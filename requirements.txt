@@ -15,18 +15,3 @@ psycopg2-binary==2.9.9
 redis==5.0.1
 python-dotenv==1.0.0
 loguru==0.7.2
-```
-- [ ] Click "Commit new file"
-
-#### **File 2:** `Procfile`
-```
-Filename: Procfile
-```
-```
-web: uvicorn main:app --host 0.0.0.0 --port $PORT
-```
-- [ ] Click "Commit new file"
-
-#### **File 3:** `main.py`
-```
-Filename: main.py
