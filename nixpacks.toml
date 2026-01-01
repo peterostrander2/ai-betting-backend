@@ -1,10 +1,1 @@
-[build]
-builder = "nixpacks"
 
-[build.nixpacksPlan.phases.setup]
-nixPkgs = ["python312", "pip"]
-
-[deploy]
-startCommand = "python prediction_api.py"
-healthcheckPath = "/health"
-healthcheckTimeout = 300
