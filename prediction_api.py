@@ -300,7 +300,7 @@ async def model_status():
         "status": "operational",
         "models": {
             "ensemble_stacking": "ready",
-            "lstm_network": "ready" if predictor.lstm.tensorflow_available else "fallback_mode",
+            "lstm_network": "fallback_mode",
             "matchup_specific": "ready",
             "monte_carlo": "ready",
             "line_analyzer": "ready",
