@@ -1,0 +1,14 @@
+# ============================================
+# PHASE 1: MINIMAL DEPLOYMENT
+# Fast build (~30 seconds) for testing
+# ============================================
+
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.9.2
+python-dotenv==1.0.0
+
+# ============================================
+# Use this file first to test Railway deployment
+# Then switch to requirements.txt for full ML stack
+# ============================================
