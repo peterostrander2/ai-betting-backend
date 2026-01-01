@@ -1,8 +1,1 @@
-[phases.setup]
-nixPkgs = ["python312"]
 
-[phases.install]
-cmds = ["pip install -r requirements.txt"]
-
-[start]
-cmd = "python prediction_api.py"
