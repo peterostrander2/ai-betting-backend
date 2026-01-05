@@ -22,6 +22,120 @@ import uvicorn
 
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "6e6da61eec951acb5fa9010293b89279")
 PLAYBOOK_API_KEY = os.getenv("PLAYBOOK_API_KEY", "pbk_095c2ac98199f43d0b409f90031908bb05b8")
+WHOP_API_KEY = os.getenv("WHOP_API_KEY", "apik_V0RJhFxaEJHUF_C3577787_Q9EBRqD5B-NB-2JXPhrmuugtIBHehUEQ272DGh10-h4")
+
+
+# ============================================
+# WHOP MEMBERSHIP SERVICE
+# ============================================
+
+class WhopService:
+    def __init__(self, api_key):
+        self.api_key = api_key
+        self.base_url = "https://api.whop.com/api/v2"
+        self.headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        # Define your Whop product/plan IDs here after creating them in Whop dashboard
+        self.tiers = {
+            "free": {"name": "Free", "level": 0},
+            "standard": {"name": "Standard", "level": 1, "plan_id": None},  # Set after creating in Whop
+            "premium": {"name": "Premium", "level": 2, "plan_id": None}   # Set after creating in Whop
+        }
+    
+    def validate_license(self, license_key):
+        """Validate a license key and return membership info"""
+        try:
+            url = f"{self.base_url}/memberships/{license_key}"
+            r = requests.get(url, headers=self.headers, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                return {
+                    "valid": True,
+                    "membership": data,
+                    "status": data.get("status"),
+                    "plan": data.get("plan", {}).get("plan_name"),
+                    "user": data.get("user", {}).get("username"),
+                    "tier": self._get_tier_from_plan(data.get("plan", {}).get("id"))
+                }
+            return {"valid": False, "error": "Invalid license key"}
+        except Exception as e:
+            return {"valid": False, "error": str(e)}
+    
+    def check_membership_by_email(self, email):
+        """Check if email has active membership"""
+        try:
+            url = f"{self.base_url}/memberships"
+            params = {"email": email}
+            r = requests.get(url, headers=self.headers, params=params, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                memberships = data.get("data", [])
+                active = [m for m in memberships if m.get("status") == "active"]
+                if active:
+                    best = max(active, key=lambda x: self._get_tier_level(x.get("plan", {}).get("id")))
+                    return {
+                        "has_membership": True,
+                        "tier": self._get_tier_from_plan(best.get("plan", {}).get("id")),
+                        "status": best.get("status"),
+                        "membership_id": best.get("id")
+                    }
+                return {"has_membership": False, "tier": "free"}
+            return {"has_membership": False, "tier": "free", "error": r.status_code}
+        except Exception as e:
+            return {"has_membership": False, "tier": "free", "error": str(e)}
+    
+    def _get_tier_from_plan(self, plan_id):
+        """Map plan ID to tier name"""
+        for tier_name, tier_info in self.tiers.items():
+            if tier_info.get("plan_id") == plan_id:
+                return tier_name
+        return "standard"  # Default to standard for any paid plan
+    
+    def _get_tier_level(self, plan_id):
+        """Get numeric tier level for comparison"""
+        tier = self._get_tier_from_plan(plan_id)
+        return self.tiers.get(tier, {}).get("level", 0)
+    
+    def get_access_level(self, tier):
+        """Return what features a tier has access to"""
+        access = {
+            "free": {
+                "home": True,
+                "live_odds": True,  # Limited
+                "calculator": True,
+                "props": False,
+                "splits": False,
+                "alerts": False,
+                "esoteric": False,
+                "odds_limit": 3  # Only see 3 games
+            },
+            "standard": {
+                "home": True,
+                "live_odds": True,
+                "calculator": True,
+                "props": True,
+                "splits": True,
+                "alerts": True,
+                "esoteric": False,
+                "odds_limit": None  # Unlimited
+            },
+            "premium": {
+                "home": True,
+                "live_odds": True,
+                "calculator": True,
+                "props": True,
+                "splits": True,
+                "alerts": True,
+                "esoteric": True,
+                "odds_limit": None
+            }
+        }
+        return access.get(tier, access["free"])
+
+
+whop_service = WhopService(WHOP_API_KEY)
 
 
 # ============================================
@@ -495,7 +609,7 @@ alerts_manager = AlertsManager()
 # FASTAPI APP
 # ============================================
 
-app = FastAPI(title="AI Sports Betting API", description="ML + Odds + Splits + Esoteric + Props + ALERTS", version="4.2.0")
+app = FastAPI(title="AI Sports Betting API", description="ML + Odds + Splits + Esoteric + Props + Alerts + WHOP", version="4.3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
@@ -531,7 +645,7 @@ class DiscordWebhookRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "AI Sports Betting API v4.2 with ALERTS", "version": "4.2.0"}
+    return {"status": "online", "message": "AI Sports Betting API v4.3 with WHOP", "version": "4.3.0"}
 
 
 @app.get("/health")
@@ -871,6 +985,113 @@ async def run_alert_checks():
         sharp_alerts = alerts_manager.check_sharp_money(splits_data)
         alerts.extend(sharp_alerts)
     return {"success": True, "alerts_generated": len(alerts), "alerts": alerts}
+
+
+# ============================================
+# WHOP MEMBERSHIP ENDPOINTS
+# ============================================
+
+class LicenseValidateRequest(BaseModel):
+    license_key: str
+
+
+class EmailCheckRequest(BaseModel):
+    email: str
+
+
+@app.get("/whop/status")
+async def whop_status():
+    """Check if Whop integration is configured"""
+    return {
+        "success": True,
+        "configured": WHOP_API_KEY is not None,
+        "tiers": {
+            "free": {"price": "$0", "features": ["Home", "Odds (3 games)", "Calculator"]},
+            "standard": {"price": "$29/mo", "features": ["Unlimited Odds", "Props", "Splits", "Alerts"]},
+            "premium": {"price": "$99/mo", "features": ["Everything", "Esoteric Edge", "Priority Support"]}
+        }
+    }
+
+
+@app.post("/whop/validate")
+async def validate_license(req: LicenseValidateRequest):
+    """Validate a Whop license key"""
+    result = whop_service.validate_license(req.license_key)
+    if result.get("valid"):
+        access = whop_service.get_access_level(result.get("tier", "free"))
+        result["access"] = access
+    return result
+
+
+@app.post("/whop/check-email")
+async def check_membership_email(req: EmailCheckRequest):
+    """Check membership status by email"""
+    result = whop_service.check_membership_by_email(req.email)
+    access = whop_service.get_access_level(result.get("tier", "free"))
+    result["access"] = access
+    return result
+
+
+@app.get("/whop/access/{tier}")
+async def get_tier_access(tier: str):
+    """Get access level for a specific tier"""
+    access = whop_service.get_access_level(tier)
+    return {"success": True, "tier": tier, "access": access}
+
+
+@app.get("/whop/pricing")
+async def get_pricing():
+    """Get pricing information for display"""
+    return {
+        "success": True,
+        "plans": [
+            {
+                "id": "free",
+                "name": "Free",
+                "price": 0,
+                "price_display": "Free",
+                "interval": None,
+                "features": [
+                    "Live odds (3 games)",
+                    "Edge calculator",
+                    "Basic predictions"
+                ],
+                "cta": "Get Started"
+            },
+            {
+                "id": "standard",
+                "name": "Standard",
+                "price": 29,
+                "price_display": "$29/mo",
+                "interval": "month",
+                "features": [
+                    "Unlimited live odds",
+                    "Player props",
+                    "Betting splits",
+                    "Real-time alerts",
+                    "Discord notifications"
+                ],
+                "cta": "Subscribe",
+                "popular": True
+            },
+            {
+                "id": "premium",
+                "name": "Premium",
+                "price": 99,
+                "price_display": "$99/mo",
+                "interval": "month",
+                "features": [
+                    "Everything in Standard",
+                    "Esoteric Edge analysis",
+                    "Gematria & numerology",
+                    "Moon phase alerts",
+                    "Priority support",
+                    "Early access to features"
+                ],
+                "cta": "Go Premium"
+            }
+        ]
+    }
 
 
 if __name__ == "__main__":
