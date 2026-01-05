@@ -207,10 +207,9 @@ class PicksEngineV2:
                 home = game.get("home_team", "")
                 away = game.get("away_team", "")
                 
-                # Get bookmaker odds
-                bookmakers = game.get("bookmakers", {})
-                fd = bookmakers.get("fanduel", {}).get("markets", {})
-                dk = bookmakers.get("draftkings", {}).get("markets", {})
+                # Get bookmaker odds - direct structure from live-odds endpoint
+                fd = game.get("fanduel", {})
+                dk = game.get("draftkings", {})
                 markets = fd if fd else dk
                 if not markets:
                     continue
