@@ -4151,7 +4151,7 @@ class PicksEngineV2:
                 home = game.get("home_team", "")
                 away = game.get("away_team", "")
                 
-                # Get bookmaker odds from odds_service structure
+                # Get bookmaker odds - FanDuel preferred, DraftKings backup
                 bookmakers = game.get("bookmakers", {})
                 fd = bookmakers.get("fanduel", {}).get("markets", {})
                 dk = bookmakers.get("draftkings", {}).get("markets", {})
@@ -6181,13 +6181,22 @@ esoteric = EsotericAnalyzer()
 # ============================================
 
 class LiveOddsService:
+    """Get live odds from FanDuel and DraftKings via the-odds-api.com"""
+    
     def __init__(self, api_key):
         self.api_key = api_key
         self.base_url = "https://api.the-odds-api.com/v4"
     
     def get_live_odds(self, sport="basketball_nba", bookmakers="fanduel,draftkings"):
-        url = self.base_url + "/sports/" + sport + "/odds"
-        params = {"apiKey": self.api_key, "regions": "us", "markets": "h2h,spreads,totals", "bookmakers": bookmakers, "oddsFormat": "american"}
+        """Get odds from FanDuel and DraftKings"""
+        url = f"{self.base_url}/sports/{sport}/odds"
+        params = {
+            "apiKey": self.api_key, 
+            "regions": "us", 
+            "markets": "h2h,spreads,totals", 
+            "bookmakers": bookmakers, 
+            "oddsFormat": "american"
+        }
         
         try:
             r = requests.get(url, params=params, timeout=15)
@@ -6195,27 +6204,45 @@ class LiveOddsService:
             
             if r.status_code == 200:
                 games = r.json()
-                print(f"[ODDS API] {sport} - Raw games returned: {len(games)}")
+                print(f"[ODDS API] {sport} - Games returned: {len(games)}")
                 formatted = self._format(games)
                 remaining = r.headers.get('x-requests-remaining', 'unknown')
-                return {"success": True, "sport": sport, "games_count": len(games), "games": formatted, "api_usage": {"remaining": remaining}}
+                return {
+                    "success": True, 
+                    "sport": sport, 
+                    "games_count": len(games), 
+                    "games": formatted, 
+                    "api_usage": {"remaining": remaining}
+                }
             elif r.status_code == 401:
+                print("[ODDS API] Invalid API key!")
                 return {"success": False, "error": "Invalid API key", "status": 401}
             elif r.status_code == 429:
+                print("[ODDS API] Rate limit exceeded!")
                 return {"success": False, "error": "Rate limit exceeded", "status": 429}
             elif r.status_code == 422:
-                return {"success": False, "error": f"Invalid sport key: {sport}", "status": 422}
+                print(f"[ODDS API] Invalid sport: {sport}")
+                return {"success": False, "error": f"Invalid sport: {sport}", "status": 422}
             else:
-                return {"success": False, "error": f"API error {r.status_code}", "status": r.status_code, "message": r.text[:200]}
+                print(f"[ODDS API] Error: {r.status_code} - {r.text[:200]}")
+                return {"success": False, "error": f"API error {r.status_code}", "message": r.text[:200]}
         except requests.exceptions.Timeout:
-            return {"success": False, "error": "API timeout - try again"}
+            print("[ODDS API] Timeout!")
+            return {"success": False, "error": "API timeout"}
         except Exception as e:
             print(f"[ODDS API ERROR] {e}")
             return {"success": False, "error": str(e)}
     
     def get_player_props(self, sport="basketball_nba", markets="player_points"):
-        url = self.base_url + "/sports/" + sport + "/odds"
-        params = {"apiKey": self.api_key, "regions": "us", "markets": markets, "bookmakers": "fanduel,draftkings", "oddsFormat": "american"}
+        """Get player props from FanDuel and DraftKings"""
+        url = f"{self.base_url}/sports/{sport}/odds"
+        params = {
+            "apiKey": self.api_key, 
+            "regions": "us", 
+            "markets": markets, 
+            "bookmakers": "fanduel,draftkings", 
+            "oddsFormat": "american"
+        }
         
         try:
             r = requests.get(url, params=params, timeout=15)
@@ -6225,16 +6252,29 @@ class LiveOddsService:
                 data = r.json()
                 props = self._format_props(data)
                 print(f"[PROPS API] {sport} - Props formatted: {len(props)}")
-                return {"success": True, "sport": sport, "props_count": len(props), "props": props, "api_usage": {"remaining": r.headers.get('x-requests-remaining', 'unknown')}}
+                return {
+                    "success": True, 
+                    "sport": sport, 
+                    "props_count": len(props), 
+                    "props": props, 
+                    "api_usage": {"remaining": r.headers.get('x-requests-remaining', 'unknown')}
+                }
             return {"success": False, "error": r.status_code, "message": r.text[:200]}
         except Exception as e:
             print(f"[PROPS API ERROR] {e}")
             return {"success": False, "error": str(e)}
     
     def _format(self, games):
+        """Format raw API response to our standard structure"""
         result = []
         for g in games:
-            fg = {"id": g.get("id"), "commence_time": g.get("commence_time"), "home_team": g.get("home_team"), "away_team": g.get("away_team"), "bookmakers": {}}
+            fg = {
+                "id": g.get("id"), 
+                "commence_time": g.get("commence_time"), 
+                "home_team": g.get("home_team"), 
+                "away_team": g.get("away_team"), 
+                "bookmakers": {}
+            }
             for b in g.get("bookmakers", []):
                 fg["bookmakers"][b["key"]] = {"markets": {}}
                 for m in b.get("markets", []):
@@ -6246,17 +6286,31 @@ class LiveOddsService:
         return result
     
     def _format_props(self, data):
+        """Format player props from API response"""
         props = []
         games = data if isinstance(data, list) else [data]
         for game in games:
-            game_info = {"game_id": game.get("id"), "home_team": game.get("home_team"), "away_team": game.get("away_team"), "commence_time": game.get("commence_time")}
+            game_info = {
+                "game_id": game.get("id"), 
+                "home_team": game.get("home_team"), 
+                "away_team": game.get("away_team"), 
+                "commence_time": game.get("commence_time")
+            }
             for bookmaker in game.get("bookmakers", []):
                 book_name = bookmaker.get("key")
                 for market in bookmaker.get("markets", []):
                     market_key = market.get("key", "")
                     if "player_" in market_key or "batter_" in market_key or "pitcher_" in market_key:
                         for outcome in market.get("outcomes", []):
-                            prop = {"game": game_info, "bookmaker": book_name, "market": market_key, "player": outcome.get("description", outcome.get("name", "")), "type": outcome.get("name", ""), "line": outcome.get("point"), "odds": outcome.get("price")}
+                            prop = {
+                                "game": game_info, 
+                                "bookmaker": book_name, 
+                                "market": market_key, 
+                                "player": outcome.get("description", outcome.get("name", "")), 
+                                "type": outcome.get("name", ""), 
+                                "line": outcome.get("point"), 
+                                "odds": outcome.get("price")
+                            }
                             props.append(prop)
         return props
 
