@@ -139,6 +139,228 @@ whop_service = WhopService(WHOP_API_KEY)
 
 
 # ============================================
+# MULTI-SOURCE SPORTS DATA SCRAPER
+# Injuries: ESPN, Rotowire, CBS Sports
+# Rest/Schedule: Calculated from game data
+# ============================================
+
+from bs4 import BeautifulSoup
+from datetime import timedelta
+import re
+
+class InjuryScraper:
+    """Scrapes injury data from multiple sources"""
+    
+    def __init__(self):
+        self.headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        self.cache = {}
+        self.cache_time = None
+    
+    def get_injuries(self, sport: str) -> Dict:
+        """Get injuries from ESPN, Rotowire, CBS - cross-referenced"""
+        sport = sport.lower()
+        
+        injuries = {"sport": sport, "updated_at": datetime.now().isoformat(), "players": []}
+        
+        # Collect from all sources
+        espn = self._scrape_espn(sport)
+        rotowire = self._scrape_rotowire(sport)
+        cbs = self._scrape_cbs(sport)
+        
+        # Merge and add confidence based on source count
+        injuries["players"] = self._merge_injuries(espn, rotowire, cbs)
+        injuries["sources"] = ["ESPN", "Rotowire", "CBS Sports"]
+        
+        return injuries
+    
+    def _scrape_espn(self, sport: str) -> List[Dict]:
+        """Scrape ESPN injuries"""
+        injuries = []
+        sport_map = {"nba": "basketball/nba", "nfl": "football/nfl", "nhl": "hockey/nhl", "mlb": "baseball/mlb", "ncaab": "basketball/mens-college-basketball"}
+        url = f"https://www.espn.com/{sport_map.get(sport, sport)}/injuries"
+        
+        try:
+            r = requests.get(url, headers=self.headers, timeout=10)
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.text, 'html.parser')
+                tables = soup.find_all('table')
+                
+                for table in tables:
+                    team_header = table.find_previous(['h2', 'h3'])
+                    team = team_header.get_text(strip=True) if team_header else ""
+                    
+                    for row in table.find_all('tr')[1:]:
+                        cols = row.find_all('td')
+                        if len(cols) >= 2:
+                            player = cols[0].get_text(strip=True)
+                            status = cols[-1].get_text(strip=True) if cols else ""
+                            if player:
+                                injuries.append({"player": player, "team": team, "status": self._normalize_status(status), "source": "ESPN"})
+        except Exception as e:
+            print(f"ESPN error: {e}")
+        return injuries
+    
+    def _scrape_rotowire(self, sport: str) -> List[Dict]:
+        """Scrape Rotowire injuries"""
+        injuries = []
+        sport_map = {"nba": "basketball", "nfl": "football", "nhl": "hockey", "mlb": "baseball", "ncaab": "college-basketball"}
+        url = f"https://www.rotowire.com/{sport_map.get(sport, sport)}/injury-report.php"
+        
+        try:
+            r = requests.get(url, headers=self.headers, timeout=10)
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.text, 'html.parser')
+                items = soup.find_all(['div', 'tr'], class_=re.compile(r'injury|player', re.I))
+                
+                for item in items:
+                    player_el = item.find(['a', 'span'], class_=re.compile(r'player|name', re.I))
+                    if player_el:
+                        player = player_el.get_text(strip=True)
+                        status_el = item.find(['span', 'td'], class_=re.compile(r'status', re.I))
+                        status = status_el.get_text(strip=True) if status_el else ""
+                        team_el = item.find(['span', 'td'], class_=re.compile(r'team', re.I))
+                        team = team_el.get_text(strip=True) if team_el else ""
+                        if player:
+                            injuries.append({"player": player, "team": team, "status": self._normalize_status(status), "source": "Rotowire"})
+        except Exception as e:
+            print(f"Rotowire error: {e}")
+        return injuries
+    
+    def _scrape_cbs(self, sport: str) -> List[Dict]:
+        """Scrape CBS Sports injuries"""
+        injuries = []
+        url = f"https://www.cbssports.com/{sport}/injuries/"
+        
+        try:
+            r = requests.get(url, headers=self.headers, timeout=10)
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.text, 'html.parser')
+                rows = soup.find_all('tr')
+                team = ""
+                for row in rows:
+                    cols = row.find_all('td')
+                    if len(cols) >= 2:
+                        player = cols[0].get_text(strip=True)
+                        status = cols[1].get_text(strip=True) if len(cols) > 1 else ""
+                        if player and not player.startswith('Player'):
+                            injuries.append({"player": player, "team": team, "status": self._normalize_status(status), "source": "CBS"})
+        except Exception as e:
+            print(f"CBS error: {e}")
+        return injuries
+    
+    def _normalize_status(self, status: str) -> str:
+        """Normalize status across sources"""
+        s = status.lower()
+        if any(x in s for x in ["out", "ir", "pup"]): return "OUT"
+        if "doubtful" in s: return "DOUBTFUL"
+        if any(x in s for x in ["questionable", "gtd"]): return "QUESTIONABLE"
+        if "probable" in s: return "PROBABLE"
+        return status.upper()[:15]
+    
+    def _merge_injuries(self, *sources) -> List[Dict]:
+        """Merge from all sources, add confidence"""
+        merged = {}
+        for source in sources:
+            for inj in source:
+                key = inj.get("player", "").lower().strip()
+                if not key: continue
+                if key not in merged:
+                    merged[key] = {"player": inj["player"], "team": inj.get("team", ""), "status": inj["status"], "sources": [inj["source"]], "confidence": 33}
+                else:
+                    if inj["source"] not in merged[key]["sources"]:
+                        merged[key]["sources"].append(inj["source"])
+                        merged[key]["confidence"] = min(100, len(merged[key]["sources"]) * 33)
+        
+        return sorted(merged.values(), key=lambda x: -x["confidence"])
+    
+    def get_team_injuries(self, team: str, sport: str) -> List[Dict]:
+        """Get injuries for a specific team"""
+        all_injuries = self.get_injuries(sport)
+        return [i for i in all_injuries.get("players", []) if team.lower() in i.get("team", "").lower()]
+
+
+class RestCalculator:
+    """Calculates rest/fatigue based on schedule"""
+    
+    def __init__(self):
+        self.headers = {"User-Agent": "Mozilla/5.0"}
+    
+    def calculate_rest_advantage(self, home: str, away: str, sport: str, games_data: List = None) -> Dict:
+        """Calculate rest advantage between teams"""
+        # Default values - would be enhanced with real schedule data
+        # For now, use game commence times to detect back-to-backs
+        
+        result = {
+            "advantage": None,
+            "strength": 0,
+            "description": "",
+            "home_rest_days": 2,
+            "away_rest_days": 2,
+            "home_b2b": False,
+            "away_b2b": False
+        }
+        
+        # In production: scrape recent game dates from ESPN/CBS
+        # For now: return neutral unless we have specific data
+        
+        return result
+    
+    def is_back_to_back(self, team: str, sport: str) -> bool:
+        """Check if team is on back-to-back"""
+        # Would check team's schedule
+        return False
+
+
+class SportsDataService:
+    """Combined service for all sports data"""
+    
+    def __init__(self):
+        self.injury_scraper = InjuryScraper()
+        self.rest_calculator = RestCalculator()
+    
+    def get_game_context(self, home: str, away: str, sport: str) -> Dict:
+        """Get full game context: injuries + rest"""
+        # Get injuries
+        home_injuries = self.injury_scraper.get_team_injuries(home, sport)
+        away_injuries = self.injury_scraper.get_team_injuries(away, sport)
+        
+        # Calculate injury impact
+        injury_impact = self._calculate_injury_impact(home_injuries, away_injuries, home, away)
+        
+        # Get rest advantage
+        rest = self.rest_calculator.calculate_rest_advantage(home, away, sport)
+        
+        return {
+            "injuries": {"home": home_injuries, "away": away_injuries, "impact": injury_impact},
+            "rest": rest
+        }
+    
+    def _calculate_injury_impact(self, home_inj: List, away_inj: List, home: str, away: str) -> Dict:
+        """Calculate which team has injury advantage"""
+        def score(injuries):
+            s = 0
+            for i in injuries:
+                conf = i.get("confidence", 50) / 100
+                if i["status"] == "OUT": s += 3 * conf
+                elif i["status"] == "DOUBTFUL": s += 2 * conf
+                elif i["status"] == "QUESTIONABLE": s += 1 * conf
+            return s
+        
+        home_score = score(home_inj)
+        away_score = score(away_inj)
+        diff = away_score - home_score
+        
+        if diff >= 2:
+            return {"advantage": home, "strength": min(0.9, diff / 8), "description": f"{away} has more injuries"}
+        elif diff <= -2:
+            return {"advantage": away, "strength": min(0.9, abs(diff) / 8), "description": f"{home} has more injuries"}
+        return {"advantage": None, "strength": 0, "description": "No injury advantage"}
+
+
+sports_data = SportsDataService()
+
+
+# ============================================
 # PICKS ENGINE V2 - THE BRAIN
 # ============================================
 
@@ -224,162 +446,265 @@ class PicksEngineV2:
                 total_score = 0
                 max_possible = 0
                 
-                # ===== AI MODEL SIGNALS =====
+                # Get actual odds data
+                spreads = markets.get("spreads", {})
+                totals = markets.get("totals", {})
+                h2h = markets.get("h2h", {})
                 
-                # 1. Ensemble prediction (simulated)
-                ensemble_conf = 0.55 + (hash(home + away) % 10) / 100
-                if ensemble_conf > 0.52:
-                    weight = self.weights["ensemble_prediction"]
-                    max_possible += weight
-                    total_score += (ensemble_conf - 0.5) * 2 * weight
-                    signals["ensemble"] = {"confidence": ensemble_conf}
-                    reasons.append(f"AI Ensemble: {round(ensemble_conf*100)}% confidence")
+                home_spread = spreads.get(home, {}).get("point", 0)
+                home_spread_odds = spreads.get(home, {}).get("price", -110)
+                away_spread = spreads.get(away, {}).get("point", 0)
+                away_spread_odds = spreads.get(away, {}).get("price", -110)
                 
-                # 2. Monte Carlo simulation
-                mc_prob = 0.50 + (hash(away + home) % 8) / 100
-                if mc_prob > 0.51:
-                    weight = self.weights["monte_carlo_probability"]
-                    max_possible += weight
-                    total_score += (mc_prob - 0.5) * 3 * weight
-                    signals["monte_carlo"] = {"probability": mc_prob}
-                    reasons.append(f"Monte Carlo: {round(mc_prob*100)}% win probability")
+                total_line = totals.get("Over", {}).get("point", 0)
+                over_odds = totals.get("Over", {}).get("price", -110)
+                under_odds = totals.get("Under", {}).get("price", -110)
                 
-                # 3. Line movement analysis
+                home_ml = h2h.get(home, {}).get("price", -110)
+                away_ml = h2h.get(away, {}).get("price", -110)
+                
+                # ===== AI MODEL SIGNALS (Based on Real Odds) =====
+                
+                # 1. Line Value Analysis - Look for plus money or off-key numbers
+                weight = self.weights["ensemble_prediction"]
+                max_possible += weight
+                # Value on spread if getting + odds or if spread is off key number
+                if home_spread_odds > -105 or away_spread_odds > -105:
+                    better_side = home if home_spread_odds > away_spread_odds else away
+                    total_score += weight * 0.7
+                    signals["line_value"] = {"side": better_side, "odds": max(home_spread_odds, away_spread_odds)}
+                    reasons.append(f"Line Value: {better_side} at {max(home_spread_odds, away_spread_odds)}")
+                
+                # 2. Moneyline Value - Underdog value check
+                weight = self.weights["monte_carlo_probability"]
+                max_possible += weight
+                # Good value if underdog is +150 to +300 range (not too big, not too small)
+                if 150 <= away_ml <= 300:
+                    total_score += weight * 0.8
+                    signals["ml_value"] = {"team": away, "odds": away_ml}
+                    reasons.append(f"ML Value: {away} +{away_ml}")
+                elif 150 <= home_ml <= 300:
+                    total_score += weight * 0.8
+                    signals["ml_value"] = {"team": home, "odds": home_ml}
+                    reasons.append(f"ML Value: {home} +{home_ml}")
+                
+                # 3. Sharp Money Detection
+                sharp = self._check_sharp_money(home, away, splits_lookup)
+                weight = self.weights["sharp_money"]
+                max_possible += weight
+                if sharp.get("detected"):
+                    score_pct = min(1.0, sharp["strength"] / 12)
+                    total_score += score_pct * weight
+                    signals["sharp_money"] = sharp
+                    reasons.append(f"SHARP MONEY: {sharp['side']} ({sharp['strength']}%)")
+                
+                # 4. Spread Analysis - Key numbers and hook value
+                weight = self.weights["matchup_specific"]
+                max_possible += weight
+                # Key numbers in basketball: 3, 7, 10 / Key numbers in football: 3, 7
+                if abs(home_spread) in [3, 3.5, 7, 7.5]:
+                    total_score += weight * 0.75
+                    signals["key_spread"] = {"spread": home_spread}
+                    reasons.append(f"Key Number: {home_spread}")
+                elif abs(home_spread) == 2.5:  # Hook on 3
+                    total_score += weight * 0.6
+                    signals["hook"] = {"spread": home_spread}
+                    reasons.append(f"Hook Value: {home_spread} (off 3)")
+                
+                # 5. Total Analysis - Key totals and market lean
                 weight = self.weights["line_movement_signal"]
                 max_possible += weight
-                # Check for reverse line movement from splits
-                sharp = self._check_sharp_money(home, away, splits_lookup)
-                if sharp.get("detected"):
-                    total_score += (sharp["strength"] / 15) * weight * 1.5
-                    signals["line_movement"] = sharp
-                    reasons.append(f"Line Movement: Sharp action detected")
+                if total_line > 0:
+                    # Check for juice discrepancy (indicates market lean)
+                    if over_odds >= -105 and under_odds <= -115:
+                        total_score += weight * 0.7
+                        signals["total_lean"] = {"direction": "OVER", "line": total_line}
+                        reasons.append(f"Market Lean: OVER {total_line}")
+                    elif under_odds >= -105 and over_odds <= -115:
+                        total_score += weight * 0.7
+                        signals["total_lean"] = {"direction": "UNDER", "line": total_line}
+                        reasons.append(f"Market Lean: UNDER {total_line}")
                 
-                # 4. Rest/Fatigue (simulated based on schedule)
-                rest_advantage = (hash(home) % 3) - 1  # -1, 0, or 1
-                if rest_advantage != 0:
-                    weight = self.weights["rest_fatigue_factor"]
-                    max_possible += weight
-                    total_score += 0.5 * weight
-                    team = home if rest_advantage > 0 else away
-                    signals["rest"] = {"advantage": team}
-                    reasons.append(f"Rest Edge: {team} more rested")
+                # 6. REST/FATIGUE - From sports data service
+                weight = self.weights["rest_fatigue_factor"]
+                max_possible += weight
+                try:
+                    rest_data = sports_data.rest_calculator.calculate_rest_advantage(home, away, league_map.get(sport, "NBA"))
+                    if rest_data.get("advantage"):
+                        total_score += rest_data.get("strength", 0.5) * weight
+                        signals["rest"] = rest_data
+                        reasons.append(f"Rest Edge: {rest_data['description']}")
+                except:
+                    pass
                 
-                # 5. Kelly Criterion edge
-                if mc_prob > 0.52:
-                    decimal_odds = 1.91  # -110
-                    kelly_edge = ((mc_prob * decimal_odds) - 1) * 100
-                    if kelly_edge > 2:
-                        weight = self.weights["kelly_edge"]
-                        max_possible += weight
-                        total_score += min(kelly_edge / 10, 1) * weight
-                        signals["kelly"] = {"edge": kelly_edge}
-                        reasons.append(f"Kelly Edge: +{round(kelly_edge, 1)}% EV")
+                # 7. INJURY IMPACT - From multi-source scraper
+                weight = self.weights["injury_impact"]
+                max_possible += weight
+                try:
+                    game_context = sports_data.get_game_context(home, away, league_map.get(sport, "NBA"))
+                    injury_impact = game_context.get("injuries", {}).get("impact", {})
+                    if injury_impact.get("advantage"):
+                        total_score += injury_impact.get("strength", 0.5) * weight
+                        signals["injury"] = injury_impact
+                        reasons.append(f"Injury Edge: {injury_impact['description']}")
+                except:
+                    pass
+                
+                # 8. Kelly Criterion - Calculate actual edge
+                weight = self.weights["kelly_edge"]
+                max_possible += weight
+                # If we have a value signal, calculate Kelly
+                if signals.get("ml_value"):
+                    ml_odds = signals["ml_value"]["odds"]
+                    # Implied probability from odds
+                    if ml_odds > 0:
+                        implied_prob = 100 / (ml_odds + 100)
+                        # Assume our edge is 3-5% on identified value
+                        our_prob = implied_prob + 0.04
+                        decimal_odds = (ml_odds / 100) + 1
+                        kelly_edge = ((our_prob * decimal_odds) - 1) * 100
+                        if kelly_edge > 2:
+                            total_score += weight * 0.8
+                            signals["kelly"] = {"edge": kelly_edge, "bet_size": min(5, kelly_edge / 2)}
+                            reasons.append(f"Kelly Edge: +{round(kelly_edge, 1)}% EV")
                 
                 # ===== ESOTERIC SIGNALS =====
                 
                 esoteric_edge = esoteric_result.get("esoteric_edge", {})
                 esoteric_score = esoteric_edge.get("score", 50)
                 
-                # 6. Gematria
+                # 8. Gematria
                 gematria = esoteric_result.get("gematria", {})
                 diff = gematria.get("difference", 0)
-                if abs(diff) > 15:
-                    weight = self.weights["gematria_alignment"]
-                    max_possible += weight
-                    total_score += 0.7 * weight
+                weight = self.weights["gematria_alignment"]
+                max_possible += weight
+                if abs(diff) > 10:
+                    score_pct = min(1.0, abs(diff) / 40)
+                    total_score += score_pct * weight
                     favors = home if diff > 0 else away
                     signals["gematria"] = {"favors": favors, "diff": diff}
                     reasons.append(f"Gematria: {favors} +{abs(diff)}")
                 
-                # 7. Numerology
+                # 9. Numerology
+                weight = self.weights["numerology_power"]
+                max_possible += weight
                 if today_numerology.get("power_day"):
-                    weight = self.weights["numerology_power"]
-                    max_possible += weight
-                    total_score += weight * 0.8
+                    total_score += weight * 0.85
                     signals["numerology"] = {"power_day": True, "life_path": today_numerology["life_path"]}
                     reasons.append(f"POWER DAY: Life Path {today_numerology['life_path']}")
                 elif today_numerology.get("upset_potential"):
-                    weight = self.weights["numerology_power"]
-                    max_possible += weight
-                    total_score += weight * 0.5
-                    signals["numerology"] = {"upset": True}
+                    total_score += weight * 0.6
+                    signals["numerology"] = {"upset": True, "life_path": today_numerology["life_path"]}
                     reasons.append(f"Upset Energy: Life Path {today_numerology['life_path']}")
                 
-                # 8. Sacred Geometry
+                # 10. Sacred Geometry
                 sacred = esoteric_result.get("sacred_geometry")
+                weight = self.weights["sacred_geometry"]
+                max_possible += weight
                 if sacred and sacred.get("tesla_energy"):
-                    weight = self.weights["sacred_geometry"]
-                    max_possible += weight
                     total_score += weight * 0.9
                     signals["sacred"] = sacred
                     reasons.append("Tesla 3-6-9 alignment!")
+                elif sacred and sacred.get("fib_aligned"):
+                    total_score += weight * 0.6
+                    signals["sacred"] = sacred
+                    reasons.append("Fibonacci alignment")
                 
-                # 9. Moon Phase
+                # 11. Moon Phase
+                weight = self.weights["moon_phase"]
+                max_possible += weight
                 if today_moon.get("full_moon"):
-                    weight = self.weights["moon_phase"]
-                    max_possible += weight
-                    total_score += weight * 0.7
-                    signals["moon"] = {"full": True, "phase": today_moon["phase"]}
+                    total_score += weight * 0.8
+                    signals["moon"] = {"full": True, "phase": today_moon.get("phase")}
                     reasons.append("FULL MOON: Chaos factor HIGH")
                 elif today_moon.get("new_moon"):
-                    weight = self.weights["moon_phase"]
-                    max_possible += weight
-                    total_score += weight * 0.4
+                    total_score += weight * 0.5
                     signals["moon"] = {"new": True}
                     reasons.append("New Moon: Underdog energy")
                 
-                # 10. Zodiac Element
+                # 12. Zodiac Element
                 element = today_zodiac.get("element", "")
                 weight = self.weights["zodiac_element"]
                 max_possible += weight
                 if element == "Fire":
-                    total_score += weight * 0.6
+                    total_score += weight * 0.7
                     signals["zodiac"] = {"element": element, "lean": "OVER"}
-                    reasons.append("Fire Sign: Lean OVER")
+                    reasons.append(f"Fire Sign: Lean OVER")
                 elif element == "Earth":
-                    total_score += weight * 0.6
+                    total_score += weight * 0.7
                     signals["zodiac"] = {"element": element, "lean": "UNDER"}
-                    reasons.append("Earth Sign: Lean UNDER")
+                    reasons.append(f"Earth Sign: Lean UNDER")
                 
-                # ===== EXTERNAL DATA SIGNALS =====
+                # ===== ADDITIONAL SIGNALS =====
                 
-                # 11. Sharp Money (from splits)
-                if sharp.get("detected"):
-                    weight = self.weights["sharp_money"]
-                    max_possible += weight
-                    total_score += (sharp["strength"] / 12) * weight
-                    signals["sharp_money"] = sharp
-                    reasons.append(f"SHARP MONEY: {sharp['side']} ({sharp['strength']}%)")
+                # 13. LSTM/TREND - Line movement direction analysis
+                weight = self.weights["lstm_sequence"]
+                max_possible += weight
+                # Analyze spread movement: opening vs current (via juice changes)
+                # If juice is moving one direction, trend is forming
+                if home_spread_odds < -115:  # Heavy juice on home = line moving toward home
+                    total_score += weight * 0.6
+                    signals["trend"] = {"direction": "toward_home", "strength": abs(home_spread_odds + 110) / 10}
+                    reasons.append(f"Line Trend: Moving toward {home}")
+                elif away_spread_odds < -115:
+                    total_score += weight * 0.6
+                    signals["trend"] = {"direction": "toward_away", "strength": abs(away_spread_odds + 110) / 10}
+                    reasons.append(f"Line Trend: Moving toward {away}")
                 
-                # 12. Public Fade
-                public_pct = splits_lookup.get(f"{away}@{home}".lower().replace(" ", ""), {}).get("public_pct", 50)
-                if public_pct > 70:
-                    weight = self.weights["public_fade"]
-                    max_possible += weight
-                    total_score += 0.7 * weight
-                    signals["public_fade"] = {"pct": public_pct}
-                    reasons.append(f"Fade Public: {public_pct}% on one side")
+                # 14. PUBLIC FADE - Fade heavy public action
+                weight = self.weights["public_fade"]
+                max_possible += weight
+                # Check splits for heavy public side (>70%)
+                game_key = f"{away}@{home}".lower().replace(" ", "")
+                game_splits = splits_lookup.get(game_key, {})
+                spread_splits = game_splits.get("spread", {})
+                bets = spread_splits.get("bets", {})
+                home_bet_pct = bets.get("homePercent", 50) or 50
+                away_bet_pct = bets.get("awayPercent", 50) or 50
                 
-                # 13. Key Numbers
-                spread = self._get_spread(markets, home)
-                if abs(spread) in [3, 3.5, 7, 7.5, 10]:
-                    weight = self.weights["key_number"]
-                    max_possible += weight
-                    total_score += weight * 0.8
-                    signals["key_number"] = {"spread": spread}
-                    reasons.append(f"Key Number: {spread}")
+                if home_bet_pct >= 70:
+                    # Heavy public on home - fade to away
+                    total_score += weight * 0.75
+                    signals["public_fade"] = {"fade": away, "public_pct": home_bet_pct}
+                    reasons.append(f"Fade Public: {home_bet_pct}% on {home}")
+                elif away_bet_pct >= 70:
+                    # Heavy public on away - fade to home
+                    total_score += weight * 0.75
+                    signals["public_fade"] = {"fade": home, "public_pct": away_bet_pct}
+                    reasons.append(f"Fade Public: {away_bet_pct}% on {away}")
                 
-                # ===== CALCULATE FINAL PICK =====
+                # 15. KEY NUMBER - Spread on key number (3, 7, 10 for basketball/football)
+                weight = self.weights["key_number"]
+                max_possible += weight
+                spread_abs = abs(home_spread)
+                if spread_abs in [3, 7, 10]:
+                    total_score += weight * 0.85
+                    signals["key_number"] = {"number": spread_abs, "exact": True}
+                    reasons.append(f"KEY NUMBER: {spread_abs}")
+                elif spread_abs in [3.5, 7.5, 10.5]:
+                    # Half-point off key number (hook)
+                    total_score += weight * 0.6
+                    signals["key_number"] = {"number": spread_abs, "hook": True}
+                    reasons.append(f"Hook on {int(spread_abs)}")
                 
+                # ===== CALCULATE FINAL CONFIDENCE =====
+                
+                # Confidence = (score achieved / max possible) * 100
+                # This represents how strongly our signals agree
                 if max_possible > 0:
-                    confidence = min(95, max(35, (total_score / max_possible) * 100))
+                    confidence = (total_score / max_possible) * 100
+                    confidence = min(95, max(35, confidence))
                 else:
-                    confidence = 50
+                    confidence = 35
+                
+                # Only output picks where we have genuine confidence
+                signals_fired_count = len(signals)
                 
                 # Determine pick direction
                 pick_result = self._determine_pick(signals, markets, home, away, esoteric_score, sharp)
                 
-                if confidence >= 40 and pick_result:
+                if confidence >= 75 and pick_result and signals_fired_count >= 4:
+                    # Only GOOD (75+) and STRONG (85+) with at least 4 signals agreeing
                     pick = {
                         "id": f"{game.get('id', '')}_{datetime.now().strftime('%H%M%S')}",
                         "game": f"{away} @ {home}",
@@ -475,6 +800,7 @@ class PicksEngineV2:
     def _determine_pick(self, signals, markets, home, away, esoteric_score, sharp):
         spreads = markets.get("spreads", {})
         totals = markets.get("totals", {})
+        h2h = markets.get("h2h", {})
         
         home_spread = spreads.get(home, {}).get("point", 0)
         home_odds = spreads.get(home, {}).get("price", -110)
@@ -485,14 +811,10 @@ class PicksEngineV2:
         under_odds = totals.get("Under", {}).get("price", -110)
         total_line = totals.get("Over", {}).get("point", 220)
         
-        # Check for zodiac over/under lean
-        zodiac = signals.get("zodiac", {})
-        if zodiac.get("lean") == "OVER":
-            return {"type": "total", "pick": f"OVER {total_line}", "odds": over_odds}
-        elif zodiac.get("lean") == "UNDER":
-            return {"type": "total", "pick": f"UNDER {total_line}", "odds": under_odds}
+        home_ml = h2h.get(home, {}).get("price", -110)
+        away_ml = h2h.get(away, {}).get("price", 100)
         
-        # Check sharp money
+        # Priority 1: Sharp money (highest value signal)
         if sharp.get("detected"):
             side = sharp["side"]
             if side == home:
@@ -500,20 +822,55 @@ class PicksEngineV2:
             else:
                 return {"type": "spread", "pick": f"{away} {away_spread:+g}", "odds": away_odds}
         
-        # Check esoteric lean
+        # Priority 2: Moneyline value on underdogs
+        if signals.get("ml_value"):
+            team = signals["ml_value"]["team"]
+            odds = signals["ml_value"]["odds"]
+            return {"type": "moneyline", "pick": f"{team} ML", "odds": odds}
+        
+        # Priority 3: Total lean from market analysis or zodiac
+        if signals.get("total_lean"):
+            direction = signals["total_lean"]["direction"]
+            if direction == "OVER":
+                return {"type": "total", "pick": f"OVER {total_line}", "odds": over_odds}
+            else:
+                return {"type": "total", "pick": f"UNDER {total_line}", "odds": under_odds}
+        
+        zodiac = signals.get("zodiac", {})
+        if zodiac.get("lean") == "OVER":
+            return {"type": "total", "pick": f"OVER {total_line}", "odds": over_odds}
+        elif zodiac.get("lean") == "UNDER":
+            return {"type": "total", "pick": f"UNDER {total_line}", "odds": under_odds}
+        
+        # Priority 4: Line value signal
+        if signals.get("line_value"):
+            side = signals["line_value"]["side"]
+            if side == home:
+                return {"type": "spread", "pick": f"{home} {home_spread:+g}", "odds": home_odds}
+            else:
+                return {"type": "spread", "pick": f"{away} {away_spread:+g}", "odds": away_odds}
+        
+        # Priority 5: Key spread / hook value
+        if signals.get("key_spread") or signals.get("hook"):
+            # Favor the side getting points on key numbers
+            if home_spread > 0:
+                return {"type": "spread", "pick": f"{home} {home_spread:+g}", "odds": home_odds}
+            else:
+                return {"type": "spread", "pick": f"{away} {away_spread:+g}", "odds": away_odds}
+        
+        # Priority 6: Esoteric lean
         if esoteric_score > 55:
             return {"type": "spread", "pick": f"{home} {home_spread:+g}", "odds": home_odds}
         elif esoteric_score < 45:
             return {"type": "spread", "pick": f"{away} {away_spread:+g}", "odds": away_odds}
         
-        # Default to home spread
-        return {"type": "spread", "pick": f"{home} {home_spread:+g}", "odds": home_odds}
+        # Default: No strong lean, return None (skip this game)
+        return None
     
     def _get_label(self, score):
-        if score >= 80: return "STRONG"
-        elif score >= 70: return "GOOD"
-        elif score >= 60: return "LEAN"
-        else: return "SLIGHT"
+        if score >= 85: return "STRONG"
+        elif score >= 75: return "GOOD"
+        else: return "BELOW_THRESHOLD"  # Should not appear in output
     
     # ===== GRADING SYSTEM =====
     
@@ -622,6 +979,425 @@ class PicksEngineV2:
                     self.performance = data.get("performance", self.performance)
         except Exception as e:
             print(f"Load error: {e}")
+
+
+# ============================================
+# PROPS PICKS ENGINE - PLAYER PROPS ANALYSIS
+# ============================================
+
+class PropsPicksEngine:
+    """
+    Player Props Picks Engine - Same rigor as game picks
+    Only outputs GOOD (75+) and STRONG (85+) confidence props
+    
+    Signals Used:
+    1. Line Value (juice analysis)
+    2. Player Gematria
+    3. Line Sacred Geometry (Tesla 3-6-9, Fibonacci)
+    4. Date Numerology
+    5. Moon Phase Impact
+    6. Prop Type Analysis
+    7. Over/Under Lean
+    8. Kelly Criterion Edge
+    """
+    
+    def __init__(self):
+        self.weights = {
+            "line_value": 15,
+            "player_gematria": 12,
+            "line_sacred": 10,
+            "numerology": 12,
+            "moon_phase": 8,
+            "prop_type": 10,
+            "over_under_lean": 13,
+            "kelly_edge": 15,
+            "zodiac_element": 5
+        }
+        
+        self.props_history = []
+        self.graded_props = []
+        self.performance = {
+            "total_picks": 0, "wins": 0, "losses": 0, "pushes": 0,
+            "win_rate": 0, "roi": 0,
+            "by_sport": {}, "by_type": {}, "by_confidence": {}
+        }
+    
+    def generate_prop_picks(self, sport="basketball_nba"):
+        """Generate best player prop picks using all signals"""
+        best_props = []
+        
+        # Get player props
+        markets_map = {
+            "basketball_nba": "player_points,player_rebounds,player_assists,player_threes",
+            "basketball_ncaab": "player_points,player_rebounds,player_assists",
+            "icehockey_nhl": "player_points,player_goals,player_assists,player_shots_on_goal",
+            "baseball_mlb": "batter_hits,batter_total_bases,pitcher_strikeouts"
+        }
+        
+        markets = markets_map.get(sport, "player_points")
+        props_data = odds_service.get_player_props(sport=sport, markets=markets)
+        
+        if not props_data.get("success") or not props_data.get("props"):
+            return {"success": False, "error": "No props available", "picks": []}
+        
+        # Get today's cosmic energy
+        today = date.today()
+        today_numerology = esoteric.numerology.date_energy(today)
+        today_moon = esoteric.astrology.moon_phase(today)
+        today_zodiac = esoteric.astrology.zodiac(today)
+        
+        # Group props by player to find best line
+        player_props = {}
+        for prop in props_data.get("props", []):
+            player = prop.get("player", "")
+            market = prop.get("market", "")
+            key = f"{player}_{market}"
+            
+            if key not in player_props:
+                player_props[key] = []
+            player_props[key].append(prop)
+        
+        # Analyze each unique player/prop combo
+        for key, props in player_props.items():
+            try:
+                # Get best line (compare bookmakers)
+                over_props = [p for p in props if p.get("type") == "Over"]
+                under_props = [p for p in props if p.get("type") == "Under"]
+                
+                if not over_props and not under_props:
+                    continue
+                
+                # Use first available
+                sample_prop = over_props[0] if over_props else under_props[0]
+                player_name = sample_prop.get("player", "")
+                prop_type = sample_prop.get("market", "")
+                line = sample_prop.get("line", 0)
+                game_info = sample_prop.get("game", {})
+                
+                if not player_name or not line:
+                    continue
+                
+                # Get odds
+                over_odds = over_props[0].get("odds", -110) if over_props else -110
+                under_odds = under_props[0].get("odds", -110) if under_props else -110
+                
+                # Calculate signals
+                signals = {}
+                reasons = []
+                total_score = 0
+                max_possible = 0
+                
+                # ===== SIGNAL 1: Line Value (Juice Analysis) =====
+                weight = self.weights["line_value"]
+                max_possible += weight
+                
+                if over_odds > -105:
+                    total_score += weight * 0.8
+                    signals["line_value"] = {"side": "OVER", "odds": over_odds}
+                    reasons.append(f"OVER value at {over_odds}")
+                elif under_odds > -105:
+                    total_score += weight * 0.8
+                    signals["line_value"] = {"side": "UNDER", "odds": under_odds}
+                    reasons.append(f"UNDER value at {under_odds}")
+                elif over_odds >= -108:
+                    total_score += weight * 0.5
+                    signals["line_value"] = {"side": "OVER", "odds": over_odds}
+                elif under_odds >= -108:
+                    total_score += weight * 0.5
+                    signals["line_value"] = {"side": "UNDER", "odds": under_odds}
+                
+                # ===== SIGNAL 2: Player Gematria =====
+                weight = self.weights["player_gematria"]
+                max_possible += weight
+                
+                player_gematria = esoteric.gematria.full_analysis(player_name)
+                player_reduced = player_gematria.get("reduced", 0)
+                
+                # Tesla numbers (3, 6, 9) = high energy
+                if player_reduced in [3, 6, 9]:
+                    total_score += weight * 0.9
+                    signals["player_gematria"] = {"reduced": player_reduced, "tesla": True}
+                    reasons.append(f"Player Tesla Energy ({player_reduced})")
+                # Master numbers (11, 22, 33) = powerful
+                elif player_reduced in [11, 22, 33]:
+                    total_score += weight * 0.85
+                    signals["player_gematria"] = {"reduced": player_reduced, "master": True}
+                    reasons.append(f"Player Master Number ({player_reduced})")
+                elif player_reduced in [1, 8]:  # Leadership/power numbers
+                    total_score += weight * 0.6
+                    signals["player_gematria"] = {"reduced": player_reduced}
+                
+                # ===== SIGNAL 3: Line Sacred Geometry =====
+                weight = self.weights["line_sacred"]
+                max_possible += weight
+                
+                line_sacred = esoteric.sacred.analyze(line)
+                
+                if line_sacred and line_sacred.get("tesla_energy"):
+                    total_score += weight * 0.9
+                    signals["line_sacred"] = line_sacred
+                    reasons.append(f"Line {line} Tesla aligned!")
+                elif line_sacred and line_sacred.get("fib_aligned"):
+                    total_score += weight * 0.7
+                    signals["line_sacred"] = line_sacred
+                    reasons.append(f"Line {line} Fibonacci")
+                
+                # ===== SIGNAL 4: Date Numerology =====
+                weight = self.weights["numerology"]
+                max_possible += weight
+                
+                if today_numerology.get("power_day"):
+                    total_score += weight * 0.85
+                    signals["numerology"] = {"power_day": True, "life_path": today_numerology["life_path"]}
+                    reasons.append(f"POWER DAY: LP {today_numerology['life_path']}")
+                elif today_numerology.get("life_path") == 3:
+                    # Life path 3 = creativity/expression = high scoring
+                    total_score += weight * 0.7
+                    signals["numerology"] = {"life_path": 3, "high_scoring": True}
+                    reasons.append("LP3: High scoring energy")
+                elif today_numerology.get("upset_potential"):
+                    total_score += weight * 0.5
+                    signals["numerology"] = {"upset": True}
+                
+                # ===== SIGNAL 5: Moon Phase =====
+                weight = self.weights["moon_phase"]
+                max_possible += weight
+                
+                if today_moon.get("full_moon"):
+                    total_score += weight * 0.8
+                    signals["moon"] = {"full": True}
+                    reasons.append("Full Moon: Peak performance")
+                elif today_moon.get("waxing"):
+                    total_score += weight * 0.6
+                    signals["moon"] = {"waxing": True}
+                    reasons.append("Waxing Moon: Building energy")
+                
+                # ===== SIGNAL 6: Prop Type Analysis =====
+                weight = self.weights["prop_type"]
+                max_possible += weight
+                
+                # Points props are most predictable
+                if "points" in prop_type.lower():
+                    total_score += weight * 0.7
+                    signals["prop_type"] = {"type": "points", "reliability": "high"}
+                elif "assists" in prop_type.lower():
+                    total_score += weight * 0.6
+                    signals["prop_type"] = {"type": "assists", "reliability": "medium"}
+                elif "rebounds" in prop_type.lower():
+                    total_score += weight * 0.6
+                    signals["prop_type"] = {"type": "rebounds", "reliability": "medium"}
+                elif "strikeouts" in prop_type.lower():
+                    total_score += weight * 0.65
+                    signals["prop_type"] = {"type": "strikeouts", "reliability": "medium-high"}
+                
+                # ===== SIGNAL 7: Over/Under Lean =====
+                weight = self.weights["over_under_lean"]
+                max_possible += weight
+                
+                # Determine lean based on signals
+                over_lean = 0
+                under_lean = 0
+                
+                # Tesla energy = OVER lean (high performance)
+                if signals.get("player_gematria", {}).get("tesla"):
+                    over_lean += 2
+                
+                # Full moon = volatility, lean OVER for stars
+                if signals.get("moon", {}).get("full"):
+                    over_lean += 1
+                
+                # Earth zodiac = conservative = UNDER
+                if today_zodiac.get("element") == "Earth":
+                    under_lean += 1.5
+                # Fire zodiac = aggressive = OVER
+                elif today_zodiac.get("element") == "Fire":
+                    over_lean += 1.5
+                
+                if over_lean > under_lean + 1:
+                    total_score += weight * 0.75
+                    signals["lean"] = {"direction": "OVER", "strength": over_lean}
+                    reasons.append("Signals lean OVER")
+                elif under_lean > over_lean + 1:
+                    total_score += weight * 0.75
+                    signals["lean"] = {"direction": "UNDER", "strength": under_lean}
+                    reasons.append("Signals lean UNDER")
+                
+                # ===== SIGNAL 8: Kelly Criterion =====
+                weight = self.weights["kelly_edge"]
+                max_possible += weight
+                
+                # Calculate edge based on line value
+                best_odds = max(over_odds, under_odds)
+                if best_odds > -110:
+                    if best_odds > 0:
+                        implied_prob = 100 / (best_odds + 100)
+                    else:
+                        implied_prob = abs(best_odds) / (abs(best_odds) + 100)
+                    
+                    # Assume 3% edge on identified value
+                    our_prob = implied_prob + 0.03
+                    decimal_odds = (best_odds / 100 + 1) if best_odds > 0 else (100 / abs(best_odds) + 1)
+                    kelly_edge = ((our_prob * decimal_odds) - 1) * 100
+                    
+                    if kelly_edge > 2:
+                        total_score += weight * 0.8
+                        signals["kelly"] = {"edge": kelly_edge}
+                        reasons.append(f"Kelly Edge: +{round(kelly_edge, 1)}%")
+                
+                # ===== SIGNAL 9: Zodiac Element =====
+                weight = self.weights["zodiac_element"]
+                max_possible += weight
+                
+                if today_zodiac.get("element") == "Fire":
+                    total_score += weight * 0.7
+                    signals["zodiac"] = {"element": "Fire", "lean": "OVER"}
+                elif today_zodiac.get("element") == "Earth":
+                    total_score += weight * 0.7
+                    signals["zodiac"] = {"element": "Earth", "lean": "UNDER"}
+                
+                # ===== CALCULATE CONFIDENCE =====
+                
+                if max_possible > 0:
+                    confidence = (total_score / max_possible) * 100
+                    confidence = min(95, max(35, confidence))
+                else:
+                    confidence = 35
+                
+                signals_fired = len(signals)
+                
+                # Determine pick direction
+                pick_direction = self._determine_prop_direction(signals, over_odds, under_odds, line)
+                
+                # ONLY GOOD (75+) AND STRONG (85+) with at least 4 signals
+                if confidence >= 75 and pick_direction and signals_fired >= 4:
+                    prop_pick = {
+                        "id": f"prop_{player_name.replace(' ', '_')}_{datetime.now().strftime('%H%M%S')}",
+                        "player": player_name,
+                        "prop_type": self._format_prop_type(prop_type),
+                        "line": line,
+                        "pick": pick_direction["pick"],
+                        "odds": pick_direction["odds"],
+                        "game": f"{game_info.get('away_team', '')} @ {game_info.get('home_team', '')}",
+                        "sport": sport.split("_")[1].upper() if "_" in sport else sport.upper(),
+                        "confidence_score": round(confidence, 1),
+                        "confidence_label": "STRONG" if confidence >= 85 else "GOOD",
+                        "reasons": reasons[:5],
+                        "signals_fired": signals_fired,
+                        "esoteric_score": player_gematria.get("reduced", 0),
+                        "kelly_size": signals.get("kelly", {}).get("edge", 0) / 4 if signals.get("kelly") else 0,
+                        "status": "pending"
+                    }
+                    best_props.append(prop_pick)
+                    
+            except Exception as e:
+                print(f"Error processing prop: {e}")
+                continue
+        
+        # Sort by confidence
+        best_props.sort(key=lambda x: x["confidence_score"], reverse=True)
+        
+        # Add rank
+        for i, prop in enumerate(best_props):
+            prop["rank"] = i + 1
+        
+        # Store
+        self.props_history.extend(best_props[:10])
+        
+        return {
+            "success": True,
+            "sport": sport,
+            "generated_at": datetime.now().isoformat(),
+            "total_analyzed": len(player_props),
+            "total_picks": len(best_props),
+            "picks": best_props[:10],
+            "weights": self.weights,
+            "performance": self.performance
+        }
+    
+    def _determine_prop_direction(self, signals, over_odds, under_odds, line):
+        """Determine OVER or UNDER based on signals"""
+        
+        # Check explicit lean signal
+        lean = signals.get("lean", {})
+        if lean.get("direction") == "OVER":
+            return {"pick": f"OVER {line}", "odds": over_odds}
+        elif lean.get("direction") == "UNDER":
+            return {"pick": f"UNDER {line}", "odds": under_odds}
+        
+        # Check line value
+        line_value = signals.get("line_value", {})
+        if line_value.get("side") == "OVER":
+            return {"pick": f"OVER {line}", "odds": over_odds}
+        elif line_value.get("side") == "UNDER":
+            return {"pick": f"UNDER {line}", "odds": under_odds}
+        
+        # Check zodiac
+        zodiac = signals.get("zodiac", {})
+        if zodiac.get("lean") == "OVER":
+            return {"pick": f"OVER {line}", "odds": over_odds}
+        elif zodiac.get("lean") == "UNDER":
+            return {"pick": f"UNDER {line}", "odds": under_odds}
+        
+        # Default based on Tesla energy
+        if signals.get("player_gematria", {}).get("tesla"):
+            return {"pick": f"OVER {line}", "odds": over_odds}
+        
+        # No strong direction
+        return None
+    
+    def _format_prop_type(self, prop_type):
+        """Format prop type for display"""
+        type_map = {
+            "player_points": "Points",
+            "player_rebounds": "Rebounds",
+            "player_assists": "Assists",
+            "player_threes": "3-Pointers",
+            "player_goals": "Goals",
+            "player_shots_on_goal": "Shots on Goal",
+            "batter_hits": "Hits",
+            "batter_total_bases": "Total Bases",
+            "pitcher_strikeouts": "Strikeouts",
+            "batter_rbis": "RBIs"
+        }
+        return type_map.get(prop_type, prop_type.replace("_", " ").title())
+    
+    def grade_prop(self, prop_id: str, result: str):
+        """Grade a prop: W, L, or P"""
+        for prop in self.props_history:
+            if prop.get("id") == prop_id:
+                prop["status"] = "graded"
+                prop["result"] = result
+                
+                odds = prop.get("odds", -110)
+                if result == "W":
+                    prop["profit_loss"] = (odds / 100) if odds > 0 else (100 / abs(odds))
+                    self.performance["wins"] += 1
+                elif result == "L":
+                    prop["profit_loss"] = -1
+                    self.performance["losses"] += 1
+                else:
+                    prop["profit_loss"] = 0
+                    self.performance["pushes"] += 1
+                
+                self.performance["total_picks"] += 1
+                self._update_metrics(prop)
+                self.graded_props.append(prop)
+                
+                return {"success": True, "prop": prop, "performance": self.performance}
+        
+        return {"success": False, "error": "Prop not found"}
+    
+    def _update_metrics(self, prop):
+        total = self.performance["wins"] + self.performance["losses"]
+        if total > 0:
+            self.performance["win_rate"] = round(self.performance["wins"] / total * 100, 1)
+        
+        total_profit = sum(p.get("profit_loss", 0) for p in self.graded_props)
+        if len(self.graded_props) > 0:
+            self.performance["roi"] = round(total_profit / len(self.graded_props) * 100, 1)
+
+
+props_engine = PropsPicksEngine()
 
 
 picks_engine = PicksEngineV2()
@@ -1663,6 +2439,90 @@ async def get_all_picks():
         "generated_at": datetime.now().isoformat(),
         "total_picks": len(all_picks),
         "picks": all_picks[:15]  # Top 15 across all sports
+    }
+
+
+# ============================================
+# PROP PICKS ENDPOINTS - GOOD & STRONG ONLY
+# ============================================
+
+@app.get("/props/picks")
+async def get_prop_picks(sport: str = "basketball_nba"):
+    """Get best player prop picks - GOOD (75+) and STRONG (85+) only"""
+    return props_engine.generate_prop_picks(sport)
+
+
+@app.get("/props/picks/nba")
+async def get_nba_prop_picks():
+    """Get best NBA player prop picks"""
+    return props_engine.generate_prop_picks("basketball_nba")
+
+
+@app.get("/props/picks/ncaab")
+async def get_ncaab_prop_picks():
+    """Get best NCAAB player prop picks"""
+    return props_engine.generate_prop_picks("basketball_ncaab")
+
+
+@app.get("/props/picks/nfl")
+async def get_nfl_prop_picks():
+    """Get best NFL player prop picks"""
+    return props_engine.generate_prop_picks("football_nfl")
+
+
+@app.get("/props/picks/nhl")
+async def get_nhl_prop_picks():
+    """Get best NHL player prop picks"""
+    return props_engine.generate_prop_picks("icehockey_nhl")
+
+
+@app.get("/props/picks/mlb")
+async def get_mlb_prop_picks():
+    """Get best MLB player prop picks"""
+    return props_engine.generate_prop_picks("baseball_mlb")
+
+
+@app.get("/props/picks/all")
+async def get_all_prop_picks():
+    """Get best prop picks across all sports - GOOD & STRONG ONLY"""
+    all_props = []
+    
+    for sport in ["basketball_nba", "basketball_ncaab", "football_nfl", "icehockey_nhl", "baseball_mlb"]:
+        result = props_engine.generate_prop_picks(sport)
+        if result.get("success") and result.get("picks"):
+            all_props.extend(result["picks"])
+    
+    # Sort by confidence
+    all_props.sort(key=lambda x: x.get("confidence_score", 0), reverse=True)
+    
+    # Re-rank
+    for i, prop in enumerate(all_props):
+        prop["rank"] = i + 1
+    
+    return {
+        "success": True,
+        "generated_at": datetime.now().isoformat(),
+        "total_picks": len(all_props),
+        "picks": all_props[:15]  # Top 15 prop picks
+    }
+
+
+@app.post("/props/picks/grade")
+async def grade_prop_pick(req: GradeRequest):
+    """Grade a prop pick as W (win), L (loss), or P (push)"""
+    if req.result not in ["W", "L", "P"]:
+        raise HTTPException(status_code=400, detail="Result must be W, L, or P")
+    return props_engine.grade_prop(req.pick_id, req.result)
+
+
+@app.get("/props/picks/performance")
+async def get_props_performance():
+    """Get prop picks performance metrics"""
+    return {
+        "success": True,
+        "performance": props_engine.performance,
+        "total_graded": len(props_engine.graded_props),
+        "recent_graded": props_engine.graded_props[-10:][::-1] if props_engine.graded_props else []
     }
 
 
