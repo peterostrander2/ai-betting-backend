@@ -412,26 +412,3 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     print(f"Starting AI Sports Betting API on port {port}...")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
-# FastAPI and Server
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.9.2
-python-dotenv==1.0.0
-
-# HTTP Requests (for The Odds API)
-requests>=2.31.0
-
-# Data Science
-numpy>=1.26.0,<2.0.0
-pandas>=2.1.0,<2.3.0
-scipy>=1.11.0,<1.14.0
-
-# Machine Learning
-scikit-learn>=1.3.0,<1.6.0
-xgboost>=2.0.0,<2.2.0
-lightgbm>=4.0.0,<4.6.0
-
-# Utilities
-joblib>=1.3.0
-
-
