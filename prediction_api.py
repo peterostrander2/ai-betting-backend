@@ -1,5 +1,5 @@
 """
-FastAPI - AI Sports Betting API v4.1 with Player Props
+FastAPI - AI Sports Betting API v4.2 with Alerts System
 """
 
 from fastapi import FastAPI, HTTPException
@@ -9,6 +9,7 @@ from typing import Dict, Optional, List
 from datetime import datetime, date
 import requests
 import os
+import json
 
 try:
     from advanced_ml_backend import MasterPredictionSystem
@@ -22,6 +23,10 @@ import uvicorn
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "6e6da61eec951acb5fa9010293b89279")
 PLAYBOOK_API_KEY = os.getenv("PLAYBOOK_API_KEY", "pbk_095c2ac98199f43d0b409f90031908bb05b8")
 
+
+# ============================================
+# ESOTERIC MODULE
+# ============================================
 
 class GematriaCalculator:
     SIMPLE = {chr(i+64): i for i in range(1, 27)}
@@ -174,7 +179,7 @@ class EsotericAnalyzer:
         else:
             lean = "NEUTRAL"
         edge_score = min(max(edge_score, 0), 100)
-        result = {
+        return {
             "matchup": away + " @ " + home,
             "date": game_date.isoformat(),
             "gematria": {"home": home_gem, "away": away_gem, "difference": gem_diff},
@@ -184,7 +189,6 @@ class EsotericAnalyzer:
             "sacred_geometry": sacred,
             "esoteric_edge": {"score": edge_score, "factors": factors, "lean": lean}
         }
-        return result
     
     def analyze_player_prop(self, player_name, prop_line, prop_type="points"):
         player_gem = self.gematria.full_analysis(player_name)
@@ -229,6 +233,10 @@ class EsotericAnalyzer:
 esoteric = EsotericAnalyzer()
 
 
+# ============================================
+# LIVE ODDS SERVICE
+# ============================================
+
 class LiveOddsService:
     def __init__(self, api_key):
         self.api_key = api_key
@@ -245,38 +253,14 @@ class LiveOddsService:
             return {"success": True, "sport": sport, "games_count": len(games), "games": formatted, "api_usage": {"remaining": remaining}}
         return {"success": False, "error": r.status_code}
     
-    def get_events(self, sport="basketball_nba"):
-        url = self.base_url + "/sports/" + sport + "/events"
-        params = {"apiKey": self.api_key}
-        r = requests.get(url, params=params)
-        if r.status_code == 200:
-            return {"success": True, "events": r.json(), "api_usage": {"remaining": r.headers.get('x-requests-remaining', 'unknown')}}
-        return {"success": False, "error": r.status_code}
-    
-    def get_player_props(self, sport="basketball_nba", event_id=None, markets="player_points,player_rebounds,player_assists"):
-        if event_id:
-            url = self.base_url + "/sports/" + sport + "/events/" + event_id + "/odds"
-        else:
-            url = self.base_url + "/sports/" + sport + "/odds"
-        params = {
-            "apiKey": self.api_key,
-            "regions": "us",
-            "markets": markets,
-            "bookmakers": "fanduel,draftkings",
-            "oddsFormat": "american"
-        }
+    def get_player_props(self, sport="basketball_nba", markets="player_points"):
+        url = self.base_url + "/sports/" + sport + "/odds"
+        params = {"apiKey": self.api_key, "regions": "us", "markets": markets, "bookmakers": "fanduel,draftkings", "oddsFormat": "american"}
         r = requests.get(url, params=params)
         if r.status_code == 200:
             data = r.json()
             props = self._format_props(data)
-            return {
-                "success": True,
-                "sport": sport,
-                "event_id": event_id,
-                "props_count": len(props),
-                "props": props,
-                "api_usage": {"remaining": r.headers.get('x-requests-remaining', 'unknown')}
-            }
+            return {"success": True, "sport": sport, "props_count": len(props), "props": props, "api_usage": {"remaining": r.headers.get('x-requests-remaining', 'unknown')}}
         return {"success": False, "error": r.status_code, "message": r.text}
     
     def _format(self, games):
@@ -297,27 +281,14 @@ class LiveOddsService:
         props = []
         games = data if isinstance(data, list) else [data]
         for game in games:
-            game_info = {
-                "game_id": game.get("id"),
-                "home_team": game.get("home_team"),
-                "away_team": game.get("away_team"),
-                "commence_time": game.get("commence_time")
-            }
+            game_info = {"game_id": game.get("id"), "home_team": game.get("home_team"), "away_team": game.get("away_team"), "commence_time": game.get("commence_time")}
             for bookmaker in game.get("bookmakers", []):
                 book_name = bookmaker.get("key")
                 for market in bookmaker.get("markets", []):
                     market_key = market.get("key", "")
-                    if "player_" in market_key:
+                    if "player_" in market_key or "batter_" in market_key or "pitcher_" in market_key:
                         for outcome in market.get("outcomes", []):
-                            prop = {
-                                "game": game_info,
-                                "bookmaker": book_name,
-                                "market": market_key,
-                                "player": outcome.get("description", outcome.get("name", "")),
-                                "type": outcome.get("name", ""),
-                                "line": outcome.get("point"),
-                                "odds": outcome.get("price")
-                            }
+                            prop = {"game": game_info, "bookmaker": book_name, "market": market_key, "player": outcome.get("description", outcome.get("name", "")), "type": outcome.get("name", ""), "line": outcome.get("point"), "odds": outcome.get("price")}
                             props.append(prop)
         return props
 
@@ -342,7 +313,189 @@ class BettingSplitsService:
 odds_service = LiveOddsService(ODDS_API_KEY)
 splits_service = BettingSplitsService(PLAYBOOK_API_KEY)
 
-app = FastAPI(title="AI Sports Betting API", description="ML + Live Odds + Splits + ESOTERIC + PLAYER PROPS", version="4.1.0")
+
+# ============================================
+# ALERTS SYSTEM
+# ============================================
+
+class AlertsManager:
+    def __init__(self):
+        self.alerts = []
+        self.settings = {
+            "sharp_money": {"enabled": True, "threshold": 8},
+            "line_movement": {"enabled": True, "threshold": 1.5},
+            "injury": {"enabled": True},
+            "esoteric_edge": {"enabled": True, "threshold": 65},
+            "value_bet": {"enabled": True, "threshold": 3}
+        }
+        self.discord_webhook = None
+    
+    def set_discord_webhook(self, webhook_url):
+        self.discord_webhook = webhook_url
+    
+    def update_settings(self, new_settings):
+        for key, value in new_settings.items():
+            if key in self.settings:
+                self.settings[key].update(value)
+    
+    def create_alert(self, alert_type, title, message, data=None):
+        alert = {
+            "id": len(self.alerts) + 1,
+            "type": alert_type,
+            "title": title,
+            "message": message,
+            "data": data,
+            "timestamp": datetime.now().isoformat(),
+            "read": False
+        }
+        self.alerts.insert(0, alert)
+        if len(self.alerts) > 100:
+            self.alerts = self.alerts[:100]
+        if self.discord_webhook and self.settings.get(alert_type, {}).get("enabled", True):
+            self.send_discord(alert)
+        return alert
+    
+    def send_discord(self, alert):
+        if not self.discord_webhook:
+            return
+        try:
+            color_map = {
+                "sharp_money": 65280,
+                "line_movement": 16776960,
+                "injury": 16711680,
+                "esoteric_edge": 9109759,
+                "value_bet": 65535
+            }
+            embed = {
+                "title": alert["title"],
+                "description": alert["message"],
+                "color": color_map.get(alert["type"], 8421504),
+                "timestamp": alert["timestamp"],
+                "footer": {"text": "Bookie-o-em Alerts"}
+            }
+            payload = {"embeds": [embed]}
+            requests.post(self.discord_webhook, json=payload, timeout=5)
+        except Exception as e:
+            print(f"Discord webhook error: {e}")
+    
+    def check_sharp_money(self, splits_data):
+        if not self.settings["sharp_money"]["enabled"]:
+            return []
+        threshold = self.settings["sharp_money"]["threshold"]
+        alerts = []
+        try:
+            games = splits_data.get("splits", {}).get("data", [])
+            for game in games:
+                home = game.get("homeTeam", "Home")
+                away = game.get("awayTeam", "Away")
+                splits = game.get("splits", {})
+                for market in ["spread", "total", "moneyline"]:
+                    market_data = splits.get(market, {})
+                    bets = market_data.get("bets", {})
+                    money = market_data.get("money", {})
+                    home_bets = bets.get("homePercent", 0) or 0
+                    home_money = money.get("homePercent", 0) or 0
+                    away_bets = bets.get("awayPercent", 0) or 0
+                    away_money = money.get("awayPercent", 0) or 0
+                    if home_money - home_bets >= threshold:
+                        alert = self.create_alert(
+                            "sharp_money",
+                            f"Sharp Money Alert: {home}",
+                            f"{market.upper()}: {home_bets}% bets but {home_money}% money on {home}. Sharp money detected!",
+                            {"game": f"{away} @ {home}", "market": market, "bets": home_bets, "money": home_money}
+                        )
+                        alerts.append(alert)
+                    if away_money - away_bets >= threshold:
+                        alert = self.create_alert(
+                            "sharp_money",
+                            f"Sharp Money Alert: {away}",
+                            f"{market.upper()}: {away_bets}% bets but {away_money}% money on {away}. Sharp money detected!",
+                            {"game": f"{away} @ {home}", "market": market, "bets": away_bets, "money": away_money}
+                        )
+                        alerts.append(alert)
+        except Exception as e:
+            print(f"Sharp money check error: {e}")
+        return alerts
+    
+    def check_esoteric_edge(self):
+        if not self.settings["esoteric_edge"]["enabled"]:
+            return []
+        alerts = []
+        threshold = self.settings["esoteric_edge"]["threshold"]
+        today = date.today()
+        moon = esoteric.astrology.moon_phase(today)
+        numerology = esoteric.numerology.date_energy(today)
+        if moon["full_moon"]:
+            alert = self.create_alert(
+                "esoteric_edge",
+                "Full Moon Alert",
+                "Full Moon today! Expect chaos, upsets, and emotional games. Consider underdog plays.",
+                {"moon_phase": moon["phase"], "position": moon["position"]}
+            )
+            alerts.append(alert)
+        if numerology["power_day"]:
+            alert = self.create_alert(
+                "esoteric_edge",
+                "Power Day Alert",
+                f"Life Path {numerology['life_path']} - Power day! Favorites are strengthened today.",
+                {"life_path": numerology["life_path"], "meaning": numerology["meaning"]}
+            )
+            alerts.append(alert)
+        if numerology["upset_potential"]:
+            alert = self.create_alert(
+                "esoteric_edge",
+                "Upset Energy Alert",
+                f"Life Path {numerology['life_path']} - Upset energy present! Watch for underdogs.",
+                {"life_path": numerology["life_path"], "meaning": numerology["meaning"]}
+            )
+            alerts.append(alert)
+        return alerts
+    
+    def check_value_bet(self, probability, odds):
+        if not self.settings["value_bet"]["enabled"]:
+            return None
+        threshold = self.settings["value_bet"]["threshold"]
+        if odds > 0:
+            dec = (odds / 100) + 1
+        else:
+            dec = (100 / abs(odds)) + 1
+        edge = ((probability * dec) - 1) * 100
+        if edge >= threshold:
+            alert = self.create_alert(
+                "value_bet",
+                f"Value Bet Found: +{round(edge, 1)}% Edge",
+                f"Your {round(probability*100)}% probability at {odds} odds gives {round(edge, 1)}% edge. Consider betting!",
+                {"probability": probability, "odds": odds, "edge": edge}
+            )
+            return alert
+        return None
+    
+    def get_alerts(self, limit=50, alert_type=None):
+        filtered = self.alerts
+        if alert_type:
+            filtered = [a for a in self.alerts if a["type"] == alert_type]
+        return filtered[:limit]
+    
+    def mark_read(self, alert_id):
+        for alert in self.alerts:
+            if alert["id"] == alert_id:
+                alert["read"] = True
+                return True
+        return False
+    
+    def mark_all_read(self):
+        for alert in self.alerts:
+            alert["read"] = True
+
+
+alerts_manager = AlertsManager()
+
+
+# ============================================
+# FASTAPI APP
+# ============================================
+
+app = FastAPI(title="AI Sports Betting API", description="ML + Odds + Splits + Esoteric + Props + ALERTS", version="4.2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
@@ -364,14 +517,26 @@ class PlayerPropRequest(BaseModel):
     prop_type: Optional[str] = "points"
 
 
+class AlertSettingsRequest(BaseModel):
+    sharp_money: Optional[dict] = None
+    line_movement: Optional[dict] = None
+    injury: Optional[dict] = None
+    esoteric_edge: Optional[dict] = None
+    value_bet: Optional[dict] = None
+
+
+class DiscordWebhookRequest(BaseModel):
+    webhook_url: str
+
+
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "AI Sports Betting API v4.1 with PLAYER PROPS", "version": "4.1.0"}
+    return {"status": "online", "message": "AI Sports Betting API v4.2 with ALERTS", "version": "4.2.0"}
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat(), "esoteric": "enabled", "player_props": "enabled"}
+    return {"status": "healthy", "timestamp": datetime.now().isoformat(), "features": ["esoteric", "props", "alerts"]}
 
 
 @app.get("/model-status")
@@ -389,9 +554,9 @@ async def model_status():
         "numerology": "ready",
         "sacred_geometry": "ready",
         "astrology": "ready",
-        "player_props": "ready"
+        "alerts_system": "ready"
     }
-    return {"status": "operational", "models": models, "total_models": 13, "version": "4.1.0"}
+    return {"status": "operational", "models": models, "total_models": 13, "version": "4.2.0"}
 
 
 @app.post("/calculate-edge")
@@ -405,9 +570,11 @@ async def calc_edge(req: EdgeRequest):
     edge = ((prob * dec) - 1) * 100
     kelly = max(0, (prob * (dec - 1) - (1 - prob)) / (dec - 1))
     rec = "BET" if edge > 2 else "NO BET"
+    alerts_manager.check_value_bet(prob, odds)
     return {"status": "success", "edge_analysis": {"edge_percent": round(edge, 2), "kelly": round(kelly, 4), "recommendation": rec}}
 
 
+# Live Odds
 @app.get("/live-odds")
 async def live_odds(sport: str = "basketball_nba"):
     return odds_service.get_live_odds(sport)
@@ -444,9 +611,18 @@ async def mlb():
     return await live_games("baseball_mlb")
 
 
+@app.get("/live-odds/nhl")
+async def nhl():
+    return await live_games("icehockey_nhl")
+
+
+# Splits
 @app.get("/splits")
 async def splits(league: str = "NFL"):
-    return splits_service.get_splits(league)
+    data = splits_service.get_splits(league)
+    if data.get("success"):
+        alerts_manager.check_sharp_money(data)
+    return data
 
 
 @app.get("/splits/nfl")
@@ -469,6 +645,7 @@ async def splits_nhl():
     return await splits("NHL")
 
 
+# Esoteric
 @app.post("/esoteric/analyze")
 async def esoteric_analyze(req: EsotericRequest):
     try:
@@ -517,126 +694,183 @@ async def today_energy():
     num = esoteric.numerology.date_energy(d)
     moon = esoteric.astrology.moon_phase(d)
     zod = esoteric.astrology.zodiac(d)
+    alerts_manager.check_esoteric_edge()
     return {"success": True, "date": d.isoformat(), "numerology": num, "moon": moon, "zodiac": zod}
 
 
-# ============================================
-# PLAYER PROPS ENDPOINTS
-# ============================================
-
-@app.get("/props/events")
-async def get_events(sport: str = "basketball_nba"):
-    """Get list of upcoming events/games"""
-    return odds_service.get_events(sport)
-
-
+# Player Props
 @app.get("/props")
 async def get_props(sport: str = "basketball_nba", markets: str = "player_points,player_rebounds,player_assists"):
-    """Get player props for all games in a sport"""
     return odds_service.get_player_props(sport=sport, markets=markets)
 
 
 @app.get("/props/nba")
 async def get_nba_props():
-    """Get NBA player props (points, rebounds, assists)"""
     return odds_service.get_player_props(sport="basketball_nba", markets="player_points,player_rebounds,player_assists")
-
-
-@app.get("/props/nfl")
-async def get_nfl_props():
-    """Get NFL player props (passing, rushing, receiving)"""
-    return odds_service.get_player_props(sport="football_nfl", markets="player_pass_yds,player_rush_yds,player_reception_yds")
 
 
 @app.get("/props/nba/points")
 async def get_nba_points():
-    """Get NBA player points props"""
     return odds_service.get_player_props(sport="basketball_nba", markets="player_points")
 
 
 @app.get("/props/nba/rebounds")
 async def get_nba_rebounds():
-    """Get NBA player rebounds props"""
     return odds_service.get_player_props(sport="basketball_nba", markets="player_rebounds")
 
 
 @app.get("/props/nba/assists")
 async def get_nba_assists():
-    """Get NBA player assists props"""
     return odds_service.get_player_props(sport="basketball_nba", markets="player_assists")
 
 
 @app.get("/props/nba/threes")
 async def get_nba_threes():
-    """Get NBA player 3-pointers props"""
     return odds_service.get_player_props(sport="basketball_nba", markets="player_threes")
 
 
 @app.get("/props/nhl")
 async def get_nhl_props():
-    """Get NHL player props (points, goals, assists, shots)"""
     return odds_service.get_player_props(sport="icehockey_nhl", markets="player_points,player_goals,player_assists,player_shots_on_goal")
 
 
 @app.get("/props/nhl/points")
 async def get_nhl_points():
-    """Get NHL player points props"""
     return odds_service.get_player_props(sport="icehockey_nhl", markets="player_points")
 
 
 @app.get("/props/nhl/goals")
 async def get_nhl_goals():
-    """Get NHL player goals props"""
     return odds_service.get_player_props(sport="icehockey_nhl", markets="player_goals")
 
 
 @app.get("/props/nhl/assists")
 async def get_nhl_assists():
-    """Get NHL player assists props"""
     return odds_service.get_player_props(sport="icehockey_nhl", markets="player_assists")
 
 
 @app.get("/props/nhl/shots")
 async def get_nhl_shots():
-    """Get NHL player shots on goal props"""
     return odds_service.get_player_props(sport="icehockey_nhl", markets="player_shots_on_goal")
 
 
 @app.get("/props/mlb")
 async def get_mlb_props():
-    """Get MLB player props (hits, total bases, strikeouts, etc.)"""
-    return odds_service.get_player_props(sport="baseball_mlb", markets="batter_hits,batter_total_bases,batter_rbis,batter_runs_scored,pitcher_strikeouts")
+    return odds_service.get_player_props(sport="baseball_mlb", markets="batter_hits,batter_total_bases,batter_rbis,pitcher_strikeouts")
 
 
 @app.get("/props/mlb/hits")
 async def get_mlb_hits():
-    """Get MLB batter hits props"""
     return odds_service.get_player_props(sport="baseball_mlb", markets="batter_hits")
 
 
 @app.get("/props/mlb/bases")
 async def get_mlb_bases():
-    """Get MLB batter total bases props"""
     return odds_service.get_player_props(sport="baseball_mlb", markets="batter_total_bases")
 
 
 @app.get("/props/mlb/strikeouts")
 async def get_mlb_strikeouts():
-    """Get MLB pitcher strikeouts props"""
     return odds_service.get_player_props(sport="baseball_mlb", markets="pitcher_strikeouts")
 
 
 @app.get("/props/mlb/rbis")
 async def get_mlb_rbis():
-    """Get MLB batter RBIs props"""
     return odds_service.get_player_props(sport="baseball_mlb", markets="batter_rbis")
+
+
+@app.get("/props/nfl")
+async def get_nfl_props():
+    return odds_service.get_player_props(sport="americanfootball_nfl", markets="player_pass_yds,player_rush_yds,player_reception_yds")
 
 
 @app.post("/props/analyze")
 async def analyze_prop(req: PlayerPropRequest):
-    """Analyze a player prop with esoteric factors"""
     result = esoteric.analyze_player_prop(req.player_name, req.prop_line, req.prop_type)
     return {"success": True, "analysis": result}
+
+
+# ============================================
+# ALERTS ENDPOINTS
+# ============================================
+
+@app.get("/alerts")
+async def get_alerts(limit: int = 50, alert_type: str = None):
+    alerts = alerts_manager.get_alerts(limit=limit, alert_type=alert_type)
+    unread = len([a for a in alerts_manager.alerts if not a["read"]])
+    return {"success": True, "alerts": alerts, "unread_count": unread, "total": len(alerts_manager.alerts)}
+
+
+@app.get("/alerts/settings")
+async def get_alert_settings():
+    return {"success": True, "settings": alerts_manager.settings, "discord_configured": alerts_manager.discord_webhook is not None}
+
+
+@app.post("/alerts/settings")
+async def update_alert_settings(req: AlertSettingsRequest):
+    updates = {}
+    if req.sharp_money:
+        updates["sharp_money"] = req.sharp_money
+    if req.line_movement:
+        updates["line_movement"] = req.line_movement
+    if req.injury:
+        updates["injury"] = req.injury
+    if req.esoteric_edge:
+        updates["esoteric_edge"] = req.esoteric_edge
+    if req.value_bet:
+        updates["value_bet"] = req.value_bet
+    alerts_manager.update_settings(updates)
+    return {"success": True, "settings": alerts_manager.settings}
+
+
+@app.post("/alerts/discord")
+async def set_discord_webhook(req: DiscordWebhookRequest):
+    alerts_manager.set_discord_webhook(req.webhook_url)
+    test_alert = alerts_manager.create_alert(
+        "value_bet",
+        "Discord Connected!",
+        "Your Bookie-o-em alerts are now connected to Discord.",
+        {"test": True}
+    )
+    return {"success": True, "message": "Discord webhook configured", "test_alert_sent": True}
+
+
+@app.post("/alerts/read/{alert_id}")
+async def mark_alert_read(alert_id: int):
+    success = alerts_manager.mark_read(alert_id)
+    return {"success": success}
+
+
+@app.post("/alerts/read-all")
+async def mark_all_alerts_read():
+    alerts_manager.mark_all_read()
+    return {"success": True}
+
+
+@app.post("/alerts/test")
+async def test_alert(alert_type: str = "sharp_money"):
+    test_alerts = {
+        "sharp_money": ("Sharp Money Test", "70% of money on Chiefs but only 45% of bets. Sharp action detected!"),
+        "line_movement": ("Line Movement Test", "Patriots moved from -3 to -1.5. Significant reverse line movement!"),
+        "injury": ("Injury Alert Test", "Patrick Mahomes - Questionable (Ankle) - Monitor closely"),
+        "esoteric_edge": ("Esoteric Edge Test", "Full Moon + Life Path 7 = Maximum upset potential today!"),
+        "value_bet": ("Value Bet Test", "Found +5.2% edge on Lakers ML at +150!")
+    }
+    title, message = test_alerts.get(alert_type, ("Test Alert", "This is a test alert"))
+    alert = alerts_manager.create_alert(alert_type, title, message, {"test": True})
+    return {"success": True, "alert": alert}
+
+
+@app.get("/alerts/check")
+async def run_alert_checks():
+    alerts = []
+    esoteric_alerts = alerts_manager.check_esoteric_edge()
+    alerts.extend(esoteric_alerts)
+    splits_data = splits_service.get_splits("NFL")
+    if splits_data.get("success"):
+        sharp_alerts = alerts_manager.check_sharp_money(splits_data)
+        alerts.extend(sharp_alerts)
+    return {"success": True, "alerts_generated": len(alerts), "alerts": alerts}
 
 
 if __name__ == "__main__":
