@@ -6134,6 +6134,17 @@ class DiscordWebhookRequest(BaseModel):
     webhook_url: str
 
 
+class GradeRequest(BaseModel):
+    """Request model for grading picks"""
+    pick_id: str
+    result: str  # W, L, or P
+
+
+class BulkGradeRequest(BaseModel):
+    """Request model for bulk grading picks"""
+    results: Dict[str, str]  # {pick_id: result, ...}
+
+
 @app.get("/")
 async def root():
     return {
@@ -7778,15 +7789,6 @@ async def get_enhanced_props(sport: str = "basketball_nba"):
 # ============================================
 # GRADING & LEARNING ENDPOINTS
 # ============================================
-
-class GradeRequest(BaseModel):
-    pick_id: str
-    result: str  # W, L, or P
-
-
-class BulkGradeRequest(BaseModel):
-    results: Dict[str, str]  # {pick_id: result, ...}
-
 
 @app.post("/picks/grade")
 async def grade_pick(req: GradeRequest):
