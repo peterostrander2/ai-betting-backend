@@ -68,8 +68,222 @@ except Exception as e:
 import uvicorn
 
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "6e6da61eec951acb5fa9010293b89279")
-PLAYBOOK_API_KEY = os.getenv("PLAYBOOK_API_KEY", "pbk_095c2ac98199f43d0b409f90031908bb05b8")
+PLAYBOOK_API_KEY = os.getenv("PLAYBOOK_API_KEY", "pbk_095c2ac98199f43d0b407990031908bb05b8")
 WHOP_API_KEY = os.getenv("WHOP_API_KEY", "apik_V0RJhFxaEJHUF_C3577787_Q9EBRqD5B-NB-2JXPhrmuugtIBHehUEQ272DGh10-h4")
+
+
+# ============================================
+# TEAM NAME NORMALIZER - THE ROSETTA STONE
+# ============================================
+
+class TeamNameMapper:
+    """
+    Normalizes team names across different data sources.
+    Maps variations (NYK, N.Y. Knicks, New York) to canonical IDs.
+    """
+    
+    # NBA Teams
+    NBA_TEAMS = {
+        "NBA_ATL": ["Atlanta Hawks", "Hawks", "ATL", "Atlanta"],
+        "NBA_BOS": ["Boston Celtics", "Celtics", "BOS", "Boston"],
+        "NBA_BKN": ["Brooklyn Nets", "Nets", "BKN", "Brooklyn", "BRK"],
+        "NBA_CHA": ["Charlotte Hornets", "Hornets", "CHA", "Charlotte"],
+        "NBA_CHI": ["Chicago Bulls", "Bulls", "CHI", "Chicago"],
+        "NBA_CLE": ["Cleveland Cavaliers", "Cavaliers", "Cavs", "CLE", "Cleveland"],
+        "NBA_DAL": ["Dallas Mavericks", "Mavericks", "Mavs", "DAL", "Dallas"],
+        "NBA_DEN": ["Denver Nuggets", "Nuggets", "DEN", "Denver"],
+        "NBA_DET": ["Detroit Pistons", "Pistons", "DET", "Detroit"],
+        "NBA_GSW": ["Golden State Warriors", "Warriors", "GSW", "Golden State", "GS"],
+        "NBA_HOU": ["Houston Rockets", "Rockets", "HOU", "Houston"],
+        "NBA_IND": ["Indiana Pacers", "Pacers", "IND", "Indiana"],
+        "NBA_LAC": ["Los Angeles Clippers", "LA Clippers", "Clippers", "LAC"],
+        "NBA_LAL": ["Los Angeles Lakers", "LA Lakers", "Lakers", "LAL"],
+        "NBA_MEM": ["Memphis Grizzlies", "Grizzlies", "MEM", "Memphis"],
+        "NBA_MIA": ["Miami Heat", "Heat", "MIA", "Miami"],
+        "NBA_MIL": ["Milwaukee Bucks", "Bucks", "MIL", "Milwaukee"],
+        "NBA_MIN": ["Minnesota Timberwolves", "Timberwolves", "Wolves", "MIN", "Minnesota"],
+        "NBA_NOP": ["New Orleans Pelicans", "Pelicans", "NOP", "New Orleans", "NO"],
+        "NBA_NYK": ["New York Knicks", "Knicks", "NYK", "New York", "NY Knicks", "N.Y. Knicks"],
+        "NBA_OKC": ["Oklahoma City Thunder", "Thunder", "OKC", "Oklahoma City"],
+        "NBA_ORL": ["Orlando Magic", "Magic", "ORL", "Orlando"],
+        "NBA_PHI": ["Philadelphia 76ers", "76ers", "Sixers", "PHI", "Philadelphia"],
+        "NBA_PHX": ["Phoenix Suns", "Suns", "PHX", "Phoenix", "PHO"],
+        "NBA_POR": ["Portland Trail Blazers", "Trail Blazers", "Blazers", "POR", "Portland"],
+        "NBA_SAC": ["Sacramento Kings", "Kings", "SAC", "Sacramento"],
+        "NBA_SAS": ["San Antonio Spurs", "Spurs", "SAS", "San Antonio", "SA"],
+        "NBA_TOR": ["Toronto Raptors", "Raptors", "TOR", "Toronto"],
+        "NBA_UTA": ["Utah Jazz", "Jazz", "UTA", "Utah"],
+        "NBA_WAS": ["Washington Wizards", "Wizards", "WAS", "Washington"],
+    }
+    
+    # NFL Teams
+    NFL_TEAMS = {
+        "NFL_ARI": ["Arizona Cardinals", "Cardinals", "ARI", "Arizona"],
+        "NFL_ATL": ["Atlanta Falcons", "Falcons", "ATL", "Atlanta"],
+        "NFL_BAL": ["Baltimore Ravens", "Ravens", "BAL", "Baltimore"],
+        "NFL_BUF": ["Buffalo Bills", "Bills", "BUF", "Buffalo"],
+        "NFL_CAR": ["Carolina Panthers", "Panthers", "CAR", "Carolina"],
+        "NFL_CHI": ["Chicago Bears", "Bears", "CHI", "Chicago"],
+        "NFL_CIN": ["Cincinnati Bengals", "Bengals", "CIN", "Cincinnati"],
+        "NFL_CLE": ["Cleveland Browns", "Browns", "CLE", "Cleveland"],
+        "NFL_DAL": ["Dallas Cowboys", "Cowboys", "DAL", "Dallas"],
+        "NFL_DEN": ["Denver Broncos", "Broncos", "DEN", "Denver"],
+        "NFL_DET": ["Detroit Lions", "Lions", "DET", "Detroit"],
+        "NFL_GB": ["Green Bay Packers", "Packers", "GB", "Green Bay", "GNB"],
+        "NFL_HOU": ["Houston Texans", "Texans", "HOU", "Houston"],
+        "NFL_IND": ["Indianapolis Colts", "Colts", "IND", "Indianapolis"],
+        "NFL_JAX": ["Jacksonville Jaguars", "Jaguars", "JAX", "Jacksonville", "JAC"],
+        "NFL_KC": ["Kansas City Chiefs", "Chiefs", "KC", "Kansas City", "KAN"],
+        "NFL_LV": ["Las Vegas Raiders", "Raiders", "LV", "Las Vegas", "LAR", "OAK"],
+        "NFL_LAC": ["Los Angeles Chargers", "LA Chargers", "Chargers", "LAC", "SD"],
+        "NFL_LAR": ["Los Angeles Rams", "LA Rams", "Rams", "LAR"],
+        "NFL_MIA": ["Miami Dolphins", "Dolphins", "MIA", "Miami"],
+        "NFL_MIN": ["Minnesota Vikings", "Vikings", "MIN", "Minnesota"],
+        "NFL_NE": ["New England Patriots", "Patriots", "Pats", "NE", "New England", "NEP"],
+        "NFL_NO": ["New Orleans Saints", "Saints", "NO", "New Orleans", "NOR"],
+        "NFL_NYG": ["New York Giants", "Giants", "NYG", "NY Giants"],
+        "NFL_NYJ": ["New York Jets", "Jets", "NYJ", "NY Jets"],
+        "NFL_PHI": ["Philadelphia Eagles", "Eagles", "PHI", "Philadelphia"],
+        "NFL_PIT": ["Pittsburgh Steelers", "Steelers", "PIT", "Pittsburgh"],
+        "NFL_SF": ["San Francisco 49ers", "49ers", "Niners", "SF", "San Francisco", "SFO"],
+        "NFL_SEA": ["Seattle Seahawks", "Seahawks", "SEA", "Seattle"],
+        "NFL_TB": ["Tampa Bay Buccaneers", "Buccaneers", "Bucs", "TB", "Tampa Bay", "TAM"],
+        "NFL_TEN": ["Tennessee Titans", "Titans", "TEN", "Tennessee"],
+        "NFL_WAS": ["Washington Commanders", "Commanders", "WAS", "Washington", "WSH"],
+    }
+    
+    # NHL Teams
+    NHL_TEAMS = {
+        "NHL_ANA": ["Anaheim Ducks", "Ducks", "ANA", "Anaheim"],
+        "NHL_ARI": ["Arizona Coyotes", "Coyotes", "ARI", "Arizona", "Utah Hockey Club", "Utah HC"],
+        "NHL_BOS": ["Boston Bruins", "Bruins", "BOS", "Boston"],
+        "NHL_BUF": ["Buffalo Sabres", "Sabres", "BUF", "Buffalo"],
+        "NHL_CGY": ["Calgary Flames", "Flames", "CGY", "Calgary"],
+        "NHL_CAR": ["Carolina Hurricanes", "Hurricanes", "Canes", "CAR", "Carolina"],
+        "NHL_CHI": ["Chicago Blackhawks", "Blackhawks", "Hawks", "CHI", "Chicago"],
+        "NHL_COL": ["Colorado Avalanche", "Avalanche", "Avs", "COL", "Colorado"],
+        "NHL_CBJ": ["Columbus Blue Jackets", "Blue Jackets", "CBJ", "Columbus"],
+        "NHL_DAL": ["Dallas Stars", "Stars", "DAL", "Dallas"],
+        "NHL_DET": ["Detroit Red Wings", "Red Wings", "DET", "Detroit"],
+        "NHL_EDM": ["Edmonton Oilers", "Oilers", "EDM", "Edmonton"],
+        "NHL_FLA": ["Florida Panthers", "Panthers", "FLA", "Florida"],
+        "NHL_LAK": ["Los Angeles Kings", "LA Kings", "Kings", "LAK", "Los Angeles"],
+        "NHL_MIN": ["Minnesota Wild", "Wild", "MIN", "Minnesota"],
+        "NHL_MTL": ["Montreal Canadiens", "Canadiens", "Habs", "MTL", "Montreal"],
+        "NHL_NSH": ["Nashville Predators", "Predators", "Preds", "NSH", "Nashville"],
+        "NHL_NJD": ["New Jersey Devils", "Devils", "NJD", "New Jersey", "NJ"],
+        "NHL_NYI": ["New York Islanders", "Islanders", "NYI", "NY Islanders"],
+        "NHL_NYR": ["New York Rangers", "Rangers", "NYR", "NY Rangers"],
+        "NHL_OTT": ["Ottawa Senators", "Senators", "Sens", "OTT", "Ottawa"],
+        "NHL_PHI": ["Philadelphia Flyers", "Flyers", "PHI", "Philadelphia"],
+        "NHL_PIT": ["Pittsburgh Penguins", "Penguins", "Pens", "PIT", "Pittsburgh"],
+        "NHL_SJS": ["San Jose Sharks", "Sharks", "SJS", "San Jose", "SJ"],
+        "NHL_SEA": ["Seattle Kraken", "Kraken", "SEA", "Seattle"],
+        "NHL_STL": ["St. Louis Blues", "Blues", "STL", "St. Louis", "St Louis"],
+        "NHL_TBL": ["Tampa Bay Lightning", "Lightning", "Bolts", "TBL", "Tampa Bay", "TB"],
+        "NHL_TOR": ["Toronto Maple Leafs", "Maple Leafs", "Leafs", "TOR", "Toronto"],
+        "NHL_VAN": ["Vancouver Canucks", "Canucks", "VAN", "Vancouver"],
+        "NHL_VGK": ["Vegas Golden Knights", "Golden Knights", "Knights", "VGK", "Vegas", "LV"],
+        "NHL_WPG": ["Winnipeg Jets", "Jets", "WPG", "Winnipeg"],
+        "NHL_WSH": ["Washington Capitals", "Capitals", "Caps", "WSH", "Washington"],
+    }
+    
+    # MLB Teams
+    MLB_TEAMS = {
+        "MLB_ARI": ["Arizona Diamondbacks", "Diamondbacks", "D-backs", "ARI", "Arizona"],
+        "MLB_ATL": ["Atlanta Braves", "Braves", "ATL", "Atlanta"],
+        "MLB_BAL": ["Baltimore Orioles", "Orioles", "O's", "BAL", "Baltimore"],
+        "MLB_BOS": ["Boston Red Sox", "Red Sox", "Sox", "BOS", "Boston"],
+        "MLB_CHC": ["Chicago Cubs", "Cubs", "CHC", "Chicago Cubs"],
+        "MLB_CWS": ["Chicago White Sox", "White Sox", "CWS", "Chicago White Sox", "CHW"],
+        "MLB_CIN": ["Cincinnati Reds", "Reds", "CIN", "Cincinnati"],
+        "MLB_CLE": ["Cleveland Guardians", "Guardians", "CLE", "Cleveland"],
+        "MLB_COL": ["Colorado Rockies", "Rockies", "COL", "Colorado"],
+        "MLB_DET": ["Detroit Tigers", "Tigers", "DET", "Detroit"],
+        "MLB_HOU": ["Houston Astros", "Astros", "HOU", "Houston"],
+        "MLB_KC": ["Kansas City Royals", "Royals", "KC", "Kansas City", "KCR"],
+        "MLB_LAA": ["Los Angeles Angels", "LA Angels", "Angels", "LAA", "Anaheim Angels"],
+        "MLB_LAD": ["Los Angeles Dodgers", "LA Dodgers", "Dodgers", "LAD"],
+        "MLB_MIA": ["Miami Marlins", "Marlins", "MIA", "Miami"],
+        "MLB_MIL": ["Milwaukee Brewers", "Brewers", "MIL", "Milwaukee"],
+        "MLB_MIN": ["Minnesota Twins", "Twins", "MIN", "Minnesota"],
+        "MLB_NYM": ["New York Mets", "Mets", "NYM", "NY Mets"],
+        "MLB_NYY": ["New York Yankees", "Yankees", "NYY", "NY Yankees"],
+        "MLB_OAK": ["Oakland Athletics", "Athletics", "A's", "OAK", "Oakland"],
+        "MLB_PHI": ["Philadelphia Phillies", "Phillies", "PHI", "Philadelphia"],
+        "MLB_PIT": ["Pittsburgh Pirates", "Pirates", "PIT", "Pittsburgh"],
+        "MLB_SD": ["San Diego Padres", "Padres", "SD", "San Diego", "SDP"],
+        "MLB_SF": ["San Francisco Giants", "Giants", "SF", "San Francisco", "SFG"],
+        "MLB_SEA": ["Seattle Mariners", "Mariners", "SEA", "Seattle"],
+        "MLB_STL": ["St. Louis Cardinals", "Cardinals", "Cards", "STL", "St. Louis", "St Louis"],
+        "MLB_TB": ["Tampa Bay Rays", "Rays", "TB", "Tampa Bay", "TBR"],
+        "MLB_TEX": ["Texas Rangers", "Rangers", "TEX", "Texas"],
+        "MLB_TOR": ["Toronto Blue Jays", "Blue Jays", "Jays", "TOR", "Toronto"],
+        "MLB_WSH": ["Washington Nationals", "Nationals", "Nats", "WSH", "Washington"],
+    }
+    
+    def __init__(self):
+        # Build reverse lookup: any name variation -> canonical ID
+        self._lookup = {}
+        
+        for canonical_id, variations in self.NBA_TEAMS.items():
+            for name in variations:
+                self._lookup[name.lower()] = canonical_id
+                self._lookup[name.lower().replace(" ", "")] = canonical_id
+        
+        for canonical_id, variations in self.NFL_TEAMS.items():
+            for name in variations:
+                self._lookup[name.lower()] = canonical_id
+                self._lookup[name.lower().replace(" ", "")] = canonical_id
+        
+        for canonical_id, variations in self.NHL_TEAMS.items():
+            for name in variations:
+                self._lookup[name.lower()] = canonical_id
+                self._lookup[name.lower().replace(" ", "")] = canonical_id
+        
+        for canonical_id, variations in self.MLB_TEAMS.items():
+            for name in variations:
+                self._lookup[name.lower()] = canonical_id
+                self._lookup[name.lower().replace(" ", "")] = canonical_id
+    
+    def normalize(self, team_name: str) -> str:
+        """Convert any team name variation to canonical ID"""
+        if not team_name:
+            return team_name
+        
+        clean_name = team_name.lower().strip()
+        
+        # Direct lookup
+        if clean_name in self._lookup:
+            return self._lookup[clean_name]
+        
+        # Try without spaces
+        no_spaces = clean_name.replace(" ", "")
+        if no_spaces in self._lookup:
+            return self._lookup[no_spaces]
+        
+        # Partial match - check if any key is contained in the name
+        for key, canonical in self._lookup.items():
+            if key in clean_name or clean_name in key:
+                return canonical
+        
+        # Return original if no match found
+        return team_name
+    
+    def get_display_name(self, canonical_id: str) -> str:
+        """Get the full display name from canonical ID"""
+        all_teams = {**self.NBA_TEAMS, **self.NFL_TEAMS, **self.NHL_TEAMS, **self.MLB_TEAMS}
+        if canonical_id in all_teams:
+            return all_teams[canonical_id][0]  # First entry is full name
+        return canonical_id
+    
+    def are_same_team(self, name1: str, name2: str) -> bool:
+        """Check if two team name variations refer to the same team"""
+        return self.normalize(name1) == self.normalize(name2)
+
+
+# Global instance
+team_mapper = TeamNameMapper()
 
 
 # ============================================
@@ -4065,7 +4279,16 @@ class PicksEngineV2:
     - 4 Esoteric Systems  
     - 5 External Data Signals
     Plus: Grading, Learning, Performance Tracking
+    
+    Uses EV-based filtering instead of raw confidence:
+    - Edge = Model_Probability - Implied_Odds_Probability
+    - Only bet when Edge > threshold (typically 3-5%)
     """
+    
+    # Minimum edge thresholds by tier
+    MIN_EDGE_STRONG = 0.05   # 5% edge for STRONG bets
+    MIN_EDGE_GOOD = 0.03     # 3% edge for GOOD bets  
+    MIN_EDGE_LEAN = 0.015    # 1.5% edge for LEAN bets
     
     def __init__(self):
         # Signal weights (learned over time)
@@ -4098,6 +4321,68 @@ class PicksEngineV2:
             "by_sport": {}, "by_type": {}, "by_confidence": {}
         }
         self._load_history()
+    
+    # ===== EV CALCULATION METHODS =====
+    
+    def _odds_to_implied_prob(self, american_odds: int) -> float:
+        """
+        Convert American odds to implied probability.
+        -110 -> 52.38%
+        +150 -> 40.00%
+        """
+        if american_odds < 0:
+            return abs(american_odds) / (abs(american_odds) + 100)
+        else:
+            return 100 / (american_odds + 100)
+    
+    def _calculate_edge(self, model_probability: float, american_odds: int) -> float:
+        """
+        Calculate betting edge.
+        Edge = Model_Probability - Implied_Odds_Probability
+        
+        Example: Model says 65%, odds -110 (52.4% implied) = 12.6% edge
+        Example: Model says 65%, odds -250 (71.4% implied) = -6.4% edge (NO BET)
+        """
+        implied_prob = self._odds_to_implied_prob(american_odds)
+        return model_probability - implied_prob
+    
+    def _calculate_ev(self, model_probability: float, american_odds: int) -> float:
+        """
+        Calculate Expected Value per $100 bet.
+        EV = (Win_Prob * Profit) - (Lose_Prob * Stake)
+        """
+        if american_odds > 0:
+            profit_on_win = american_odds
+        else:
+            profit_on_win = 100 / abs(american_odds) * 100
+        
+        ev = (model_probability * profit_on_win) - ((1 - model_probability) * 100)
+        return ev
+    
+    def _get_tier_and_units(self, signals_fired: int, confidence: float, edge: float) -> dict:
+        """
+        Determine bet tier and unit size based on signals, confidence, and edge.
+        
+        STRONG: 4+ signals, 75%+ confidence, 5%+ edge -> 1.0 units
+        GOOD:   3+ signals, 70%+ confidence, 3%+ edge -> 0.5 units
+        LEAN:   2+ signals, 65%+ confidence, 1.5%+ edge -> 0.25 units
+        
+        Returns: {"tier": str, "units": float, "should_bet": bool}
+        """
+        # STRONG tier
+        if signals_fired >= 4 and confidence >= 75 and edge >= self.MIN_EDGE_STRONG:
+            return {"tier": "STRONG", "units": 1.0, "should_bet": True}
+        
+        # GOOD tier
+        if signals_fired >= 3 and confidence >= 70 and edge >= self.MIN_EDGE_GOOD:
+            return {"tier": "GOOD", "units": 0.5, "should_bet": True}
+        
+        # LEAN tier (pizza money)
+        if signals_fired >= 2 and confidence >= 65 and edge >= self.MIN_EDGE_LEAN:
+            return {"tier": "LEAN", "units": 0.25, "should_bet": True}
+        
+        # Does not meet any threshold
+        return {"tier": "NO_BET", "units": 0, "should_bet": False}
     
     def generate_best_bets(self, sport="basketball_nba"):
         """Generate best bets using ALL signals"""
@@ -4456,28 +4741,61 @@ class PicksEngineV2:
                 else:
                     confidence = 35
                 
-                # Only output picks where we have genuine confidence
                 signals_fired_count = len(signals)
                 
                 # Determine pick direction
                 pick_result = self._determine_pick(signals, markets, home, away, esoteric_score, sharp)
                 
-                if confidence >= 75 and pick_result and signals_fired_count >= 4:
-                    # Only GOOD (75+) and STRONG (85+) with at least 4 signals agreeing
+                if not pick_result:
+                    continue
+                
+                # ===== EV-BASED FILTERING (THE KEY CHANGE) =====
+                # Convert confidence to model probability (confidence/100)
+                model_probability = confidence / 100
+                
+                # Get the actual odds for this pick
+                pick_odds = pick_result.get("odds", -110)
+                
+                # Calculate edge: Model_Prob - Implied_Prob
+                edge = self._calculate_edge(model_probability, pick_odds)
+                
+                # Calculate Expected Value per $100
+                ev = self._calculate_ev(model_probability, pick_odds)
+                
+                # Get tier and units based on signals, confidence, AND edge
+                tier_info = self._get_tier_and_units(signals_fired_count, confidence, edge)
+                
+                # Only output picks that meet our criteria
+                if tier_info["should_bet"]:
+                    implied_prob = self._odds_to_implied_prob(pick_odds)
+                    
                     pick = {
                         "id": f"{game.get('id', '')}_{datetime.now().strftime('%H%M%S')}",
                         "game": f"{away} @ {home}",
                         "sport": sport.split("_")[1].upper() if "_" in sport else sport,
                         "type": pick_result["type"],
                         "pick": pick_result["pick"],
-                        "odds": pick_result["odds"],
+                        "odds": pick_odds,
+                        
+                        # Confidence metrics
                         "confidence_score": round(confidence, 1),
-                        "confidence_label": self._get_label(confidence),
+                        "confidence_label": tier_info["tier"],
+                        
+                        # EV metrics (THE NEW STUFF)
+                        "model_probability": round(model_probability * 100, 1),
+                        "implied_probability": round(implied_prob * 100, 1),
+                        "edge": round(edge * 100, 2),  # As percentage
+                        "ev_per_100": round(ev, 2),    # Expected value per $100 bet
+                        
+                        # Staking
+                        "units": tier_info["units"],
+                        "tier": tier_info["tier"],
+                        
+                        # Supporting info
                         "reasons": reasons[:6],
-                        "signals_fired": len(signals),
+                        "signals_fired": signals_fired_count,
                         "sharp_money": sharp.get("detected", False),
                         "esoteric_score": esoteric_score,
-                        "kelly_size": signals.get("kelly", {}).get("edge", 0) / 4 if signals.get("kelly") else 0,
                         "status": "pending"
                     }
                     best_bets.append(pick)
@@ -4486,8 +4804,8 @@ class PicksEngineV2:
                 print(f"Error processing game: {e}")
                 continue
         
-        # Sort and rank
-        best_bets.sort(key=lambda x: x["confidence_score"], reverse=True)
+        # Sort by edge (best value first), then by confidence
+        best_bets.sort(key=lambda x: (x.get("edge", 0), x.get("confidence_score", 0)), reverse=True)
         for i, pick in enumerate(best_bets):
             pick["rank"] = i + 1
         
@@ -4501,6 +4819,9 @@ class PicksEngineV2:
             "generated_at": datetime.now().isoformat(),
             "total_analyzed": len(odds_data.get("games", [])),
             "total_picks": len(best_bets),
+            "strong_picks": len([p for p in best_bets if p["tier"] == "STRONG"]),
+            "good_picks": len([p for p in best_bets if p["tier"] == "GOOD"]),
+            "lean_picks": len([p for p in best_bets if p["tier"] == "LEAN"]),
             "picks": best_bets[:10],
             "weights": self.weights,
             "performance": self.performance
