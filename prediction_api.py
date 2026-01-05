@@ -4105,8 +4105,35 @@ class PicksEngineV2:
         
         # Get live odds
         odds_data = odds_service.get_live_odds(sport)
-        if not odds_data.get("success") or not odds_data.get("games"):
-            return {"success": False, "error": "No games available", "picks": []}
+        
+        # Debug: Log what we got from API
+        print(f"[PICKS] Sport: {sport}, API Success: {odds_data.get('success')}, Games: {odds_data.get('games_count', 0)}")
+        
+        # If no live games, return detailed error
+        if not odds_data.get("success"):
+            return {
+                "success": False, 
+                "error": f"Odds API error: {odds_data.get('error', 'Unknown')}",
+                "picks": [],
+                "debug": {
+                    "sport": sport,
+                    "api_response": odds_data,
+                    "suggestion": "Check API key or try again later"
+                }
+            }
+        
+        if not odds_data.get("games"):
+            return {
+                "success": False, 
+                "error": "No games scheduled right now",
+                "picks": [],
+                "debug": {
+                    "sport": sport,
+                    "games_count": 0,
+                    "api_remaining": odds_data.get("api_usage", {}).get("remaining", "unknown"),
+                    "suggestion": "Games typically available 1-2 hours before tip-off"
+                }
+            }
         
         # Get splits
         league_map = {"basketball_nba": "NBA", "basketball_ncaab": "NCAAB", "football_nfl": "NFL", "icehockey_nhl": "NHL", "baseball_mlb": "MLB"}
@@ -4701,6 +4728,158 @@ class PicksEngineV2:
             "picks_today": len([p for p in self.picks_history if p.get("status") == "pending"])
         }
     
+    # ===== SAMPLE PICKS WHEN NO LIVE DATA =====
+    
+    def _generate_sample_picks(self, sport: str):
+        """Generate sample picks when no live odds available"""
+        
+        # Sport-specific sample games
+        sample_games = {
+            "basketball_nba": [
+                {"home": "Los Angeles Lakers", "away": "Boston Celtics", "spread": -3.5, "total": 224.5, "home_ml": -160, "away_ml": +140},
+                {"home": "Golden State Warriors", "away": "Phoenix Suns", "spread": -5.5, "total": 230.0, "home_ml": -210, "away_ml": +175},
+                {"home": "Denver Nuggets", "away": "Milwaukee Bucks", "spread": -2.5, "total": 226.5, "home_ml": -135, "away_ml": +115},
+                {"home": "New York Knicks", "away": "Miami Heat", "spread": -1.5, "total": 212.5, "home_ml": -120, "away_ml": +100},
+            ],
+            "basketball_ncaab": [
+                {"home": "Duke Blue Devils", "away": "North Carolina Tar Heels", "spread": -4.5, "total": 148.5, "home_ml": -180, "away_ml": +155},
+                {"home": "Kansas Jayhawks", "away": "Kentucky Wildcats", "spread": -3.0, "total": 152.0, "home_ml": -150, "away_ml": +130},
+            ],
+            "football_nfl": [
+                {"home": "Kansas City Chiefs", "away": "Buffalo Bills", "spread": -3.0, "total": 48.5, "home_ml": -155, "away_ml": +135},
+                {"home": "San Francisco 49ers", "away": "Dallas Cowboys", "spread": -6.5, "total": 46.5, "home_ml": -275, "away_ml": +220},
+            ],
+            "icehockey_nhl": [
+                {"home": "Edmonton Oilers", "away": "Toronto Maple Leafs", "spread": -1.5, "total": 6.5, "home_ml": -130, "away_ml": +110},
+                {"home": "Colorado Avalanche", "away": "Vegas Golden Knights", "spread": -1.5, "total": 6.0, "home_ml": -145, "away_ml": +125},
+            ],
+            "baseball_mlb": [
+                {"home": "Los Angeles Dodgers", "away": "New York Yankees", "spread": -1.5, "total": 8.5, "home_ml": -150, "away_ml": +130},
+                {"home": "Houston Astros", "away": "Atlanta Braves", "spread": -1.5, "total": 8.0, "home_ml": -135, "away_ml": +115},
+            ]
+        }
+        
+        games = sample_games.get(sport, sample_games["basketball_nba"])
+        picks = []
+        
+        # Get today's esoteric energy
+        today = date.today()
+        today_numerology = esoteric.numerology.date_energy(today)
+        today_moon = esoteric.astrology.moon_phase(today)
+        
+        for i, game in enumerate(games):
+            # Run esoteric analysis
+            esoteric_result = esoteric.analyze_matchup(
+                game["home"], game["away"], today, game["total"]
+            )
+            
+            # Calculate signals
+            signals_hit = []
+            confidence = 65 + (i * 3)  # Base confidence varies by game
+            
+            # Sharp money simulation based on line movement
+            if abs(game["spread"]) in [3, 3.5, 7, 7.5]:
+                signals_hit.append("Key Number")
+                confidence += 5
+            
+            # Value detection
+            if game["away_ml"] >= 150:
+                signals_hit.append(f"ML Value: {game['away']} +{game['away_ml']}")
+                confidence += 4
+            
+            # Esoteric signals
+            if esoteric_result.get("overall_score", 0) > 60:
+                signals_hit.append(f"Esoteric Edge: {esoteric_result.get('overall_score', 0):.0f}")
+                confidence += 3
+            
+            # Moon phase
+            if "Full" in today_moon or "New" in today_moon:
+                signals_hit.append(f"Moon: {today_moon}")
+                confidence += 2
+            
+            # Numerology
+            if today_numerology.get("life_path") in [7, 8, 9]:
+                signals_hit.append(f"Life Path {today_numerology.get('life_path')}")
+                confidence += 2
+            
+            # Determine pick type based on signals
+            pick_types = []
+            
+            # Spread pick
+            if game["spread"] < 0:  # Home favorite
+                pick_types.append({
+                    "type": "spread",
+                    "pick": f"{game['home']} {game['spread']}",
+                    "odds": -110,
+                    "confidence": confidence
+                })
+            else:
+                pick_types.append({
+                    "type": "spread",
+                    "pick": f"{game['away']} +{abs(game['spread'])}",
+                    "odds": -110,
+                    "confidence": confidence - 2
+                })
+            
+            # Total pick
+            total_lean = "OVER" if esoteric_result.get("total_lean") == "OVER" else "UNDER"
+            pick_types.append({
+                "type": "total",
+                "pick": f"{total_lean} {game['total']}",
+                "odds": -110,
+                "confidence": confidence - 3
+            })
+            
+            # Pick the best one
+            best_pick = max(pick_types, key=lambda x: x["confidence"])
+            
+            pick = {
+                "id": f"sample_{sport}_{i}_{datetime.now().strftime('%Y%m%d')}",
+                "rank": i + 1,
+                "game": f"{game['away']} @ {game['home']}",
+                "pick": best_pick["pick"],
+                "type": best_pick["type"],
+                "odds": best_pick["odds"],
+                "confidence_score": min(92, best_pick["confidence"]),
+                "confidence_label": "STRONG" if best_pick["confidence"] >= 80 else "GOOD" if best_pick["confidence"] >= 70 else "LEAN",
+                "signals_hit": len(signals_hit),
+                "signals_possible": 17,
+                "key_factors": signals_hit[:5],
+                "esoteric": {
+                    "score": esoteric_result.get("overall_score", 50),
+                    "moon": today_moon,
+                    "numerology": today_numerology.get("life_path", 5)
+                },
+                "generated_at": datetime.now().isoformat(),
+                "status": "pending",
+                "is_sample": True,
+                "note": "Sample pick - Live odds not yet available"
+            }
+            picks.append(pick)
+        
+        # Sort by confidence
+        picks.sort(key=lambda x: x["confidence_score"], reverse=True)
+        
+        # Re-rank
+        for i, pick in enumerate(picks):
+            pick["rank"] = i + 1
+        
+        return {
+            "success": True,
+            "sport": sport,
+            "generated_at": datetime.now().isoformat(),
+            "model_version": "6.2",
+            "signals_used": 17,
+            "total_picks": len(picks),
+            "picks": picks,
+            "note": "Sample picks generated - Live games will appear when available",
+            "cosmic_energy": {
+                "moon_phase": today_moon,
+                "life_path": today_numerology.get("life_path"),
+                "energy": "ACTIVE" if today_numerology.get("life_path", 0) in [1, 3, 5, 8] else "RECEPTIVE"
+            }
+        }
+    
     # ===== PERSISTENCE =====
     
     def _save_history(self):
@@ -4814,8 +4993,35 @@ class PropsPicksEngine:
         markets = markets_map.get(sport, "player_points")
         props_data = odds_service.get_player_props(sport=sport, markets=markets)
         
-        if not props_data.get("success") or not props_data.get("props"):
-            return {"success": False, "error": "No props available", "picks": []}
+        # Debug: Log what we got from API
+        print(f"[PROPS] Sport: {sport}, API Success: {props_data.get('success')}, Props: {props_data.get('props_count', 0)}")
+        
+        # If no props, return detailed error
+        if not props_data.get("success"):
+            return {
+                "success": False, 
+                "error": f"Props API error: {props_data.get('error', 'Unknown')} - {props_data.get('message', '')}",
+                "picks": [],
+                "debug": {
+                    "sport": sport,
+                    "markets_requested": markets,
+                    "api_response": props_data,
+                    "suggestion": "Player props may require premium API access"
+                }
+            }
+        
+        if not props_data.get("props"):
+            return {
+                "success": False, 
+                "error": "No player props available right now",
+                "picks": [],
+                "debug": {
+                    "sport": sport,
+                    "props_count": 0,
+                    "api_remaining": props_data.get("api_usage", {}).get("remaining", "unknown"),
+                    "suggestion": "Props typically available 4-6 hours before game time"
+                }
+            }
         
         # Get today's cosmic energy
         today = date.today()
@@ -5621,6 +5827,138 @@ class PropsPicksEngine:
         total_profit = sum(p.get("profit_loss", 0) for p in self.graded_props)
         if len(self.graded_props) > 0:
             self.performance["roi"] = round(total_profit / len(self.graded_props) * 100, 1)
+    
+    def _generate_sample_props(self, sport: str):
+        """Generate sample prop picks when no live props available"""
+        
+        # Sample player props by sport
+        sample_props = {
+            "basketball_nba": [
+                {"player": "LeBron James", "team": "LAL", "opponent": "BOS", "stat": "points", "line": 25.5, "season_avg": 26.2},
+                {"player": "Stephen Curry", "team": "GSW", "opponent": "PHX", "stat": "points", "line": 28.5, "season_avg": 27.8},
+                {"player": "Nikola Jokic", "team": "DEN", "opponent": "MIL", "stat": "rebounds", "line": 12.5, "season_avg": 13.1},
+                {"player": "Luka Doncic", "team": "DAL", "opponent": "LAC", "stat": "assists", "line": 8.5, "season_avg": 9.2},
+                {"player": "Jayson Tatum", "team": "BOS", "opponent": "LAL", "stat": "points", "line": 27.5, "season_avg": 28.4},
+                {"player": "Anthony Edwards", "team": "MIN", "opponent": "OKC", "stat": "points", "line": 24.5, "season_avg": 25.1},
+                {"player": "Tyrese Haliburton", "team": "IND", "opponent": "NYK", "stat": "assists", "line": 10.5, "season_avg": 11.2},
+                {"player": "Giannis Antetokounmpo", "team": "MIL", "opponent": "DEN", "stat": "rebounds", "line": 11.5, "season_avg": 11.8},
+            ],
+            "basketball_ncaab": [
+                {"player": "Cooper Flagg", "team": "Duke", "opponent": "UNC", "stat": "points", "line": 18.5, "season_avg": 19.2},
+                {"player": "Dylan Harper", "team": "Rutgers", "opponent": "Indiana", "stat": "points", "line": 20.5, "season_avg": 21.1},
+            ],
+            "icehockey_nhl": [
+                {"player": "Connor McDavid", "team": "EDM", "opponent": "TOR", "stat": "points", "line": 1.5, "season_avg": 1.8},
+                {"player": "Nathan MacKinnon", "team": "COL", "opponent": "VGK", "stat": "shots", "line": 4.5, "season_avg": 4.9},
+            ],
+            "baseball_mlb": [
+                {"player": "Shohei Ohtani", "team": "LAD", "opponent": "NYY", "stat": "hits", "line": 1.5, "season_avg": 1.4},
+                {"player": "Aaron Judge", "team": "NYY", "opponent": "LAD", "stat": "total_bases", "line": 2.5, "season_avg": 2.3},
+            ]
+        }
+        
+        props = sample_props.get(sport, sample_props["basketball_nba"])
+        picks = []
+        
+        # Get today's esoteric energy
+        today = date.today()
+        today_numerology = esoteric.numerology.date_energy(today)
+        today_moon = esoteric.astrology.moon_phase(today)
+        
+        for i, prop in enumerate(props):
+            # Calculate signals
+            signals_hit = []
+            confidence = 70 + (i % 5) * 3  # Base varies
+            
+            # Recent form signal (simulated)
+            if prop["season_avg"] > prop["line"]:
+                direction = "OVER"
+                edge = prop["season_avg"] - prop["line"]
+                signals_hit.append(f"Season avg {prop['season_avg']} > line {prop['line']}")
+                confidence += min(10, edge * 3)
+            else:
+                direction = "UNDER"
+                edge = prop["line"] - prop["season_avg"]
+                signals_hit.append(f"Season avg {prop['season_avg']} < line {prop['line']}")
+                confidence += min(8, edge * 2)
+            
+            # Esoteric analysis
+            esoteric_result = esoteric.analyze_matchup(
+                prop["team"], prop["opponent"], today, prop["line"]
+            )
+            
+            if esoteric_result.get("overall_score", 0) > 55:
+                signals_hit.append(f"Esoteric: {esoteric_result.get('overall_score', 0):.0f}")
+                confidence += 3
+            
+            # Moon phase
+            if "Full" in today_moon:
+                signals_hit.append(f"Full Moon Energy")
+                confidence += 2
+            
+            # Gematria
+            gematria_val = esoteric.gematria.calculate_pythagorean(prop["player"])
+            if gematria_val in [7, 8, 9]:
+                signals_hit.append(f"Gematria: {gematria_val}")
+                confidence += 2
+            
+            stat_display = prop["stat"].replace("_", " ").title()
+            
+            pick = {
+                "id": f"sample_prop_{sport}_{i}_{datetime.now().strftime('%Y%m%d')}",
+                "rank": i + 1,
+                "player": prop["player"],
+                "team": prop["team"],
+                "opponent": prop["opponent"],
+                "game": f"{prop['team']} vs {prop['opponent']}",
+                "prop_type": stat_display,
+                "line": prop["line"],
+                "pick": f"{direction} {prop['line']}",
+                "direction": direction,
+                "odds": -110,
+                "confidence_score": min(92, confidence),
+                "confidence_label": "STRONG" if confidence >= 82 else "GOOD" if confidence >= 72 else "LEAN",
+                "season_avg": prop["season_avg"],
+                "edge": round(abs(prop["season_avg"] - prop["line"]), 1),
+                "signals_hit": len(signals_hit),
+                "signals_possible": 18,
+                "key_factors": signals_hit[:5],
+                "esoteric": {
+                    "score": esoteric_result.get("overall_score", 50),
+                    "moon": today_moon,
+                    "gematria": gematria_val
+                },
+                "generated_at": datetime.now().isoformat(),
+                "status": "pending",
+                "is_sample": True,
+                "note": "Sample prop - Live props will appear when available"
+            }
+            picks.append(pick)
+        
+        # Sort by confidence
+        picks.sort(key=lambda x: x["confidence_score"], reverse=True)
+        
+        # Re-rank
+        for i, pick in enumerate(picks):
+            pick["rank"] = i + 1
+        
+        return {
+            "success": True,
+            "sport": sport,
+            "generated_at": datetime.now().isoformat(),
+            "model_version": "6.2",
+            "signals_used": 18,
+            "total_picks": len(picks),
+            "strong_picks": len([p for p in picks if p["confidence_score"] >= 82]),
+            "good_picks": len([p for p in picks if 72 <= p["confidence_score"] < 82]),
+            "picks": picks,
+            "note": "Sample props generated - Live player props will appear when available",
+            "cosmic_energy": {
+                "moon_phase": today_moon,
+                "life_path": today_numerology.get("life_path"),
+                "energy": "ACTIVE" if today_numerology.get("life_path", 0) in [1, 3, 5, 8] else "RECEPTIVE"
+            }
+        }
 
 
 props_engine = PropsPicksEngine()
@@ -5850,23 +6188,48 @@ class LiveOddsService:
     def get_live_odds(self, sport="basketball_nba", bookmakers="fanduel,draftkings"):
         url = self.base_url + "/sports/" + sport + "/odds"
         params = {"apiKey": self.api_key, "regions": "us", "markets": "h2h,spreads,totals", "bookmakers": bookmakers, "oddsFormat": "american"}
-        r = requests.get(url, params=params)
-        if r.status_code == 200:
-            games = r.json()
-            formatted = self._format(games)
-            remaining = r.headers.get('x-requests-remaining', 'unknown')
-            return {"success": True, "sport": sport, "games_count": len(games), "games": formatted, "api_usage": {"remaining": remaining}}
-        return {"success": False, "error": r.status_code}
+        
+        try:
+            r = requests.get(url, params=params, timeout=15)
+            print(f"[ODDS API] {sport} - Status: {r.status_code}, Remaining: {r.headers.get('x-requests-remaining', '?')}")
+            
+            if r.status_code == 200:
+                games = r.json()
+                print(f"[ODDS API] {sport} - Raw games returned: {len(games)}")
+                formatted = self._format(games)
+                remaining = r.headers.get('x-requests-remaining', 'unknown')
+                return {"success": True, "sport": sport, "games_count": len(games), "games": formatted, "api_usage": {"remaining": remaining}}
+            elif r.status_code == 401:
+                return {"success": False, "error": "Invalid API key", "status": 401}
+            elif r.status_code == 429:
+                return {"success": False, "error": "Rate limit exceeded", "status": 429}
+            elif r.status_code == 422:
+                return {"success": False, "error": f"Invalid sport key: {sport}", "status": 422}
+            else:
+                return {"success": False, "error": f"API error {r.status_code}", "status": r.status_code, "message": r.text[:200]}
+        except requests.exceptions.Timeout:
+            return {"success": False, "error": "API timeout - try again"}
+        except Exception as e:
+            print(f"[ODDS API ERROR] {e}")
+            return {"success": False, "error": str(e)}
     
     def get_player_props(self, sport="basketball_nba", markets="player_points"):
         url = self.base_url + "/sports/" + sport + "/odds"
         params = {"apiKey": self.api_key, "regions": "us", "markets": markets, "bookmakers": "fanduel,draftkings", "oddsFormat": "american"}
-        r = requests.get(url, params=params)
-        if r.status_code == 200:
-            data = r.json()
-            props = self._format_props(data)
-            return {"success": True, "sport": sport, "props_count": len(props), "props": props, "api_usage": {"remaining": r.headers.get('x-requests-remaining', 'unknown')}}
-        return {"success": False, "error": r.status_code, "message": r.text}
+        
+        try:
+            r = requests.get(url, params=params, timeout=15)
+            print(f"[PROPS API] {sport} - Status: {r.status_code}, Markets: {markets}")
+            
+            if r.status_code == 200:
+                data = r.json()
+                props = self._format_props(data)
+                print(f"[PROPS API] {sport} - Props formatted: {len(props)}")
+                return {"success": True, "sport": sport, "props_count": len(props), "props": props, "api_usage": {"remaining": r.headers.get('x-requests-remaining', 'unknown')}}
+            return {"success": False, "error": r.status_code, "message": r.text[:200]}
+        except Exception as e:
+            print(f"[PROPS API ERROR] {e}")
+            return {"success": False, "error": str(e)}
     
     def _format(self, games):
         result = []
@@ -6149,35 +6512,105 @@ class BulkGradeRequest(BaseModel):
 async def root():
     return {
         "status": "online",
-        "message": "Bookie-o-em API v4.5 - Full Picks Engine",
-        "version": "4.5.0",
-        "features": ["17 signals", "grading", "learning", "performance tracking"]
+        "message": "Bookie-o-em API v6.2 - Professional Sports Betting Intelligence",
+        "version": "6.2.0",
+        "signals": {
+            "total": 17,
+            "ai_models": 8,
+            "esoteric": 4,
+            "external": 5
+        },
+        "features": [
+            "17 signals betting analysis",
+            "LSTM + Ensemble ML predictions",
+            "Esoteric edge (gematria, numerology, astrology)",
+            "Kelly Criterion staking",
+            "Sharp money tracking",
+            "Coach rotation modeling",
+            "CLV backtesting",
+            "LSTM + Esoteric synergy (SuperSignals)"
+        ],
+        "sports": ["NBA", "NCAAB", "NFL", "NHL", "MLB"]
     }
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat(), "features": ["esoteric", "props", "alerts"]}
+    return {"status": "healthy", "timestamp": datetime.now().isoformat(), "version": "6.2.0", "features": ["esoteric", "props", "alerts", "staking", "synergy"]}
+
+
+@app.get("/debug/odds/{sport}")
+async def debug_odds(sport: str = "basketball_nba"):
+    """Debug endpoint to see raw API response"""
+    # Get raw odds
+    odds_result = odds_service.get_live_odds(sport)
+    
+    return {
+        "sport": sport,
+        "timestamp": datetime.now().isoformat(),
+        "api_success": odds_result.get("success"),
+        "api_error": odds_result.get("error"),
+        "games_count": odds_result.get("games_count", 0),
+        "api_remaining": odds_result.get("api_usage", {}).get("remaining"),
+        "games_preview": odds_result.get("games", [])[:2],  # First 2 games for preview
+        "debug": odds_result.get("debug", {})
+    }
+
+
+@app.get("/debug/props/{sport}")
+async def debug_props(sport: str = "basketball_nba"):
+    """Debug endpoint to see raw props API response"""
+    markets = "player_points,player_rebounds,player_assists"
+    props_result = odds_service.get_player_props(sport, markets)
+    
+    return {
+        "sport": sport,
+        "markets": markets,
+        "timestamp": datetime.now().isoformat(),
+        "api_success": props_result.get("success"),
+        "api_error": props_result.get("error"),
+        "props_count": props_result.get("props_count", 0),
+        "api_remaining": props_result.get("api_usage", {}).get("remaining"),
+        "props_preview": props_result.get("props", [])[:5],  # First 5 props for preview
+    }
 
 
 @app.get("/model-status")
 async def model_status():
     models = {
-        "ensemble_stacking": "ready",
-        "lstm_network": "fallback_mode",
-        "matchup_specific": "ready",
-        "monte_carlo": "ready",
-        "line_analyzer": "ready",
-        "rest_fatigue": "ready",
-        "injury_impact": "ready",
-        "edge_calculator": "ready",
-        "gematria": "ready",
-        "numerology": "ready",
-        "sacred_geometry": "ready",
-        "astrology": "ready",
-        "alerts_system": "ready"
+        "ai_models": {
+            "ensemble_stacking": "ready (XGBoost + LightGBM + RF + CatBoost)",
+            "lstm_network": TENSORFLOW_AVAILABLE and "ready" or "fallback_mode",
+            "monte_carlo_kde": "ready (Kernel Density Estimation)",
+            "matchup_model": "ready (Home/Away splits)",
+            "line_analyzer": "ready",
+            "rest_fatigue": "ready",
+            "injury_impact": "ready",
+            "edge_calculator": "ready (Kelly Criterion)"
+        },
+        "esoteric_models": {
+            "gematria": "ready",
+            "numerology": "ready",
+            "sacred_geometry": "ready",
+            "astrology": "ready (Moon phases)"
+        },
+        "advanced_systems": {
+            "staking_engine": "ready (Kelly Criterion)",
+            "backtest_simulator": "ready (CLV tracking)",
+            "sharp_tracker": "ready (Ticket/Money divergence)",
+            "rotation_model": "ready (14 coach profiles)",
+            "harmonic_convergence": "ready (LSTM + Esoteric synergy)"
+        }
     }
-    return {"status": "operational", "models": models, "total_models": 13, "version": "4.2.0"}
+    return {
+        "status": "operational",
+        "models": models,
+        "total_signals": 17,
+        "ai_models": 8,
+        "esoteric_models": 4,
+        "external_signals": 5,
+        "version": "6.2.0"
+    }
 
 
 @app.post("/calculate-edge")
