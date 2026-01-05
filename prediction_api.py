@@ -207,9 +207,10 @@ class PicksEngineV2:
                 home = game.get("home_team", "")
                 away = game.get("away_team", "")
                 
-                # Get bookmaker odds - direct structure from live-odds endpoint
-                fd = game.get("fanduel", {})
-                dk = game.get("draftkings", {})
+                # Get bookmaker odds from odds_service structure
+                bookmakers = game.get("bookmakers", {})
+                fd = bookmakers.get("fanduel", {}).get("markets", {})
+                dk = bookmakers.get("draftkings", {}).get("markets", {})
                 markets = fd if fd else dk
                 if not markets:
                     continue
@@ -378,7 +379,7 @@ class PicksEngineV2:
                 # Determine pick direction
                 pick_result = self._determine_pick(signals, markets, home, away, esoteric_score, sharp)
                 
-                if confidence >= 55 and pick_result:
+                if confidence >= 40 and pick_result:
                     pick = {
                         "id": f"{game.get('id', '')}_{datetime.now().strftime('%H%M%S')}",
                         "game": f"{away} @ {home}",
@@ -414,6 +415,7 @@ class PicksEngineV2:
             "success": True,
             "sport": sport,
             "generated_at": datetime.now().isoformat(),
+            "total_analyzed": len(odds_data.get("games", [])),
             "total_picks": len(best_bets),
             "picks": best_bets[:10],
             "weights": self.weights,
