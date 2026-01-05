@@ -6,6 +6,7 @@ import Calculator from './pages/Calculator'
 import LiveGames from './pages/LiveGames'
 import Splits from './pages/Splits'
 import Esoteric from './pages/Esoteric'
+import PlayerProps from './pages/PlayerProps'
 
 function App() {
   return (
@@ -16,17 +17,17 @@ function App() {
         </Link>
         <ul className="nav-links">
           <li><Link to="/">Home</Link></li>
-          <li><Link to="/live">Live Odds</Link></li>
+          <li><Link to="/live">Odds</Link></li>
+          <li><Link to="/props">Props</Link></li>
           <li><Link to="/splits">Splits</Link></li>
-          <li><Link to="/esoteric">🔮 Esoteric</Link></li>
-          <li><Link to="/predict">Predict</Link></li>
-          <li><Link to="/models">Models</Link></li>
-          <li><Link to="/calculator">Calculator</Link></li>
+          <li><Link to="/esoteric">🔮</Link></li>
+          <li><Link to="/calculator">Calc</Link></li>
         </ul>
       </nav>
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/live" element={<LiveGames />} />
+        <Route path="/props" element={<PlayerProps />} />
         <Route path="/splits" element={<Splits />} />
         <Route path="/esoteric" element={<Esoteric />} />
         <Route path="/predict" element={<Predict />} />
