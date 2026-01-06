@@ -6498,6 +6498,546 @@ esoteric = EsotericAnalyzer()
 
 
 # ============================================
+# ADVANCED LSTM DATA SERVICES
+# The 5 Critical Features for Smart Predictions
+# ============================================
+
+class DefensiveContextService:
+    """
+    Feature 1: Opponent Defensive Context by Position
+    
+    Provides: Defense rating vs position, rim protection, 
+    perimeter defense for position-specific matchup analysis.
+    """
+    
+    # NBA team defensive rankings by position (updated periodically)
+    # Scale: 1 = best defense, 30 = worst defense vs that position
+    DEFENSE_VS_POSITION = {
+        # Format: team: {PG, SG, SF, PF, C}
+        "Boston Celtics": {"PG": 3, "SG": 5, "SF": 2, "PF": 4, "C": 6},
+        "Cleveland Cavaliers": {"PG": 8, "SG": 4, "SF": 7, "PF": 3, "C": 2},
+        "Oklahoma City Thunder": {"PG": 2, "SG": 3, "SF": 4, "PF": 5, "C": 8},
+        "Orlando Magic": {"PG": 6, "SG": 7, "SF": 3, "PF": 2, "C": 1},
+        "New York Knicks": {"PG": 10, "SG": 8, "SF": 5, "PF": 6, "C": 4},
+        "Houston Rockets": {"PG": 4, "SG": 6, "SF": 8, "PF": 7, "C": 9},
+        "Memphis Grizzlies": {"PG": 12, "SG": 10, "SF": 9, "PF": 8, "C": 5},
+        "Minnesota Timberwolves": {"PG": 5, "SG": 2, "SF": 6, "PF": 4, "C": 3},
+        "Los Angeles Lakers": {"PG": 15, "SG": 14, "SF": 10, "PF": 9, "C": 7},
+        "Golden State Warriors": {"PG": 18, "SG": 15, "SF": 12, "PF": 11, "C": 10},
+        "Denver Nuggets": {"PG": 20, "SG": 18, "SF": 15, "PF": 12, "C": 8},
+        "Milwaukee Bucks": {"PG": 11, "SG": 9, "SF": 8, "PF": 10, "C": 6},
+        "Phoenix Suns": {"PG": 22, "SG": 20, "SF": 18, "PF": 16, "C": 14},
+        "Los Angeles Clippers": {"PG": 7, "SG": 11, "SF": 9, "PF": 13, "C": 11},
+        "Miami Heat": {"PG": 9, "SG": 12, "SF": 11, "PF": 14, "C": 12},
+        "Dallas Mavericks": {"PG": 16, "SG": 19, "SF": 17, "PF": 18, "C": 15},
+        "Sacramento Kings": {"PG": 24, "SG": 22, "SF": 20, "PF": 19, "C": 17},
+        "Indiana Pacers": {"PG": 25, "SG": 24, "SF": 22, "PF": 21, "C": 18},
+        "Atlanta Hawks": {"PG": 26, "SG": 25, "SF": 23, "PF": 22, "C": 20},
+        "Detroit Pistons": {"PG": 14, "SG": 16, "SF": 14, "PF": 15, "C": 13},
+        "Chicago Bulls": {"PG": 19, "SG": 17, "SF": 16, "PF": 17, "C": 16},
+        "Toronto Raptors": {"PG": 17, "SG": 13, "SF": 13, "PF": 11, "C": 19},
+        "Philadelphia 76ers": {"PG": 13, "SG": 21, "SF": 19, "PF": 20, "C": 21},
+        "Brooklyn Nets": {"PG": 27, "SG": 26, "SF": 25, "PF": 24, "C": 23},
+        "San Antonio Spurs": {"PG": 21, "SG": 23, "SF": 21, "PF": 23, "C": 22},
+        "Portland Trail Blazers": {"PG": 23, "SG": 27, "SF": 26, "PF": 26, "C": 25},
+        "Utah Jazz": {"PG": 28, "SG": 28, "SF": 27, "PF": 27, "C": 26},
+        "Charlotte Hornets": {"PG": 29, "SG": 29, "SF": 28, "PF": 28, "C": 27},
+        "Washington Wizards": {"PG": 30, "SG": 30, "SF": 30, "PF": 30, "C": 30},
+        "New Orleans Pelicans": {"PG": 15, "SG": 14, "SF": 12, "PF": 15, "C": 14},
+    }
+    
+    # Rim protection ratings (FG% allowed at rim - lower = better)
+    RIM_PROTECTION = {
+        "Orlando Magic": 58.2, "Cleveland Cavaliers": 59.1, "Oklahoma City Thunder": 59.8,
+        "Boston Celtics": 60.5, "Minnesota Timberwolves": 61.0, "New York Knicks": 61.5,
+        "Houston Rockets": 62.0, "Memphis Grizzlies": 62.3, "Milwaukee Bucks": 62.8,
+        "Miami Heat": 63.0, "Los Angeles Clippers": 63.5, "Detroit Pistons": 63.8,
+        "Denver Nuggets": 64.0, "Los Angeles Lakers": 64.5, "Dallas Mavericks": 65.0,
+        "Phoenix Suns": 65.5, "Golden State Warriors": 66.0, "Toronto Raptors": 66.2,
+        "Philadelphia 76ers": 66.5, "Chicago Bulls": 66.8, "Indiana Pacers": 67.0,
+        "Atlanta Hawks": 67.5, "Sacramento Kings": 68.0, "Brooklyn Nets": 68.5,
+        "San Antonio Spurs": 69.0, "Portland Trail Blazers": 69.5, "New Orleans Pelicans": 70.0,
+        "Utah Jazz": 70.5, "Charlotte Hornets": 71.0, "Washington Wizards": 72.0,
+    }
+    
+    def get_matchup_context(self, player_position: str, opponent_team: str) -> dict:
+        """
+        Get defensive context for a player's matchup.
+        
+        Returns:
+        - defense_rank: How opponent ranks defending this position (1-30)
+        - matchup_difficulty: "SOFT", "NEUTRAL", "TOUGH", "LOCKDOWN"
+        - rim_protection: If center, how good is rim protection
+        - adjustment_factor: Multiplier for projections (0.85-1.15)
+        """
+        position = player_position.upper()
+        if position not in ["PG", "SG", "SF", "PF", "C"]:
+            position = "SF"  # Default
+        
+        # Get defense rank vs position
+        team_defense = self.DEFENSE_VS_POSITION.get(opponent_team, {})
+        defense_rank = team_defense.get(position, 15)  # Default to middle
+        
+        # Determine matchup difficulty
+        if defense_rank <= 5:
+            difficulty = "LOCKDOWN"
+            adjustment = 0.85  # Reduce projection by 15%
+        elif defense_rank <= 12:
+            difficulty = "TOUGH"
+            adjustment = 0.92  # Reduce by 8%
+        elif defense_rank <= 20:
+            difficulty = "NEUTRAL"
+            adjustment = 1.0
+        else:
+            difficulty = "SOFT"
+            adjustment = 1.10  # Increase by 10%
+        
+        result = {
+            "opponent": opponent_team,
+            "player_position": position,
+            "defense_rank_vs_position": defense_rank,
+            "matchup_difficulty": difficulty,
+            "projection_adjustment": adjustment,
+            "description": f"{opponent_team} ranks #{defense_rank} vs {position}s"
+        }
+        
+        # Add rim protection for centers
+        if position == "C":
+            rim_pct = self.RIM_PROTECTION.get(opponent_team, 65.0)
+            result["rim_protection_pct"] = rim_pct
+            result["rim_difficulty"] = "ELITE" if rim_pct < 62 else "GOOD" if rim_pct < 66 else "WEAK"
+        
+        return result
+
+
+class PaceService:
+    """
+    Feature 2: Pace and Possessions
+    
+    A game with 110 possessions has ~15% more stat opportunities
+    than a game with 95 possessions. Essential for totals and props.
+    """
+    
+    # Team pace ratings (possessions per 48 minutes, 2024-25 estimates)
+    TEAM_PACE = {
+        "Indiana Pacers": 103.5, "Atlanta Hawks": 102.2, "Milwaukee Bucks": 101.8,
+        "Sacramento Kings": 101.5, "New Orleans Pelicans": 100.8, "Utah Jazz": 100.5,
+        "Minnesota Timberwolves": 100.2, "Portland Trail Blazers": 100.0, 
+        "Golden State Warriors": 99.8, "Dallas Mavericks": 99.5,
+        "Los Angeles Lakers": 99.2, "Oklahoma City Thunder": 99.0,
+        "Denver Nuggets": 98.8, "Houston Rockets": 98.5, "Phoenix Suns": 98.2,
+        "Brooklyn Nets": 98.0, "Charlotte Hornets": 97.8, "San Antonio Spurs": 97.5,
+        "Boston Celtics": 97.2, "Toronto Raptors": 97.0, "Chicago Bulls": 96.8,
+        "Philadelphia 76ers": 96.5, "Washington Wizards": 96.2, "Detroit Pistons": 96.0,
+        "Los Angeles Clippers": 95.8, "New York Knicks": 95.5, "Miami Heat": 95.2,
+        "Memphis Grizzlies": 95.0, "Cleveland Cavaliers": 94.8, "Orlando Magic": 94.5,
+    }
+    
+    LEAGUE_AVG_PACE = 98.5
+    
+    def get_game_pace(self, home_team: str, away_team: str) -> dict:
+        """
+        Calculate projected game pace and stat multipliers.
+        
+        Returns:
+        - home_pace, away_pace, projected_pace
+        - pace_environment: "FAST", "AVERAGE", "SLOW"
+        - stat_multiplier: Adjust projections up/down based on pace
+        """
+        home_pace = self.TEAM_PACE.get(home_team, self.LEAGUE_AVG_PACE)
+        away_pace = self.TEAM_PACE.get(away_team, self.LEAGUE_AVG_PACE)
+        
+        # Projected game pace is average of both teams
+        projected_pace = (home_pace + away_pace) / 2
+        
+        # Calculate deviation from league average
+        pace_diff = projected_pace - self.LEAGUE_AVG_PACE
+        
+        # Determine environment
+        if projected_pace >= 101:
+            environment = "FAST"
+            stat_multiplier = 1.0 + (pace_diff / 100)  # +3% for pace 101.5
+        elif projected_pace >= 96:
+            environment = "AVERAGE"
+            stat_multiplier = 1.0
+        else:
+            environment = "SLOW"
+            stat_multiplier = 1.0 + (pace_diff / 100)  # -3% for pace 95.5
+        
+        # Extra possessions estimate
+        extra_possessions = (projected_pace - self.LEAGUE_AVG_PACE) * 0.5
+        
+        return {
+            "home_team": home_team,
+            "away_team": away_team,
+            "home_pace": home_pace,
+            "away_pace": away_pace,
+            "projected_pace": round(projected_pace, 1),
+            "league_avg": self.LEAGUE_AVG_PACE,
+            "pace_environment": environment,
+            "stat_multiplier": round(stat_multiplier, 3),
+            "extra_possessions": round(extra_possessions, 1),
+            "description": f"Projected {projected_pace:.1f} pace ({environment})"
+        }
+
+
+class UsageVacuumService:
+    """
+    Feature 3: Usage Vacuum (Injury Impact)
+    
+    When a star is out, their usage has to go somewhere.
+    This is the single biggest edge in player props.
+    """
+    
+    # Top usage players by team with their usage rates
+    TEAM_USAGE_LEADERS = {
+        "Boston Celtics": [("Jayson Tatum", 28.5), ("Jaylen Brown", 24.2), ("Derrick White", 16.8)],
+        "Cleveland Cavaliers": [("Donovan Mitchell", 29.0), ("Darius Garland", 25.5), ("Evan Mobley", 17.2)],
+        "Oklahoma City Thunder": [("Shai Gilgeous-Alexander", 31.5), ("Jalen Williams", 21.0), ("Chet Holmgren", 18.5)],
+        "New York Knicks": [("Jalen Brunson", 32.0), ("Karl-Anthony Towns", 22.5), ("Mikal Bridges", 18.0)],
+        "Denver Nuggets": [("Nikola Jokic", 27.0), ("Jamal Murray", 24.5), ("Michael Porter Jr.", 18.0)],
+        "Dallas Mavericks": [("Luka Doncic", 35.5), ("Kyrie Irving", 25.0), ("Klay Thompson", 16.5)],
+        "Milwaukee Bucks": [("Giannis Antetokounmpo", 33.0), ("Damian Lillard", 27.5), ("Khris Middleton", 20.0)],
+        "Phoenix Suns": [("Kevin Durant", 29.5), ("Devin Booker", 28.0), ("Bradley Beal", 22.0)],
+        "Los Angeles Lakers": [("Anthony Davis", 28.0), ("LeBron James", 26.5), ("Austin Reaves", 18.0)],
+        "Golden State Warriors": [("Stephen Curry", 30.0), ("Andrew Wiggins", 18.5), ("Draymond Green", 14.0)],
+        "Philadelphia 76ers": [("Tyrese Maxey", 28.5), ("Paul George", 24.0), ("Kelly Oubre Jr.", 17.0)],
+        "Miami Heat": [("Jimmy Butler", 26.5), ("Bam Adebayo", 22.0), ("Tyler Herro", 24.0)],
+        "Minnesota Timberwolves": [("Anthony Edwards", 31.0), ("Julius Randle", 24.5), ("Rudy Gobert", 14.0)],
+        "Sacramento Kings": [("De'Aaron Fox", 29.0), ("Domantas Sabonis", 21.5), ("DeMar DeRozan", 25.0)],
+        "Houston Rockets": [("Jalen Green", 26.0), ("Alperen Sengun", 22.0), ("Fred VanVleet", 20.0)],
+        "Memphis Grizzlies": [("Ja Morant", 32.0), ("Desmond Bane", 23.0), ("Jaren Jackson Jr.", 20.0)],
+        "Orlando Magic": [("Paolo Banchero", 27.5), ("Franz Wagner", 23.0), ("Jalen Suggs", 16.5)],
+        "Indiana Pacers": [("Tyrese Haliburton", 26.0), ("Pascal Siakam", 24.0), ("Myles Turner", 17.0)],
+        "Atlanta Hawks": [("Trae Young", 30.5), ("Jalen Johnson", 20.0), ("De'Andre Hunter", 17.5)],
+        "Toronto Raptors": [("Scottie Barnes", 25.0), ("RJ Barrett", 23.5), ("Immanuel Quickley", 21.0)],
+        "Chicago Bulls": [("Zach LaVine", 27.0), ("Coby White", 22.5), ("Nikola Vucevic", 20.0)],
+        "Detroit Pistons": [("Cade Cunningham", 29.0), ("Jaden Ivey", 22.0), ("Tobias Harris", 17.0)],
+        "Brooklyn Nets": [("Cam Thomas", 28.5), ("Dennis Schroder", 22.0), ("Nic Claxton", 15.0)],
+        "Charlotte Hornets": [("LaMelo Ball", 31.0), ("Brandon Miller", 21.0), ("Miles Bridges", 20.0)],
+        "Los Angeles Clippers": [("James Harden", 27.5), ("Norman Powell", 22.0), ("Ivica Zubac", 16.0)],
+        "Portland Trail Blazers": [("Anfernee Simons", 26.5), ("Scoot Henderson", 24.0), ("Jerami Grant", 21.0)],
+        "San Antonio Spurs": [("Victor Wembanyama", 26.0), ("Devin Vassell", 22.5), ("Keldon Johnson", 18.0)],
+        "Utah Jazz": [("Lauri Markkanen", 26.5), ("Jordan Clarkson", 25.0), ("Collin Sexton", 22.0)],
+        "Washington Wizards": [("Jordan Poole", 27.0), ("Kyle Kuzma", 24.5), ("Bilal Coulibaly", 16.0)],
+        "New Orleans Pelicans": [("Zion Williamson", 30.0), ("Brandon Ingram", 26.5), ("CJ McCollum", 22.0)],
+    }
+    
+    def calculate_usage_vacuum(self, team: str, injured_players: list) -> dict:
+        """
+        Calculate available usage when star players are out.
+        
+        Args:
+            team: Team name
+            injured_players: List of injured player names
+            
+        Returns:
+        - available_usage: Percentage of usage up for grabs
+        - beneficiaries: Players likely to see usage bump
+        - boost_estimates: How much each beneficiary gains
+        """
+        team_leaders = self.TEAM_USAGE_LEADERS.get(team, [])
+        if not team_leaders:
+            return {"error": f"No usage data for {team}"}
+        
+        injured_set = set(p.lower() for p in injured_players)
+        
+        total_available = 0
+        injured_details = []
+        healthy_players = []
+        
+        for player, usage in team_leaders:
+            if player.lower() in injured_set or any(inj in player.lower() for inj in injured_set):
+                total_available += usage
+                injured_details.append({"player": player, "usage": usage})
+            else:
+                healthy_players.append({"player": player, "usage": usage})
+        
+        # Calculate boost for healthy players
+        # Usage redistributes proportionally to remaining players
+        if healthy_players and total_available > 0:
+            remaining_usage = sum(p["usage"] for p in healthy_players)
+            for player in healthy_players:
+                share = player["usage"] / remaining_usage if remaining_usage > 0 else 0
+                boost = total_available * share * 0.7  # 70% of usage typically redistributes
+                player["projected_boost"] = round(boost, 1)
+                player["new_usage"] = round(player["usage"] + boost, 1)
+        
+        return {
+            "team": team,
+            "injured_players": injured_details,
+            "available_usage": round(total_available, 1),
+            "usage_vacuum_level": "HIGH" if total_available >= 25 else "MEDIUM" if total_available >= 15 else "LOW",
+            "healthy_beneficiaries": healthy_players[:3],
+            "description": f"{total_available:.1f}% usage available from injuries"
+        }
+
+
+class AdvancedFatigueService:
+    """
+    Feature 4: Advanced Fatigue (Travel & Rest)
+    
+    Travel is the silent killer in sports betting.
+    Time zones and back-to-backs matter more than people think.
+    """
+    
+    # City coordinates for distance calculation
+    CITY_COORDS = {
+        "Boston Celtics": (42.36, -71.06), "Brooklyn Nets": (40.68, -73.97),
+        "New York Knicks": (40.75, -73.99), "Philadelphia 76ers": (39.90, -75.17),
+        "Toronto Raptors": (43.64, -79.38), "Chicago Bulls": (41.88, -87.67),
+        "Cleveland Cavaliers": (41.50, -81.69), "Detroit Pistons": (42.34, -83.06),
+        "Indiana Pacers": (39.76, -86.16), "Milwaukee Bucks": (43.04, -87.92),
+        "Atlanta Hawks": (33.76, -84.40), "Charlotte Hornets": (35.23, -80.84),
+        "Miami Heat": (25.78, -80.19), "Orlando Magic": (28.54, -81.38),
+        "Washington Wizards": (38.90, -77.02), "Denver Nuggets": (39.75, -105.00),
+        "Minnesota Timberwolves": (44.98, -93.28), "Oklahoma City Thunder": (35.46, -97.52),
+        "Portland Trail Blazers": (45.53, -122.67), "Utah Jazz": (40.77, -111.90),
+        "Golden State Warriors": (37.77, -122.39), "Los Angeles Clippers": (34.04, -118.27),
+        "Los Angeles Lakers": (34.04, -118.27), "Phoenix Suns": (33.45, -112.07),
+        "Sacramento Kings": (38.58, -121.50), "Dallas Mavericks": (32.79, -96.81),
+        "Houston Rockets": (29.75, -95.36), "Memphis Grizzlies": (35.14, -90.05),
+        "New Orleans Pelicans": (29.95, -90.08), "San Antonio Spurs": (29.43, -98.44),
+    }
+    
+    # Time zones (hours from ET)
+    TIME_ZONES = {
+        "Boston Celtics": 0, "Brooklyn Nets": 0, "New York Knicks": 0,
+        "Philadelphia 76ers": 0, "Toronto Raptors": 0, "Washington Wizards": 0,
+        "Orlando Magic": 0, "Miami Heat": 0, "Atlanta Hawks": 0, "Charlotte Hornets": 0,
+        "Cleveland Cavaliers": 0, "Detroit Pistons": 0, "Indiana Pacers": 0,
+        "Chicago Bulls": -1, "Milwaukee Bucks": -1, "Minnesota Timberwolves": -1,
+        "Memphis Grizzlies": -1, "New Orleans Pelicans": -1, "Dallas Mavericks": -1,
+        "Houston Rockets": -1, "San Antonio Spurs": -1, "Oklahoma City Thunder": -1,
+        "Denver Nuggets": -2, "Utah Jazz": -2, "Phoenix Suns": -2,
+        "Portland Trail Blazers": -3, "Sacramento Kings": -3, "Golden State Warriors": -3,
+        "Los Angeles Lakers": -3, "Los Angeles Clippers": -3,
+    }
+    
+    def calculate_travel_fatigue(self, team: str, previous_location: str, 
+                                  days_rest: int, games_last_7: int) -> dict:
+        """
+        Calculate comprehensive fatigue metrics.
+        
+        Returns:
+        - miles_traveled: Distance from last game
+        - time_zones_crossed: Jet lag factor
+        - is_back_to_back: Boolean
+        - is_3_in_4: Boolean
+        - fatigue_score: 0-100 (higher = more fatigued)
+        - projection_adjustment: Multiply projections by this
+        """
+        import math
+        
+        # Calculate distance
+        team_coords = self.CITY_COORDS.get(team, (40, -90))
+        prev_coords = self.CITY_COORDS.get(previous_location, team_coords)
+        
+        # Haversine formula for distance
+        lat1, lon1 = math.radians(team_coords[0]), math.radians(team_coords[1])
+        lat2, lon2 = math.radians(prev_coords[0]), math.radians(prev_coords[1])
+        
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        miles = c * 3959  # Earth radius in miles
+        
+        # Time zones
+        team_tz = self.TIME_ZONES.get(team, 0)
+        prev_tz = self.TIME_ZONES.get(previous_location, 0)
+        tz_crossed = abs(team_tz - prev_tz)
+        
+        # Rest factors
+        is_b2b = days_rest == 0
+        is_3_in_4 = games_last_7 >= 3 and days_rest <= 1
+        
+        # Calculate fatigue score (0-100)
+        fatigue = 0
+        
+        # Distance factor (0-30 points)
+        if miles > 2000:
+            fatigue += 30
+        elif miles > 1000:
+            fatigue += 20
+        elif miles > 500:
+            fatigue += 10
+        
+        # Time zone factor (0-20 points)
+        fatigue += tz_crossed * 7
+        
+        # Rest factor (0-40 points)
+        if is_b2b:
+            fatigue += 35
+        elif days_rest == 1:
+            fatigue += 15
+        elif days_rest >= 4:
+            fatigue -= 10  # Well rested bonus
+        
+        # Schedule density (0-20 points)
+        if is_3_in_4:
+            fatigue += 20
+        elif games_last_7 >= 4:
+            fatigue += 15
+        
+        fatigue = max(0, min(100, fatigue))
+        
+        # Projection adjustment
+        if fatigue >= 70:
+            adjustment = 0.92  # Heavy fatigue
+        elif fatigue >= 50:
+            adjustment = 0.96  # Moderate fatigue
+        elif fatigue >= 30:
+            adjustment = 1.0   # Normal
+        else:
+            adjustment = 1.02  # Well rested
+        
+        # Direction matters: West-to-East is harder
+        direction = "EAST" if prev_tz < team_tz else "WEST" if prev_tz > team_tz else "SAME"
+        if direction == "EAST" and tz_crossed >= 2:
+            adjustment -= 0.02  # Extra penalty for flying east
+            fatigue += 5
+        
+        return {
+            "team": team,
+            "previous_location": previous_location,
+            "miles_traveled": round(miles),
+            "time_zones_crossed": tz_crossed,
+            "travel_direction": direction,
+            "days_rest": days_rest,
+            "games_last_7": games_last_7,
+            "is_back_to_back": is_b2b,
+            "is_3_in_4": is_3_in_4,
+            "fatigue_score": fatigue,
+            "fatigue_level": "HIGH" if fatigue >= 60 else "MEDIUM" if fatigue >= 35 else "LOW",
+            "projection_adjustment": round(adjustment, 3),
+            "description": f"Fatigue: {fatigue}/100 after {round(miles)} mile trip"
+        }
+
+
+class VegasBaselineService:
+    """
+    Feature 5: Market Baseline (Vegas Intelligence)
+    
+    The closing line is the sharpest data point in the world.
+    Use Vegas implied totals to anchor projections.
+    """
+    
+    def calculate_implied_totals(self, game_total: float, spread: float, 
+                                  home_team: str, away_team: str) -> dict:
+        """
+        Calculate team implied totals from Vegas lines.
+        
+        Formula: 
+        - Home Implied = (Total / 2) - (Spread / 2)
+        - Away Implied = (Total / 2) + (Spread / 2)
+        
+        Example: Total 220, Spread -6.5 home
+        - Home Implied = 110 - (-3.25) = 113.25
+        - Away Implied = 110 + (-3.25) = 106.75
+        """
+        half_total = game_total / 2
+        half_spread = spread / 2
+        
+        home_implied = half_total - half_spread
+        away_implied = half_total + half_spread
+        
+        # Determine game environment
+        if game_total >= 235:
+            game_environment = "SHOOTOUT"
+            total_adjustment = 1.05
+        elif game_total >= 225:
+            game_environment = "HIGH_SCORING"
+            total_adjustment = 1.02
+        elif game_total >= 215:
+            game_environment = "AVERAGE"
+            total_adjustment = 1.0
+        elif game_total >= 210:
+            game_environment = "DEFENSIVE"
+            total_adjustment = 0.98
+        else:
+            game_environment = "SLUGFEST"
+            total_adjustment = 0.95
+        
+        # Spread analysis for player props
+        if abs(spread) >= 12:
+            blowout_risk = "HIGH"
+            star_minutes_adj = 0.90  # Stars may rest in blowout
+        elif abs(spread) >= 8:
+            blowout_risk = "MEDIUM"
+            star_minutes_adj = 0.95
+        else:
+            blowout_risk = "LOW"
+            star_minutes_adj = 1.0
+        
+        # Determine favorite/underdog
+        if spread < 0:
+            favorite = home_team
+            underdog = away_team
+        else:
+            favorite = away_team
+            underdog = home_team
+        
+        return {
+            "game_total": game_total,
+            "spread": spread,
+            "home_team": home_team,
+            "away_team": away_team,
+            "home_implied_total": round(home_implied, 1),
+            "away_implied_total": round(away_implied, 1),
+            "favorite": favorite,
+            "underdog": underdog,
+            "spread_size": abs(spread),
+            "game_environment": game_environment,
+            "total_adjustment": total_adjustment,
+            "blowout_risk": blowout_risk,
+            "star_minutes_adjustment": star_minutes_adj,
+            "description": f"{game_environment} game: {home_team} {home_implied:.1f} pts, {away_team} {away_implied:.1f} pts"
+        }
+    
+    def get_player_baseline(self, player_team: str, opponent_team: str,
+                            game_total: float, spread: float,
+                            player_avg: float, is_home: bool) -> dict:
+        """
+        Get Vegas-anchored baseline for player projection.
+        
+        Uses implied total to scale player averages up/down.
+        """
+        # Get team implied total
+        if is_home:
+            half_total = game_total / 2
+            half_spread = spread / 2
+            team_implied = half_total - half_spread
+            expected_team_score = 112  # League average
+        else:
+            half_total = game_total / 2
+            half_spread = -spread / 2
+            team_implied = half_total - half_spread
+            expected_team_score = 110  # Slightly less for road teams
+        
+        # Scale player projection based on team implied vs average
+        scale_factor = team_implied / expected_team_score
+        
+        vegas_adjusted_projection = player_avg * scale_factor
+        
+        return {
+            "player_avg": player_avg,
+            "team_implied_total": round(team_implied, 1),
+            "scale_factor": round(scale_factor, 3),
+            "vegas_adjusted_projection": round(vegas_adjusted_projection, 1),
+            "adjustment_direction": "UP" if scale_factor > 1 else "DOWN" if scale_factor < 1 else "NEUTRAL"
+        }
+
+
+# Initialize services
+defensive_context = DefensiveContextService()
+pace_service = PaceService()
+usage_vacuum = UsageVacuumService()
+fatigue_service = AdvancedFatigueService()
+vegas_baseline = VegasBaselineService()
+
+
+# ============================================
 # LIVE ODDS SERVICE
 # ============================================
 
@@ -6932,6 +7472,140 @@ async def debug_odds(sport: str = "basketball_nba"):
     }
 
 
+@app.get("/debug/picks/{sport}")
+async def debug_picks(sport: str = "basketball_nba"):
+    """Debug endpoint to see WHY picks are or aren't generated"""
+    from datetime import date
+    
+    odds_data = odds_service.get_live_odds(sport)
+    
+    if not odds_data.get("success"):
+        return {"error": f"Odds API failed: {odds_data.get('error')}", "games": []}
+    
+    games_analysis = []
+    
+    for game in odds_data.get("games", [])[:5]:  # Analyze first 5 games
+        home = game.get("home_team", "")
+        away = game.get("away_team", "")
+        
+        # Get markets
+        bookmakers = game.get("bookmakers", {})
+        fd = bookmakers.get("fanduel", {}).get("markets", {})
+        dk = bookmakers.get("draftkings", {}).get("markets", {})
+        markets = fd if fd else dk
+        
+        if not markets:
+            games_analysis.append({
+                "game": f"{away} @ {home}",
+                "status": "SKIPPED",
+                "reason": "No market data from FanDuel or DraftKings"
+            })
+            continue
+        
+        # Get odds
+        spreads = markets.get("spreads", {})
+        totals = markets.get("totals", {})
+        h2h = markets.get("h2h", {})
+        
+        home_spread = spreads.get(home, {}).get("point", 0)
+        home_spread_odds = spreads.get(home, {}).get("price", -110)
+        total_line = totals.get("Over", {}).get("point", 0)
+        home_ml = h2h.get(home, {}).get("price", -110)
+        away_ml = h2h.get(away, {}).get("price", 100)
+        
+        # Count signals that would fire
+        signals_firing = []
+        
+        # Line value
+        if home_spread_odds > -105 or spreads.get(away, {}).get("price", -110) > -105:
+            signals_firing.append("line_value")
+        
+        # ML value (underdog in +150 to +300)
+        if 150 <= away_ml <= 300:
+            signals_firing.append(f"ml_value: {away} +{away_ml}")
+        elif 150 <= home_ml <= 300:
+            signals_firing.append(f"ml_value: {home} +{home_ml}")
+        
+        # Key numbers
+        if abs(home_spread) in [3, 7, 10]:
+            signals_firing.append(f"key_number: {home_spread}")
+        
+        # Esoteric signals (always fire based on team names)
+        today = date.today()
+        try:
+            esoteric_result = esoteric.analyze_matchup(home, away, today, total_line or 220)
+            gematria = esoteric_result.get("gematria", {})
+            if abs(gematria.get("difference", 0)) > 10:
+                signals_firing.append(f"gematria: diff={gematria.get('difference')}")
+            
+            numerology = esoteric_result.get("numerology", {})
+            if numerology.get("power_day"):
+                signals_firing.append("numerology_power_day")
+            elif numerology.get("upset_potential"):
+                signals_firing.append("numerology_upset")
+            
+            sacred = esoteric_result.get("sacred_geometry", {})
+            if sacred.get("tesla_energy"):
+                signals_firing.append("sacred_geometry_tesla")
+            
+            moon = esoteric_result.get("moon_phase", {})
+            if moon.get("full_moon"):
+                signals_firing.append("moon_full")
+            elif moon.get("new_moon"):
+                signals_firing.append("moon_new")
+        except Exception as e:
+            signals_firing.append(f"esoteric_error: {str(e)[:50]}")
+        
+        # Simulate confidence calculation
+        # Rough estimate: each signal adds ~10-15% to confidence
+        estimated_confidence = min(95, 35 + len(signals_firing) * 12)
+        
+        # EV calculation
+        model_prob = estimated_confidence / 100
+        implied_prob = abs(home_spread_odds) / (abs(home_spread_odds) + 100) if home_spread_odds < 0 else 100 / (home_spread_odds + 100)
+        edge = (model_prob - implied_prob) * 100
+        
+        # Would this pass thresholds?
+        would_pass = False
+        tier = "NO_BET"
+        if len(signals_firing) >= 4 and estimated_confidence >= 75 and edge >= 5:
+            would_pass = True
+            tier = "STRONG"
+        elif len(signals_firing) >= 3 and estimated_confidence >= 70 and edge >= 3:
+            would_pass = True
+            tier = "GOOD"
+        elif len(signals_firing) >= 2 and estimated_confidence >= 65 and edge >= 1.5:
+            would_pass = True
+            tier = "LEAN"
+        
+        games_analysis.append({
+            "game": f"{away} @ {home}",
+            "spread": home_spread,
+            "total": total_line,
+            "signals_firing": signals_firing,
+            "signals_count": len(signals_firing),
+            "estimated_confidence": estimated_confidence,
+            "model_probability": round(model_prob * 100, 1),
+            "implied_probability": round(implied_prob * 100, 1),
+            "edge": round(edge, 2),
+            "would_pass": would_pass,
+            "tier": tier,
+            "thresholds": {
+                "STRONG": "4+ signals, 75%+ conf, 5%+ edge",
+                "GOOD": "3+ signals, 70%+ conf, 3%+ edge",
+                "LEAN": "2+ signals, 65%+ conf, 1.5%+ edge"
+            }
+        })
+    
+    return {
+        "sport": sport,
+        "timestamp": datetime.now().isoformat(),
+        "total_games": len(odds_data.get("games", [])),
+        "games_analyzed": len(games_analysis),
+        "games": games_analysis
+    }
+
+
 @app.get("/debug/props/{sport}")
 async def debug_props(sport: str = "basketball_nba"):
     """Debug endpoint to see raw props API response"""
@@ -6950,6 +7624,160 @@ async def debug_props(sport: str = "basketball_nba"):
     }
 
 
+# ============================================
+# LSTM FEATURE ENDPOINTS (5 Critical Features)
+# ============================================
+
+@app.get("/features/defense/{opponent}")
+async def get_defensive_context(opponent: str, position: str = "SF"):
+    """
+    Feature 1: Get opponent's defensive context by position.
+    
+    Example: /features/defense/Boston Celtics?position=PG
+    """
+    result = defensive_context.get_matchup_context(position, opponent)
+    return {
+        "feature": "defensive_context",
+        "description": "Opponent defense rating vs position (1=best, 30=worst)",
+        "data": result
+    }
+
+
+@app.get("/features/pace/{home_team}/{away_team}")
+async def get_game_pace(home_team: str, away_team: str):
+    """
+    Feature 2: Get projected game pace and stat multipliers.
+    
+    Example: /features/pace/Indiana Pacers/Orlando Magic
+    """
+    result = pace_service.get_game_pace(home_team, away_team)
+    return {
+        "feature": "game_pace",
+        "description": "Projected possessions and stat multiplier",
+        "data": result
+    }
+
+
+@app.get("/features/usage/{team}")
+async def get_usage_vacuum(team: str, injured: str = ""):
+    """
+    Feature 3: Calculate usage vacuum from injuries.
+    
+    Example: /features/usage/Milwaukee Bucks?injured=Giannis Antetokounmpo,Damian Lillard
+    """
+    injured_list = [p.strip() for p in injured.split(",") if p.strip()]
+    result = usage_vacuum.calculate_usage_vacuum(team, injured_list)
+    return {
+        "feature": "usage_vacuum",
+        "description": "Available usage % from injuries and boost projections",
+        "data": result
+    }
+
+
+@app.get("/features/fatigue/{team}")
+async def get_fatigue_analysis(team: str, previous_location: str = "", 
+                               days_rest: int = 1, games_last_7: int = 3):
+    """
+    Feature 4: Calculate advanced fatigue metrics.
+    
+    Example: /features/fatigue/Los Angeles Lakers?previous_location=Boston Celtics&days_rest=0&games_last_7=4
+    """
+    if not previous_location:
+        previous_location = team  # Home game
+    result = fatigue_service.calculate_travel_fatigue(team, previous_location, days_rest, games_last_7)
+    return {
+        "feature": "advanced_fatigue",
+        "description": "Travel distance, time zones, and fatigue score",
+        "data": result
+    }
+
+
+@app.get("/features/vegas/{home_team}/{away_team}")
+async def get_vegas_baseline(home_team: str, away_team: str, 
+                             total: float = 225.0, spread: float = -5.5):
+    """
+    Feature 5: Get Vegas implied totals and baselines.
+    
+    Example: /features/vegas/Boston Celtics/Chicago Bulls?total=236.5&spread=-10.5
+    """
+    result = vegas_baseline.calculate_implied_totals(total, spread, home_team, away_team)
+    return {
+        "feature": "vegas_baseline",
+        "description": "Implied team totals and game environment",
+        "data": result
+    }
+
+
+@app.get("/features/full-context/{home_team}/{away_team}")
+async def get_full_game_context(home_team: str, away_team: str,
+                                total: float = 225.0, spread: float = -5.5,
+                                home_days_rest: int = 1, away_days_rest: int = 1,
+                                home_previous: str = "", away_previous: str = "",
+                                home_injured: str = "", away_injured: str = ""):
+    """
+    Get ALL 5 LSTM features for a game in one call.
+    
+    Example: /features/full-context/Boston Celtics/Chicago Bulls?total=236.5&spread=-10.5
+    """
+    # 1. Pace
+    pace = pace_service.get_game_pace(home_team, away_team)
+    
+    # 2. Vegas baseline
+    vegas = vegas_baseline.calculate_implied_totals(total, spread, home_team, away_team)
+    
+    # 3. Home team fatigue
+    home_prev = home_previous if home_previous else home_team
+    home_fatigue = fatigue_service.calculate_travel_fatigue(home_team, home_prev, home_days_rest, 3)
+    
+    # 4. Away team fatigue
+    away_prev = away_previous if away_previous else away_team
+    away_fatigue = fatigue_service.calculate_travel_fatigue(away_team, away_prev, away_days_rest, 3)
+    
+    # 5. Usage vacuum (if injuries provided)
+    home_usage = None
+    away_usage = None
+    if home_injured:
+        home_usage = usage_vacuum.calculate_usage_vacuum(home_team, [p.strip() for p in home_injured.split(",")])
+    if away_injured:
+        away_usage = usage_vacuum.calculate_usage_vacuum(away_team, [p.strip() for p in away_injured.split(",")])
+    
+    # Calculate combined projection adjustments
+    combined_home_adj = (
+        pace["stat_multiplier"] * 
+        vegas["total_adjustment"] * 
+        home_fatigue["projection_adjustment"]
+    )
+    combined_away_adj = (
+        pace["stat_multiplier"] * 
+        vegas["total_adjustment"] * 
+        away_fatigue["projection_adjustment"]
+    )
+    
+    return {
+        "game": f"{away_team} @ {home_team}",
+        "timestamp": datetime.now().isoformat(),
+        "features": {
+            "pace": pace,
+            "vegas_baseline": vegas,
+            "home_fatigue": home_fatigue,
+            "away_fatigue": away_fatigue,
+            "home_usage_vacuum": home_usage,
+            "away_usage_vacuum": away_usage
+        },
+        "combined_adjustments": {
+            "home_projection_multiplier": round(combined_home_adj, 3),
+            "away_projection_multiplier": round(combined_away_adj, 3)
+        },
+        "summary": {
+            "pace_environment": pace["pace_environment"],
+            "game_environment": vegas["game_environment"],
+            "blowout_risk": vegas["blowout_risk"],
+            "home_fatigue_level": home_fatigue["fatigue_level"],
+            "away_fatigue_level": away_fatigue["fatigue_level"]
+        }
+    }
+
+
 @app.get("/model-status")
 async def model_status():
     models = {
@@ -6962,6 +7790,13 @@ async def model_status():
             "rest_fatigue": "ready",
             "injury_impact": "ready",
             "edge_calculator": "ready (Kelly Criterion)"
+        },
+        "lstm_features": {
+            "defensive_context": "ready (Defense vs Position rankings)",
+            "pace_service": "ready (Possessions per game)",
+            "usage_vacuum": "ready (Injury impact on usage)",
+            "advanced_fatigue": "ready (Travel + Time zones)",
+            "vegas_baseline": "ready (Implied team totals)"
         },
         "esoteric_models": {
             "gematria": "ready",
@@ -6982,9 +7817,10 @@ async def model_status():
         "models": models,
         "total_signals": 17,
         "ai_models": 8,
+        "lstm_features": 5,
         "esoteric_models": 4,
         "external_signals": 5,
-        "version": "6.2.0"
+        "version": "6.3.0"
     }
 
 
