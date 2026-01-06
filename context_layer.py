@@ -891,12 +891,20 @@ class ContextGenerator:
             "position": position,
             "stat_type": stat_type,
             
+            # LSTM Features - ALIGNED WITH SPEC: [stat, mins, home_away, vacuum, def_rank, pace]
             "lstm_features": {
-                "defense_rank": defense_rank,
-                "defense_context": defense_context,
-                "pace": pace,
-                "pace_context": pace_context,
+                # Spec-aligned fields (for LSTM input)
+                "stat": player_avg,          # Current game uses avg as baseline (actual filled from history)
+                "player_avg": player_avg,    # For normalization
+                "mins": 32.0,                # Expected minutes (filled from history for past games)
+                "home_away": 1 if home_team and home_team.upper() == player_team.upper() else 0,
                 "vacuum": vacuum,
+                "def_rank": defense_rank,
+                "pace": pace,
+                
+                # Additional context (for debugging/display)
+                "defense_context": defense_context,
+                "pace_context": pace_context,
                 "vacuum_context": vacuum_context,
                 "total": game_total,
                 "spread": game_spread,
