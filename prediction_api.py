@@ -1,6 +1,6 @@
 """
 FastAPI endpoints for AI sports betting predictions
-v7.2.0 - Multi-Sport Context Layer + Officials + LSTM Brain + Auto-Grader + Live Data (NBA, NFL, MLB, NHL, NCAAB)
+v7.3.0 - Multi-Sport Context Layer + Officials + LSTM Brain + Auto-Grader + Live Data (NBA, NFL, MLB, NHL, NCAAB)
 """
 
 import os
@@ -24,6 +24,7 @@ from context_layer import (
 from lstm_brain import LSTMBrain, MultiSportLSTMBrain, integrate_lstm_prediction
 from auto_grader import AutoGrader, ContextFeatureCalculator, get_grader
 from live_data_router import LiveDataRouter, live_data_router
+from lstm_training_pipeline import training_router, LSTMTrainingPipeline
 from loguru import logger
 import uvicorn
 
@@ -36,7 +37,7 @@ auto_grader = get_grader()
 app = FastAPI(
     title="AI Sports Betting API",
     description="Multi-Sport AI Predictions with Context Layer + Officials + LSTM Brain + Auto-Grader + Live Data (NBA, NFL, MLB, NHL, NCAAB)",
-    version="7.2.0"
+    version="7.3.0"
 )
 
 app.add_middleware(
@@ -49,6 +50,9 @@ app.add_middleware(
 
 # Include Live Data Router
 app.include_router(live_data_router)
+
+# Include Training Router
+app.include_router(training_router)
 
 # ============================================
 # ESOTERIC MODELS (The "Magic")
@@ -743,7 +747,7 @@ async def root():
     return {
         "status": "online",
         "message": "Multi-Sport AI Betting API with Context Layer + Officials + LSTM Brain + Auto-Grader + Esoteric Edge + Live Data",
-        "version": "7.2.0",
+        "version": "7.3.0",
         "supported_sports": SUPPORTED_SPORTS,
         "models": {
             "ai": ["Ensemble", "LSTM Brain", "Monte Carlo", "Line Movement", "Rest/Fatigue", "Injury Impact", "Matchup", "Edge Calculator"],
@@ -752,6 +756,7 @@ async def root():
         "endpoints": {
             "predictions": ["/predict-context", "/predict-batch", "/predict-live"],
             "live_data": ["/live/games/{sport}", "/live/props/{sport}", "/live/injuries/{sport}", "/live/player/{name}", "/live/slate/{sport}"],
+            "training": ["/training/train/{sport}", "/training/train-all", "/training/evaluate/{sport}", "/training/status"],
             "brain": ["/brain/predict", "/brain/status"],
             "grader": ["/grader/weights", "/grader/grade", "/grader/audit", "/grader/bias"],
             "esoteric": ["/esoteric/analyze", "/esoteric/gematria", "/esoteric/numerology", "/esoteric/astrology"],
@@ -1990,20 +1995,21 @@ async def health_check():
     return {
         "status": "healthy", 
         "timestamp": datetime.now().isoformat(), 
-        "version": "7.2.0", 
+        "version": "7.3.0", 
         "context_layer": "active", 
         "officials_layer": "active",
         "lstm_brain": "active",
         "auto_grader": "active",
         "esoteric_engine": "active",
         "live_data_router": "active",
+        "lstm_training": "active",
         "supported_sports": SUPPORTED_SPORTS
     }
 
 @app.get("/model-status")
 async def model_status():
     return {
-        "version": "7.2.0",
+        "version": "7.3.0",
         "supported_sports": SUPPORTED_SPORTS,
         "context_layer": {
             "usage_vacuum": "ready",
@@ -2037,10 +2043,22 @@ async def model_status():
             "sacred_geometry": "active",
             "astrology": "active",
             "harmonic_convergence": "active"
+        },
+        "lstm_training": {
+            "status": "ready",
+            "synthetic_data": "available",
+            "endpoints": ["/training/train/{sport}", "/training/train-all", "/training/evaluate/{sport}", "/training/status"],
+            "supported_stats": {
+                "NBA": ["points", "rebounds", "assists"],
+                "NFL": ["passing_yards", "rushing_yards", "receiving_yards"],
+                "MLB": ["hits", "total_bases", "strikeouts"],
+                "NHL": ["points", "shots"],
+                "NCAAB": ["points", "rebounds"]
+            }
         }
     }
 
 if __name__ == "__main__":
-    logger.info("Starting Multi-Sport AI Betting API v7.2.0...")
+    logger.info("Starting Multi-Sport AI Betting API v7.3.0...")
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
