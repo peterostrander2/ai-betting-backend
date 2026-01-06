@@ -1,6 +1,6 @@
 """
 FastAPI endpoints for AI sports betting predictions
-v6.8.0 - Multi-Sport Context Layer + Officials (NBA, NFL, MLB, NHL, NCAAB)
+v6.9.0 - Multi-Sport Context Layer + Officials + LSTM Brain (NBA, NFL, MLB, NHL, NCAAB)
 """
 
 from fastapi import FastAPI, HTTPException
@@ -20,13 +20,17 @@ from context_layer import (
     SPORT_STAT_TYPES,
     LEAGUE_AVERAGES
 )
+from lstm_brain import LSTMBrain, MultiSportLSTMBrain, integrate_lstm_prediction
 from loguru import logger
 import uvicorn
 
+# Initialize LSTM Brain (sport-specific models)
+lstm_brain_manager = MultiSportLSTMBrain()
+
 app = FastAPI(
     title="AI Sports Betting API",
-    description="Multi-Sport AI Predictions with Context Layer + Officials (NBA, NFL, MLB, NHL, NCAAB)",
-    version="6.8.0"
+    description="Multi-Sport AI Predictions with Context Layer + Officials + LSTM Brain (NBA, NFL, MLB, NHL, NCAAB)",
+    version="6.9.0"
 )
 
 app.add_middleware(
@@ -51,6 +55,15 @@ class InjuryInput(BaseModel):
     time_on_ice: Optional[float] = None
     plate_appearances: Optional[float] = None
 
+class LSTMHistoryInput(BaseModel):
+    """Historical game features for LSTM sequence (single game)."""
+    defense_rank: float = Field(16, description="Opponent defense rank (1-32)")
+    defense_context: float = Field(0.0, description="Defense context adjustment (-1 to 1)")
+    pace: float = Field(100.0, description="Game pace factor")
+    pace_context: float = Field(0.0, description="Pace context adjustment (-1 to 1)")
+    vacuum: float = Field(0.0, description="Usage vacuum factor (0 to 1)")
+    vacuum_context: float = Field(0.0, description="Vacuum context adjustment (-1 to 1)")
+
 class ContextRequest(BaseModel):
     sport: str
     player_name: str
@@ -69,6 +82,15 @@ class ContextRequest(BaseModel):
     lead_official: Optional[str] = None
     official_2: Optional[str] = None
     official_3: Optional[str] = None
+    # LSTM Brain historical context (up to 14 past games)
+    historical_features: Optional[List[LSTMHistoryInput]] = Field(
+        default=None,
+        description="Historical game features for LSTM sequence (max 14 games)"
+    )
+    use_lstm_brain: Optional[bool] = Field(
+        default=True,
+        description="Enable LSTM neural prediction adjustment"
+    )
 
 class BatchContextRequest(BaseModel):
     predictions: List[ContextRequest]
@@ -111,11 +133,12 @@ class OfficialsRequest(BaseModel):
 async def root():
     return {
         "status": "online",
-        "message": "Multi-Sport AI Betting API with Context Layer + Officials",
-        "version": "6.8.0",
+        "message": "Multi-Sport AI Betting API with Context Layer + Officials + LSTM Brain",
+        "version": "6.9.0",
         "supported_sports": SUPPORTED_SPORTS,
         "endpoints": {
             "predictions": ["/predict-context", "/predict-batch"],
+            "brain": ["/brain/predict", "/brain/status"],
             "sports_info": ["/sports", "/sports/{sport}/positions", "/sports/{sport}/stat-types"],
             "defense": ["/defense-rank", "/defense-rankings/{sport}/{position}"],
             "pace": ["/game-pace", "/pace-rankings/{sport}"],
@@ -173,6 +196,51 @@ async def predict_with_context(request: ContextRequest):
         waterfall = context["waterfall"]
         final_pred = waterfall["finalPrediction"]
         
+        # =====================
+        # LSTM BRAIN PREDICTION
+        # =====================
+        lstm_prediction = None
+        if request.use_lstm_brain:
+            try:
+                # Convert historical features if provided
+                historical_features = None
+                if request.historical_features:
+                    historical_features = [h.dict() for h in request.historical_features]
+                
+                # Get LSTM prediction from sport-specific brain
+                lstm_prediction = lstm_brain_manager.predict(
+                    sport=sport,
+                    current_features=context["lstm_features"],
+                    historical_features=historical_features,
+                    scale_factor=5.0  # Adjust prediction by up to ±5 points
+                )
+                
+                # Apply LSTM adjustment to waterfall
+                lstm_adjustment = lstm_prediction.get("adjustment", 0)
+                if abs(lstm_adjustment) > 0.1:  # Only apply significant adjustments
+                    waterfall["adjustments"].append({
+                        "factor": "lstm_brain",
+                        "value": round(lstm_adjustment, 2),
+                        "reason": f"Neural pattern analysis ({lstm_prediction.get('method', 'unknown')})"
+                    })
+                    final_pred += lstm_adjustment
+                    waterfall["finalPrediction"] = round(final_pred, 1)
+                    
+                    # Add brain badge if high confidence
+                    if lstm_prediction.get("confidence", 0) >= 50:
+                        context["badges"].append({
+                            "icon": "🧠", 
+                            "label": "brain", 
+                            "active": True,
+                            "confidence": lstm_prediction.get("confidence")
+                        })
+                
+                logger.info(f"[{sport}] LSTM Brain: adjustment={lstm_adjustment:.2f}, confidence={lstm_prediction.get('confidence', 0):.1f}%")
+                
+            except Exception as lstm_error:
+                logger.warning(f"LSTM Brain error (non-critical): {str(lstm_error)}")
+                lstm_prediction = {"error": str(lstm_error), "method": "skipped"}
+        
         # Add officials adjustment if provided
         officials_analysis = None
         if request.lead_official:
@@ -205,7 +273,9 @@ async def predict_with_context(request: ContextRequest):
                 "final": waterfall["finalPrediction"], "line": request.line, "recommendation": None,
                 "confidence": waterfall["confidence"], "is_smash_spot": waterfall["isSmashSpot"]
             },
-            "lstm_features": context["lstm_features"], "waterfall": waterfall,
+            "lstm_features": context["lstm_features"], 
+            "lstm_brain": lstm_prediction,  # NEW: Include LSTM brain output
+            "waterfall": waterfall,
             "badges": context["badges"], "raw_context": context["raw_context"]
         }
         
@@ -528,14 +598,80 @@ async def calculate_betting_edge(request: EdgeCalculationRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ============================================
+# LSTM BRAIN ENDPOINTS
+# ============================================
+
+class LSTMPredictRequest(BaseModel):
+    """Direct LSTM Brain prediction request."""
+    sport: str
+    current_features: LSTMHistoryInput
+    historical_features: Optional[List[LSTMHistoryInput]] = None
+    scale_factor: Optional[float] = 5.0
+
+@app.post("/brain/predict")
+async def lstm_brain_predict(request: LSTMPredictRequest):
+    """
+    Direct LSTM Brain prediction.
+    
+    Runs the (15, 6) LSTM neural network on provided features.
+    """
+    try:
+        sport = request.sport.upper()
+        if sport not in SUPPORTED_SPORTS:
+            raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+        
+        historical = None
+        if request.historical_features:
+            historical = [h.dict() for h in request.historical_features]
+        
+        result = lstm_brain_manager.predict(
+            sport=sport,
+            current_features=request.current_features.dict(),
+            historical_features=historical,
+            scale_factor=request.scale_factor or 5.0
+        )
+        
+        return {
+            "status": "success",
+            "sport": sport,
+            "brain_output": result
+        }
+    except Exception as e:
+        logger.error(f"LSTM Brain error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/brain/status")
+async def lstm_brain_status():
+    """Get LSTM Brain status for all sports."""
+    return {
+        "status": "success",
+        "brain_type": "Multi-Sport LSTM",
+        "input_shape": "(15, 6)",
+        "architecture": "Bidirectional LSTM (64) -> LSTM (32) -> Dense (32) -> Dense (16) -> Output",
+        "sports": lstm_brain_manager.get_status()
+    }
+
+# ============================================
+# SYSTEM STATUS
+# ============================================
+
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat(), "version": "6.8.0", "context_layer": "active", "officials_layer": "active", "supported_sports": SUPPORTED_SPORTS}
+    return {
+        "status": "healthy", 
+        "timestamp": datetime.now().isoformat(), 
+        "version": "6.9.0", 
+        "context_layer": "active", 
+        "officials_layer": "active",
+        "lstm_brain": "active",
+        "supported_sports": SUPPORTED_SPORTS
+    }
 
 @app.get("/model-status")
 async def model_status():
     return {
-        "version": "6.8.0",
+        "version": "6.9.0",
         "supported_sports": SUPPORTED_SPORTS,
         "context_layer": {
             "usage_vacuum": "ready",
@@ -550,9 +686,10 @@ async def model_status():
             "mlb_officials": "20+ umps",
             "nhl_officials": "20+ refs",
             "ncaab_officials": "20+ refs"
-        }
+        },
+        "lstm_brain": lstm_brain_manager.get_status()
     }
 
 if __name__ == "__main__":
-    logger.info("Starting Multi-Sport AI Betting API v6.8.0...")
+    logger.info("Starting Multi-Sport AI Betting API v6.9.0...")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
