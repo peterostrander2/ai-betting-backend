@@ -1,6 +1,6 @@
 """
 FastAPI endpoints for AI sports betting predictions
-v6.9.0 - Multi-Sport Context Layer + Officials + LSTM Brain (NBA, NFL, MLB, NHL, NCAAB)
+v7.0.0 - Multi-Sport Context Layer + Officials + LSTM Brain + Auto-Grader (NBA, NFL, MLB, NHL, NCAAB)
 """
 
 from fastapi import FastAPI, HTTPException
@@ -21,16 +21,20 @@ from context_layer import (
     LEAGUE_AVERAGES
 )
 from lstm_brain import LSTMBrain, MultiSportLSTMBrain, integrate_lstm_prediction
+from auto_grader import AutoGrader, ContextFeatureCalculator, get_grader
 from loguru import logger
 import uvicorn
 
 # Initialize LSTM Brain (sport-specific models)
 lstm_brain_manager = MultiSportLSTMBrain()
 
+# Initialize Auto-Grader (feedback loop)
+auto_grader = get_grader()
+
 app = FastAPI(
     title="AI Sports Betting API",
-    description="Multi-Sport AI Predictions with Context Layer + Officials + LSTM Brain (NBA, NFL, MLB, NHL, NCAAB)",
-    version="6.9.0"
+    description="Multi-Sport AI Predictions with Context Layer + Officials + LSTM Brain + Auto-Grader (NBA, NFL, MLB, NHL, NCAAB)",
+    version="7.0.0"
 )
 
 app.add_middleware(
@@ -133,12 +137,13 @@ class OfficialsRequest(BaseModel):
 async def root():
     return {
         "status": "online",
-        "message": "Multi-Sport AI Betting API with Context Layer + Officials + LSTM Brain",
-        "version": "6.9.0",
+        "message": "Multi-Sport AI Betting API with Context Layer + Officials + LSTM Brain + Auto-Grader",
+        "version": "7.0.0",
         "supported_sports": SUPPORTED_SPORTS,
         "endpoints": {
             "predictions": ["/predict-context", "/predict-batch"],
             "brain": ["/brain/predict", "/brain/status"],
+            "grader": ["/grader/weights", "/grader/grade", "/grader/audit", "/grader/bias"],
             "sports_info": ["/sports", "/sports/{sport}/positions", "/sports/{sport}/stat-types"],
             "defense": ["/defense-rank", "/defense-rankings/{sport}/{position}"],
             "pace": ["/game-pace", "/pace-rankings/{sport}"],
@@ -276,8 +281,25 @@ async def predict_with_context(request: ContextRequest):
             "lstm_features": context["lstm_features"], 
             "lstm_brain": lstm_prediction,  # NEW: Include LSTM brain output
             "waterfall": waterfall,
-            "badges": context["badges"], "raw_context": context["raw_context"]
+            "badges": context["badges"], "raw_context": context["raw_context"],
+            "dynamic_weights": auto_grader.get_weights(sport, request.stat_type or "points")  # Dynamic weights from grader
         }
+        
+        # Log prediction for grading (feedback loop)
+        adjustments_for_log = {}
+        for adj in waterfall.get("adjustments", []):
+            factor = adj.get("factor", "unknown")
+            adjustments_for_log[factor] = adj.get("value", 0)
+        
+        prediction_id = auto_grader.log_prediction(
+            sport=sport,
+            player_name=request.player_name,
+            stat_type=request.stat_type or "points",
+            predicted_value=waterfall["finalPrediction"],
+            line=request.line,
+            adjustments=adjustments_for_log
+        )
+        response["prediction_id"] = prediction_id  # Return for grading later
         
         # Add officials analysis if available
         if officials_analysis and officials_analysis.get("has_data"):
@@ -653,6 +675,142 @@ async def lstm_brain_status():
     }
 
 # ============================================
+# AUTO-GRADER ENDPOINTS (FEEDBACK LOOP)
+# ============================================
+
+class GradeRequest(BaseModel):
+    """Grade a prediction with actual result."""
+    prediction_id: str
+    actual_value: float
+
+class BulkGradeRequest(BaseModel):
+    """Bulk grade predictions."""
+    sport: str
+    results: List[Dict]  # [{"player_name": str, "stat_type": str, "actual": float}]
+
+class BiasRequest(BaseModel):
+    """Request bias analysis."""
+    sport: str
+    stat_type: Optional[str] = "all"
+    days_back: Optional[int] = 1
+
+class AuditRequest(BaseModel):
+    """Request daily audit."""
+    days_back: Optional[int] = 1
+
+@app.get("/grader/weights")
+async def get_grader_weights():
+    """
+    Get current dynamic weights for all sports.
+    
+    These weights are adjusted automatically by the feedback loop.
+    """
+    return {
+        "status": "success",
+        "weights": auto_grader.get_all_weights(),
+        "description": "Weights are dynamically adjusted based on prediction accuracy"
+    }
+
+@app.get("/grader/weights/{sport}")
+async def get_sport_weights(sport: str, stat_type: str = "points"):
+    """Get weights for a specific sport and stat type."""
+    sport = sport.upper()
+    if sport not in SUPPORTED_SPORTS:
+        raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+    
+    return {
+        "status": "success",
+        "sport": sport,
+        "stat_type": stat_type,
+        "weights": auto_grader.get_weights(sport, stat_type)
+    }
+
+@app.post("/grader/grade")
+async def grade_prediction(request: GradeRequest):
+    """
+    Grade a single prediction with actual result.
+    
+    Call this after game completes with actual player stats.
+    """
+    result = auto_grader.grade_prediction(request.prediction_id, request.actual_value)
+    
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Prediction not found: {request.prediction_id}")
+    
+    return {
+        "status": "success",
+        "grading": result
+    }
+
+@app.post("/grader/grade-bulk")
+async def grade_bulk_predictions(request: BulkGradeRequest):
+    """
+    Grade multiple predictions at once.
+    
+    Useful for end-of-day grading of all predictions.
+    """
+    sport = request.sport.upper()
+    if sport not in SUPPORTED_SPORTS:
+        raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+    
+    result = auto_grader.bulk_grade(sport, request.results)
+    
+    return {
+        "status": "success",
+        "sport": sport,
+        "grading": result
+    }
+
+@app.post("/grader/bias")
+async def get_bias_analysis(request: BiasRequest):
+    """
+    Get bias analysis for predictions.
+    
+    Shows which factors are over/under-predicting.
+    """
+    sport = request.sport.upper()
+    if sport not in SUPPORTED_SPORTS:
+        raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+    
+    result = auto_grader.calculate_bias(sport, request.stat_type or "all", request.days_back or 1)
+    
+    return {
+        "status": "success",
+        "bias_analysis": result
+    }
+
+@app.post("/grader/audit")
+async def run_daily_audit(request: AuditRequest):
+    """
+    Run daily audit to adjust weights.
+    
+    This is the core feedback loop - call daily after grading predictions.
+    It analyzes yesterday's bias and adjusts weights to improve accuracy.
+    """
+    result = auto_grader.run_daily_audit(request.days_back or 1)
+    
+    return {
+        "status": "success",
+        "audit": result
+    }
+
+@app.post("/grader/adjust-weights")
+async def adjust_weights(sport: str, stat_type: str = "points", days_back: int = 1, apply: bool = True):
+    """
+    Manually trigger weight adjustment for specific sport/stat.
+    """
+    sport = sport.upper()
+    if sport not in SUPPORTED_SPORTS:
+        raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+    
+    result = auto_grader.adjust_weights(sport, stat_type, days_back, apply_changes=apply)
+    
+    return {
+        "status": "success",
+        "adjustment": result
+    }
+
+# ============================================
 # SYSTEM STATUS
 # ============================================
 
@@ -661,17 +819,18 @@ async def health_check():
     return {
         "status": "healthy", 
         "timestamp": datetime.now().isoformat(), 
-        "version": "6.9.0", 
+        "version": "7.0.0", 
         "context_layer": "active", 
         "officials_layer": "active",
         "lstm_brain": "active",
+        "auto_grader": "active",
         "supported_sports": SUPPORTED_SPORTS
     }
 
 @app.get("/model-status")
 async def model_status():
     return {
-        "version": "6.9.0",
+        "version": "7.0.0",
         "supported_sports": SUPPORTED_SPORTS,
         "context_layer": {
             "usage_vacuum": "ready",
@@ -687,9 +846,14 @@ async def model_status():
             "nhl_officials": "20+ refs",
             "ncaab_officials": "20+ refs"
         },
-        "lstm_brain": lstm_brain_manager.get_status()
+        "lstm_brain": lstm_brain_manager.get_status(),
+        "auto_grader": {
+            "status": "active",
+            "weights_per_sport": len(auto_grader.weights),
+            "predictions_logged": sum(len(p) for p in auto_grader.predictions.values())
+        }
     }
 
 if __name__ == "__main__":
-    logger.info("Starting Multi-Sport AI Betting API v6.9.0...")
+    logger.info("Starting Multi-Sport AI Betting API v7.0.0...")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
