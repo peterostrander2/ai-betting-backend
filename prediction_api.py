@@ -191,6 +191,38 @@ async def predict_with_context(request: ContextRequest):
         logger.info(f"[{sport}] Context prediction: {request.player_name} vs {request.opponent_team}")
         injuries = [inj.dict() for inj in request.injuries]
         
+        # =====================
+        # CONTEXT LAYER INJECTION (Nano Banana Upgrade)
+        # Calculate context features BEFORE AI models
+        # =====================
+        game_stats = {
+            "home_pace": LEAGUE_AVERAGES.get(sport, {}).get("pace", 100.0),
+            "away_pace": LEAGUE_AVERAGES.get(sport, {}).get("pace", 100.0),
+            "total": request.game_total or 0.0,
+            "spread": request.game_spread or 0.0
+        }
+        
+        # Calculate context for player's team
+        player_context = ContextFeatureCalculator.calculate_context_features(
+            sport=sport,
+            team_id=request.player_team,
+            injuries=injuries,
+            game_stats=game_stats
+        )
+        
+        # Calculate context for opponent team (empty injuries = no vacuum boost for them)
+        opponent_context = ContextFeatureCalculator.calculate_context_features(
+            sport=sport,
+            team_id=request.opponent_team,
+            injuries=[],  # We don't have opponent injuries in this request
+            game_stats=game_stats
+        )
+        
+        logger.info(f"[{sport}] Context Layer: vacuum={player_context['vacuum']}, pace_vector={player_context['pace_vector']}, smash={player_context['is_smash_spot']}")
+        
+        # =====================
+        # GENERATE FULL CONTEXT
+        # =====================
         context = ContextGenerator.generate_context(
             sport=sport, player_name=request.player_name, player_team=request.player_team,
             opponent_team=request.opponent_team, position=request.position, player_avg=request.player_avg,
@@ -201,8 +233,14 @@ async def predict_with_context(request: ContextRequest):
         waterfall = context["waterfall"]
         final_pred = waterfall["finalPrediction"]
         
+        # Inject calculated context into lstm_features for LSTM brain
+        context["lstm_features"]["calculated_vacuum"] = player_context["vacuum"]
+        context["lstm_features"]["calculated_pace_vector"] = player_context["pace_vector"]
+        context["lstm_features"]["calculated_smash_spot"] = player_context["is_smash_spot"]
+        context["lstm_features"]["opponent_vacuum"] = opponent_context["vacuum"]
+        
         # =====================
-        # LSTM BRAIN PREDICTION
+        # LSTM BRAIN PREDICTION (Now with injected context)
         # =====================
         lstm_prediction = None
         if request.use_lstm_brain:
@@ -212,7 +250,7 @@ async def predict_with_context(request: ContextRequest):
                 if request.historical_features:
                     historical_features = [h.dict() for h in request.historical_features]
                 
-                # Get LSTM prediction from sport-specific brain
+                # Get LSTM prediction from sport-specific brain with calculated context
                 lstm_prediction = lstm_brain_manager.predict(
                     sport=sport,
                     current_features=context["lstm_features"],
@@ -278,11 +316,15 @@ async def predict_with_context(request: ContextRequest):
                 "final": waterfall["finalPrediction"], "line": request.line, "recommendation": None,
                 "confidence": waterfall["confidence"], "is_smash_spot": waterfall["isSmashSpot"]
             },
+            "calculated_context": {  # NEW: Nano Banana context injection
+                "player_team": player_context,
+                "opponent_team": opponent_context
+            },
             "lstm_features": context["lstm_features"], 
-            "lstm_brain": lstm_prediction,  # NEW: Include LSTM brain output
+            "lstm_brain": lstm_prediction,
             "waterfall": waterfall,
             "badges": context["badges"], "raw_context": context["raw_context"],
-            "dynamic_weights": auto_grader.get_weights(sport, request.stat_type or "points")  # Dynamic weights from grader
+            "dynamic_weights": auto_grader.get_weights(sport, request.stat_type or "points")
         }
         
         # Log prediction for grading (feedback loop)
