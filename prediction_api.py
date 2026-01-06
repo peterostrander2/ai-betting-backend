@@ -1,6 +1,6 @@
 """
 FastAPI endpoints for AI sports betting predictions
-v7.3.1 - Multi-Sport Context Layer + Officials + LSTM Brain + Auto-Grader + Live Data (NBA, NFL, MLB, NHL, NCAAB)
+v7.4.0 - Multi-Sport Context Layer + Officials + LSTM Brain + Auto-Grader + Live Data (NBA, NFL, MLB, NHL, NCAAB)
 """
 
 import os
@@ -25,6 +25,7 @@ from lstm_brain import LSTMBrain, MultiSportLSTMBrain, integrate_lstm_prediction
 from auto_grader import AutoGrader, ContextFeatureCalculator, get_grader
 from live_data_router import LiveDataRouter, live_data_router
 from lstm_training_pipeline import training_router, LSTMTrainingPipeline
+from daily_scheduler import scheduler_router, init_scheduler, get_scheduler, DailyScheduler
 from loguru import logger
 import uvicorn
 import threading
@@ -41,7 +42,7 @@ training_pipeline = LSTMTrainingPipeline()
 app = FastAPI(
     title="AI Sports Betting API",
     description="Multi-Sport AI Predictions with Context Layer + Officials + LSTM Brain + Auto-Grader + Live Data (NBA, NFL, MLB, NHL, NCAAB)",
-    version="7.3.1"
+    version="7.4.0"
 )
 
 app.add_middleware(
@@ -57,6 +58,9 @@ app.include_router(live_data_router)
 
 # Include Training Router
 app.include_router(training_router)
+
+# Include Scheduler Router
+app.include_router(scheduler_router)
 
 
 # ============================================
@@ -100,14 +104,27 @@ def auto_train_models():
 
 @app.on_event("startup")
 async def startup_event():
-    """Run auto-training in background on startup."""
-    logger.info("🚀 Starting Bookie-o-em v7.3.1...")
+    """Run auto-training and start scheduler on startup."""
+    logger.info("🚀 Starting Bookie-o-em v7.4.0...")
     
     # Run training in background thread (non-blocking)
     training_thread = threading.Thread(target=auto_train_models, daemon=True)
     training_thread.start()
-    
     logger.info("🧠 LSTM auto-training started in background...")
+    
+    # Initialize and start daily scheduler
+    scheduler = init_scheduler(auto_grader=auto_grader, training_pipeline=training_pipeline)
+    scheduler.start()
+    logger.info("⏰ Daily scheduler started (audit at 6 AM)")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop scheduler on shutdown."""
+    scheduler = get_scheduler()
+    if scheduler:
+        scheduler.stop()
+    logger.info("👋 Bookie-o-em shutting down...")
 
 
 # ============================================
@@ -803,7 +820,7 @@ async def root():
     return {
         "status": "online",
         "message": "Multi-Sport AI Betting API with Context Layer + Officials + LSTM Brain + Auto-Grader + Esoteric Edge + Live Data",
-        "version": "7.3.1",
+        "version": "7.4.0",
         "supported_sports": SUPPORTED_SPORTS,
         "models": {
             "ai": ["Ensemble", "LSTM Brain", "Monte Carlo", "Line Movement", "Rest/Fatigue", "Injury Impact", "Matchup", "Edge Calculator"],
@@ -813,6 +830,7 @@ async def root():
             "predictions": ["/predict-context", "/predict-batch", "/predict-live"],
             "live_data": ["/live/games/{sport}", "/live/props/{sport}", "/live/injuries/{sport}", "/live/player/{name}", "/live/slate/{sport}"],
             "training": ["/training/train/{sport}", "/training/train-all", "/training/evaluate/{sport}", "/training/status"],
+            "scheduler": ["/scheduler/status", "/scheduler/start", "/scheduler/stop", "/scheduler/run-audit"],
             "brain": ["/brain/predict", "/brain/status"],
             "grader": ["/grader/weights", "/grader/grade", "/grader/audit", "/grader/bias"],
             "esoteric": ["/esoteric/analyze", "/esoteric/gematria", "/esoteric/numerology", "/esoteric/astrology"],
@@ -2048,10 +2066,11 @@ async def astrology_analysis(game_date: str = None):
 
 @app.get("/health")
 async def health_check():
+    scheduler = get_scheduler()
     return {
         "status": "healthy", 
         "timestamp": datetime.now().isoformat(), 
-        "version": "7.3.1", 
+        "version": "7.4.0", 
         "context_layer": "active", 
         "officials_layer": "active",
         "lstm_brain": "active",
@@ -2059,13 +2078,14 @@ async def health_check():
         "esoteric_engine": "active",
         "live_data_router": "active",
         "lstm_training": "active",
+        "daily_scheduler": "active" if scheduler and scheduler.running else "inactive",
         "supported_sports": SUPPORTED_SPORTS
     }
 
 @app.get("/model-status")
 async def model_status():
     return {
-        "version": "7.3.1",
+        "version": "7.4.0",
         "supported_sports": SUPPORTED_SPORTS,
         "context_layer": {
             "usage_vacuum": "ready",
@@ -2115,6 +2135,6 @@ async def model_status():
     }
 
 if __name__ == "__main__":
-    logger.info("Starting Multi-Sport AI Betting API v7.3.1...")
+    logger.info("Starting Multi-Sport AI Betting API v7.4.0...")
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
