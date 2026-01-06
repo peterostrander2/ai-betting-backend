@@ -3,6 +3,7 @@ FastAPI endpoints for AI sports betting predictions
 v7.0.0 - Multi-Sport Context Layer + Officials + LSTM Brain + Auto-Grader (NBA, NFL, MLB, NHL, NCAAB)
 """
 
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -898,4 +899,5 @@ async def model_status():
 
 if __name__ == "__main__":
     logger.info("Starting Multi-Sport AI Betting API v7.0.0...")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
