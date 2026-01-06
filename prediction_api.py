@@ -47,6 +47,331 @@ app.add_middleware(
 )
 
 # ============================================
+# ESOTERIC MODELS (The "Magic")
+# ============================================
+
+class GematriaCalculator:
+    """Hebrew numerology - maps letters to numbers, finds patterns."""
+    
+    HEBREW_VALUES = {
+        'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9,
+        'j': 10, 'k': 20, 'l': 30, 'm': 40, 'n': 50, 'o': 60, 'p': 70, 'q': 80, 'r': 90,
+        's': 100, 't': 200, 'u': 300, 'v': 400, 'w': 500, 'x': 600, 'y': 700, 'z': 800
+    }
+    
+    @classmethod
+    def calculate_value(cls, text: str) -> int:
+        """Calculate gematria value of a string."""
+        total = sum(cls.HEBREW_VALUES.get(c.lower(), 0) for c in text if c.isalpha())
+        return total
+    
+    @classmethod
+    def reduce_to_single(cls, value: int) -> int:
+        """Reduce to single digit (1-9)."""
+        while value > 9:
+            value = sum(int(d) for d in str(value))
+        return value
+    
+    @classmethod
+    def analyze(cls, player_name: str, opponent: str, line: float) -> Dict:
+        """Full gematria analysis for a matchup."""
+        player_val = cls.calculate_value(player_name)
+        player_reduced = cls.reduce_to_single(player_val)
+        opponent_val = cls.calculate_value(opponent)
+        opponent_reduced = cls.reduce_to_single(opponent_val)
+        line_reduced = cls.reduce_to_single(int(abs(line * 10)))
+        
+        # Power numbers: 1, 3, 7, 9 are traditionally favorable
+        power_numbers = {1, 3, 7, 9}
+        player_power = player_reduced in power_numbers
+        alignment = player_reduced == line_reduced
+        
+        signal = "NEUTRAL"
+        if player_power and alignment:
+            signal = "STRONG_OVER"
+        elif player_power:
+            signal = "LEAN_OVER"
+        elif alignment:
+            signal = "LEAN_UNDER"
+        
+        return {
+            "player_gematria": player_val,
+            "player_reduced": player_reduced,
+            "opponent_gematria": opponent_val,
+            "opponent_reduced": opponent_reduced,
+            "line_reduced": line_reduced,
+            "is_power_number": player_power,
+            "is_aligned": alignment,
+            "signal": signal,
+            "confidence": 0.65 if signal.startswith("STRONG") else 0.55 if signal.startswith("LEAN") else 0.50
+        }
+
+
+class NumerologyEngine:
+    """Birth dates, jersey numbers, game dates - life path analysis."""
+    
+    MASTER_NUMBERS = {11, 22, 33}
+    LUCKY_NUMBERS = {3, 7, 9}
+    
+    @classmethod
+    def calculate_life_path(cls, birth_date: str) -> int:
+        """Calculate life path number from birth date (YYYY-MM-DD)."""
+        try:
+            digits = [int(d) for d in birth_date if d.isdigit()]
+            total = sum(digits)
+            while total > 9 and total not in cls.MASTER_NUMBERS:
+                total = sum(int(d) for d in str(total))
+            return total
+        except:
+            return 5  # Default neutral
+    
+    @classmethod
+    def analyze_game_date(cls, game_date: datetime) -> Dict:
+        """Analyze game date numerology."""
+        day_num = game_date.day % 9 or 9
+        month_num = game_date.month % 9 or 9
+        combined = (day_num + month_num) % 9 or 9
+        
+        return {
+            "day_number": day_num,
+            "month_number": month_num,
+            "combined": combined,
+            "is_lucky_day": day_num in cls.LUCKY_NUMBERS,
+            "is_master_day": game_date.day in cls.MASTER_NUMBERS
+        }
+    
+    @classmethod
+    def analyze(cls, player_name: str, jersey_number: int, game_date: datetime, line: float) -> Dict:
+        """Full numerology analysis."""
+        date_analysis = cls.analyze_game_date(game_date)
+        jersey_reduced = jersey_number % 9 or 9
+        line_int = int(abs(line))
+        line_reduced = line_int % 9 or 9
+        
+        # Check alignments
+        jersey_date_align = jersey_reduced == date_analysis["day_number"]
+        jersey_line_align = jersey_reduced == line_reduced
+        
+        signal = "NEUTRAL"
+        if jersey_date_align and date_analysis["is_lucky_day"]:
+            signal = "STRONG_OVER"
+        elif jersey_date_align or jersey_line_align:
+            signal = "LEAN_OVER"
+        elif date_analysis["is_master_day"]:
+            signal = "LEAN_OVER"
+        
+        return {
+            "jersey_number": jersey_number,
+            "jersey_reduced": jersey_reduced,
+            "date_analysis": date_analysis,
+            "line_reduced": line_reduced,
+            "jersey_date_alignment": jersey_date_align,
+            "jersey_line_alignment": jersey_line_align,
+            "signal": signal,
+            "confidence": 0.62 if signal.startswith("STRONG") else 0.54 if signal.startswith("LEAN") else 0.50
+        }
+
+
+class SacredGeometryAnalyzer:
+    """Fibonacci, golden ratio, pi - patterns in lines and stats."""
+    
+    FIBONACCI = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89]
+    PHI = 1.618033988749895  # Golden ratio
+    PI = 3.14159265358979
+    
+    @classmethod
+    def is_fibonacci_adjacent(cls, value: float, tolerance: float = 0.5) -> bool:
+        """Check if value is close to a Fibonacci number."""
+        return any(abs(value - f) < tolerance for f in cls.FIBONACCI)
+    
+    @classmethod
+    def golden_ratio_check(cls, a: float, b: float) -> bool:
+        """Check if ratio approximates golden ratio."""
+        if b == 0:
+            return False
+        ratio = max(a, b) / min(a, b) if min(a, b) > 0 else 0
+        return abs(ratio - cls.PHI) < 0.15
+    
+    @classmethod
+    def analyze(cls, spread: float, total: float, line: float, player_avg: float) -> Dict:
+        """Full sacred geometry analysis."""
+        spread_fib = cls.is_fibonacci_adjacent(abs(spread))
+        line_fib = cls.is_fibonacci_adjacent(line)
+        total_fib = cls.is_fibonacci_adjacent(total / 10)  # Scale down
+        
+        avg_line_golden = cls.golden_ratio_check(player_avg, line) if player_avg > 0 else False
+        spread_total_golden = cls.golden_ratio_check(abs(spread), total / 10) if spread != 0 else False
+        
+        alignments = sum([spread_fib, line_fib, total_fib, avg_line_golden, spread_total_golden])
+        
+        signal = "NEUTRAL"
+        if alignments >= 3:
+            signal = "STRONG_ALIGNMENT"
+        elif alignments >= 2:
+            signal = "MODERATE_ALIGNMENT"
+        elif alignments >= 1:
+            signal = "WEAK_ALIGNMENT"
+        
+        return {
+            "spread_fibonacci": spread_fib,
+            "line_fibonacci": line_fib,
+            "total_fibonacci": total_fib,
+            "avg_line_golden_ratio": avg_line_golden,
+            "spread_total_golden_ratio": spread_total_golden,
+            "total_alignments": alignments,
+            "signal": signal,
+            "confidence": 0.60 + (alignments * 0.05)
+        }
+
+
+class AstrologyTracker:
+    """Moon phases, zodiac, planetary alignments."""
+    
+    ZODIAC_SIGNS = [
+        "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
+        "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+    ]
+    
+    MOON_PHASES = ["New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous",
+                   "Full Moon", "Waning Gibbous", "Last Quarter", "Waning Crescent"]
+    
+    # Fire signs favor OVER, Earth signs favor UNDER, Air/Water neutral
+    FIRE_SIGNS = {"Aries", "Leo", "Sagittarius"}
+    EARTH_SIGNS = {"Taurus", "Virgo", "Capricorn"}
+    
+    @classmethod
+    def get_moon_phase(cls, game_date: datetime) -> str:
+        """Approximate moon phase based on date."""
+        # Simple approximation: lunar cycle ~29.5 days
+        days_since_new = (game_date - datetime(2024, 1, 11)).days % 30  # Jan 11, 2024 was new moon
+        phase_index = int(days_since_new / 3.75) % 8
+        return cls.MOON_PHASES[phase_index]
+    
+    @classmethod
+    def get_sun_sign(cls, game_date: datetime) -> str:
+        """Get zodiac sign for date."""
+        day = game_date.day
+        month = game_date.month
+        
+        zodiac_dates = [
+            (1, 20, "Capricorn"), (2, 19, "Aquarius"), (3, 20, "Pisces"),
+            (4, 20, "Aries"), (5, 21, "Taurus"), (6, 21, "Gemini"),
+            (7, 22, "Cancer"), (8, 23, "Leo"), (9, 23, "Virgo"),
+            (10, 23, "Libra"), (11, 22, "Scorpio"), (12, 22, "Sagittarius")
+        ]
+        
+        for m, d, sign in zodiac_dates:
+            if month == m and day <= d:
+                return sign
+            if month == m - 1 or (month == 12 and m == 1):
+                return zodiac_dates[(zodiac_dates.index((m, d, sign)) - 1) % 12][2]
+        return "Capricorn"
+    
+    @classmethod
+    def analyze(cls, game_date: datetime, player_birth_date: Optional[str] = None) -> Dict:
+        """Full astrology analysis."""
+        moon_phase = cls.get_moon_phase(game_date)
+        sun_sign = cls.get_sun_sign(game_date)
+        
+        # Full moon = high energy = OVER tendency
+        # New moon = low energy = UNDER tendency
+        moon_signal = "NEUTRAL"
+        if moon_phase == "Full Moon":
+            moon_signal = "STRONG_OVER"
+        elif moon_phase in ["Waxing Gibbous", "First Quarter"]:
+            moon_signal = "LEAN_OVER"
+        elif moon_phase == "New Moon":
+            moon_signal = "LEAN_UNDER"
+        
+        # Fire signs = action = OVER
+        zodiac_signal = "NEUTRAL"
+        if sun_sign in cls.FIRE_SIGNS:
+            zodiac_signal = "LEAN_OVER"
+        elif sun_sign in cls.EARTH_SIGNS:
+            zodiac_signal = "LEAN_UNDER"
+        
+        # Combine signals
+        combined_signal = "NEUTRAL"
+        if moon_signal.endswith("OVER") and zodiac_signal.endswith("OVER"):
+            combined_signal = "STRONG_OVER"
+        elif moon_signal.endswith("OVER") or zodiac_signal.endswith("OVER"):
+            combined_signal = "LEAN_OVER"
+        elif moon_signal.endswith("UNDER") and zodiac_signal.endswith("UNDER"):
+            combined_signal = "LEAN_UNDER"
+        
+        return {
+            "moon_phase": moon_phase,
+            "sun_sign": sun_sign,
+            "moon_signal": moon_signal,
+            "zodiac_signal": zodiac_signal,
+            "combined_signal": combined_signal,
+            "confidence": 0.58 if combined_signal.startswith("STRONG") else 0.52 if combined_signal.startswith("LEAN") else 0.50
+        }
+
+
+class EsotericEngine:
+    """Master engine combining all esoteric models + Harmonic Convergence detection."""
+    
+    @classmethod
+    def analyze(
+        cls,
+        player_name: str,
+        opponent: str,
+        line: float,
+        game_date: datetime,
+        player_avg: float = 0.0,
+        spread: float = 0.0,
+        total: float = 220.0,
+        jersey_number: int = 0
+    ) -> Dict:
+        """Run all esoteric models and detect Harmonic Convergence."""
+        
+        gematria = GematriaCalculator.analyze(player_name, opponent, line)
+        numerology = NumerologyEngine.analyze(player_name, jersey_number, game_date, line)
+        geometry = SacredGeometryAnalyzer.analyze(spread, total, line, player_avg)
+        astrology = AstrologyTracker.analyze(game_date)
+        
+        # Count OVER signals
+        over_signals = sum([
+            1 if "OVER" in gematria["signal"] else 0,
+            1 if "OVER" in numerology["signal"] else 0,
+            1 if geometry["total_alignments"] >= 2 else 0,
+            1 if "OVER" in astrology["combined_signal"] else 0
+        ])
+        
+        under_signals = sum([
+            1 if "UNDER" in gematria["signal"] else 0,
+            1 if "UNDER" in numerology["signal"] else 0,
+            1 if "UNDER" in astrology["combined_signal"] else 0
+        ])
+        
+        # Harmonic Convergence: 3+ esoteric models agree
+        harmonic_convergence = over_signals >= 3 or under_signals >= 3
+        esoteric_direction = "OVER" if over_signals > under_signals else "UNDER" if under_signals > over_signals else "NEUTRAL"
+        
+        # Esoteric edge score (0-100)
+        esoteric_score = (max(over_signals, under_signals) / 4) * 100
+        
+        return {
+            "gematria": gematria,
+            "numerology": numerology,
+            "sacred_geometry": geometry,
+            "astrology": astrology,
+            "summary": {
+                "over_signals": over_signals,
+                "under_signals": under_signals,
+                "direction": esoteric_direction,
+                "harmonic_convergence": harmonic_convergence,
+                "esoteric_score": round(esoteric_score, 1),
+                "confidence": round((esoteric_score / 100) * 0.3 + 0.5, 2)  # 50-80% range
+            }
+        }
+
+
+# Initialize esoteric engine
+esoteric_engine = EsotericEngine()
+
+# ============================================
 # REQUEST MODELS
 # ============================================
 
@@ -130,6 +455,17 @@ class OfficialsRequest(BaseModel):
     is_home: Optional[bool] = False
     is_star: Optional[bool] = False
 
+class EsotericRequest(BaseModel):
+    """Request for esoteric analysis (Gematria, Numerology, Sacred Geometry, Astrology)."""
+    player_name: str = Field(..., description="Player name for gematria analysis")
+    opponent: str = Field(..., description="Opponent team for matchup analysis")
+    line: float = Field(..., description="Betting line")
+    game_date: Optional[str] = Field(None, description="Game date (YYYY-MM-DD), defaults to today")
+    player_avg: Optional[float] = Field(0.0, description="Player's season average")
+    spread: Optional[float] = Field(0.0, description="Game spread")
+    total: Optional[float] = Field(220.0, description="Game total")
+    jersey_number: Optional[int] = Field(0, description="Player's jersey number")
+
 # ============================================
 # ROOT
 # ============================================
@@ -138,13 +474,18 @@ class OfficialsRequest(BaseModel):
 async def root():
     return {
         "status": "online",
-        "message": "Multi-Sport AI Betting API with Context Layer + Officials + LSTM Brain + Auto-Grader",
-        "version": "7.0.0",
+        "message": "Multi-Sport AI Betting API with Context Layer + Officials + LSTM Brain + Auto-Grader + Esoteric Edge",
+        "version": "7.1.0",
         "supported_sports": SUPPORTED_SPORTS,
+        "models": {
+            "ai": ["Ensemble", "LSTM Brain", "Monte Carlo", "Line Movement", "Rest/Fatigue", "Injury Impact", "Matchup", "Edge Calculator"],
+            "esoteric": ["Gematria", "Numerology", "Sacred Geometry", "Astrology"]
+        },
         "endpoints": {
             "predictions": ["/predict-context", "/predict-batch"],
             "brain": ["/brain/predict", "/brain/status"],
             "grader": ["/grader/weights", "/grader/grade", "/grader/audit", "/grader/bias"],
+            "esoteric": ["/esoteric/analyze", "/esoteric/gematria", "/esoteric/numerology", "/esoteric/astrology"],
             "sports_info": ["/sports", "/sports/{sport}/positions", "/sports/{sport}/stat-types"],
             "defense": ["/defense-rank", "/defense-rankings/{sport}/{position}"],
             "pace": ["/game-pace", "/pace-rankings/{sport}"],
@@ -309,6 +650,60 @@ async def predict_with_context(request: ContextRequest):
                     waterfall["finalPrediction"] = round(final_pred, 1)
                     context["badges"].append({"icon": "🦓", "label": "officials", "active": True})
         
+        # =====================
+        # ESOTERIC ANALYSIS (The "Magic")
+        # =====================
+        esoteric_result = None
+        try:
+            esoteric_result = EsotericEngine.analyze(
+                player_name=request.player_name,
+                opponent=request.opponent_team,
+                line=request.line or request.player_avg,
+                game_date=datetime.now(),
+                player_avg=request.player_avg,
+                spread=request.game_spread or 0.0,
+                total=request.game_total or 220.0,
+                jersey_number=0  # Could be added to request later
+            )
+            
+            # Check for Harmonic Convergence (Math + Magic align)
+            if esoteric_result["summary"]["harmonic_convergence"]:
+                esoteric_direction = esoteric_result["summary"]["direction"]
+                math_direction = "OVER" if waterfall["finalPrediction"] > (request.line or request.player_avg) else "UNDER"
+                
+                if esoteric_direction == math_direction:
+                    # TRUE HARMONIC CONVERGENCE: Math and Magic agree!
+                    context["badges"].append({
+                        "icon": "✨", 
+                        "label": "harmonic_convergence", 
+                        "active": True,
+                        "direction": esoteric_direction,
+                        "esoteric_score": esoteric_result["summary"]["esoteric_score"]
+                    })
+                    logger.info(f"[{sport}] ✨ HARMONIC CONVERGENCE: Math={math_direction}, Magic={esoteric_direction}")
+                else:
+                    # Esoteric models agree but conflict with math
+                    context["badges"].append({
+                        "icon": "🔮", 
+                        "label": "esoteric_divergence", 
+                        "active": True,
+                        "math_direction": math_direction,
+                        "magic_direction": esoteric_direction
+                    })
+            elif esoteric_result["summary"]["esoteric_score"] >= 50:
+                # Some esoteric signal but not full convergence
+                context["badges"].append({
+                    "icon": "🔮", 
+                    "label": "esoteric_lean", 
+                    "active": True,
+                    "direction": esoteric_result["summary"]["direction"],
+                    "score": esoteric_result["summary"]["esoteric_score"]
+                })
+                
+        except Exception as esoteric_error:
+            logger.warning(f"Esoteric analysis error (non-critical): {str(esoteric_error)}")
+            esoteric_result = {"error": str(esoteric_error)}
+        
         response = {
             "status": "success", "sport": sport,
             "prediction": {
@@ -317,12 +712,13 @@ async def predict_with_context(request: ContextRequest):
                 "final": waterfall["finalPrediction"], "line": request.line, "recommendation": None,
                 "confidence": waterfall["confidence"], "is_smash_spot": waterfall["isSmashSpot"]
             },
-            "calculated_context": {  # NEW: Nano Banana context injection
+            "calculated_context": {
                 "player_team": player_context,
                 "opponent_team": opponent_context
             },
             "lstm_features": context["lstm_features"], 
             "lstm_brain": lstm_prediction,
+            "esoteric": esoteric_result,  # NEW: Esoteric analysis
             "waterfall": waterfall,
             "badges": context["badges"], "raw_context": context["raw_context"],
             "dynamic_weights": auto_grader.get_weights(sport, request.stat_type or "points")
@@ -854,6 +1250,83 @@ async def adjust_weights(sport: str, stat_type: str = "points", days_back: int =
     }
 
 # ============================================
+# ESOTERIC ENDPOINTS (The "Magic")
+# ============================================
+
+@app.post("/esoteric/analyze")
+async def esoteric_full_analysis(request: EsotericRequest):
+    """
+    Full esoteric analysis combining all 4 models:
+    - Gematria (Hebrew numerology)
+    - Numerology (birth dates, jersey numbers)
+    - Sacred Geometry (Fibonacci, golden ratio)
+    - Astrology (moon phase, zodiac)
+    
+    Also detects "Harmonic Convergence" when 3+ models agree.
+    """
+    try:
+        # Parse game date
+        if request.game_date:
+            game_date = datetime.strptime(request.game_date, "%Y-%m-%d")
+        else:
+            game_date = datetime.now()
+        
+        result = EsotericEngine.analyze(
+            player_name=request.player_name,
+            opponent=request.opponent,
+            line=request.line,
+            game_date=game_date,
+            player_avg=request.player_avg or 0.0,
+            spread=request.spread or 0.0,
+            total=request.total or 220.0,
+            jersey_number=request.jersey_number or 0
+        )
+        
+        return {
+            "status": "success",
+            "player": request.player_name,
+            "opponent": request.opponent,
+            "line": request.line,
+            "game_date": game_date.strftime("%Y-%m-%d"),
+            "analysis": result
+        }
+        
+    except Exception as e:
+        logger.error(f"Esoteric analysis error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Esoteric analysis failed: {str(e)}")
+
+
+@app.post("/esoteric/gematria")
+async def gematria_analysis(player_name: str, opponent: str, line: float):
+    """Gematria (Hebrew numerology) analysis only."""
+    result = GematriaCalculator.analyze(player_name, opponent, line)
+    return {"status": "success", "analysis": result}
+
+
+@app.post("/esoteric/numerology")
+async def numerology_analysis(player_name: str, jersey_number: int = 0, game_date: str = None, line: float = 0.0):
+    """Numerology analysis only."""
+    date = datetime.strptime(game_date, "%Y-%m-%d") if game_date else datetime.now()
+    result = NumerologyEngine.analyze(player_name, jersey_number, date, line)
+    return {"status": "success", "analysis": result}
+
+
+@app.post("/esoteric/sacred-geometry")
+async def sacred_geometry_analysis(spread: float = 0.0, total: float = 220.0, line: float = 0.0, player_avg: float = 0.0):
+    """Sacred Geometry (Fibonacci, golden ratio) analysis only."""
+    result = SacredGeometryAnalyzer.analyze(spread, total, line, player_avg)
+    return {"status": "success", "analysis": result}
+
+
+@app.post("/esoteric/astrology")
+async def astrology_analysis(game_date: str = None):
+    """Astrology (moon phase, zodiac) analysis only."""
+    date = datetime.strptime(game_date, "%Y-%m-%d") if game_date else datetime.now()
+    result = AstrologyTracker.analyze(date)
+    return {"status": "success", "analysis": result}
+
+
+# ============================================
 # SYSTEM STATUS
 # ============================================
 
@@ -862,11 +1335,12 @@ async def health_check():
     return {
         "status": "healthy", 
         "timestamp": datetime.now().isoformat(), 
-        "version": "7.0.0", 
+        "version": "7.1.0", 
         "context_layer": "active", 
         "officials_layer": "active",
         "lstm_brain": "active",
         "auto_grader": "active",
+        "esoteric_engine": "active",
         "supported_sports": SUPPORTED_SPORTS
     }
 
