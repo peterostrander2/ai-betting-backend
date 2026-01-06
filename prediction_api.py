@@ -1,6 +1,6 @@
 """
 FastAPI endpoints for AI sports betting predictions
-v6.7.0 - Multi-Sport Context Layer (NBA, NFL, MLB, NHL, NCAAB)
+v6.8.0 - Multi-Sport Context Layer + Officials (NBA, NFL, MLB, NHL, NCAAB)
 """
 
 from fastapi import FastAPI, HTTPException
@@ -14,17 +14,19 @@ from context_layer import (
     PaceVectorService, 
     UsageVacuumService,
     ParkFactorService,
+    OfficialsService,
     SUPPORTED_SPORTS,
     SPORT_POSITIONS,
-    SPORT_STAT_TYPES
+    SPORT_STAT_TYPES,
+    LEAGUE_AVERAGES
 )
 from loguru import logger
 import uvicorn
 
 app = FastAPI(
     title="AI Sports Betting API",
-    description="Multi-Sport AI Predictions with Context Layer (NBA, NFL, MLB, NHL, NCAAB)",
-    version="6.7.0"
+    description="Multi-Sport AI Predictions with Context Layer + Officials (NBA, NFL, MLB, NHL, NCAAB)",
+    version="6.8.0"
 )
 
 app.add_middleware(
@@ -63,6 +65,10 @@ class ContextRequest(BaseModel):
     home_team: Optional[str] = None
     line: Optional[float] = None
     odds: Optional[int] = None
+    # Officials
+    lead_official: Optional[str] = None
+    official_2: Optional[str] = None
+    official_3: Optional[str] = None
 
 class BatchContextRequest(BaseModel):
     predictions: List[ContextRequest]
@@ -88,6 +94,15 @@ class EdgeCalculationRequest(BaseModel):
     your_probability: float = Field(..., ge=0, le=1)
     betting_odds: int
 
+class OfficialsRequest(BaseModel):
+    sport: str
+    lead_official: str
+    official_2: Optional[str] = ""
+    official_3: Optional[str] = ""
+    bet_type: Optional[str] = "total"  # total, spread, props
+    is_home: Optional[bool] = False
+    is_star: Optional[bool] = False
+
 # ============================================
 # ROOT
 # ============================================
@@ -96,12 +111,20 @@ class EdgeCalculationRequest(BaseModel):
 async def root():
     return {
         "status": "online",
-        "message": "Multi-Sport AI Betting API with Context Layer",
-        "version": "6.7.0",
+        "message": "Multi-Sport AI Betting API with Context Layer + Officials",
+        "version": "6.8.0",
         "supported_sports": SUPPORTED_SPORTS,
-        "endpoints": ["/predict-context", "/predict-batch", "/sports", "/defense-rank", 
-                      "/defense-rankings/{sport}/{position}", "/usage-vacuum", "/game-pace",
-                      "/pace-rankings/{sport}", "/park-factor", "/park-factors", "/calculate-edge", "/health", "/docs"]
+        "endpoints": {
+            "predictions": ["/predict-context", "/predict-batch"],
+            "sports_info": ["/sports", "/sports/{sport}/positions", "/sports/{sport}/stat-types"],
+            "defense": ["/defense-rank", "/defense-rankings/{sport}/{position}"],
+            "pace": ["/game-pace", "/pace-rankings/{sport}"],
+            "vacuum": ["/usage-vacuum"],
+            "officials": ["/officials-analysis", "/officials/{sport}", "/official/{sport}/{name}"],
+            "mlb": ["/park-factor", "/park-factors"],
+            "edge": ["/calculate-edge"],
+            "system": ["/health", "/model-status", "/docs"]
+        }
     }
 
 @app.get("/sports")
@@ -150,31 +173,65 @@ async def predict_with_context(request: ContextRequest):
         waterfall = context["waterfall"]
         final_pred = waterfall["finalPrediction"]
         
+        # Add officials adjustment if provided
+        officials_analysis = None
+        if request.lead_official:
+            officials_analysis = OfficialsService.analyze_crew(
+                sport, request.lead_official, 
+                request.official_2 or "", 
+                request.official_3 or ""
+            )
+            
+            if officials_analysis.get("has_data"):
+                # Get props adjustment for star players
+                is_star = request.player_avg > 20 if sport in ["NBA", "NCAAB"] else request.player_avg > 80
+                officials_adj = OfficialsService.get_adjustment(
+                    sport, request.lead_official,
+                    request.official_2 or "", request.official_3 or "",
+                    bet_type="props", is_star=is_star
+                )
+                
+                if officials_adj:
+                    waterfall["adjustments"].append(officials_adj)
+                    final_pred += officials_adj["value"]
+                    waterfall["finalPrediction"] = round(final_pred, 1)
+                    context["badges"].append({"icon": "🦓", "label": "officials", "active": True})
+        
         response = {
             "status": "success", "sport": sport,
             "prediction": {
                 "player": request.player_name, "team": request.player_team, "opponent": request.opponent_team,
                 "position": request.position, "stat_type": request.stat_type, "base": request.player_avg,
-                "final": final_pred, "line": request.line, "recommendation": None,
+                "final": waterfall["finalPrediction"], "line": request.line, "recommendation": None,
                 "confidence": waterfall["confidence"], "is_smash_spot": waterfall["isSmashSpot"]
             },
             "lstm_features": context["lstm_features"], "waterfall": waterfall,
             "badges": context["badges"], "raw_context": context["raw_context"]
         }
         
+        # Add officials analysis if available
+        if officials_analysis and officials_analysis.get("has_data"):
+            response["officials"] = {
+                "crew": officials_analysis.get("officials_found", []),
+                "total_recommendation": officials_analysis.get("total_recommendation"),
+                "props_lean": officials_analysis.get("props_lean"),
+                "over_pct": officials_analysis.get("over_pct"),
+                "confidence": officials_analysis.get("confidence")
+            }
+        
         if request.line:
-            edge = final_pred - request.line
+            edge = waterfall["finalPrediction"] - request.line
             response["prediction"]["recommendation"] = "OVER" if edge > 0 else "UNDER"
             response["edge"] = {"raw": round(edge, 1), "percent": round((edge / request.line) * 100, 1) if request.line != 0 else 0, "direction": "OVER" if edge > 0 else "UNDER"}
         
         if request.odds and request.line:
-            edge_pct = (final_pred - request.line) / request.line if request.line != 0 else 0
+            edge_pct = (waterfall["finalPrediction"] - request.line) / request.line if request.line != 0 else 0
             implied_prob = abs(request.odds) / (abs(request.odds) + 100) if request.odds < 0 else 100 / (request.odds + 100)
             our_prob = max(0.1, min(0.9, 0.5 + (edge_pct * 2)))
             ev = (our_prob * 100) - ((1 - our_prob) * 100)
             response["ev"] = {"percent": round(ev, 1), "per_100": round(ev, 2), "implied_prob": round(implied_prob * 100, 1), "our_prob": round(our_prob * 100, 1)}
         
-        logger.success(f"[{sport}] Prediction: {final_pred} | Smash: {waterfall['isSmashSpot']}")
+        logger.success(f"[{sport}] Prediction: {waterfall['finalPrediction']} | Smash: {waterfall['isSmashSpot']}")
         return response
     except HTTPException:
         raise
@@ -214,6 +271,123 @@ async def predict_batch(request: BatchContextRequest):
                 smash_spots.append(result)
         return {"status": "success", "count": len(results), "smash_spot_count": len(smash_spots), "predictions": results, "smash_spots": smash_spots, "by_sport": by_sport}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================
+# OFFICIALS ENDPOINTS (ALL SPORTS)
+# ============================================
+
+@app.post("/officials-analysis")
+async def analyze_officials(request: OfficialsRequest):
+    """
+    Analyze officiating crew for ANY sport
+    
+    Supports: NBA, NFL, MLB, NHL, NCAAB
+    
+    Returns tendencies for:
+    - Totals (over/under)
+    - Spreads (home advantage)
+    - Props (foul/penalty rates)
+    """
+    try:
+        sport = request.sport.upper()
+        if sport not in SUPPORTED_SPORTS:
+            raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+        
+        analysis = OfficialsService.analyze_crew(
+            sport, request.lead_official,
+            request.official_2 or "",
+            request.official_3 or ""
+        )
+        
+        if not analysis.get("has_data"):
+            return {"status": "no_data", "message": "Official(s) not found in database", "sport": sport}
+        
+        adjustment = None
+        if request.bet_type:
+            adjustment = OfficialsService.get_adjustment(
+                sport, request.lead_official,
+                request.official_2 or "", request.official_3 or "",
+                bet_type=request.bet_type,
+                is_home=request.is_home or False,
+                is_star=request.is_star or False
+            )
+        
+        return {
+            "status": "success",
+            "sport": sport,
+            "analysis": analysis,
+            "adjustment": adjustment,
+            "league_avg": LEAGUE_AVERAGES.get(sport, {})
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Officials analysis error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/officials/{sport}")
+async def get_all_officials(sport: str):
+    """Get all officials for a sport grouped by tendency"""
+    try:
+        sport = sport.upper()
+        if sport not in SUPPORTED_SPORTS:
+            raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+        
+        grouped = OfficialsService.get_all_officials_by_tendency(sport)
+        
+        # Count by tendency
+        summary = {tendency: len(officials) for tendency, officials in grouped.items()}
+        
+        return {
+            "status": "success",
+            "sport": sport,
+            "officials": grouped,
+            "summary": summary,
+            "league_avg": LEAGUE_AVERAGES.get(sport, {})
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Officials fetch error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/official/{sport}/{name}")
+async def get_official_profile(sport: str, name: str):
+    """Get profile for a single official in any sport"""
+    try:
+        sport = sport.upper()
+        if sport not in SUPPORTED_SPORTS:
+            raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+        
+        profile = OfficialsService.get_official_profile(sport, name)
+        
+        if not profile:
+            raise HTTPException(status_code=404, detail=f"Official '{name}' not found in {sport}")
+        
+        league_avg = LEAGUE_AVERAGES.get(sport, {})
+        
+        # Calculate edges vs league average
+        edges = {}
+        for key, value in profile.items():
+            if key != "tendency" and isinstance(value, (int, float)) and key in league_avg:
+                edges[key] = round(value - league_avg[key], 1)
+        
+        return {
+            "status": "success",
+            "sport": sport,
+            "name": name.title(),
+            "profile": profile,
+            "edges_vs_avg": edges,
+            "league_avg": league_avg
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Official profile error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================
@@ -356,12 +530,29 @@ async def calculate_betting_edge(request: EdgeCalculationRequest):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat(), "version": "6.7.0", "context_layer": "active", "supported_sports": SUPPORTED_SPORTS}
+    return {"status": "healthy", "timestamp": datetime.now().isoformat(), "version": "6.8.0", "context_layer": "active", "officials_layer": "active", "supported_sports": SUPPORTED_SPORTS}
 
 @app.get("/model-status")
 async def model_status():
-    return {"version": "6.7.0", "supported_sports": SUPPORTED_SPORTS, "context_layer": {"usage_vacuum": "ready", "defensive_rank": "ready", "pace_vector": "ready", "park_factor": "ready (MLB)", "context_generator": "ready"}}
+    return {
+        "version": "6.8.0",
+        "supported_sports": SUPPORTED_SPORTS,
+        "context_layer": {
+            "usage_vacuum": "ready",
+            "defensive_rank": "ready",
+            "pace_vector": "ready",
+            "park_factor": "ready (MLB)",
+            "context_generator": "ready"
+        },
+        "officials_layer": {
+            "nba_officials": "35+ refs",
+            "nfl_officials": "20+ refs",
+            "mlb_officials": "20+ umps",
+            "nhl_officials": "20+ refs",
+            "ncaab_officials": "20+ refs"
+        }
+    }
 
 if __name__ == "__main__":
-    logger.info("Starting Multi-Sport AI Betting API v6.7.0...")
+    logger.info("Starting Multi-Sport AI Betting API v6.8.0...")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
