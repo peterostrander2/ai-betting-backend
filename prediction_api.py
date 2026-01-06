@@ -1,6 +1,6 @@
 """
 FastAPI endpoints for AI sports betting predictions
-v7.3.0 - Multi-Sport Context Layer + Officials + LSTM Brain + Auto-Grader + Live Data (NBA, NFL, MLB, NHL, NCAAB)
+v7.3.1 - Multi-Sport Context Layer + Officials + LSTM Brain + Auto-Grader + Live Data (NBA, NFL, MLB, NHL, NCAAB)
 """
 
 import os
@@ -27,6 +27,7 @@ from live_data_router import LiveDataRouter, live_data_router
 from lstm_training_pipeline import training_router, LSTMTrainingPipeline
 from loguru import logger
 import uvicorn
+import threading
 
 # Initialize LSTM Brain (sport-specific models)
 lstm_brain_manager = MultiSportLSTMBrain()
@@ -34,10 +35,13 @@ lstm_brain_manager = MultiSportLSTMBrain()
 # Initialize Auto-Grader (feedback loop)
 auto_grader = get_grader()
 
+# Initialize Training Pipeline
+training_pipeline = LSTMTrainingPipeline()
+
 app = FastAPI(
     title="AI Sports Betting API",
     description="Multi-Sport AI Predictions with Context Layer + Officials + LSTM Brain + Auto-Grader + Live Data (NBA, NFL, MLB, NHL, NCAAB)",
-    version="7.3.0"
+    version="7.3.1"
 )
 
 app.add_middleware(
@@ -53,6 +57,58 @@ app.include_router(live_data_router)
 
 # Include Training Router
 app.include_router(training_router)
+
+
+# ============================================
+# AUTO-TRAINING ON STARTUP
+# ============================================
+
+def auto_train_models():
+    """Background task to train models if not already trained."""
+    import os
+    
+    # Default stats to train for each sport
+    sport_stats = {
+        "NBA": "points",
+        "NFL": "passing_yards",
+        "MLB": "hits",
+        "NHL": "points",
+        "NCAAB": "points"
+    }
+    
+    models_dir = "./models"
+    os.makedirs(models_dir, exist_ok=True)
+    
+    for sport, stat_type in sport_stats.items():
+        model_path = os.path.join(models_dir, f"lstm_{sport.lower()}_{stat_type}.weights.h5")
+        
+        if not os.path.exists(model_path):
+            logger.info(f"🧠 Auto-training {sport}/{stat_type} model...")
+            try:
+                result = training_pipeline.train_sport(
+                    sport=sport,
+                    stat_type=stat_type,
+                    epochs=30,  # Faster startup training
+                    num_players=50
+                )
+                logger.success(f"✅ {sport} model trained: val_loss={result.get('best_val_loss', 'N/A'):.4f}")
+            except Exception as e:
+                logger.error(f"❌ Failed to train {sport}: {e}")
+        else:
+            logger.info(f"✅ {sport}/{stat_type} model already exists")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Run auto-training in background on startup."""
+    logger.info("🚀 Starting Bookie-o-em v7.3.1...")
+    
+    # Run training in background thread (non-blocking)
+    training_thread = threading.Thread(target=auto_train_models, daemon=True)
+    training_thread.start()
+    
+    logger.info("🧠 LSTM auto-training started in background...")
+
 
 # ============================================
 # ESOTERIC MODELS (The "Magic")
@@ -747,7 +803,7 @@ async def root():
     return {
         "status": "online",
         "message": "Multi-Sport AI Betting API with Context Layer + Officials + LSTM Brain + Auto-Grader + Esoteric Edge + Live Data",
-        "version": "7.3.0",
+        "version": "7.3.1",
         "supported_sports": SUPPORTED_SPORTS,
         "models": {
             "ai": ["Ensemble", "LSTM Brain", "Monte Carlo", "Line Movement", "Rest/Fatigue", "Injury Impact", "Matchup", "Edge Calculator"],
@@ -1995,7 +2051,7 @@ async def health_check():
     return {
         "status": "healthy", 
         "timestamp": datetime.now().isoformat(), 
-        "version": "7.3.0", 
+        "version": "7.3.1", 
         "context_layer": "active", 
         "officials_layer": "active",
         "lstm_brain": "active",
@@ -2009,7 +2065,7 @@ async def health_check():
 @app.get("/model-status")
 async def model_status():
     return {
-        "version": "7.3.0",
+        "version": "7.3.1",
         "supported_sports": SUPPORTED_SPORTS,
         "context_layer": {
             "usage_vacuum": "ready",
@@ -2059,6 +2115,6 @@ async def model_status():
     }
 
 if __name__ == "__main__":
-    logger.info("Starting Multi-Sport AI Betting API v7.3.0...")
+    logger.info("Starting Multi-Sport AI Betting API v7.3.1...")
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
