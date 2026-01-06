@@ -637,13 +637,17 @@ class InjuryInput(BaseModel):
     plate_appearances: Optional[float] = None
 
 class LSTMHistoryInput(BaseModel):
-    """Historical game features for LSTM sequence (single game)."""
-    defense_rank: float = Field(16, description="Opponent defense rank (1-32)")
-    defense_context: float = Field(0.0, description="Defense context adjustment (-1 to 1)")
-    pace: float = Field(100.0, description="Game pace factor")
-    pace_context: float = Field(0.0, description="Pace context adjustment (-1 to 1)")
+    """
+    Historical game features for LSTM sequence (single game).
+    Aligned with spec: [stat, mins, home_away, vacuum, def_rank, pace]
+    """
+    stat: float = Field(0.0, description="Player's stat value for that game")
+    player_avg: float = Field(20.0, description="Player's season average (for normalization)")
+    mins: float = Field(30.0, description="Minutes played in that game")
+    home_away: int = Field(0, description="0 = away, 1 = home")
     vacuum: float = Field(0.0, description="Usage vacuum factor (0 to 1)")
-    vacuum_context: float = Field(0.0, description="Vacuum context adjustment (-1 to 1)")
+    def_rank: float = Field(16, description="Opponent defense rank (1-32)")
+    pace: float = Field(100.0, description="Game pace factor")
 
 class ContextRequest(BaseModel):
     sport: str
@@ -659,6 +663,15 @@ class ContextRequest(BaseModel):
     home_team: Optional[str] = None
     line: Optional[float] = None
     odds: Optional[int] = None
+    # LSTM Spec Fields
+    expected_mins: Optional[float] = Field(
+        default=None,
+        description="Expected minutes for this game (for LSTM input)"
+    )
+    jersey_number: Optional[int] = Field(
+        default=None,
+        description="Player's jersey number (for Esoteric analysis)"
+    )
     # Officials
     lead_official: Optional[str] = None
     official_2: Optional[str] = None
@@ -937,14 +950,42 @@ async def predict_with_context(request: ContextRequest):
         waterfall = context["waterfall"]
         final_pred = waterfall["finalPrediction"]
         
-        # Inject calculated context into lstm_features for LSTM brain
-        context["lstm_features"]["calculated_vacuum"] = player_context["vacuum"]
-        context["lstm_features"]["calculated_pace_vector"] = player_context["pace_vector"]
-        context["lstm_features"]["calculated_smash_spot"] = player_context["is_smash_spot"]
-        context["lstm_features"]["opponent_vacuum"] = opponent_context["vacuum"]
+        # =====================
+        # LSTM FEATURES (Aligned with spec: [stat, mins, home_away, vacuum, def_rank, pace])
+        # =====================
+        # Capture original context values before reassigning
+        original_def_rank = context["lstm_features"].get("def_rank", context["lstm_features"].get("defense_rank", 16))
+        original_pace = context["lstm_features"].get("pace", 100.0)
+        
+        # Determine home/away status
+        is_home = 1 if request.home_team and TeamNameMapper.match_teams(
+            request.player_team, request.home_team, sport
+        ) else 0
+        
+        # Default expected minutes by sport
+        default_mins = {"NBA": 32.0, "NFL": 55.0, "MLB": 6.0, "NHL": 18.0, "NCAAB": 30.0}
+        expected_mins = request.expected_mins or default_mins.get(sport, 30.0)
+        
+        # Build spec-compliant lstm_features
+        context["lstm_features"] = {
+            # Spec features: [stat, mins, home_away, vacuum, def_rank, pace]
+            "stat": request.player_avg,  # Use player average as baseline stat (actual comes from history)
+            "player_avg": request.player_avg,  # For normalization
+            "mins": expected_mins,  # Expected minutes for this game
+            "home_away": is_home,
+            "vacuum": player_context["vacuum"],
+            "def_rank": original_def_rank,
+            "pace": original_pace,
+            # Additional context (for reference/debugging)
+            "calculated_vacuum": player_context["vacuum"],
+            "calculated_pace_vector": player_context["pace_vector"],
+            "calculated_smash_spot": player_context["is_smash_spot"],
+            "opponent_vacuum": opponent_context["vacuum"],
+            "defense_rank": original_def_rank,  # Legacy field for backwards compatibility
+        }
         
         # =====================
-        # LSTM BRAIN PREDICTION (Now with injected context)
+        # LSTM BRAIN PREDICTION (Now with spec-compliant features)
         # =====================
         lstm_prediction = None
         if request.use_lstm_brain:
@@ -1025,7 +1066,7 @@ async def predict_with_context(request: ContextRequest):
                 player_avg=request.player_avg,
                 spread=request.game_spread or 0.0,
                 total=request.game_total or 220.0,
-                jersey_number=0  # Could be added to request later
+                jersey_number=request.jersey_number or 0
             )
             
             # Check for Harmonic Convergence (Math + Magic align)
