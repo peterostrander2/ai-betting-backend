@@ -1,16 +1,13 @@
 """
 FastAPI endpoints for AI sports betting predictions
-v6.6.0 - Context Layer Integration
+v6.6.0 - Context Layer Integration (Standalone)
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional
 from datetime import datetime
-import sys
-sys.path.append('..')
-from models.advanced_ml_backend import MasterPredictionSystem
 from context_layer import ContextGenerator, DefensiveRankService, PaceVectorService, UsageVacuumService
 from loguru import logger
 import uvicorn
@@ -25,104 +22,20 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Global predictor instance
-predictor = MasterPredictionSystem()
-
 # ============================================
-# REQUEST/RESPONSE MODELS
-# ============================================
-
-class PlayerStats(BaseModel):
-    stat_type: str = Field(..., example="points")
-    expected_value: float = Field(..., example=27.5)
-    variance: float = Field(..., example=45.0)
-    std_dev: float = Field(..., example=6.5)
-
-class Schedule(BaseModel):
-    days_rest: int = Field(..., example=1)
-    travel_miles: int = Field(..., example=1500)
-    games_in_last_7: int = Field(..., example=3)
-    road_trip_game_num: Optional[int] = Field(0, example=2)
-
-class Player(BaseModel):
-    position: str = Field(..., example="SF")
-    points_per_game: float = Field(..., example=25.4)
-    depth: int = Field(1, example=1)
-
-class Injury(BaseModel):
-    player: Player
-    status: str = Field(..., example="out")  # out, doubtful, questionable
-
-class BettingPercentages(BaseModel):
-    public_on_favorite: float = Field(..., example=68.0)
-
-class PredictionRequest(BaseModel):
-    player_id: str = Field(..., example="lebron_james")
-    opponent_id: str = Field(..., example="gsw")
-    features: List[float] = Field(..., example=[25.4, 7.2, 6.8, 1, 35, 28, 2])
-    recent_games: List[float] = Field(..., example=[27, 31, 22, 28, 25, 30, 26, 24, 29, 32])
-    player_stats: PlayerStats
-    schedule: Schedule
-    injuries: List[Injury] = Field(default_factory=list)
-    depth_chart: Dict = Field(default_factory=dict)
-    game_id: str = Field(..., example="lal_gsw_20250114")
-    current_line: float = Field(..., example=25.5)
-    opening_line: float = Field(..., example=26.0)
-    time_until_game: float = Field(..., example=6.0)
-    betting_percentages: BettingPercentages
-    betting_odds: float = Field(..., example=-110)
-    line: float = Field(..., example=25.5)
-
-class PredictionResponse(BaseModel):
-    predicted_value: float
-    line: float
-    recommendation: str
-    ai_score: float
-    confidence: str
-    expected_value: float
-    probability: float
-    kelly_bet_size: float
-    factors: Dict
-    monte_carlo: Dict
-
-class GameSimulationRequest(BaseModel):
-    team_a_stats: Dict = Field(..., example={
-        'pace': 100.0,
-        'off_rating': 115.0,
-        'off_rating_std': 5.0
-    })
-    team_b_stats: Dict = Field(..., example={
-        'pace': 98.0,
-        'off_rating': 110.0,
-        'off_rating_std': 6.0
-    })
-    num_simulations: int = Field(10000, example=10000)
-
-class LineAnalysisRequest(BaseModel):
-    game_id: str
-    current_line: float
-    opening_line: float
-    time_until_game: float
-    betting_percentages: BettingPercentages
-
-class EdgeCalculationRequest(BaseModel):
-    your_probability: float = Field(..., example=0.65, ge=0, le=1)
-    betting_odds: float = Field(..., example=-110)
-
-# ============================================
-# 🔥 CONTEXT LAYER REQUEST MODELS (NEW)
+# REQUEST MODELS
 # ============================================
 
 class InjuryInput(BaseModel):
     """Injury data for vacuum calculation"""
     player_name: Optional[str] = Field(None, example="Tyrese Haliburton")
-    status: str = Field(..., example="OUT")  # OUT, GTD, Questionable
+    status: str = Field(..., example="OUT")
     usage_pct: float = Field(..., example=26.0)
     minutes_per_game: float = Field(..., example=34.0)
 
@@ -131,7 +44,7 @@ class ContextRequest(BaseModel):
     player_name: str = Field(..., example="Pascal Siakam")
     player_team: str = Field(..., example="Indiana Pacers")
     opponent_team: str = Field(..., example="Washington Wizards")
-    position: str = Field(..., example="Wing")  # Guard, Wing, or Big
+    position: str = Field(..., example="Wing")
     player_avg: float = Field(..., example=21.5)
     stat_type: str = Field("points", example="points")
     injuries: List[InjuryInput] = Field(default_factory=list)
@@ -158,8 +71,13 @@ class PaceRequest(BaseModel):
     team1: str = Field(..., example="Indiana Pacers")
     team2: str = Field(..., example="Oklahoma City Thunder")
 
+class EdgeCalculationRequest(BaseModel):
+    """Request for edge/EV calculation"""
+    your_probability: float = Field(..., example=0.65, ge=0, le=1)
+    betting_odds: int = Field(..., example=-110)
+
 # ============================================
-# API ENDPOINTS
+# ROOT ENDPOINT
 # ============================================
 
 @app.get("/")
@@ -170,7 +88,6 @@ async def root():
         "message": "AI Sports Betting API with Context Layer",
         "version": "6.6.0",
         "endpoints": [
-            "/predict",
             "/predict-context",
             "/predict-batch",
             "/defense-rank",
@@ -178,8 +95,6 @@ async def root():
             "/usage-vacuum",
             "/game-pace",
             "/pace-rankings",
-            "/simulate-game",
-            "/analyze-line",
             "/calculate-edge",
             "/health",
             "/docs"
@@ -187,7 +102,7 @@ async def root():
     }
 
 # ============================================
-# 🔥 CONTEXT LAYER ENDPOINTS (NEW)
+# 🔥 CONTEXT LAYER ENDPOINTS
 # ============================================
 
 @app.post("/predict-context")
@@ -199,8 +114,6 @@ async def predict_with_context(request: ContextRequest):
     - Usage Vacuum (injury impact)
     - Defensive Rank (position-specific)
     - Pace Vector (game speed)
-    
-    Returns prediction with waterfall breakdown and smash spot detection.
     """
     try:
         logger.info(f"Context prediction: {request.player_name} vs {request.opponent_team}")
@@ -267,8 +180,8 @@ async def predict_with_context(request: ContextRequest):
                 implied_prob = 100 / (request.odds + 100)
             
             # Our probability based on edge
-            our_prob = 0.5 + (edge_pct * 2)  # Simple conversion
-            our_prob = max(0.1, min(0.9, our_prob))  # Cap between 10-90%
+            our_prob = 0.5 + (edge_pct * 2)
+            our_prob = max(0.1, min(0.9, our_prob))
             
             # EV calculation
             ev = (our_prob * 100) - ((1 - our_prob) * 100)
@@ -292,8 +205,6 @@ async def predict_with_context(request: ContextRequest):
 async def predict_batch(request: BatchContextRequest):
     """
     Batch context predictions for multiple players
-    
-    Perfect for analyzing an entire slate at once.
     """
     try:
         logger.info(f"Batch prediction: {len(request.predictions)} players")
@@ -302,10 +213,8 @@ async def predict_batch(request: BatchContextRequest):
         smash_spots = []
         
         for pred_request in request.predictions:
-            # Convert injuries to dict format
             injuries = [inj.dict() for inj in pred_request.injuries]
             
-            # Generate context
             context = ContextGenerator.generate_context(
                 player_name=pred_request.player_name,
                 player_team=pred_request.player_team,
@@ -363,14 +272,11 @@ async def predict_batch(request: BatchContextRequest):
 async def get_defense_rank(request: DefenseRankRequest):
     """
     Get defensive rank for a team vs position
-    
-    Returns rank 1-30 (1=best defense, 30=worst/smash spot)
     """
     try:
         rank = DefensiveRankService.get_rank(request.team, request.position)
         context = DefensiveRankService.rank_to_context(request.team, request.position)
         
-        # Determine matchup quality
         if rank >= 22:
             quality = "SOFT 🎯"
         elif rank <= 8:
@@ -396,8 +302,6 @@ async def get_defense_rank(request: DefenseRankRequest):
 async def get_defense_rankings(position: str):
     """
     Get all teams ranked by defense vs position
-    
-    Position options: Guard, Wing, Big
     """
     try:
         pos = position.lower()
@@ -413,10 +317,7 @@ async def get_defense_rankings(position: str):
         else:
             raise HTTPException(status_code=400, detail="Position must be Guard, Wing, or Big")
         
-        # Sort by rank
         sorted_rankings = dict(sorted(rankings.items(), key=lambda x: x[1]))
-        
-        # Identify smash spots (rank 25+)
         smash_teams = [team for team, rank in rankings.items() if rank >= 25]
         
         return {
@@ -439,21 +340,12 @@ async def get_defense_rankings(position: str):
 async def calculate_usage_vacuum(request: VacuumRequest):
     """
     Calculate usage vacuum from injuries
-    
-    Formula: sum((USG% × MPG) / 48) for all OUT players
-    
-    Interpretation:
-    - 0-10: Minimal impact
-    - 10-20: Moderate opportunity
-    - 20-35: Significant boost
-    - 35+: SMASH SPOT
     """
     try:
         injuries = [inj.dict() for inj in request.injuries]
         vacuum = UsageVacuumService.calculate_vacuum(injuries)
         context = UsageVacuumService.vacuum_to_context(vacuum)
         
-        # Determine impact level
         if vacuum >= 35:
             impact = "SMASH SPOT 💎"
         elif vacuum >= 20:
@@ -480,8 +372,6 @@ async def calculate_usage_vacuum(request: VacuumRequest):
 async def get_game_pace(request: PaceRequest):
     """
     Estimate game pace between two teams
-    
-    Returns expected possessions per game.
     """
     try:
         pace = PaceVectorService.get_game_pace(request.team1, request.team2)
@@ -490,7 +380,6 @@ async def get_game_pace(request: PaceRequest):
         pace1 = PaceVectorService.get_team_pace(request.team1)
         pace2 = PaceVectorService.get_team_pace(request.team2)
         
-        # Determine pace category
         if pace >= 101:
             category = "FAST ⚡"
         elif pace <= 96:
@@ -517,14 +406,9 @@ async def get_game_pace(request: PaceRequest):
 async def get_pace_rankings():
     """
     Get all teams ranked by pace
-    
-    Pace = possessions per game
     """
     try:
-        # Sort by pace (fastest first)
         sorted_pace = dict(sorted(PaceVectorService.TEAM_PACE.items(), key=lambda x: x[1], reverse=True))
-        
-        # Identify fast teams (pace 100+)
         fast_teams = [team for team, pace in PaceVectorService.TEAM_PACE.items() if pace >= 100]
         
         return {
@@ -541,135 +425,64 @@ async def get_pace_rankings():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============================================
-# ORIGINAL ENDPOINTS
-# ============================================
-
-@app.post("/predict", response_model=PredictionResponse)
-async def generate_prediction(request: PredictionRequest):
-    """
-    Generate comprehensive AI prediction for a player prop or game
-    
-    This endpoint combines all 8 AI models to produce:
-    - Predicted value
-    - Recommendation (OVER/UNDER)
-    - AI confidence score (0-10)
-    - Expected value (EV)
-    - Probability
-    - Kelly criterion bet sizing
-    """
-    try:
-        logger.info(f"Generating prediction for {request.player_id} vs {request.opponent_id}")
-        
-        # Convert Pydantic models to dicts
-        game_data = request.dict()
-        
-        # Generate prediction
-        result = predictor.generate_comprehensive_prediction(game_data)
-        
-        logger.success(f"Prediction generated: {result['recommendation']} at {result['ai_score']}/10 confidence")
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Prediction error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
-
-@app.post("/simulate-game")
-async def simulate_game(request: GameSimulationRequest):
-    """
-    Run Monte Carlo game simulation
-    
-    Simulates the game thousands of times to get:
-    - Win probabilities
-    - Score distributions
-    - Over/under probabilities
-    - Spread cover probabilities
-    """
-    try:
-        logger.info("Running game simulation...")
-        
-        results = predictor.monte_carlo.simulate_game(
-            request.team_a_stats,
-            request.team_b_stats,
-            request.num_simulations
-        )
-        
-        logger.success("Simulation complete")
-        
-        return {
-            "status": "success",
-            "simulations_run": request.num_simulations,
-            "results": results
-        }
-        
-    except Exception as e:
-        logger.error(f"Simulation error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Simulation failed: {str(e)}")
-
-@app.post("/analyze-line")
-async def analyze_line_movement(request: LineAnalysisRequest):
-    """
-    Analyze betting line movement to detect sharp money
-    
-    Returns:
-    - Sharp money indicators
-    - Reverse line movement detection
-    - Steam move detection
-    - Recommended side
-    """
-    try:
-        logger.info(f"Analyzing line movement for {request.game_id}")
-        
-        analysis = predictor.line_analyzer.analyze_line_movement(
-            request.game_id,
-            request.current_line,
-            request.opening_line,
-            request.time_until_game,
-            request.betting_percentages.dict()
-        )
-        
-        logger.success("Line analysis complete")
-        
-        return {
-            "status": "success",
-            "game_id": request.game_id,
-            "analysis": analysis
-        }
-        
-    except Exception as e:
-        logger.error(f"Line analysis error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Line analysis failed: {str(e)}")
-
 @app.post("/calculate-edge")
 async def calculate_betting_edge(request: EdgeCalculationRequest):
     """
     Calculate expected value (EV) and optimal bet size
-    
-    Returns:
-    - Expected value per $100 bet
-    - Edge percentage
-    - Kelly criterion bet size
-    - Confidence level
     """
     try:
         logger.info("Calculating betting edge...")
         
-        edge = predictor.edge_calculator.calculate_ev(
-            request.your_probability,
-            request.betting_odds
-        )
+        # Convert American odds to decimal
+        if request.betting_odds < 0:
+            decimal_odds = 1 + (100 / abs(request.betting_odds))
+            implied_prob = abs(request.betting_odds) / (abs(request.betting_odds) + 100)
+        else:
+            decimal_odds = 1 + (request.betting_odds / 100)
+            implied_prob = 100 / (request.betting_odds + 100)
         
-        logger.success(f"Edge calculated: {edge['edge_percent']}%")
+        # Calculate edge
+        edge = request.your_probability - implied_prob
+        edge_percent = edge * 100
+        
+        # Calculate EV per $100 bet
+        ev = (request.your_probability * (decimal_odds - 1) * 100) - ((1 - request.your_probability) * 100)
+        
+        # Kelly Criterion
+        kelly = edge / (decimal_odds - 1) if decimal_odds > 1 else 0
+        kelly = max(0, kelly)  # No negative bets
+        
+        # Confidence level
+        if edge_percent >= 10:
+            confidence = "HIGH"
+        elif edge_percent >= 5:
+            confidence = "MEDIUM"
+        elif edge_percent > 0:
+            confidence = "LOW"
+        else:
+            confidence = "NO EDGE"
+        
+        result = {
+            "your_probability": round(request.your_probability * 100, 1),
+            "implied_probability": round(implied_prob * 100, 1),
+            "edge_percent": round(edge_percent, 2),
+            "ev_per_100": round(ev, 2),
+            "kelly_bet_size": round(kelly * 100, 1),
+            "decimal_odds": round(decimal_odds, 3),
+            "confidence": confidence
+        }
+        
+        logger.success(f"Edge calculated: {edge_percent:.1f}%")
         
         return {
             "status": "success",
-            "edge_analysis": edge
+            "edge_analysis": result
         }
         
     except Exception as e:
         logger.error(f"Edge calculation error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Edge calculation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/health")
 async def health_check():
@@ -678,31 +491,25 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "version": "6.6.0",
-        "context_layer": "active",
-        "models_loaded": True
+        "context_layer": "active"
     }
+
 
 @app.get("/model-status")
 async def model_status():
-    """Check status of all AI models"""
+    """Check status of all components"""
     return {
         "version": "6.6.0",
         "context_layer": {
             "usage_vacuum": "ready",
             "defensive_rank": "ready",
-            "pace_vector": "ready"
+            "pace_vector": "ready",
+            "context_generator": "ready"
         },
-        "ml_models": {
-            "ensemble": predictor.ensemble.is_trained,
-            "lstm_built": predictor.lstm.model is not None,
-            "matchup_models": len(predictor.matchup.matchup_models),
-            "monte_carlo": "ready",
-            "line_analyzer": "ready",
-            "rest_model": "ready",
-            "injury_model": "ready",
-            "edge_calculator": "ready"
-        }
+        "teams_loaded": len(PaceVectorService.TEAM_PACE),
+        "positions_supported": ["Guard", "Wing", "Big"]
     }
+
 
 # ============================================
 # RUN SERVER
