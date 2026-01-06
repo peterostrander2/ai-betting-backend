@@ -372,6 +372,257 @@ class EsotericEngine:
 esoteric_engine = EsotericEngine()
 
 # ============================================
+# TEAM NAME MAPPER (Cross-Source Normalization)
+# ============================================
+
+class TeamNameMapper:
+    """
+    Normalizes team names across different data sources.
+    ESPN uses abbreviations (NYK), Odds API uses full names (New York Knicks),
+    internal systems may use various formats.
+    """
+    
+    # NBA Teams: abbrev -> (full_name, city, aliases)
+    NBA_TEAMS = {
+        "ATL": ("Atlanta Hawks", "Atlanta", ["hawks", "atl"]),
+        "BOS": ("Boston Celtics", "Boston", ["celtics", "bos"]),
+        "BKN": ("Brooklyn Nets", "Brooklyn", ["nets", "bkn", "nj", "njn"]),
+        "CHA": ("Charlotte Hornets", "Charlotte", ["hornets", "cha", "cho"]),
+        "CHI": ("Chicago Bulls", "Chicago", ["bulls", "chi"]),
+        "CLE": ("Cleveland Cavaliers", "Cleveland", ["cavaliers", "cavs", "cle"]),
+        "DAL": ("Dallas Mavericks", "Dallas", ["mavericks", "mavs", "dal"]),
+        "DEN": ("Denver Nuggets", "Denver", ["nuggets", "den"]),
+        "DET": ("Detroit Pistons", "Detroit", ["pistons", "det"]),
+        "GSW": ("Golden State Warriors", "Golden State", ["warriors", "gsw", "gs"]),
+        "HOU": ("Houston Rockets", "Houston", ["rockets", "hou"]),
+        "IND": ("Indiana Pacers", "Indiana", ["pacers", "ind"]),
+        "LAC": ("Los Angeles Clippers", "LA Clippers", ["clippers", "lac"]),
+        "LAL": ("Los Angeles Lakers", "LA Lakers", ["lakers", "lal"]),
+        "MEM": ("Memphis Grizzlies", "Memphis", ["grizzlies", "mem"]),
+        "MIA": ("Miami Heat", "Miami", ["heat", "mia"]),
+        "MIL": ("Milwaukee Bucks", "Milwaukee", ["bucks", "mil"]),
+        "MIN": ("Minnesota Timberwolves", "Minnesota", ["timberwolves", "wolves", "min"]),
+        "NOP": ("New Orleans Pelicans", "New Orleans", ["pelicans", "nop", "no"]),
+        "NYK": ("New York Knicks", "New York", ["knicks", "nyk", "ny"]),
+        "OKC": ("Oklahoma City Thunder", "Oklahoma City", ["thunder", "okc"]),
+        "ORL": ("Orlando Magic", "Orlando", ["magic", "orl"]),
+        "PHI": ("Philadelphia 76ers", "Philadelphia", ["76ers", "sixers", "phi"]),
+        "PHX": ("Phoenix Suns", "Phoenix", ["suns", "phx"]),
+        "POR": ("Portland Trail Blazers", "Portland", ["blazers", "por"]),
+        "SAC": ("Sacramento Kings", "Sacramento", ["kings", "sac"]),
+        "SAS": ("San Antonio Spurs", "San Antonio", ["spurs", "sas", "sa"]),
+        "TOR": ("Toronto Raptors", "Toronto", ["raptors", "tor"]),
+        "UTA": ("Utah Jazz", "Utah", ["jazz", "uta"]),
+        "WAS": ("Washington Wizards", "Washington", ["wizards", "was", "wsh"]),
+    }
+    
+    # NFL Teams
+    NFL_TEAMS = {
+        "ARI": ("Arizona Cardinals", "Arizona", ["cardinals", "ari"]),
+        "ATL": ("Atlanta Falcons", "Atlanta", ["falcons", "atl"]),
+        "BAL": ("Baltimore Ravens", "Baltimore", ["ravens", "bal"]),
+        "BUF": ("Buffalo Bills", "Buffalo", ["bills", "buf"]),
+        "CAR": ("Carolina Panthers", "Carolina", ["panthers", "car"]),
+        "CHI": ("Chicago Bears", "Chicago", ["bears", "chi"]),
+        "CIN": ("Cincinnati Bengals", "Cincinnati", ["bengals", "cin"]),
+        "CLE": ("Cleveland Browns", "Cleveland", ["browns", "cle"]),
+        "DAL": ("Dallas Cowboys", "Dallas", ["cowboys", "dal"]),
+        "DEN": ("Denver Broncos", "Denver", ["broncos", "den"]),
+        "DET": ("Detroit Lions", "Detroit", ["lions", "det"]),
+        "GB": ("Green Bay Packers", "Green Bay", ["packers", "gb", "gnb"]),
+        "HOU": ("Houston Texans", "Houston", ["texans", "hou"]),
+        "IND": ("Indianapolis Colts", "Indianapolis", ["colts", "ind"]),
+        "JAX": ("Jacksonville Jaguars", "Jacksonville", ["jaguars", "jax", "jac"]),
+        "KC": ("Kansas City Chiefs", "Kansas City", ["chiefs", "kc"]),
+        "LV": ("Las Vegas Raiders", "Las Vegas", ["raiders", "lv", "lvr", "oak"]),
+        "LAC": ("Los Angeles Chargers", "LA Chargers", ["chargers", "lac", "sd"]),
+        "LAR": ("Los Angeles Rams", "LA Rams", ["rams", "lar", "stl"]),
+        "MIA": ("Miami Dolphins", "Miami", ["dolphins", "mia"]),
+        "MIN": ("Minnesota Vikings", "Minnesota", ["vikings", "min"]),
+        "NE": ("New England Patriots", "New England", ["patriots", "ne", "nep"]),
+        "NO": ("New Orleans Saints", "New Orleans", ["saints", "no", "nos"]),
+        "NYG": ("New York Giants", "NY Giants", ["giants", "nyg"]),
+        "NYJ": ("New York Jets", "NY Jets", ["jets", "nyj"]),
+        "PHI": ("Philadelphia Eagles", "Philadelphia", ["eagles", "phi"]),
+        "PIT": ("Pittsburgh Steelers", "Pittsburgh", ["steelers", "pit"]),
+        "SF": ("San Francisco 49ers", "San Francisco", ["49ers", "niners", "sf"]),
+        "SEA": ("Seattle Seahawks", "Seattle", ["seahawks", "sea"]),
+        "TB": ("Tampa Bay Buccaneers", "Tampa Bay", ["buccaneers", "bucs", "tb"]),
+        "TEN": ("Tennessee Titans", "Tennessee", ["titans", "ten"]),
+        "WAS": ("Washington Commanders", "Washington", ["commanders", "was", "wsh"]),
+    }
+    
+    # MLB Teams
+    MLB_TEAMS = {
+        "ARI": ("Arizona Diamondbacks", "Arizona", ["diamondbacks", "dbacks", "ari"]),
+        "ATL": ("Atlanta Braves", "Atlanta", ["braves", "atl"]),
+        "BAL": ("Baltimore Orioles", "Baltimore", ["orioles", "bal"]),
+        "BOS": ("Boston Red Sox", "Boston", ["red sox", "redsox", "bos"]),
+        "CHC": ("Chicago Cubs", "Chicago Cubs", ["cubs", "chc"]),
+        "CHW": ("Chicago White Sox", "Chicago White Sox", ["white sox", "whitesox", "chw", "cws"]),
+        "CIN": ("Cincinnati Reds", "Cincinnati", ["reds", "cin"]),
+        "CLE": ("Cleveland Guardians", "Cleveland", ["guardians", "cle", "indians"]),
+        "COL": ("Colorado Rockies", "Colorado", ["rockies", "col"]),
+        "DET": ("Detroit Tigers", "Detroit", ["tigers", "det"]),
+        "HOU": ("Houston Astros", "Houston", ["astros", "hou"]),
+        "KC": ("Kansas City Royals", "Kansas City", ["royals", "kc"]),
+        "LAA": ("Los Angeles Angels", "LA Angels", ["angels", "laa", "ana"]),
+        "LAD": ("Los Angeles Dodgers", "LA Dodgers", ["dodgers", "lad"]),
+        "MIA": ("Miami Marlins", "Miami", ["marlins", "mia", "fla"]),
+        "MIL": ("Milwaukee Brewers", "Milwaukee", ["brewers", "mil"]),
+        "MIN": ("Minnesota Twins", "Minnesota", ["twins", "min"]),
+        "NYM": ("New York Mets", "NY Mets", ["mets", "nym"]),
+        "NYY": ("New York Yankees", "NY Yankees", ["yankees", "nyy"]),
+        "OAK": ("Oakland Athletics", "Oakland", ["athletics", "a's", "oak"]),
+        "PHI": ("Philadelphia Phillies", "Philadelphia", ["phillies", "phi"]),
+        "PIT": ("Pittsburgh Pirates", "Pittsburgh", ["pirates", "pit"]),
+        "SD": ("San Diego Padres", "San Diego", ["padres", "sd"]),
+        "SF": ("San Francisco Giants", "San Francisco", ["giants", "sf"]),
+        "SEA": ("Seattle Mariners", "Seattle", ["mariners", "sea"]),
+        "STL": ("St. Louis Cardinals", "St. Louis", ["cardinals", "stl"]),
+        "TB": ("Tampa Bay Rays", "Tampa Bay", ["rays", "tb"]),
+        "TEX": ("Texas Rangers", "Texas", ["rangers", "tex"]),
+        "TOR": ("Toronto Blue Jays", "Toronto", ["blue jays", "bluejays", "tor"]),
+        "WAS": ("Washington Nationals", "Washington", ["nationals", "nats", "was"]),
+    }
+    
+    # NHL Teams
+    NHL_TEAMS = {
+        "ANA": ("Anaheim Ducks", "Anaheim", ["ducks", "ana"]),
+        "ARI": ("Arizona Coyotes", "Arizona", ["coyotes", "ari", "phx"]),
+        "BOS": ("Boston Bruins", "Boston", ["bruins", "bos"]),
+        "BUF": ("Buffalo Sabres", "Buffalo", ["sabres", "buf"]),
+        "CGY": ("Calgary Flames", "Calgary", ["flames", "cgy"]),
+        "CAR": ("Carolina Hurricanes", "Carolina", ["hurricanes", "canes", "car"]),
+        "CHI": ("Chicago Blackhawks", "Chicago", ["blackhawks", "chi"]),
+        "COL": ("Colorado Avalanche", "Colorado", ["avalanche", "avs", "col"]),
+        "CBJ": ("Columbus Blue Jackets", "Columbus", ["blue jackets", "cbj"]),
+        "DAL": ("Dallas Stars", "Dallas", ["stars", "dal"]),
+        "DET": ("Detroit Red Wings", "Detroit", ["red wings", "det"]),
+        "EDM": ("Edmonton Oilers", "Edmonton", ["oilers", "edm"]),
+        "FLA": ("Florida Panthers", "Florida", ["panthers", "fla"]),
+        "LA": ("Los Angeles Kings", "Los Angeles", ["kings", "la", "lak"]),
+        "MIN": ("Minnesota Wild", "Minnesota", ["wild", "min"]),
+        "MTL": ("Montreal Canadiens", "Montreal", ["canadiens", "habs", "mtl"]),
+        "NSH": ("Nashville Predators", "Nashville", ["predators", "preds", "nsh"]),
+        "NJ": ("New Jersey Devils", "New Jersey", ["devils", "nj", "njd"]),
+        "NYI": ("New York Islanders", "NY Islanders", ["islanders", "nyi"]),
+        "NYR": ("New York Rangers", "NY Rangers", ["rangers", "nyr"]),
+        "OTT": ("Ottawa Senators", "Ottawa", ["senators", "sens", "ott"]),
+        "PHI": ("Philadelphia Flyers", "Philadelphia", ["flyers", "phi"]),
+        "PIT": ("Pittsburgh Penguins", "Pittsburgh", ["penguins", "pens", "pit"]),
+        "SJ": ("San Jose Sharks", "San Jose", ["sharks", "sj"]),
+        "SEA": ("Seattle Kraken", "Seattle", ["kraken", "sea"]),
+        "STL": ("St. Louis Blues", "St. Louis", ["blues", "stl"]),
+        "TB": ("Tampa Bay Lightning", "Tampa Bay", ["lightning", "bolts", "tb", "tbl"]),
+        "TOR": ("Toronto Maple Leafs", "Toronto", ["maple leafs", "leafs", "tor"]),
+        "VAN": ("Vancouver Canucks", "Vancouver", ["canucks", "van"]),
+        "VGK": ("Vegas Golden Knights", "Vegas", ["golden knights", "knights", "vgk"]),
+        "WAS": ("Washington Capitals", "Washington", ["capitals", "caps", "was", "wsh"]),
+        "WPG": ("Winnipeg Jets", "Winnipeg", ["jets", "wpg"]),
+    }
+    
+    # NCAAB - Top 50 programs (expandable)
+    NCAAB_TEAMS = {
+        "DUKE": ("Duke Blue Devils", "Duke", ["blue devils", "duke"]),
+        "UNC": ("North Carolina Tar Heels", "North Carolina", ["tar heels", "unc", "carolina"]),
+        "UK": ("Kentucky Wildcats", "Kentucky", ["wildcats", "uk", "kentucky"]),
+        "KU": ("Kansas Jayhawks", "Kansas", ["jayhawks", "ku", "kansas"]),
+        "UCLA": ("UCLA Bruins", "UCLA", ["bruins", "ucla"]),
+        "GONZ": ("Gonzaga Bulldogs", "Gonzaga", ["bulldogs", "zags", "gonz", "gonzaga"]),
+        "MICH": ("Michigan Wolverines", "Michigan", ["wolverines", "mich"]),
+        "MSU": ("Michigan State Spartans", "Michigan State", ["spartans", "msu"]),
+        "OSU": ("Ohio State Buckeyes", "Ohio State", ["buckeyes", "osu"]),
+        "IU": ("Indiana Hoosiers", "Indiana", ["hoosiers", "iu", "indiana"]),
+        "LOU": ("Louisville Cardinals", "Louisville", ["cardinals", "lou", "louisville"]),
+        "NOVA": ("Villanova Wildcats", "Villanova", ["wildcats", "nova", "villanova"]),
+        "UVA": ("Virginia Cavaliers", "Virginia", ["cavaliers", "uva", "virginia"]),
+        "BAYLOR": ("Baylor Bears", "Baylor", ["bears", "baylor"]),
+        "TENN": ("Tennessee Volunteers", "Tennessee", ["volunteers", "vols", "tenn"]),
+        "ARIZ": ("Arizona Wildcats", "Arizona", ["wildcats", "ariz", "arizona"]),
+        "CONN": ("UConn Huskies", "UConn", ["huskies", "conn", "uconn", "connecticut"]),
+        "ARK": ("Arkansas Razorbacks", "Arkansas", ["razorbacks", "hogs", "ark"]),
+        "AUB": ("Auburn Tigers", "Auburn", ["tigers", "aub", "auburn"]),
+        "PUR": ("Purdue Boilermakers", "Purdue", ["boilermakers", "pur", "purdue"]),
+    }
+    
+    @classmethod
+    def get_team_map(cls, sport: str) -> Dict:
+        """Get team mapping for a sport."""
+        sport = sport.upper()
+        return {
+            "NBA": cls.NBA_TEAMS,
+            "NFL": cls.NFL_TEAMS,
+            "MLB": cls.MLB_TEAMS,
+            "NHL": cls.NHL_TEAMS,
+            "NCAAB": cls.NCAAB_TEAMS
+        }.get(sport, {})
+    
+    @classmethod
+    def normalize(cls, team_input: str, sport: str) -> str:
+        """
+        Normalize any team name input to standard abbreviation.
+        
+        Args:
+            team_input: Any form of team name (abbrev, full name, city, nickname)
+            sport: Sport league (NBA, NFL, MLB, NHL, NCAAB)
+        
+        Returns:
+            Standard abbreviation (e.g., "NYK", "LAL")
+        """
+        team_map = cls.get_team_map(sport)
+        if not team_map:
+            return team_input.upper()[:3]
+        
+        # Check if already an abbreviation
+        if team_input.upper() in team_map:
+            return team_input.upper()
+        
+        # Search through all teams
+        input_lower = team_input.lower().strip()
+        for abbrev, (full_name, city, aliases) in team_map.items():
+            # Check full name
+            if input_lower == full_name.lower():
+                return abbrev
+            # Check city
+            if input_lower == city.lower():
+                return abbrev
+            # Check aliases
+            if input_lower in [a.lower() for a in aliases]:
+                return abbrev
+            # Partial match on full name
+            if input_lower in full_name.lower() or full_name.lower() in input_lower:
+                return abbrev
+        
+        # Fallback: return uppercase truncated
+        return team_input.upper()[:3]
+    
+    @classmethod
+    def to_full_name(cls, abbrev: str, sport: str) -> str:
+        """Convert abbreviation to full team name."""
+        team_map = cls.get_team_map(sport)
+        if abbrev.upper() in team_map:
+            return team_map[abbrev.upper()][0]
+        return abbrev
+    
+    @classmethod
+    def to_city(cls, abbrev: str, sport: str) -> str:
+        """Convert abbreviation to city/region name."""
+        team_map = cls.get_team_map(sport)
+        if abbrev.upper() in team_map:
+            return team_map[abbrev.upper()][1]
+        return abbrev
+    
+    @classmethod
+    def match_teams(cls, team1: str, team2: str, sport: str) -> bool:
+        """Check if two team name inputs refer to the same team."""
+        return cls.normalize(team1, sport) == cls.normalize(team2, sport)
+
+
+# Initialize mapper
+team_mapper = TeamNameMapper()
+
+# ============================================
 # REQUEST MODELS
 # ============================================
 
@@ -486,6 +737,7 @@ async def root():
             "brain": ["/brain/predict", "/brain/status"],
             "grader": ["/grader/weights", "/grader/grade", "/grader/audit", "/grader/bias"],
             "esoteric": ["/esoteric/analyze", "/esoteric/gematria", "/esoteric/numerology", "/esoteric/astrology"],
+            "teams": ["/teams/normalize", "/teams/match", "/teams/{sport}", "/teams/{sport}/{abbrev}"],
             "sports_info": ["/sports", "/sports/{sport}/positions", "/sports/{sport}/stat-types"],
             "defense": ["/defense-rank", "/defense-rankings/{sport}/{position}"],
             "pace": ["/game-pace", "/pace-rankings/{sport}"],
@@ -520,6 +772,110 @@ async def get_sport_stat_types(sport: str):
     return {"status": "success", "sport": sport, "stat_types": SPORT_STAT_TYPES.get(sport, [])}
 
 # ============================================
+# TEAM NAME MAPPER ENDPOINTS
+# ============================================
+
+@app.post("/teams/normalize")
+async def normalize_team_name(team_input: str, sport: str):
+    """
+    Normalize any team name input to standard abbreviation.
+    Handles ESPN names, Odds API names, full names, cities, nicknames.
+    """
+    sport = sport.upper()
+    if sport not in SUPPORTED_SPORTS:
+        raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+    
+    abbrev = TeamNameMapper.normalize(team_input, sport)
+    full_name = TeamNameMapper.to_full_name(abbrev, sport)
+    city = TeamNameMapper.to_city(abbrev, sport)
+    
+    return {
+        "status": "success",
+        "input": team_input,
+        "sport": sport,
+        "normalized": {
+            "abbreviation": abbrev,
+            "full_name": full_name,
+            "city": city
+        }
+    }
+
+
+@app.post("/teams/match")
+async def check_team_match(team1: str, team2: str, sport: str):
+    """
+    Check if two team name inputs refer to the same team.
+    Useful for matching data from different sources.
+    """
+    sport = sport.upper()
+    if sport not in SUPPORTED_SPORTS:
+        raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+    
+    is_match = TeamNameMapper.match_teams(team1, team2, sport)
+    norm1 = TeamNameMapper.normalize(team1, sport)
+    norm2 = TeamNameMapper.normalize(team2, sport)
+    
+    return {
+        "status": "success",
+        "team1": {"input": team1, "normalized": norm1},
+        "team2": {"input": team2, "normalized": norm2},
+        "is_match": is_match
+    }
+
+
+@app.get("/teams/{sport}")
+async def list_all_teams(sport: str):
+    """Get all teams for a sport with abbreviations and full names."""
+    sport = sport.upper()
+    if sport not in SUPPORTED_SPORTS:
+        raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+    
+    team_map = TeamNameMapper.get_team_map(sport)
+    teams = []
+    for abbrev, (full_name, city, aliases) in team_map.items():
+        teams.append({
+            "abbreviation": abbrev,
+            "full_name": full_name,
+            "city": city,
+            "aliases": aliases
+        })
+    
+    return {
+        "status": "success",
+        "sport": sport,
+        "team_count": len(teams),
+        "teams": sorted(teams, key=lambda x: x["abbreviation"])
+    }
+
+
+@app.get("/teams/{sport}/{abbrev}")
+async def get_team_info(sport: str, abbrev: str):
+    """Get detailed info for a specific team."""
+    sport = sport.upper()
+    if sport not in SUPPORTED_SPORTS:
+        raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+    
+    team_map = TeamNameMapper.get_team_map(sport)
+    normalized = TeamNameMapper.normalize(abbrev, sport)
+    
+    if normalized not in team_map:
+        raise HTTPException(status_code=404, detail=f"Team '{abbrev}' not found in {sport}")
+    
+    full_name, city, aliases = team_map[normalized]
+    
+    return {
+        "status": "success",
+        "sport": sport,
+        "team": {
+            "abbreviation": normalized,
+            "full_name": full_name,
+            "city": city,
+            "aliases": aliases
+        }
+    }
+
+
+# ============================================
 # CONTEXT PREDICTIONS
 # ============================================
 
@@ -530,7 +886,13 @@ async def predict_with_context(request: ContextRequest):
         if sport not in SUPPORTED_SPORTS:
             raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
         
-        logger.info(f"[{sport}] Context prediction: {request.player_name} vs {request.opponent_team}")
+        # =====================
+        # TEAM NAME NORMALIZATION
+        # =====================
+        player_team_normalized = TeamNameMapper.normalize(request.player_team, sport)
+        opponent_team_normalized = TeamNameMapper.normalize(request.opponent_team, sport)
+        
+        logger.info(f"[{sport}] Context prediction: {request.player_name} ({player_team_normalized}) vs {opponent_team_normalized}")
         injuries = [inj.dict() for inj in request.injuries]
         
         # =====================
@@ -544,10 +906,10 @@ async def predict_with_context(request: ContextRequest):
             "spread": request.game_spread or 0.0
         }
         
-        # Calculate context for player's team
+        # Calculate context for player's team (use normalized names)
         player_context = ContextFeatureCalculator.calculate_context_features(
             sport=sport,
-            team_id=request.player_team,
+            team_id=player_team_normalized,
             injuries=injuries,
             game_stats=game_stats
         )
@@ -555,7 +917,7 @@ async def predict_with_context(request: ContextRequest):
         # Calculate context for opponent team (empty injuries = no vacuum boost for them)
         opponent_context = ContextFeatureCalculator.calculate_context_features(
             sport=sport,
-            team_id=request.opponent_team,
+            team_id=opponent_team_normalized,
             injuries=[],  # We don't have opponent injuries in this request
             game_stats=game_stats
         )
@@ -563,11 +925,11 @@ async def predict_with_context(request: ContextRequest):
         logger.info(f"[{sport}] Context Layer: vacuum={player_context['vacuum']}, pace_vector={player_context['pace_vector']}, smash={player_context['is_smash_spot']}")
         
         # =====================
-        # GENERATE FULL CONTEXT
+        # GENERATE FULL CONTEXT (use normalized team names)
         # =====================
         context = ContextGenerator.generate_context(
-            sport=sport, player_name=request.player_name, player_team=request.player_team,
-            opponent_team=request.opponent_team, position=request.position, player_avg=request.player_avg,
+            sport=sport, player_name=request.player_name, player_team=player_team_normalized,
+            opponent_team=opponent_team_normalized, position=request.position, player_avg=request.player_avg,
             stat_type=request.stat_type or "points", injuries=injuries, game_total=request.game_total or 0.0,
             game_spread=request.game_spread or 0.0, home_team=request.home_team
         )
@@ -657,7 +1019,7 @@ async def predict_with_context(request: ContextRequest):
         try:
             esoteric_result = EsotericEngine.analyze(
                 player_name=request.player_name,
-                opponent=request.opponent_team,
+                opponent=opponent_team_normalized,
                 line=request.line or request.player_avg,
                 game_date=datetime.now(),
                 player_avg=request.player_avg,
@@ -707,10 +1069,18 @@ async def predict_with_context(request: ContextRequest):
         response = {
             "status": "success", "sport": sport,
             "prediction": {
-                "player": request.player_name, "team": request.player_team, "opponent": request.opponent_team,
+                "player": request.player_name, 
+                "team": player_team_normalized,
+                "team_full": TeamNameMapper.to_full_name(player_team_normalized, sport),
+                "opponent": opponent_team_normalized,
+                "opponent_full": TeamNameMapper.to_full_name(opponent_team_normalized, sport),
                 "position": request.position, "stat_type": request.stat_type, "base": request.player_avg,
                 "final": waterfall["finalPrediction"], "line": request.line, "recommendation": None,
                 "confidence": waterfall["confidence"], "is_smash_spot": waterfall["isSmashSpot"]
+            },
+            "team_normalization": {
+                "player_team": {"input": request.player_team, "normalized": player_team_normalized},
+                "opponent_team": {"input": request.opponent_team, "normalized": opponent_team_normalized}
             },
             "calculated_context": {
                 "player_team": player_context,
@@ -718,7 +1088,7 @@ async def predict_with_context(request: ContextRequest):
             },
             "lstm_features": context["lstm_features"], 
             "lstm_brain": lstm_prediction,
-            "esoteric": esoteric_result,  # NEW: Esoteric analysis
+            "esoteric": esoteric_result,
             "waterfall": waterfall,
             "badges": context["badges"], "raw_context": context["raw_context"],
             "dynamic_weights": auto_grader.get_weights(sport, request.stat_type or "points")
