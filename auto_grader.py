@@ -10,6 +10,31 @@ This is the learning mechanism that makes Bookie-o-em self-improving:
 4. Persists learned weights for next session
 
 All 5 Sports: NBA, NFL, MLB, NHL, NCAAB
+
+INTERPRETING BIAS RESULTS:
+==========================
+* Drift Detection:
+  - If `vacuum_bias` is consistently positive (e.g., +4.0), the model is 
+    UNDER-reacting to injuries. Safe to INCREASE vacuum weight.
+  - If `vacuum_bias` is consistently negative (e.g., -3.0), the model is 
+    OVER-reacting to injuries. Safe to DECREASE vacuum weight.
+  - Same logic applies to defense_bias, pace_bias, lstm_bias, officials_bias.
+
+* Over-fitting Warning:
+  - If Global MAE is high (>5.0) but training error was low, the model 
+    might be memorizing the past rather than predicting the future.
+  - Solution: Reduce learning_rate, add more regularization, or use more 
+    diverse training data.
+
+* Healthy Bias Range:
+  - Bias between -1.0 and +1.0 is acceptable (normal variance)
+  - Bias between -2.0 and -1.0 or +1.0 and +2.0 warrants monitoring
+  - Bias beyond ±2.0 requires immediate weight adjustment
+
+* Target Metrics:
+  - MAE < 3.0 for NBA/NCAAB points
+  - MAE < 15.0 for NFL passing yards
+  - Hit Rate > 52% (profitable threshold with -110 odds)
 """
 
 import json
