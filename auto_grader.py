@@ -126,6 +126,7 @@ class AutoGrader:
     
     def _load_state(self):
         """Load persisted weights and prediction history."""
+        # Load weights
         weights_file = os.path.join(self.storage_path, "weights.json")
         if os.path.exists(weights_file):
             try:
@@ -139,22 +140,45 @@ class AutoGrader:
                 print(f"✅ Loaded weights from {weights_file}")
             except Exception as e:
                 print(f"⚠️ Could not load weights: {e}")
+        
+        # Load predictions history
+        predictions_file = os.path.join(self.storage_path, "predictions.json")
+        if os.path.exists(predictions_file):
+            try:
+                with open(predictions_file, 'r') as f:
+                    data = json.load(f)
+                    for sport, records in data.items():
+                        for record_dict in records:
+                            self.predictions[sport].append(PredictionRecord(**record_dict))
+                print(f"✅ Loaded {sum(len(p) for p in self.predictions.values())} predictions from {predictions_file}")
+            except Exception as e:
+                print(f"⚠️ Could not load predictions: {e}")
     
     def _save_state(self):
-        """Persist weights to disk."""
+        """Persist weights and predictions to disk."""
         os.makedirs(self.storage_path, exist_ok=True)
-        weights_file = os.path.join(self.storage_path, "weights.json")
         
-        # Convert to serializable format
-        data = {}
+        # Save weights
+        weights_file = os.path.join(self.storage_path, "weights.json")
+        weights_data = {}
         for sport, stat_weights in self.weights.items():
-            data[sport] = {}
+            weights_data[sport] = {}
             for stat, config in stat_weights.items():
-                data[sport][stat] = asdict(config)
+                weights_data[sport][stat] = asdict(config)
         
         with open(weights_file, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(weights_data, f, indent=2)
         print(f"✅ Saved weights to {weights_file}")
+        
+        # Save predictions
+        predictions_file = os.path.join(self.storage_path, "predictions.json")
+        predictions_data = {}
+        for sport, records in self.predictions.items():
+            predictions_data[sport] = [asdict(r) for r in records]
+        
+        with open(predictions_file, 'w') as f:
+            json.dump(predictions_data, f, indent=2)
+        print(f"✅ Saved {sum(len(p) for p in self.predictions.values())} predictions to {predictions_file}")
     
     # ============================================
     # PREDICTION LOGGING
@@ -195,7 +219,22 @@ class AutoGrader:
         )
         
         self.predictions[sport].append(record)
+        
+        # Auto-save predictions to disk (persist for tomorrow's audit)
+        self._save_predictions()
+        
         return prediction_id
+    
+    def _save_predictions(self):
+        """Save predictions only (lightweight save for each log)."""
+        os.makedirs(self.storage_path, exist_ok=True)
+        predictions_file = os.path.join(self.storage_path, "predictions.json")
+        predictions_data = {}
+        for sport, records in self.predictions.items():
+            predictions_data[sport] = [asdict(r) for r in records]
+        
+        with open(predictions_file, 'w') as f:
+            json.dump(predictions_data, f, indent=2)
     
     def grade_prediction(
         self,
@@ -219,6 +258,9 @@ class AutoGrader:
                         predicted_over = record.predicted_value > record.line
                         actual_over = actual_value > record.line
                         record.hit = predicted_over == actual_over
+                    
+                    # Save graded prediction to disk
+                    self._save_predictions()
                     
                     return {
                         "prediction_id": prediction_id,
