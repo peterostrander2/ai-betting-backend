@@ -4,13 +4,13 @@ LSTM Brain - The Neural Core of Bookie-o-em
 Real TensorFlow LSTM inference for sports betting predictions.
 
 Input Shape: (15, 6) - 15 game history, 6 context features per game
-Features:
-    0: defense_rank (1-32, normalized to 0-1)
-    1: defense_context (-1 to 1, contextual adjustment)
-    2: pace (normalized 0-1)
-    3: pace_context (-1 to 1, contextual adjustment)
-    4: vacuum (0-1, usage redistribution factor)
-    5: vacuum_context (-1 to 1, contextual adjustment)
+Features (aligned with spec):
+    0: stat (player's stat value for that game, normalized)
+    1: mins (minutes played, normalized 0-1)
+    2: home_away (0 = away, 1 = home)
+    3: vacuum (0-1, usage redistribution factor)
+    4: def_rank (opponent defense rank 1-32, normalized 0-1)
+    5: pace (game pace factor, normalized 0-1)
 
 Output: Prediction adjustment value for the waterfall
 """
@@ -48,15 +48,25 @@ class LSTMBrain:
     NUM_FEATURES = 6      # Features per game
     INPUT_SHAPE = (SEQUENCE_LENGTH, NUM_FEATURES)
     
-    # Feature indices for reference
+    # Feature indices for reference (ALIGNED WITH SPEC)
     FEATURE_NAMES = [
-        "defense_rank",    # 0: 1-32 normalized to 0-1
-        "defense_context", # 1: -1 to 1 contextual
-        "pace",            # 2: 0-1 normalized
-        "pace_context",    # 3: -1 to 1 contextual
-        "vacuum",          # 4: 0-1 usage redistribution
-        "vacuum_context"   # 5: -1 to 1 contextual
+        "stat",       # 0: Player's stat value (normalized by player avg)
+        "mins",       # 1: Minutes played (normalized 0-1, max ~48 NBA, ~60 NFL, etc)
+        "home_away",  # 2: 0 = away, 1 = home
+        "vacuum",     # 3: Usage vacuum (0-1)
+        "def_rank",   # 4: Opponent defense rank (1-32 normalized to 0-1)
+        "pace"        # 5: Game pace factor (normalized 0-1)
     ]
+    
+    # Feature weights for fallback inference
+    FEATURE_WEIGHTS = {
+        "stat": 0.25,      # Historical performance matters most
+        "mins": 0.10,      # Minutes = opportunity
+        "home_away": 0.10, # Home court advantage
+        "vacuum": 0.20,    # Injury opportunity
+        "def_rank": 0.20,  # Matchup quality
+        "pace": 0.15       # Game tempo
+    }
     
     def __init__(self, model_path: Optional[str] = None, sport: str = "NBA"):
         """
@@ -141,51 +151,61 @@ class LSTMBrain:
         Convert lstm_features dict to normalized numpy array.
         
         Args:
-            lstm_features: Dict with defense_rank, pace, vacuum, etc.
+            lstm_features: Dict with stat, mins, home_away, vacuum, def_rank, pace
             sport: Sport for sport-specific normalization
             
         Returns:
-            (6,) numpy array with normalized features
+            (6,) numpy array with normalized features [stat, mins, home_away, vacuum, def_rank, pace]
         """
         # Extract values with defaults
-        defense_rank = lstm_features.get("defense_rank", 16)
-        defense_context = lstm_features.get("defense_context", 0.0)
-        pace = lstm_features.get("pace", 100.0)
-        pace_context = lstm_features.get("pace_context", 0.0)
-        vacuum = lstm_features.get("vacuum", 0.0)
-        vacuum_context = lstm_features.get("vacuum_context", 0.0)
+        stat = lstm_features.get("stat", 0.0)  # Raw stat value
+        player_avg = lstm_features.get("player_avg", 20.0)  # For normalization
+        mins = lstm_features.get("mins", 30.0)  # Minutes played
+        home_away = lstm_features.get("home_away", 0.5)  # 0=away, 1=home, 0.5=neutral
+        vacuum = lstm_features.get("vacuum", 0.0)  # Usage vacuum
+        def_rank = lstm_features.get("def_rank", lstm_features.get("defense_rank", 16))  # Defense rank
+        pace = lstm_features.get("pace", 100.0)  # Game pace
         
         # Sport-specific normalization ranges
         normalization = {
-            "NBA": {"pace_min": 95, "pace_max": 105, "rank_max": 30},
-            "NFL": {"pace_min": 55, "pace_max": 75, "rank_max": 32},
-            "MLB": {"pace_min": 85, "pace_max": 115, "rank_max": 30},
-            "NHL": {"pace_min": 28, "pace_max": 36, "rank_max": 32},
-            "NCAAB": {"pace_min": 60, "pace_max": 75, "rank_max": 400}
+            "NBA": {"pace_min": 95, "pace_max": 105, "rank_max": 30, "mins_max": 48},
+            "NFL": {"pace_min": 55, "pace_max": 75, "rank_max": 32, "mins_max": 60},
+            "MLB": {"pace_min": 85, "pace_max": 115, "rank_max": 30, "mins_max": 9},  # Innings for pitchers
+            "NHL": {"pace_min": 28, "pace_max": 36, "rank_max": 32, "mins_max": 25},  # TOI
+            "NCAAB": {"pace_min": 60, "pace_max": 75, "rank_max": 400, "mins_max": 40}
         }
         
         norms = normalization.get(sport.upper(), normalization["NBA"])
         
-        # Normalize to 0-1 range
-        defense_rank_norm = np.clip((defense_rank - 1) / (norms["rank_max"] - 1), 0, 1)
+        # Normalize stat by player average (ratio: 1.0 = at avg, >1 = above avg)
+        stat_norm = np.clip(stat / max(player_avg, 1.0), 0, 2) / 2  # 0-2 range -> 0-1
+        
+        # Normalize minutes (0-1)
+        mins_norm = np.clip(mins / norms["mins_max"], 0, 1)
+        
+        # Home/away is already 0 or 1
+        home_away_norm = np.clip(float(home_away), 0, 1)
+        
+        # Vacuum is already 0-1
+        vacuum_norm = np.clip(vacuum, 0, 1)
+        
+        # Normalize defense rank (1-32 -> 0-1, where 0=best defense, 1=worst)
+        def_rank_norm = np.clip((def_rank - 1) / (norms["rank_max"] - 1), 0, 1)
+        
+        # Normalize pace
         pace_norm = np.clip(
             (pace - norms["pace_min"]) / (norms["pace_max"] - norms["pace_min"]), 
             0, 1
         )
         
-        # Context values are already in -1 to 1 range
-        defense_context_norm = np.clip(defense_context, -1, 1)
-        pace_context_norm = np.clip(pace_context, -1, 1)
-        vacuum_norm = np.clip(vacuum, 0, 1)
-        vacuum_context_norm = np.clip(vacuum_context, -1, 1)
-        
+        # Return in spec order: [stat, mins, home_away, vacuum, def_rank, pace]
         return np.array([
-            defense_rank_norm,
-            defense_context_norm,
-            pace_norm,
-            pace_context_norm,
+            stat_norm,
+            mins_norm,
+            home_away_norm,
             vacuum_norm,
-            vacuum_context_norm
+            def_rank_norm,
+            pace_norm
         ], dtype=np.float32)
     
     def build_sequence(
@@ -269,19 +289,22 @@ class LSTMBrain:
         """
         Fallback prediction using numpy when TensorFlow unavailable.
         Uses weighted moving average of context features.
+        
+        Features: [stat, mins, home_away, vacuum, def_rank, pace]
         """
         # Recent game weights (more recent = more weight)
         weights = np.linspace(0.5, 1.5, self.SEQUENCE_LENGTH)
         weights = weights / weights.sum()
         
-        # Feature importance weights
+        # Feature importance weights (aligned with spec)
+        # [stat, mins, home_away, vacuum, def_rank, pace]
         feature_weights = np.array([
-            0.25,  # defense_rank - high importance
-            0.15,  # defense_context
-            0.20,  # pace - high importance
-            0.10,  # pace_context
-            0.20,  # vacuum - high importance
-            0.10   # vacuum_context
+            0.25,  # stat - historical performance matters most
+            0.10,  # mins - minutes = opportunity
+            0.10,  # home_away - home court advantage
+            0.20,  # vacuum - injury opportunity (high importance)
+            0.20,  # def_rank - matchup quality (high importance)
+            0.15   # pace - game tempo
         ])
         
         # Weighted feature averages across time
@@ -290,7 +313,13 @@ class LSTMBrain:
         # Combined score
         raw_score = np.sum(weighted_features * feature_weights)
         
-        # Transform to -1 to 1 range (features are normalized 0-1 mostly)
+        # Transform to -1 to 1 range (features are normalized 0-1)
+        # For interpretation:
+        # - High stat (>0.5) = historically performing well = positive
+        # - High def_rank (>0.5) = weak defense = positive (OVER)
+        # - High vacuum (>0.5) = more opportunity = positive
+        # - High pace (>0.5) = faster game = positive
+        # - Home (1) = advantage = slight positive
         centered = (raw_score - 0.5) * 2
         adjustment = centered * scale_factor
         
@@ -299,7 +328,15 @@ class LSTMBrain:
             "raw_output": round(centered, 4),
             "confidence": round(abs(centered) * 100, 1),
             "method": "numpy_fallback",
-            "is_trained": False
+            "is_trained": False,
+            "feature_analysis": {
+                "stat_signal": round(weighted_features[0], 3),
+                "mins_signal": round(weighted_features[1], 3),
+                "home_away_signal": round(weighted_features[2], 3),
+                "vacuum_signal": round(weighted_features[3], 3),
+                "def_rank_signal": round(weighted_features[4], 3),
+                "pace_signal": round(weighted_features[5], 3)
+            }
         }
     
     def train(
