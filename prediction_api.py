@@ -1,6 +1,6 @@
 """
 FastAPI endpoints for AI sports betting predictions
-v7.0.0 - Multi-Sport Context Layer + Officials + LSTM Brain + Auto-Grader (NBA, NFL, MLB, NHL, NCAAB)
+v7.2.0 - Multi-Sport Context Layer + Officials + LSTM Brain + Auto-Grader + Live Data (NBA, NFL, MLB, NHL, NCAAB)
 """
 
 import os
@@ -23,6 +23,7 @@ from context_layer import (
 )
 from lstm_brain import LSTMBrain, MultiSportLSTMBrain, integrate_lstm_prediction
 from auto_grader import AutoGrader, ContextFeatureCalculator, get_grader
+from live_data_router import LiveDataRouter, live_data_router
 from loguru import logger
 import uvicorn
 
@@ -34,8 +35,8 @@ auto_grader = get_grader()
 
 app = FastAPI(
     title="AI Sports Betting API",
-    description="Multi-Sport AI Predictions with Context Layer + Officials + LSTM Brain + Auto-Grader (NBA, NFL, MLB, NHL, NCAAB)",
-    version="7.0.0"
+    description="Multi-Sport AI Predictions with Context Layer + Officials + LSTM Brain + Auto-Grader + Live Data (NBA, NFL, MLB, NHL, NCAAB)",
+    version="7.2.0"
 )
 
 app.add_middleware(
@@ -45,6 +46,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include Live Data Router
+app.include_router(live_data_router)
 
 # ============================================
 # ESOTERIC MODELS (The "Magic")
@@ -738,15 +742,16 @@ class EsotericRequest(BaseModel):
 async def root():
     return {
         "status": "online",
-        "message": "Multi-Sport AI Betting API with Context Layer + Officials + LSTM Brain + Auto-Grader + Esoteric Edge",
-        "version": "7.1.0",
+        "message": "Multi-Sport AI Betting API with Context Layer + Officials + LSTM Brain + Auto-Grader + Esoteric Edge + Live Data",
+        "version": "7.2.0",
         "supported_sports": SUPPORTED_SPORTS,
         "models": {
             "ai": ["Ensemble", "LSTM Brain", "Monte Carlo", "Line Movement", "Rest/Fatigue", "Injury Impact", "Matchup", "Edge Calculator"],
             "esoteric": ["Gematria", "Numerology", "Sacred Geometry", "Astrology"]
         },
         "endpoints": {
-            "predictions": ["/predict-context", "/predict-batch"],
+            "predictions": ["/predict-context", "/predict-batch", "/predict-live"],
+            "live_data": ["/live/games/{sport}", "/live/props/{sport}", "/live/injuries/{sport}", "/live/player/{name}", "/live/slate/{sport}"],
             "brain": ["/brain/predict", "/brain/status"],
             "grader": ["/grader/weights", "/grader/grade", "/grader/audit", "/grader/bias"],
             "esoteric": ["/esoteric/analyze", "/esoteric/gematria", "/esoteric/numerology", "/esoteric/astrology"],
@@ -1180,6 +1185,245 @@ async def predict_with_context(request: ContextRequest):
     except Exception as e:
         logger.error(f"Context prediction error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# PREDICT WITH LIVE DATA
+# ============================================
+
+class LivePredictionRequest(BaseModel):
+    """Minimal request - live data fills the rest."""
+    sport: str
+    player_name: str
+    player_team: str
+    opponent_team: str
+    stat_type: Optional[str] = "points"
+    use_lstm_brain: Optional[bool] = True
+
+
+@app.post("/predict-live")
+async def predict_with_live_data(request: LivePredictionRequest):
+    """
+    Make prediction using LIVE DATA from APIs.
+    
+    Automatically fetches:
+    - Player stats (avg, minutes)
+    - Team injuries (for vacuum)
+    - Game odds (spread, total)
+    - Player props (line)
+    
+    Then runs full prediction pipeline.
+    """
+    try:
+        sport = request.sport.upper()
+        if sport not in SUPPORTED_SPORTS:
+            raise HTTPException(status_code=400, detail=f"Sport must be one of: {SUPPORTED_SPORTS}")
+        
+        logger.info(f"[{sport}] Live prediction: {request.player_name} ({request.player_team}) vs {request.opponent_team}")
+        
+        # =====================
+        # FETCH LIVE DATA
+        # =====================
+        live_context = LiveDataRouter.build_prediction_context(
+            sport=sport,
+            player_name=request.player_name,
+            player_team=request.player_team,
+            opponent_team=request.opponent_team
+        )
+        
+        # Normalize team names
+        player_team_normalized = TeamNameMapper.normalize(request.player_team, sport)
+        opponent_team_normalized = TeamNameMapper.normalize(request.opponent_team, sport)
+        
+        # Build injuries list from live data
+        injuries = []
+        for inj in live_context.get("injuries", []):
+            injuries.append({
+                "player_name": inj.get("player_name"),
+                "status": inj.get("status", "OUT"),
+                "usage_pct": inj.get("usage_pct", 0.15),
+                "minutes_per_game": inj.get("minutes_per_game", 25.0)
+            })
+        
+        # Get player average from live data or use default
+        player_avg = live_context.get("player_avg", 20.0)
+        position = live_context.get("position", "G")
+        expected_mins = live_context.get("expected_mins", 30.0)
+        game_total = live_context.get("game_total", 220.0)
+        game_spread = live_context.get("game_spread", 0.0)
+        line = live_context.get("line", player_avg)
+        home_team = live_context.get("home_team")
+        
+        # =====================
+        # CONTEXT LAYER INJECTION
+        # =====================
+        game_stats = {
+            "home_pace": LEAGUE_AVERAGES.get(sport, {}).get("pace", 100.0),
+            "away_pace": LEAGUE_AVERAGES.get(sport, {}).get("pace", 100.0),
+            "total": game_total,
+            "spread": game_spread
+        }
+        
+        player_context = ContextFeatureCalculator.calculate_context_features(
+            sport=sport,
+            team_id=player_team_normalized,
+            injuries=injuries,
+            game_stats=game_stats
+        )
+        
+        opponent_context = ContextFeatureCalculator.calculate_context_features(
+            sport=sport,
+            team_id=opponent_team_normalized,
+            injuries=[],
+            game_stats=game_stats
+        )
+        
+        # =====================
+        # GENERATE PREDICTION
+        # =====================
+        context = ContextGenerator.generate_context(
+            sport=sport, 
+            player_name=request.player_name, 
+            player_team=player_team_normalized,
+            opponent_team=opponent_team_normalized, 
+            position=position, 
+            player_avg=player_avg,
+            stat_type=request.stat_type or "points", 
+            injuries=injuries, 
+            game_total=game_total,
+            game_spread=game_spread, 
+            home_team=home_team
+        )
+        
+        waterfall = context["waterfall"]
+        final_pred = waterfall["finalPrediction"]
+        
+        # =====================
+        # LSTM BRAIN (if enabled)
+        # =====================
+        lstm_prediction = None
+        if request.use_lstm_brain:
+            try:
+                is_home = 1 if home_team and TeamNameMapper.match_teams(request.player_team, home_team, sport) else 0
+                lstm_features = {
+                    "stat": player_avg,
+                    "player_avg": player_avg,
+                    "mins": expected_mins,
+                    "home_away": is_home,
+                    "vacuum": player_context["vacuum"],
+                    "def_rank": context["lstm_features"].get("def_rank", 16),
+                    "pace": context["lstm_features"].get("pace", 100.0)
+                }
+                
+                lstm_prediction = lstm_brain_manager.predict(
+                    sport=sport,
+                    current_features=lstm_features,
+                    historical_features=None,
+                    scale_factor=5.0
+                )
+                
+                lstm_adjustment = lstm_prediction.get("adjustment", 0)
+                if abs(lstm_adjustment) > 0.1:
+                    waterfall["adjustments"].append({
+                        "factor": "lstm_brain",
+                        "value": round(lstm_adjustment, 2),
+                        "reason": f"Neural pattern analysis ({lstm_prediction.get('method', 'unknown')})"
+                    })
+                    final_pred += lstm_adjustment
+                    waterfall["finalPrediction"] = round(final_pred, 1)
+                    
+                    if lstm_prediction.get("confidence", 0) >= 50:
+                        context["badges"].append({"icon": "🧠", "label": "brain", "active": True})
+                        
+            except Exception as e:
+                logger.warning(f"LSTM error (non-critical): {e}")
+        
+        # =====================
+        # ESOTERIC ANALYSIS
+        # =====================
+        esoteric_result = None
+        try:
+            esoteric_result = EsotericEngine.analyze(
+                player_name=request.player_name,
+                opponent=opponent_team_normalized,
+                line=line,
+                game_date=datetime.now(),
+                player_avg=player_avg,
+                spread=game_spread,
+                total=game_total,
+                jersey_number=0
+            )
+            
+            if esoteric_result["summary"]["harmonic_convergence"]:
+                esoteric_direction = esoteric_result["summary"]["direction"]
+                math_direction = "OVER" if final_pred > line else "UNDER"
+                
+                if esoteric_direction == math_direction:
+                    context["badges"].append({
+                        "icon": "✨", "label": "harmonic_convergence", "active": True,
+                        "direction": esoteric_direction
+                    })
+        except Exception as e:
+            logger.warning(f"Esoteric error: {e}")
+        
+        # =====================
+        # BUILD RESPONSE
+        # =====================
+        edge = final_pred - line if line else 0
+        recommendation = "OVER" if edge > 0 else "UNDER" if edge < 0 else "HOLD"
+        
+        response = {
+            "status": "success",
+            "sport": sport,
+            "data_source": "LIVE",
+            "prediction": {
+                "player": request.player_name,
+                "team": player_team_normalized,
+                "opponent": opponent_team_normalized,
+                "stat_type": request.stat_type,
+                "player_avg": player_avg,
+                "final": waterfall["finalPrediction"],
+                "line": line,
+                "edge": round(edge, 1),
+                "recommendation": recommendation,
+                "confidence": waterfall["confidence"],
+                "is_smash_spot": waterfall["isSmashSpot"]
+            },
+            "live_data": {
+                "game_total": game_total,
+                "game_spread": game_spread,
+                "injuries_found": len(injuries),
+                "vacuum": round(player_context["vacuum"] * 100, 1),
+                "home_team": home_team
+            },
+            "waterfall": waterfall,
+            "badges": context["badges"],
+            "lstm_brain": lstm_prediction,
+            "esoteric": esoteric_result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Log for grading
+        adjustments_for_log = {adj.get("factor", "unknown"): adj.get("value", 0) for adj in waterfall.get("adjustments", [])}
+        prediction_id = auto_grader.log_prediction(
+            sport=sport,
+            player_name=request.player_name,
+            stat_type=request.stat_type or "points",
+            predicted_value=waterfall["finalPrediction"],
+            line=line,
+            adjustments=adjustments_for_log
+        )
+        response["prediction_id"] = prediction_id
+        
+        logger.success(f"[{sport}] LIVE Prediction: {final_pred} vs {line} | {recommendation} | Vacuum: {player_context['vacuum']:.2f}")
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Live prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/predict-batch")
 async def predict_batch(request: BatchContextRequest):
@@ -1746,19 +1990,20 @@ async def health_check():
     return {
         "status": "healthy", 
         "timestamp": datetime.now().isoformat(), 
-        "version": "7.1.0", 
+        "version": "7.2.0", 
         "context_layer": "active", 
         "officials_layer": "active",
         "lstm_brain": "active",
         "auto_grader": "active",
         "esoteric_engine": "active",
+        "live_data_router": "active",
         "supported_sports": SUPPORTED_SPORTS
     }
 
 @app.get("/model-status")
 async def model_status():
     return {
-        "version": "7.0.0",
+        "version": "7.2.0",
         "supported_sports": SUPPORTED_SPORTS,
         "context_layer": {
             "usage_vacuum": "ready",
@@ -1779,10 +2024,23 @@ async def model_status():
             "status": "active",
             "weights_per_sport": len(auto_grader.weights),
             "predictions_logged": sum(len(p) for p in auto_grader.predictions.values())
+        },
+        "live_data": {
+            "odds_api": "ready (set ODDS_API_KEY)",
+            "espn": "ready (free)",
+            "balldontlie": "ready (set BALLDONTLIE_API_KEY)",
+            "endpoints": ["/live/games", "/live/props", "/live/injuries", "/live/slate"]
+        },
+        "esoteric_engine": {
+            "gematria": "active",
+            "numerology": "active",
+            "sacred_geometry": "active",
+            "astrology": "active",
+            "harmonic_convergence": "active"
         }
     }
 
 if __name__ == "__main__":
-    logger.info("Starting Multi-Sport AI Betting API v7.0.0...")
+    logger.info("Starting Multi-Sport AI Betting API v7.2.0...")
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
