@@ -45,3 +45,5 @@ pytz>=2023.3
 
 # Esoteric calculations
 ephem>=4.1.0
+
+apscheduler>=3.10.0
