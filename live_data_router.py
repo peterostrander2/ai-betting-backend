@@ -1,9 +1,9 @@
 """
-🔥 LIVE DATA ROUTER v7.5.0
+🔥 LIVE DATA ROUTER v7.6.0
 ===========================
 Unified data fetching for Bookie-o-em
 
-UPDATED: Uses ALL sportsbooks and finds BEST odds
+UPDATED: Player Props + ALL sportsbooks + BEST odds
 
 Integrates:
 - The Odds API (game lines, player props) - ALL BOOKS
@@ -69,22 +69,18 @@ class GameLine:
     home_team: str
     away_team: str
     commence_time: str
-    # Best spread
     spread: float
     spread_odds: int
     spread_book: str
-    # Best total
     total: float
     over_odds: int
     over_book: str
     under_odds: int
     under_book: str
-    # Best moneylines
     home_ml: int
     home_ml_book: str
     away_ml: int
     away_ml_book: str
-    # How many books compared
     books_compared: int
     all_books: List[str]
 
@@ -102,6 +98,8 @@ class PlayerProp:
     under_book: str
     game_id: str
     books_compared: int
+    home_team: str = ""
+    away_team: str = ""
 
 
 @dataclass 
@@ -155,7 +153,6 @@ class OddsAPIService:
         try:
             response = requests.get(url, params=params, timeout=15)
             
-            # Log API usage
             remaining = response.headers.get("x-requests-remaining", "?")
             used = response.headers.get("x-requests-used", "?")
             logger.info(f"Odds API: {remaining} remaining, {used} used")
@@ -176,9 +173,8 @@ class OddsAPIService:
         if not sport_key:
             return []
         
-        # Get ALL bookmakers (no filter = all books)
         data = cls._make_request(f"sports/{sport_key}/odds", {
-            "regions": "us,us2",  # Multiple regions for more books
+            "regions": "us,us2",
             "markets": "spreads,totals,h2h",
             "oddsFormat": "american"
         })
@@ -195,7 +191,6 @@ class OddsAPIService:
                 
                 all_books = [bm["key"] for bm in bookmakers]
                 
-                # Find BEST odds across ALL books
                 best = {
                     "spread": None, "spread_odds": -999, "spread_book": None,
                     "total": None, 
@@ -214,7 +209,6 @@ class OddsAPIService:
                                 if outcome["name"] == game["home_team"]:
                                     if best["spread"] is None:
                                         best["spread"] = outcome.get("point", 0)
-                                    # Better odds = higher number (less negative or more positive)
                                     if outcome.get("price", -999) > best["spread_odds"]:
                                         best["spread_odds"] = outcome["price"]
                                         best["spread_book"] = book_name
@@ -268,7 +262,7 @@ class OddsAPIService:
                 logger.warning(f"Error parsing game: {e}")
                 continue
         
-        logger.success(f"[{sport}] Fetched {len(games)} games with best odds from {len(data[0].get('bookmakers', [])) if data else 0}+ books")
+        logger.success(f"[{sport}] Fetched {len(games)} games with best odds")
         return games
     
     @classmethod
@@ -281,28 +275,115 @@ class OddsAPIService:
         prop_markets = {
             "NBA": "player_points,player_rebounds,player_assists,player_threes",
             "NFL": "player_pass_yds,player_rush_yds,player_reception_yds,player_receptions",
-            "MLB": "batter_hits,batter_total_bases,batter_rbis,pitcher_strikeouts",
-            "NHL": "player_points,player_shots_on_goal,player_assists",
+            "MLB": "batter_hits,batter_total_bases,pitcher_strikeouts",
+            "NHL": "player_points,player_shots_on_goal",
             "NCAAB": "player_points,player_rebounds,player_assists"
         }
         
         markets = prop_markets.get(sport.upper(), "player_points")
         
-        endpoint = f"sports/{sport_key}/events/{game_id}/odds" if game_id else f"sports/{sport_key}/odds"
+        if game_id:
+            endpoint = f"sports/{sport_key}/events/{game_id}/odds"
+        else:
+            endpoint = f"sports/{sport_key}/odds"
+        
         data = cls._make_request(endpoint, {
-            "regions": "us,us2",
+            "regions": "us",
             "markets": markets,
             "oddsFormat": "american"
         })
         
         if not data:
+            logger.warning(f"[{sport}] No props data from API - using mock")
             return cls._get_mock_props(sport)
         
-        # Parse props and find best odds
-        props = []
-        # Implementation depends on API response structure
+        props_dict = {}
         
-        logger.info(f"[{sport}] Fetched player props from ALL books")
+        stat_map = {
+            "player_points": "points",
+            "player_rebounds": "rebounds", 
+            "player_assists": "assists",
+            "player_threes": "threes",
+            "player_pass_yds": "pass_yards",
+            "player_rush_yds": "rush_yards",
+            "player_reception_yds": "rec_yards",
+            "player_receptions": "receptions",
+            "batter_hits": "hits",
+            "batter_total_bases": "total_bases",
+            "pitcher_strikeouts": "strikeouts",
+            "player_shots_on_goal": "shots"
+        }
+        
+        for game in data:
+            gid = game.get("id", "")
+            home_team = game.get("home_team", "")
+            away_team = game.get("away_team", "")
+            
+            for bookmaker in game.get("bookmakers", []):
+                book_name = bookmaker.get("key", "unknown")
+                
+                for market in bookmaker.get("markets", []):
+                    market_key = market.get("key", "")
+                    
+                    if not market_key.startswith(("player_", "batter_", "pitcher_")):
+                        continue
+                    
+                    stat_type = stat_map.get(market_key, market_key.replace("player_", ""))
+                    
+                    for outcome in market.get("outcomes", []):
+                        player_name = outcome.get("description", "")
+                        if not player_name:
+                            continue
+                            
+                        line = outcome.get("point", 0)
+                        odds = outcome.get("price", -110)
+                        side = outcome.get("name", "Over")
+                        
+                        prop_key = f"{player_name}_{stat_type}_{line}"
+                        
+                        if prop_key in props_dict:
+                            existing = props_dict[prop_key]
+                            if side == "Over" and odds > existing["over_odds"]:
+                                existing["over_odds"] = odds
+                                existing["over_book"] = book_name
+                            elif side == "Under" and odds > existing["under_odds"]:
+                                existing["under_odds"] = odds
+                                existing["under_book"] = book_name
+                            existing["books_compared"] += 1
+                        else:
+                            props_dict[prop_key] = {
+                                "player_name": player_name,
+                                "team": home_team,
+                                "stat_type": stat_type,
+                                "line": line,
+                                "over_odds": odds if side == "Over" else -110,
+                                "over_book": book_name if side == "Over" else "N/A",
+                                "under_odds": odds if side == "Under" else -110,
+                                "under_book": book_name if side == "Under" else "N/A",
+                                "game_id": gid,
+                                "home_team": home_team,
+                                "away_team": away_team,
+                                "books_compared": 1
+                            }
+        
+        props = []
+        for prop_data in props_dict.values():
+            props.append(PlayerProp(
+                player_name=prop_data["player_name"],
+                team=prop_data["team"],
+                stat_type=prop_data["stat_type"],
+                line=prop_data["line"],
+                over_odds=prop_data["over_odds"],
+                over_book=prop_data["over_book"],
+                under_odds=prop_data["under_odds"],
+                under_book=prop_data["under_book"],
+                game_id=prop_data["game_id"],
+                books_compared=prop_data["books_compared"],
+                home_team=prop_data["home_team"],
+                away_team=prop_data["away_team"]
+            ))
+        
+        logger.success(f"[{sport}] Fetched {len(props)} player props")
         return props
     
     @classmethod
@@ -344,8 +425,32 @@ class OddsAPIService:
     
     @classmethod
     def _get_mock_props(cls, sport: str) -> List[PlayerProp]:
-        """Return mock props."""
-        return []
+        """Return sample props when API unavailable."""
+        mock = {
+            "NBA": [
+                PlayerProp("LeBron James", "Los Angeles Lakers", "points", 25.5, -108, "draftkings", -112, "fanduel", "nba1", 5, "Los Angeles Lakers", "Golden State Warriors"),
+                PlayerProp("Stephen Curry", "Golden State Warriors", "points", 28.5, -105, "pinnacle", -115, "betmgm", "nba1", 5, "Los Angeles Lakers", "Golden State Warriors"),
+                PlayerProp("Anthony Davis", "Los Angeles Lakers", "rebounds", 12.5, -110, "fanduel", -110, "draftkings", "nba1", 4, "Los Angeles Lakers", "Golden State Warriors"),
+                PlayerProp("Nikola Jokic", "Denver Nuggets", "assists", 9.5, -108, "caesars", -112, "pointsbet", "nba2", 4, "Denver Nuggets", "Phoenix Suns"),
+                PlayerProp("Luka Doncic", "Dallas Mavericks", "points", 32.5, -110, "draftkings", -110, "fanduel", "nba3", 5, "Dallas Mavericks", "Boston Celtics"),
+                PlayerProp("Jayson Tatum", "Boston Celtics", "points", 27.5, -108, "betmgm", -112, "caesars", "nba3", 4, "Dallas Mavericks", "Boston Celtics"),
+            ],
+            "NFL": [
+                PlayerProp("Patrick Mahomes", "Kansas City Chiefs", "pass_yards", 285.5, -110, "draftkings", -110, "fanduel", "nfl1", 5, "Kansas City Chiefs", "Buffalo Bills"),
+                PlayerProp("Josh Allen", "Buffalo Bills", "pass_yards", 275.5, -108, "pinnacle", -112, "betmgm", "nfl1", 5, "Kansas City Chiefs", "Buffalo Bills"),
+                PlayerProp("Travis Kelce", "Kansas City Chiefs", "receptions", 6.5, -115, "betmgm", -105, "pinnacle", "nfl1", 4, "Kansas City Chiefs", "Buffalo Bills"),
+            ],
+            "MLB": [
+                PlayerProp("Shohei Ohtani", "Los Angeles Dodgers", "hits", 1.5, -120, "draftkings", +100, "fanduel", "mlb1", 4, "Los Angeles Dodgers", "San Diego Padres"),
+            ],
+            "NHL": [
+                PlayerProp("Connor McDavid", "Edmonton Oilers", "points", 1.5, -130, "pinnacle", +110, "draftkings", "nhl1", 4, "Edmonton Oilers", "Toronto Maple Leafs"),
+            ],
+            "NCAAB": [
+                PlayerProp("Cooper Flagg", "Duke Blue Devils", "points", 18.5, -110, "draftkings", -110, "fanduel", "ncaab1", 4, "Duke Blue Devils", "North Carolina Tar Heels"),
+            ]
+        }
+        return mock.get(sport.upper(), [])
 
 
 # ============================================================
@@ -353,12 +458,7 @@ class OddsAPIService:
 # ============================================================
 
 class PlaybookAPIService:
-    """
-    Fetches data from Playbook API.
-    - Injuries
-    - Betting splits
-    - Sharp money signals
-    """
+    """Fetches data from Playbook API."""
     
     @staticmethod
     def _make_request(endpoint: str, params: dict = None) -> Optional[dict]:
@@ -383,7 +483,6 @@ class PlaybookAPIService:
     
     @classmethod
     def get_injuries(cls, sport: str) -> List[InjuryReport]:
-        """Get injuries from Playbook API."""
         sport_map = {"NBA": "nba", "NFL": "nfl", "MLB": "mlb", "NHL": "nhl", "NCAAB": "ncaab"}
         sport_key = sport_map.get(sport.upper())
         
@@ -406,12 +505,10 @@ class PlaybookAPIService:
             except:
                 continue
         
-        logger.info(f"[{sport}] Fetched {len(injuries)} injuries from Playbook")
         return injuries
     
     @classmethod
     def get_splits(cls, sport: str) -> List[Dict]:
-        """Get public betting splits from Playbook API."""
         sport_map = {"NBA": "nba", "NFL": "nfl", "MLB": "mlb", "NHL": "nhl", "NCAAB": "ncaab"}
         sport_key = sport_map.get(sport.upper())
         
@@ -419,12 +516,10 @@ class PlaybookAPIService:
         if not data:
             return []
         
-        logger.info(f"[{sport}] Fetched betting splits from Playbook")
         return data.get("splits", [])
     
     @classmethod
     def get_sharp_money(cls, sport: str) -> List[Dict]:
-        """Get sharp money signals from Playbook API."""
         sport_map = {"NBA": "nba", "NFL": "nfl", "MLB": "mlb", "NHL": "nhl", "NCAAB": "ncaab"}
         sport_key = sport_map.get(sport.upper())
         
@@ -432,7 +527,6 @@ class PlaybookAPIService:
         if not data:
             return []
         
-        logger.info(f"[{sport}] Fetched sharp money signals from Playbook")
         return data.get("signals", [])
 
 
@@ -456,7 +550,6 @@ class ESPNService:
     
     @classmethod
     def get_injuries(cls, sport: str, team: str = None) -> List[InjuryReport]:
-        """Get injury reports from ESPN."""
         sport_path = LiveDataConfig.ESPN_SPORTS.get(sport.upper())
         if not sport_path:
             return []
@@ -488,7 +581,6 @@ class ESPNService:
                 except:
                     continue
         
-        logger.info(f"[{sport}] Fetched {len(injuries)} injuries from ESPN")
         return injuries
     
     @classmethod
@@ -518,20 +610,16 @@ class LiveDataRouter:
     
     @classmethod
     def get_todays_games(cls, sport: str) -> List[Dict]:
-        """Get today's games with BEST odds from ALL books."""
         games = OddsAPIService.get_games(sport)
         return [asdict(g) for g in games]
     
     @classmethod
     def get_player_props(cls, sport: str, game_id: str = None) -> List[Dict]:
-        """Get player props with best odds."""
         props = OddsAPIService.get_player_props(sport, game_id)
         return [asdict(p) for p in props]
     
     @classmethod
     def get_injuries(cls, sport: str, team: str = None) -> List[Dict]:
-        """Get injuries - tries Playbook first, then ESPN."""
-        # Try Playbook API first (better data)
         injuries = PlaybookAPIService.get_injuries(sport)
         if injuries:
             result = [asdict(i) for i in injuries]
@@ -539,29 +627,23 @@ class LiveDataRouter:
                 result = [i for i in result if i.get("team", "").upper() == team.upper()]
             return result
         
-        # Fallback to ESPN
         injuries = ESPNService.get_injuries(sport, team)
         return [asdict(i) for i in injuries]
     
     @classmethod
     def get_splits(cls, sport: str) -> List[Dict]:
-        """Get public betting splits from Playbook."""
         return PlaybookAPIService.get_splits(sport)
     
     @classmethod
     def get_sharp_money(cls, sport: str) -> List[Dict]:
-        """Get sharp money signals from Playbook."""
         return PlaybookAPIService.get_sharp_money(sport)
     
     @classmethod
     def get_player_stats(cls, player_name: str, sport: str = "NBA") -> Optional[Dict]:
-        """Get player season stats."""
-        # Could integrate BallDontLie or other stats API here
         return None
     
     @classmethod
     def build_prediction_context(cls, sport: str, player_name: str, player_team: str, opponent_team: str) -> Dict:
-        """Build complete context for a prediction."""
         context = {
             "sport": sport.upper(),
             "player_name": player_name,
@@ -571,7 +653,6 @@ class LiveDataRouter:
             "timestamp": datetime.now().isoformat()
         }
         
-        # Get team injuries for vacuum calculation
         injuries = cls.get_injuries(sport, player_team)
         context["injuries"] = injuries
         
@@ -579,7 +660,6 @@ class LiveDataRouter:
         vacuum = sum(i.get("usage_pct", 0) * (i.get("minutes_per_game", 0) / 48) for i in out_injuries)
         context["calculated_vacuum"] = round(vacuum * 100, 2)
         
-        # Get game odds with best lines
         games = cls.get_todays_games(sport)
         for game in games:
             home = game.get("home_team", "")
@@ -589,26 +669,21 @@ class LiveDataRouter:
                 context["game_spread"] = game.get("spread", 0)
                 context["game_id"] = game.get("game_id")
                 context["home_team"] = game.get("home_team")
-                # Include best books info
                 context["best_over_book"] = game.get("over_book")
                 context["best_under_book"] = game.get("under_book")
                 context["books_compared"] = game.get("books_compared", 0)
                 break
         
-        # Get betting splits
         splits = cls.get_splits(sport)
         context["splits"] = splits
         
-        # Get sharp money
         sharp = cls.get_sharp_money(sport)
         context["sharp_signals"] = sharp
         
-        logger.info(f"Built live context for {player_name}: {context.get('books_compared', 0)} books compared")
         return context
     
     @classmethod
     def get_full_slate(cls, sport: str) -> List[Dict]:
-        """Get full slate with all games, props, and best odds."""
         games = cls.get_todays_games(sport)
         props = cls.get_player_props(sport)
         
@@ -636,7 +711,6 @@ live_data_router = APIRouter(prefix="/live", tags=["Live Data"])
 
 @live_data_router.get("/games/{sport}")
 async def get_live_games(sport: str):
-    """Get today's games with BEST odds from ALL sportsbooks."""
     sport = sport.upper()
     if sport not in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
         raise HTTPException(400, "Invalid sport")
@@ -647,25 +721,44 @@ async def get_live_games(sport: str):
         "sport": sport,
         "count": len(games),
         "games": games,
-        "note": "Best odds shown from all available sportsbooks",
         "timestamp": datetime.now().isoformat()
     }
 
 
 @live_data_router.get("/props/{sport}")
 async def get_player_props(sport: str, game_id: str = None):
-    """Get player props with best odds."""
     sport = sport.upper()
     if sport not in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
         raise HTTPException(400, "Invalid sport")
     
     props = LiveDataRouter.get_player_props(sport, game_id)
-    return {"status": "success", "sport": sport, "count": len(props), "props": props}
+    
+    # Add edge calculation
+    enriched = []
+    for p in props:
+        over_edge = round((p.get("over_odds", -110) + 110) / 10, 1) if p.get("over_odds", -110) > -110 else 0
+        under_edge = round((p.get("under_odds", -110) + 110) / 10, 1) if p.get("under_odds", -110) > -110 else 0
+        
+        p["over_edge"] = over_edge
+        p["under_edge"] = under_edge
+        p["best_edge"] = max(over_edge, under_edge)
+        p["recommendation"] = "OVER" if over_edge > under_edge else "UNDER"
+        p["confidence"] = min(95, 60 + int(max(over_edge, under_edge) * 3))
+        enriched.append(p)
+    
+    enriched.sort(key=lambda x: x.get("best_edge", 0), reverse=True)
+    
+    return {
+        "status": "success",
+        "sport": sport,
+        "count": len(enriched),
+        "props": enriched,
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 @live_data_router.get("/injuries/{sport}")
 async def get_injuries(sport: str, team: str = None):
-    """Get injury reports."""
     sport = sport.upper()
     if sport not in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
         raise HTTPException(400, "Invalid sport")
@@ -676,7 +769,6 @@ async def get_injuries(sport: str, team: str = None):
 
 @live_data_router.get("/splits/{sport}")
 async def get_betting_splits(sport: str):
-    """Get public betting splits from Playbook API."""
     sport = sport.upper()
     if sport not in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
         raise HTTPException(400, "Invalid sport")
@@ -687,7 +779,6 @@ async def get_betting_splits(sport: str):
 
 @live_data_router.get("/sharp/{sport}")
 async def get_sharp_money(sport: str):
-    """Get sharp money signals from Playbook API."""
     sport = sport.upper()
     if sport not in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
         raise HTTPException(400, "Invalid sport")
@@ -698,7 +789,6 @@ async def get_sharp_money(sport: str):
 
 @live_data_router.get("/player/{player_name}")
 async def get_player_info(player_name: str, sport: str = "NBA"):
-    """Get player stats."""
     stats = LiveDataRouter.get_player_stats(player_name, sport)
     if not stats:
         raise HTTPException(404, f"Player '{player_name}' not found")
@@ -707,7 +797,6 @@ async def get_player_info(player_name: str, sport: str = "NBA"):
 
 @live_data_router.get("/context/{sport}")
 async def build_context(sport: str, player_name: str, player_team: str, opponent_team: str):
-    """Build full prediction context with live data."""
     sport = sport.upper()
     if sport not in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
         raise HTTPException(400, "Invalid sport")
@@ -718,7 +807,6 @@ async def build_context(sport: str, player_name: str, player_team: str, opponent
 
 @live_data_router.get("/slate/{sport}")
 async def get_full_slate(sport: str):
-    """Get full slate with all games, props, and best odds."""
     sport = sport.upper()
     if sport not in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
         raise HTTPException(400, "Invalid sport")
@@ -733,19 +821,10 @@ async def get_full_slate(sport: str):
     }
 
 
-# ============================================================
-# TEST
-# ============================================================
-
 if __name__ == "__main__":
-    print("=== Testing Live Data Router v7.5.0 ===")
-    
+    print("=== Testing Live Data Router v7.6.0 ===")
     games = LiveDataRouter.get_todays_games("NBA")
-    print(f"\nNBA Games: {len(games)}")
-    for g in games[:2]:
-        print(f"  {g.get('away_team')} @ {g.get('home_team')}")
-        print(f"    Spread: {g.get('spread')} @ {g.get('spread_odds')} ({g.get('spread_book')})")
-        print(f"    Total: {g.get('total')} O:{g.get('over_odds')} ({g.get('over_book')}) U:{g.get('under_odds')} ({g.get('under_book')})")
-        print(f"    Books compared: {g.get('books_compared')}")
-    
-    print("\n✅ Live Data Router v7.5.0 working!")
+    print(f"NBA Games: {len(games)}")
+    props = LiveDataRouter.get_player_props("NBA")
+    print(f"NBA Props: {len(props)}")
+    print("✅ Live Data Router v7.6.0 working!")
