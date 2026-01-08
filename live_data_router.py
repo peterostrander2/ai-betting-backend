@@ -791,3 +791,20 @@ async def health_check():
         "dual_score_system": True,
         "features": ["research_signals", "esoteric_edge", "cosmic_confluence", "gematria_6_ciphers"]
     }
+
+
+# =============================================================================
+# BACKWARDS COMPATIBILITY FOR prediction_api.py
+# =============================================================================
+# prediction_api.py line 26 expects: from live_data_router import LiveDataRouter, live_data_router
+
+class LiveDataRouter:
+    """Compatibility wrapper for prediction_api.py import"""
+    def __init__(self):
+        self.router = router
+    
+    def get_router(self):
+        return self.router
+
+# Export the router instance with the expected name
+live_data_router = router
