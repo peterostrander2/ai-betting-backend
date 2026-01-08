@@ -1,9 +1,9 @@
 """
-🔥 LIVE DATA ROUTER v7.6.0
+🔥 LIVE DATA ROUTER v7.7.0
 ===========================
 Unified data fetching for Bookie-o-em
 
-UPDATED: Player Props + ALL sportsbooks + BEST odds
+UPDATED: Player Props - TOP 5 SMASH BETS ONLY (70%+ confidence)
 
 Integrates:
 - The Odds API (game lines, player props) - ALL BOOKS
@@ -141,7 +141,7 @@ class OddsAPIService:
     def _make_request(endpoint: str, params: dict = None) -> Optional[dict]:
         """Make authenticated request to The Odds API."""
         if not LiveDataConfig.ODDS_API_KEY:
-            logger.warning("ODDS_API_KEY not set - using mock data")
+            logger.warning("ODDS_API_KEY not set")
             return None
             
         if params is None:
@@ -180,7 +180,7 @@ class OddsAPIService:
         })
         
         if not data:
-            return cls._get_mock_games(sport)
+            return []
         
         games = []
         for game in data:
@@ -267,7 +267,7 @@ class OddsAPIService:
     
     @classmethod
     def get_player_props(cls, sport: str, game_id: str = None) -> List[PlayerProp]:
-        """Get player props with BEST odds from ALL books."""
+        """Get player props with BEST odds - NO MOCK DATA."""
         sport_key = LiveDataConfig.ODDS_API_SPORTS.get(sport.upper())
         if not sport_key:
             return []
@@ -282,20 +282,45 @@ class OddsAPIService:
         
         markets = prop_markets.get(sport.upper(), "player_points")
         
+        # If specific game_id provided, fetch just that game's props
         if game_id:
-            endpoint = f"sports/{sport_key}/events/{game_id}/odds"
+            data = cls._make_request(f"sports/{sport_key}/events/{game_id}/odds", {
+                "regions": "us",
+                "markets": markets,
+                "oddsFormat": "american"
+            })
+            games_data = [data] if data else []
         else:
-            endpoint = f"sports/{sport_key}/odds"
+            # First get list of games, then fetch props for each
+            games_list = cls._make_request(f"sports/{sport_key}/odds", {
+                "regions": "us",
+                "markets": "h2h",
+                "oddsFormat": "american"
+            })
+            
+            if not games_list:
+                logger.warning(f"[{sport}] No games found")
+                return []
+            
+            # Fetch props for first 3 games to save API credits
+            games_data = []
+            for game in games_list[:3]:
+                event_id = game.get("id")
+                if not event_id:
+                    continue
+                
+                props_data = cls._make_request(f"sports/{sport_key}/events/{event_id}/odds", {
+                    "regions": "us",
+                    "markets": markets,
+                    "oddsFormat": "american"
+                })
+                
+                if props_data:
+                    games_data.append(props_data)
         
-        data = cls._make_request(endpoint, {
-            "regions": "us",
-            "markets": markets,
-            "oddsFormat": "american"
-        })
-        
-        if not data:
-            logger.warning(f"[{sport}] No props data from API - using mock")
-            return cls._get_mock_props(sport)
+        if not games_data:
+            logger.warning(f"[{sport}] No props data available")
+            return []
         
         props_dict = {}
         
@@ -314,7 +339,9 @@ class OddsAPIService:
             "player_shots_on_goal": "shots"
         }
         
-        for game in data:
+        for game in games_data:
+            if not game:
+                continue
             gid = game.get("id", "")
             home_team = game.get("home_team", "")
             away_team = game.get("away_team", "")
@@ -353,7 +380,7 @@ class OddsAPIService:
                         else:
                             props_dict[prop_key] = {
                                 "player_name": player_name,
-                                "team": home_team,
+                                "team": "",
                                 "stat_type": stat_type,
                                 "line": line,
                                 "over_odds": odds if side == "Over" else -110,
@@ -385,72 +412,6 @@ class OddsAPIService:
         
         logger.success(f"[{sport}] Fetched {len(props)} player props")
         return props
-    
-    @classmethod
-    def _get_mock_games(cls, sport: str) -> List[GameLine]:
-        """Return mock games when API unavailable."""
-        mock = {
-            "NBA": [
-                GameLine("nba1", "NBA", "Los Angeles Lakers", "Golden State Warriors", 
-                        datetime.now().isoformat(), -3.5, -108, "draftkings", 228.5, 
-                        -105, "fanduel", -108, "betmgm", -150, "caesars", +135, "pinnacle", 
-                        5, ["fanduel", "draftkings", "betmgm", "caesars", "pinnacle"]),
-            ],
-            "NFL": [
-                GameLine("nfl1", "NFL", "Kansas City Chiefs", "Buffalo Bills",
-                        datetime.now().isoformat(), -3.0, -105, "pinnacle", 52.5,
-                        -108, "draftkings", -105, "fanduel", -155, "betmgm", +145, "caesars",
-                        5, ["fanduel", "draftkings", "betmgm", "caesars", "pinnacle"]),
-            ],
-            "MLB": [
-                GameLine("mlb1", "MLB", "New York Yankees", "Boston Red Sox",
-                        datetime.now().isoformat(), -1.5, +135, "pinnacle", 9.0,
-                        -105, "fanduel", -108, "draftkings", -135, "betmgm", +125, "caesars",
-                        5, ["fanduel", "draftkings", "betmgm", "caesars", "pinnacle"]),
-            ],
-            "NHL": [
-                GameLine("nhl1", "NHL", "Edmonton Oilers", "Toronto Maple Leafs",
-                        datetime.now().isoformat(), -1.5, +165, "pinnacle", 6.5,
-                        -105, "fanduel", -108, "draftkings", -125, "betmgm", +115, "caesars",
-                        5, ["fanduel", "draftkings", "betmgm", "caesars", "pinnacle"]),
-            ],
-            "NCAAB": [
-                GameLine("ncaab1", "NCAAB", "Duke Blue Devils", "North Carolina Tar Heels",
-                        datetime.now().isoformat(), -4.5, -108, "draftkings", 152.5,
-                        -105, "fanduel", -108, "betmgm", -175, "caesars", +160, "pinnacle",
-                        5, ["fanduel", "draftkings", "betmgm", "caesars", "pinnacle"]),
-            ]
-        }
-        return mock.get(sport.upper(), [])
-    
-    @classmethod
-    def _get_mock_props(cls, sport: str) -> List[PlayerProp]:
-        """Return sample props when API unavailable."""
-        mock = {
-            "NBA": [
-                PlayerProp("LeBron James", "Los Angeles Lakers", "points", 25.5, -108, "draftkings", -112, "fanduel", "nba1", 5, "Los Angeles Lakers", "Golden State Warriors"),
-                PlayerProp("Stephen Curry", "Golden State Warriors", "points", 28.5, -105, "pinnacle", -115, "betmgm", "nba1", 5, "Los Angeles Lakers", "Golden State Warriors"),
-                PlayerProp("Anthony Davis", "Los Angeles Lakers", "rebounds", 12.5, -110, "fanduel", -110, "draftkings", "nba1", 4, "Los Angeles Lakers", "Golden State Warriors"),
-                PlayerProp("Nikola Jokic", "Denver Nuggets", "assists", 9.5, -108, "caesars", -112, "pointsbet", "nba2", 4, "Denver Nuggets", "Phoenix Suns"),
-                PlayerProp("Luka Doncic", "Dallas Mavericks", "points", 32.5, -110, "draftkings", -110, "fanduel", "nba3", 5, "Dallas Mavericks", "Boston Celtics"),
-                PlayerProp("Jayson Tatum", "Boston Celtics", "points", 27.5, -108, "betmgm", -112, "caesars", "nba3", 4, "Dallas Mavericks", "Boston Celtics"),
-            ],
-            "NFL": [
-                PlayerProp("Patrick Mahomes", "Kansas City Chiefs", "pass_yards", 285.5, -110, "draftkings", -110, "fanduel", "nfl1", 5, "Kansas City Chiefs", "Buffalo Bills"),
-                PlayerProp("Josh Allen", "Buffalo Bills", "pass_yards", 275.5, -108, "pinnacle", -112, "betmgm", "nfl1", 5, "Kansas City Chiefs", "Buffalo Bills"),
-                PlayerProp("Travis Kelce", "Kansas City Chiefs", "receptions", 6.5, -115, "betmgm", -105, "pinnacle", "nfl1", 4, "Kansas City Chiefs", "Buffalo Bills"),
-            ],
-            "MLB": [
-                PlayerProp("Shohei Ohtani", "Los Angeles Dodgers", "hits", 1.5, -120, "draftkings", +100, "fanduel", "mlb1", 4, "Los Angeles Dodgers", "San Diego Padres"),
-            ],
-            "NHL": [
-                PlayerProp("Connor McDavid", "Edmonton Oilers", "points", 1.5, -130, "pinnacle", +110, "draftkings", "nhl1", 4, "Edmonton Oilers", "Toronto Maple Leafs"),
-            ],
-            "NCAAB": [
-                PlayerProp("Cooper Flagg", "Duke Blue Devils", "points", 18.5, -110, "draftkings", -110, "fanduel", "ncaab1", 4, "Duke Blue Devils", "North Carolina Tar Heels"),
-            ]
-        }
-        return mock.get(sport.upper(), [])
 
 
 # ============================================================
@@ -558,7 +519,7 @@ class ESPNService:
         data = cls._make_request(url)
         
         if not data:
-            return cls._get_mock_injuries(sport, team)
+            return []
         
         injuries = []
         for team_data in data.get("injuries", []):
@@ -581,23 +542,6 @@ class ESPNService:
                 except:
                     continue
         
-        return injuries
-    
-    @classmethod
-    def _get_mock_injuries(cls, sport: str, team: str = None) -> List[InjuryReport]:
-        mock = {
-            "NBA": [
-                InjuryReport("Anthony Davis", "LAL", "PF", "QUESTIONABLE", "knee", 0.28, 35.0),
-                InjuryReport("Kawhi Leonard", "LAC", "SF", "OUT", "knee", 0.30, 34.0),
-            ],
-            "NFL": [InjuryReport("Travis Kelce", "KC", "TE", "QUESTIONABLE", "ankle", 0.25, 55.0)],
-            "MLB": [InjuryReport("Mike Trout", "LAA", "OF", "OUT", "knee", 0.15, 4.5)],
-            "NHL": [InjuryReport("Auston Matthews", "TOR", "C", "QUESTIONABLE", "upper body", 0.20, 22.0)],
-            "NCAAB": []
-        }
-        injuries = mock.get(sport.upper(), [])
-        if team:
-            injuries = [i for i in injuries if i.team.upper() == team.upper()]
         return injuries
 
 
@@ -701,6 +645,70 @@ class LiveDataRouter:
 
 
 # ============================================================
+# CONFIDENCE CALCULATOR FOR PROPS
+# ============================================================
+
+def calculate_prop_confidence(prop: Dict) -> Dict:
+    """
+    Calculate confidence score for a player prop.
+    Only returns props with 70%+ confidence (SMASH bets).
+    """
+    over_odds = prop.get("over_odds", -110)
+    under_odds = prop.get("under_odds", -110)
+    books_compared = prop.get("books_compared", 1)
+    
+    # Base confidence starts at 50
+    confidence = 50
+    
+    # Edge calculation - how much better than -110 standard
+    over_edge = (over_odds + 110) / 10 if over_odds > -110 else 0
+    under_edge = (under_odds + 110) / 10 if under_odds > -110 else 0
+    best_edge = max(over_edge, under_edge)
+    
+    # Confidence boost based on edge
+    # +5 confidence per 1% edge
+    confidence += best_edge * 5
+    
+    # Books compared boost (more books = more reliable line)
+    if books_compared >= 5:
+        confidence += 10
+    elif books_compared >= 3:
+        confidence += 5
+    
+    # Big edge bonus (edge > 3% is significant)
+    if best_edge >= 5:
+        confidence += 15
+    elif best_edge >= 3:
+        confidence += 10
+    elif best_edge >= 2:
+        confidence += 5
+    
+    # Cap at 95
+    confidence = min(95, confidence)
+    
+    # Determine recommendation
+    recommendation = "OVER" if over_edge > under_edge else "UNDER"
+    
+    # Determine tier
+    if confidence >= 80:
+        tier = "GOLDEN_SMASH"
+    elif confidence >= 70:
+        tier = "SMASH"
+    else:
+        tier = "LEAN"
+    
+    return {
+        **prop,
+        "confidence": round(confidence),
+        "over_edge": round(over_edge, 2),
+        "under_edge": round(under_edge, 2),
+        "best_edge": round(best_edge, 2),
+        "recommendation": recommendation,
+        "tier": tier
+    }
+
+
+# ============================================================
 # FASTAPI ROUTER
 # ============================================================
 
@@ -727,32 +735,45 @@ async def get_live_games(sport: str):
 
 @live_data_router.get("/props/{sport}")
 async def get_player_props(sport: str, game_id: str = None):
+    """
+    Get TOP 5 SMASH player props (70%+ confidence only).
+    No fluff - only the best bets based on our model.
+    """
     sport = sport.upper()
     if sport not in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
         raise HTTPException(400, "Invalid sport")
     
     props = LiveDataRouter.get_player_props(sport, game_id)
     
-    # Add edge calculation
-    enriched = []
-    for p in props:
-        over_edge = round((p.get("over_odds", -110) + 110) / 10, 1) if p.get("over_odds", -110) > -110 else 0
-        under_edge = round((p.get("under_odds", -110) + 110) / 10, 1) if p.get("under_odds", -110) > -110 else 0
-        
-        p["over_edge"] = over_edge
-        p["under_edge"] = under_edge
-        p["best_edge"] = max(over_edge, under_edge)
-        p["recommendation"] = "OVER" if over_edge > under_edge else "UNDER"
-        p["confidence"] = min(95, 60 + int(max(over_edge, under_edge) * 3))
-        enriched.append(p)
+    if not props:
+        return {
+            "status": "success",
+            "sport": sport,
+            "count": 0,
+            "props": [],
+            "message": "No props available - check back closer to game time",
+            "timestamp": datetime.now().isoformat()
+        }
     
-    enriched.sort(key=lambda x: x.get("best_edge", 0), reverse=True)
+    # Calculate confidence for each prop
+    enriched = [calculate_prop_confidence(p) for p in props]
+    
+    # FILTER: Only 70%+ confidence (SMASH bets)
+    smash_props = [p for p in enriched if p["confidence"] >= 70]
+    
+    # Sort by confidence descending
+    smash_props.sort(key=lambda x: x["confidence"], reverse=True)
+    
+    # TOP 5 ONLY - no fluff
+    top_props = smash_props[:5]
     
     return {
         "status": "success",
         "sport": sport,
-        "count": len(enriched),
-        "props": enriched,
+        "count": len(top_props),
+        "props": top_props,
+        "total_analyzed": len(props),
+        "smash_threshold": 70,
         "timestamp": datetime.now().isoformat()
     }
 
@@ -822,9 +843,10 @@ async def get_full_slate(sport: str):
 
 
 if __name__ == "__main__":
-    print("=== Testing Live Data Router v7.6.0 ===")
+    print("=== Testing Live Data Router v7.7.0 ===")
+    print("TOP 5 SMASH PROPS ONLY (70%+ confidence)")
     games = LiveDataRouter.get_todays_games("NBA")
     print(f"NBA Games: {len(games)}")
     props = LiveDataRouter.get_player_props("NBA")
     print(f"NBA Props: {len(props)}")
-    print("✅ Live Data Router v7.6.0 working!")
+    print("✅ Live Data Router v7.7.0 working!")
