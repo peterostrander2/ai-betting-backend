@@ -2138,3 +2138,102 @@ if __name__ == "__main__":
     logger.info("Starting Multi-Sport AI Betting API v7.4.0...")
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+# ============================================
+# COMMUNITY VOTING - Man vs Machine
+# Add this to your FastAPI backend
+# ============================================
+
+from fastapi import Request
+from pydantic import BaseModel
+from typing import Optional
+import hashlib
+
+# In-memory storage (replace with database for production)
+votes_store = {}
+
+class VoteRequest(BaseModel):
+    side: str  # "home", "away", "over", "under"
+
+class VoteResponse(BaseModel):
+    game_vote_id: str
+    home: int
+    away: int
+    over: int
+    under: int
+    total: int
+    userVote: Optional[str]
+
+def get_user_id(request: Request) -> str:
+    """Get anonymous user ID from IP address"""
+    ip = request.client.host if request.client else "unknown"
+    return hashlib.md5(ip.encode()).hexdigest()[:12]
+
+
+@app.get("/votes/{game_vote_id}")
+async def get_votes(game_vote_id: str, request: Request):
+    """Get current vote counts for a game"""
+    user_id = get_user_id(request)
+    
+    if game_vote_id not in votes_store:
+        return {
+            "game_vote_id": game_vote_id,
+            "home": 0,
+            "away": 0,
+            "over": 0,
+            "under": 0,
+            "total": 0,
+            "userVote": None
+        }
+    
+    data = votes_store[game_vote_id]
+    user_vote = data.get("user_votes", {}).get(user_id)
+    
+    return {
+        "game_vote_id": game_vote_id,
+        "home": data.get("home", 0),
+        "away": data.get("away", 0),
+        "over": data.get("over", 0),
+        "under": data.get("under", 0),
+        "total": sum([data.get(k, 0) for k in ["home", "away", "over", "under"]]),
+        "userVote": user_vote
+    }
+
+
+@app.post("/votes/{game_vote_id}")
+async def submit_vote(game_vote_id: str, vote: VoteRequest, request: Request):
+    """Submit or update a vote"""
+    user_id = get_user_id(request)
+    
+    if vote.side not in ["home", "away", "over", "under"]:
+        return {"error": "Invalid vote side"}
+    
+    # Initialize if needed
+    if game_vote_id not in votes_store:
+        votes_store[game_vote_id] = {
+            "home": 0,
+            "away": 0,
+            "over": 0,
+            "under": 0,
+            "user_votes": {}
+        }
+    
+    data = votes_store[game_vote_id]
+    
+    # Remove previous vote if exists
+    if user_id in data["user_votes"]:
+        old_vote = data["user_votes"][user_id]
+        data[old_vote] = max(0, data[old_vote] - 1)
+    
+    # Add new vote
+    data[vote.side] += 1
+    data["user_votes"][user_id] = vote.side
+    
+    return {
+        "game_vote_id": game_vote_id,
+        "home": data["home"],
+        "away": data["away"],
+        "over": data["over"],
+        "under": data["under"],
+        "total": sum([data[k] for k in ["home", "away", "over", "under"]]),
+        "userVote": vote.side
+    }
