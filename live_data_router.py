@@ -1343,29 +1343,226 @@ async def get_best_bets(sport: str):
             "immortal_status": validate_2178()["status"],
             "daily_reading": get_daily_esoteric_reading()
         }
+# ============================================================================
+# v11-v14 API ENDPOINTS - OMNI-GLITCH, GANN PHYSICS, NOOSPHERE VELOCITY
+# ============================================================================
+
+@router.post("/vortex-math")
+async def vortex_math_endpoint(data: dict):
+    """Tesla 3-6-9 Vortex Math analysis."""
+    value = data.get("value")
+    if value is None:
+        raise HTTPException(status_code=400, detail="value required")
+    return calculate_vortex_math(float(value))
+
+@router.post("/shannon-entropy")
+async def shannon_entropy_endpoint(data: dict):
+    """Shannon Entropy pattern detection."""
+    results = data.get("recent_results", [])
+    team = data.get("team_name", "Unknown")
+    if not results:
+        raise HTTPException(status_code=400, detail="recent_results required")
+    return analyze_shannon_entropy(results, team)
+
+@router.post("/atmospheric-drag")
+async def atmospheric_drag_endpoint(data: dict):
+    """Atmospheric Drag analysis."""
+    home = data.get("home_team", "")
+    away = data.get("away_team", "")
+    pressure = data.get("current_pressure")
+    if not home or not away:
+        raise HTTPException(status_code=400, detail="home_team and away_team required")
+    return analyze_atmospheric_drag(home, away, pressure)
+
+@router.get("/void-moon")
+async def void_moon_endpoint(game_time: str = None):
+    """Void of Course Moon status."""
+    parsed_time = None
+    if game_time:
+        try:
+            parsed_time = datetime.fromisoformat(game_time)
+        except:
+            parsed_time = None
+    return is_void_of_course_moon(parsed_time)
+
+@router.post("/gann-spiral")
+async def gann_spiral_endpoint(data: dict):
+    """Gann Spiral Square of Nine analysis."""
+    total = data.get("total_points", 0)
+    return analyze_gann_spiral(float(total))
+
+@router.get("/mars-uranus")
+async def mars_uranus_endpoint(game_time: str = None):
+    """Mars-Uranus Nuclear aspect detection."""
+    parsed_time = None
+    if game_time:
+        try:
+            parsed_time = datetime.fromisoformat(game_time)
+        except:
+            parsed_time = None
+    return analyze_mars_uranus_aspect(parsed_time)
+
+@router.post("/gann-retracement")
+async def gann_retracement_endpoint(data: dict):
+    """50% Retracement Rule analysis."""
+    team = data.get("team_name", "")
+    margin = data.get("last_game_margin")
+    spread = data.get("current_spread")
+    was_win = data.get("was_win", True)
+    if not team or margin is None or spread is None:
+        raise HTTPException(status_code=400, detail="team_name, last_game_margin, current_spread required")
+    return analyze_fifty_percent_retracement(team, int(margin), float(spread), was_win)
+
+@router.post("/gann-exhaustion")
+async def gann_exhaustion_endpoint(data: dict):
+    """Rule of Three Exhaustion analysis."""
+    team = data.get("team_name", "")
+    ats = data.get("recent_ats_results", [])
+    if not team or not ats:
+        raise HTTPException(status_code=400, detail="team_name and recent_ats_results required")
+    return analyze_rule_of_three(team, ats)
+
+@router.post("/gann-annulifier")
+async def gann_annulifier_endpoint(data: dict):
+    """Annulifier Cycle analysis."""
+    team = data.get("team_name", "")
+    results = data.get("recent_results", [])
+    if not team or not results:
+        raise HTTPException(status_code=400, detail="team_name and recent_results required")
+    return analyze_annulifier_cycle(team, results)
+
+@router.post("/gann-composite")
+async def gann_composite_endpoint(data: dict):
+    """Composite Gann Physics analysis."""
+    team = data.get("team_name", "")
+    if not team:
+        raise HTTPException(status_code=400, detail="team_name required")
+    return get_gann_physics_composite(
+        team,
+        data.get("last_margin"),
+        data.get("current_spread"),
+        data.get("recent_ats"),
+        data.get("recent_results")
+    )
+
+@router.post("/noosphere/insider-leak")
+async def insider_leak_endpoint(data: dict):
+    """Insider Leak detection."""
+    team = data.get("team_name", "")
+    volume = data.get("current_volume")
+    if not team or volume is None:
+        raise HTTPException(status_code=400, detail="team_name and current_volume required")
+    return detect_insider_leak(team, float(volume), data.get("has_news", False), data.get("news_sentiment", "neutral"))
+
+@router.post("/noosphere/main-character")
+async def main_character_endpoint(data: dict):
+    """Main Character Syndrome detection."""
+    dog = data.get("underdog_name", "")
+    fav = data.get("favorite_name", "")
+    dog_vol = data.get("underdog_volume")
+    fav_vol = data.get("favorite_volume")
+    if not dog or not fav or dog_vol is None or fav_vol is None:
+        raise HTTPException(status_code=400, detail="underdog_name, favorite_name, underdog_volume, favorite_volume required")
+    return detect_main_character_syndrome(dog, fav, float(dog_vol), float(fav_vol), data.get("underdog_sentiment", "neutral"), data.get("spread", 0))
+
+@router.post("/noosphere/phantom-injury")
+async def phantom_injury_endpoint(data: dict):
+    """Phantom Injury detection."""
+    player = data.get("player_name", "")
+    volume = data.get("player_volume")
+    if not player or volume is None:
+        raise HTTPException(status_code=400, detail="player_name and player_volume required")
+    return detect_phantom_injury(player, float(volume), data.get("related_queries"), data.get("has_official_report", False), data.get("baseline_volume"))
+
+@router.post("/noosphere/composite")
+async def noosphere_composite_endpoint(data: dict):
+    """Composite Noosphere Velocity analysis."""
+    team = data.get("team_name", "")
+    if not team:
+        raise HTTPException(status_code=400, detail="team_name required")
+    return calculate_noosphere_velocity(
+        team,
+        data.get("opponent_name"),
+        data.get("team_volume"),
+        data.get("opponent_volume"),
+        data.get("player_data"),
+        data.get("has_news", False),
+        data.get("is_underdog", False)
+    )
+
+@router.get("/noosphere/status")
+async def noosphere_status():
+    """Noosphere Velocity system status."""
+    return {
+        "version": "14.0",
+        "codename": "NOOSPHERE_VELOCITY",
+        "status": "GLOBAL_MIND_ACTIVE",
+        "integration": "MAIN_MODEL",
+        "signal_weight": 17,
+        "detection_methods": {
+            "insider_leak": "Silent Spike - High volume + No news = FADE",
+            "main_character": "Underdog volume > Favorite = BET DOG",
+            "phantom_injury": "Player spike + Injury queries = BET UNDER"
+        },
+        "teams_tracked": len(TEAM_BASELINE_VOLUMES),
+        "message": "Someone always knows. Information asymmetry is the edge."
+    }
+
+@router.get("/gann-physics-status")
+async def gann_physics_status():
+    """Gann Physics system status."""
+    return {
+        "version": "13.0",
+        "codename": "GANN_PHYSICS",
+        "status": "GEOMETRIC_LAWS_ACTIVE",
+        "modules": {
+            "fifty_percent_retracement": "Gravity Check - Fade at 50% zone after blowouts",
+            "rule_of_three": "Exhaustion Node - 3 consecutive = FADE the 4th",
+            "annulifier_cycle": "Harmonic Lock - W-L-W-L = 5th result LOCKED"
+        },
+        "message": "W.D. Gann's geometric laws now govern the field."
+    }
+
+@router.get("/omni-glitch-status")
+async def omni_glitch_status():
+    """OMNI-GLITCH system status."""
+    now = datetime.now()
+    return {
+        "version": "11.0",
+        "codename": "OMNI-GLITCH",
+        "status": "TRANSCENDENT",
+        "timestamp": now.isoformat(),
+        "modules": {
+            "vortex_math": "Tesla 3-6-9 Digital Root Analysis",
+            "shannon_entropy": "Pattern Break Detection",
+            "atmospheric_drag": "Barometric Pressure Effects",
+            "void_of_course_moon": is_void_of_course_moon(now),
+            "gann_spiral": "Square of Nine Analysis",
+            "mars_uranus_nuclear": analyze_mars_uranus_aspect(now)
+        },
+        "venues_tracked": len(VENUE_ATMOSPHERICS),
+        "message": "The final dimension is open."
+    }
 
 @router.get("/health")
 async def health_check():
     return {
         "status": "healthy",
-        "engine_version": "10.1",
-        "codename": "JARVIS_SAVANT",
-        "dual_score_system": True,
-        "immortal_status": validate_2178()["status"],
+        "engine_version": "14.0",
+        "codename": "NOOSPHERE_VELOCITY",
         "features": [
-            "research_signals",
-            "esoteric_edge",
-            "cosmic_confluence",
-            "gematria_6_ciphers",
+            "v10.1_research_weights",
             "jarvis_triggers",
-            "immortal_2178",
-            "public_fade_65",
-            "goldilocks_zone",
-            "trap_gate",
-            "nhl_dog_protocol"
-        ]
+            "esoteric_edge",
+            "gematria_6_ciphers",
+            "v11_omni_glitch",
+            "v13_gann_physics",
+            "v14_noosphere_velocity"
+        ],
+        "noosphere_status": "MAIN_MODEL_INTEGRATED",
+        "teams_tracked": len(TEAM_BASELINE_VOLUMES),
+        "venues_tracked": len(VENUE_ATMOSPHERICS)
     }
-
 
 # =============================================================================
 # BACKWARDS COMPATIBILITY FOR prediction_api.py
