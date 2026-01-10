@@ -1064,6 +1064,518 @@ def calculate_main_confidence(game_data: dict, context: dict = None) -> dict:
         "signals": signals,
         "top_signals": sorted(signals.items(), key=lambda x: x[1]["score"] * SIGNAL_WEIGHTS.get(x[0], 1), reverse=True)[:3]
     }
+# ============================================================================
+# LEVEL 11: OMNI-GLITCH MODULES - The Final Dimension
+# ============================================================================
+
+def get_venue_atmospherics(team_name: str) -> dict:
+    """Get atmospheric data for a venue."""
+    for venue_team, data in VENUE_ATMOSPHERICS.items():
+        if team_name.lower() in venue_team.lower() or venue_team.lower() in team_name.lower():
+            return {"found": True, **data}
+    return {"found": False, **VENUE_ATMOSPHERICS["default"]}
+
+def calculate_vortex_math(value: float) -> dict:
+    """VORTEX MATH - Tesla's 3-6-9 Secret."""
+    if value is None or value == 0:
+        return {"analyzed": False, "reason": "No value provided"}
+    
+    str_val = str(abs(value)).replace(".", "")
+    digital_root = sum(int(d) for d in str_val)
+    while digital_root > 9:
+        digital_root = sum(int(d) for d in str(digital_root))
+    
+    if digital_root == 9:
+        circuit, energy, betting_implication, vortex_score = "COMPLETE", "Maximum energy - Full circuit completion", "High confidence plays favored", 85
+    elif digital_root == 3:
+        circuit, energy, betting_implication, vortex_score = "OPEN_LOW", "Building energy - Ascending pattern", "Momentum building - consider overs", 70
+    elif digital_root == 6:
+        circuit, energy, betting_implication, vortex_score = "OPEN_HIGH", "Releasing energy - Descending pattern", "Energy depleting - consider unders", 70
+    else:
+        circuit, energy, betting_implication, vortex_score = "TRANSITIONAL", f"Root {digital_root} - Between states", "Standard analysis applies", 50
+    
+    return {
+        "analyzed": True, "input_value": value, "digital_root": digital_root,
+        "circuit_state": circuit, "energy_description": energy,
+        "vortex_score": vortex_score, "betting_implication": betting_implication,
+        "tesla_aligned": digital_root in [3, 6, 9]
+    }
+
+def analyze_shannon_entropy(recent_results: list, team_name: str = None) -> dict:
+    """SHANNON ENTROPY - Information Theory Pattern Detection."""
+    if not recent_results or len(recent_results) < 3:
+        return {"analyzed": False, "reason": "Need at least 3 results"}
+    
+    n = len(recent_results)
+    wins = sum(1 for r in recent_results if str(r).upper() in ['W', '1', 'TRUE', 'WIN'])
+    losses = n - wins
+    
+    if wins == 0 or losses == 0:
+        entropy = 0.0
+    else:
+        p_win, p_loss = wins / n, losses / n
+        entropy = -(p_win * math.log2(p_win) + p_loss * math.log2(p_loss))
+    
+    current_streak = 1
+    streak_type = recent_results[-1] if recent_results else None
+    for i in range(len(recent_results) - 2, -1, -1):
+        if recent_results[i] == streak_type:
+            current_streak += 1
+        else:
+            break
+    
+    if entropy < 0.5:
+        state, snapback_risk, recommendation = "LOW", 75, "Low entropy = Pattern locked. FADE continuation."
+    elif entropy < 0.8:
+        state, snapback_risk, recommendation = "BALANCED", 40, "Standard play. No entropy edge."
+    elif entropy < 0.9:
+        state, snapback_risk, recommendation = "HIGH", 25, "Chaotic state. Reduce position sizes."
+    else:
+        state, snapback_risk, recommendation = "MAXIMUM", 15, "Anything possible. Small plays only."
+    
+    return {
+        "team": team_name or "Unknown", "analyzed": True, "recent_results": recent_results,
+        "entropy": {"raw": round(entropy, 4), "state": state},
+        "streak_analysis": {"current_streak": current_streak, "streak_type": streak_type, "win_pct": round(wins/n, 3), "streak_danger": current_streak >= 4 and entropy < 0.5},
+        "snapback_risk": snapback_risk, "entropy_score": round((1 - entropy) * 100), "recommendation": recommendation,
+        "betting_implications": {"fade_team": entropy < 0.5 and current_streak >= 4, "snap_back_play": current_streak >= 4 and entropy < 0.5}
+    }
+
+def analyze_atmospheric_drag(home_team: str, away_team: str, current_pressure: float = None) -> dict:
+    """ATMOSPHERIC DRAG - Air density affects outcomes."""
+    home_atmo = get_venue_atmospherics(home_team)
+    away_atmo = get_venue_atmospherics(away_team)
+    
+    if current_pressure is None:
+        current_pressure = home_atmo["base_pressure"]
+    
+    elevation = home_atmo["elevation_ft"]
+    altitude_diff = home_atmo["elevation_ft"] - away_atmo["elevation_ft"]
+    
+    if current_pressure >= 30.00:
+        pressure_state, total_bias = "HIGH", "UNDER"
+    elif current_pressure <= 29.80:
+        pressure_state, total_bias = "LOW", "OVER"
+    else:
+        pressure_state, total_bias = "NORMAL", "NEUTRAL"
+    
+    altitude_bonus = 0.12 if elevation >= 5000 else 0.08 if elevation >= 4000 else 0.0
+    visitor_fatigue = 0.15 if altitude_diff >= 4000 else 0.08 if altitude_diff >= 2500 else 0.0
+    
+    return {
+        "venue": {"home_team": home_team, "elevation_ft": elevation, "pressure": current_pressure},
+        "pressure_state": pressure_state, "total_bias": total_bias,
+        "altitude_bonus": altitude_bonus, "visitor_fatigue_pct": visitor_fatigue * 100,
+        "betting_implications": {"totals_lean": total_bias, "fade_visitor": visitor_fatigue >= 0.10}
+    }
+
+def is_void_of_course_moon(game_time: datetime = None) -> dict:
+    """VOID OF COURSE MOON - During void: Favorites fail."""
+    if game_time is None:
+        game_time = datetime.now()
+    
+    known_new_moon = datetime(2024, 1, 11)
+    days_since = (game_time - known_new_moon).days
+    moon_degrees = (days_since * 13.176396) % 360
+    
+    signs = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
+    current_sign = signs[int(moon_degrees / 30)]
+    degrees_in_sign = moon_degrees % 30
+    hours_until_change = (30 - degrees_in_sign) / 0.5493
+    is_void = degrees_in_sign >= 27
+    
+    return {
+        "game_time": game_time.strftime("%Y-%m-%d %H:%M"),
+        "moon_position": {"current_sign": current_sign, "degrees_in_sign": round(degrees_in_sign, 2), "hours_until_sign_change": round(hours_until_change, 1)},
+        "void_status": {"is_void": is_void, "state": "VOID_ACTIVE" if is_void else "ACTIVE"},
+        "recommendation": "VOID ACTIVE: Favorites vulnerable. Underdogs protected." if is_void else "Normal lunar influence.",
+        "favorite_penalty": 0.15 if is_void else 0.0,
+        "betting_implications": {"fade_favorites": is_void, "dog_protection": is_void}
+    }
+
+def analyze_gann_spiral(total_points: float, game_time: datetime = None) -> dict:
+    """GANN SPIRAL - Square of Nine analysis."""
+    if game_time is None:
+        game_time = datetime.now()
+    
+    sqrt_val = math.sqrt(total_points) if total_points > 0 else 0
+    spiral_position = sqrt_val % 1
+    min_distance = min(abs(spiral_position - cz) for cz in [0.0, 0.25, 0.5, 0.75])
+    on_cardinal = min_distance <= 0.05
+    
+    if on_cardinal:
+        gann_state, recommendation, reversal_probability = "CARDINAL_CROSS", "On Cardinal Cross - Major inflection point", 75
+    elif min_distance <= 0.10:
+        gann_state, recommendation, reversal_probability = "NEAR_CARDINAL", "Near cardinal - Watch for reversal", 60
+    else:
+        gann_state, recommendation, reversal_probability = "BETWEEN_CARDINALS", "Between cardinals - Trend continuation likely", 35
+    
+    return {
+        "total_analyzed": total_points,
+        "spiral_math": {"sqrt_value": round(sqrt_val, 4), "spiral_position": round(spiral_position, 4), "distance_to_cardinal": round(min_distance, 4)},
+        "gann_state": gann_state, "on_cardinal_cross": on_cardinal,
+        "reversal_probability": reversal_probability, "recommendation": recommendation
+    }
+
+def analyze_mars_uranus_aspect(game_time: datetime = None) -> dict:
+    """MARS-URANUS NUCLEAR - Shock aspect detection."""
+    if game_time is None:
+        game_time = datetime.now()
+    
+    j2000 = datetime(2000, 1, 1, 12, 0, 0)
+    days_since_j2000 = (game_time - j2000).total_seconds() / 86400
+    mars_longitude = (355.45 + 0.5240208 * days_since_j2000) % 360
+    uranus_longitude = (314.055 + 0.0119541 * days_since_j2000) % 360
+    aspect_angle = abs(mars_longitude - uranus_longitude)
+    if aspect_angle > 180:
+        aspect_angle = 360 - aspect_angle
+    
+    is_conjunction, is_square, is_opposition = aspect_angle <= 8, 82 <= aspect_angle <= 98, 172 <= aspect_angle <= 188
+    is_nuclear = is_conjunction or is_square or is_opposition
+    
+    if is_conjunction:
+        aspect_type, shock_level, recommendation = "CONJUNCTION", "MAXIMUM", "CONJUNCTION: Maximum upset potential. Bet biggest dog."
+    elif is_square:
+        aspect_type, shock_level, recommendation = "SQUARE", "HIGH", "SQUARE: High upset energy. Consider underdogs."
+    elif is_opposition:
+        aspect_type, shock_level, recommendation = "OPPOSITION", "ELEVATED", "OPPOSITION: Tension release. Expect the unexpected."
+    else:
+        aspect_type, shock_level, recommendation = "NONE", "NORMAL", "No major Mars-Uranus aspect. Standard analysis."
+    
+    return {
+        "game_time": game_time.strftime("%Y-%m-%d %H:%M"),
+        "planetary_positions": {"mars_longitude": round(mars_longitude, 2), "uranus_longitude": round(uranus_longitude, 2), "aspect_angle": round(aspect_angle, 2)},
+        "aspect_analysis": {"type": aspect_type, "is_nuclear": is_nuclear, "shock_level": shock_level},
+        "recommendation": recommendation,
+        "betting_implications": {"dog_boost": is_nuclear, "upset_alert": is_nuclear, "max_dog_play": is_conjunction}
+    }
+
+# ============================================================================
+# LEVEL 13: GANN PHYSICS - Financial Laws Applied to Sports
+# ============================================================================
+
+def analyze_fifty_percent_retracement(team_name: str, last_game_margin: int, current_spread: float, was_win: bool = True) -> dict:
+    """50% RETRACEMENT RULE - After 20+ point blowout, fade at 50% zone."""
+    is_major_move = abs(last_game_margin) >= 20
+    fifty_percent_level = abs(last_game_margin) / 2
+    retracement_zone_low, retracement_zone_high = fifty_percent_level - 3, fifty_percent_level + 3
+    abs_spread = abs(current_spread)
+    in_retracement_zone = retracement_zone_low <= abs_spread <= retracement_zone_high
+    
+    if is_major_move and in_retracement_zone:
+        signal, recommendation, fade_strength = "FADE_AT_RETRACEMENT", f"FADE {team_name}. At 50% retracement zone ({fifty_percent_level:.1f}). Gravity pulls back.", 78
+    elif is_major_move and abs_spread > fifty_percent_level:
+        signal, recommendation, fade_strength = "ABOVE_RETRACEMENT", "Above 50% zone. Market over-correcting.", 45
+    elif is_major_move:
+        signal, recommendation, fade_strength = "BELOW_RETRACEMENT", "Below 50% zone. Market under-correcting.", 30
+    else:
+        signal, recommendation, fade_strength = "NO_MAJOR_MOVE", "Last game wasn't major move (20+ pts). Rule doesn't apply.", 0
+    
+    return {
+        "team": team_name, "last_margin": last_game_margin, "was_win": was_win,
+        "is_major_move": is_major_move, "fifty_percent_level": fifty_percent_level,
+        "retracement_zone": {"low": retracement_zone_low, "high": retracement_zone_high},
+        "current_spread": current_spread, "in_retracement_zone": in_retracement_zone,
+        "signal": signal, "recommendation": recommendation, "fade_strength": fade_strength,
+        "gann_principle": "The 50% retracement is nature's point of equilibrium."
+    }
+
+def analyze_rule_of_three(team_name: str, recent_ats_results: list) -> dict:
+    """RULE OF THREE - 3 consecutive ATS results = FADE the 4th."""
+    if len(recent_ats_results) < 3:
+        return {"team": team_name, "analyzed": False, "reason": "Need at least 3 ATS results", "signal": "INSUFFICIENT_DATA"}
+    
+    last_three = recent_ats_results[-3:]
+    all_covers, all_fails = all(r for r in last_three), all(not r for r in last_three)
+    is_exhausted = all_covers or all_fails
+    
+    consecutive_count, direction = 1, recent_ats_results[-1]
+    for i in range(len(recent_ats_results) - 2, -1, -1):
+        if recent_ats_results[i] == direction:
+            consecutive_count += 1
+        else:
+            break
+    
+    if is_exhausted:
+        if all_covers:
+            signal, recommendation = "EXHAUSTION_FADE", f"FADE {team_name}. 3 consecutive covers = Exhaustion Node. The 4th reverses."
+        else:
+            signal, recommendation = "EXHAUSTION_BACK", f"BACK {team_name}. 3 consecutive fails = Exhaustion Node. Due for cover."
+        fade_strength, exhaustion_level = 72, "HIGH"
+    elif consecutive_count == 2:
+        signal, recommendation, fade_strength, exhaustion_level = "APPROACHING_EXHAUSTION", f"Watch {team_name}. 2 consecutive = approaching exhaustion.", 45, "MODERATE"
+    else:
+        signal, recommendation, fade_strength, exhaustion_level = "NO_EXHAUSTION", "No exhaustion pattern. Standard analysis.", 0, "LOW"
+    
+    return {
+        "team": team_name, "recent_ats": recent_ats_results, "consecutive_count": consecutive_count,
+        "direction": "covers" if direction else "fails", "exhaustion_level": exhaustion_level,
+        "signal": signal, "recommendation": recommendation, "fade_strength": fade_strength,
+        "gann_principle": "Rule of Three: Energy depletes after 3 cycles."
+    }
+
+def analyze_annulifier_cycle(team_name: str, recent_results: list, bet_type: str = "moneyline") -> dict:
+    """ANNULIFIER CYCLE - W-L-W-L pattern = 5th result LOCKED."""
+    if len(recent_results) < 4:
+        return {"team": team_name, "analyzed": False, "reason": "Need 4 results", "signal": "INSUFFICIENT_DATA"}
+    
+    normalized = []
+    for r in recent_results:
+        if isinstance(r, bool):
+            normalized.append(r)
+        elif isinstance(r, str):
+            normalized.append(r.upper() in ['W', 'WIN', '1', 'TRUE', 'COVER'])
+        else:
+            normalized.append(bool(r))
+    
+    last_four = normalized[-4:]
+    is_alternating = all(last_four[i] != last_four[i + 1] for i in range(len(last_four) - 1))
+    
+    if is_alternating:
+        predicted_next = not last_four[-1]
+        predicted_result = "W" if predicted_next else "L"
+        signal, recommendation, lock_strength, lock_level = f"LOCKED_{predicted_result}", f"{'BACK' if predicted_next else 'FADE'} {team_name}. Annulifier predicts {predicted_result}.", 78, "HARMONIC_LOCK"
+    else:
+        predicted_result, signal, recommendation, lock_strength, lock_level = None, "NO_ALTERNATION", "No alternating pattern. Annulifier inactive.", 0, "NONE"
+    
+    return {
+        "team": team_name, "bet_type": bet_type, "recent_results": [("W" if r else "L") for r in normalized[-4:]],
+        "is_alternating": is_alternating, "lock_level": lock_level, "predicted_next": predicted_result,
+        "signal": signal, "recommendation": recommendation, "lock_strength": lock_strength,
+        "gann_principle": "Annulifier: Chaos balances through oscillation."
+    }
+
+def get_gann_physics_composite(team_name: str, last_margin: int = None, current_spread: float = None, recent_ats: list = None, recent_results: list = None) -> dict:
+    """Get composite Gann Physics analysis."""
+    analyses, active_laws, total_fade_strength, signals = {}, 0, 0, []
+    
+    if last_margin is not None and current_spread is not None:
+        retracement = analyze_fifty_percent_retracement(team_name, last_margin, current_spread)
+        analyses["fifty_percent_retracement"] = retracement
+        if retracement["signal"] == "FADE_AT_RETRACEMENT":
+            active_laws += 1
+            total_fade_strength += retracement["fade_strength"]
+            signals.append("50% Retracement ACTIVE")
+    
+    if recent_ats and len(recent_ats) >= 3:
+        exhaustion = analyze_rule_of_three(team_name, recent_ats)
+        analyses["rule_of_three"] = exhaustion
+        if exhaustion["signal"] in ["EXHAUSTION_FADE", "EXHAUSTION_BACK"]:
+            active_laws += 1
+            total_fade_strength += exhaustion["fade_strength"]
+            signals.append("Rule of Three EXHAUSTED")
+    
+    if recent_results and len(recent_results) >= 4:
+        annulifier = analyze_annulifier_cycle(team_name, recent_results)
+        analyses["annulifier_cycle"] = annulifier
+        if annulifier["lock_level"] == "HARMONIC_LOCK":
+            active_laws += 1
+            total_fade_strength += annulifier["lock_strength"]
+            signals.append(f"Annulifier LOCKED: {annulifier['predicted_next']}")
+    
+    if active_laws >= 3:
+        confluence_level, confluence_message = "GANN_TRIFECTA", "ALL THREE GANN LAWS ACTIVE. Maximum geometric conviction."
+    elif active_laws == 2:
+        confluence_level, confluence_message = "DUAL_GEOMETRY", "Two Gann laws aligned. Strong signal."
+    elif active_laws == 1:
+        confluence_level, confluence_message = "SINGLE_LAW", "One Gann law active. Moderate signal."
+    else:
+        confluence_level, confluence_message = "NO_GANN_SIGNAL", "No Gann laws triggered."
+    
+    return {
+        "team": team_name, "active_laws": active_laws, "confluence_level": confluence_level,
+        "confluence_message": confluence_message, "average_fade_strength": round(total_fade_strength / active_laws) if active_laws > 0 else 0,
+        "active_signals": signals, "analyses": analyses
+    }
+
+# ============================================================================
+# LEVEL 14: NOOSPHERE VELOCITY - The Global Mind
+# ============================================================================
+
+def get_team_baseline_volume(team_name: str) -> int:
+    """Get baseline search volume for a team."""
+    team_lower = team_name.lower()
+    for key, volume in TEAM_BASELINE_VOLUMES.items():
+        if key in team_lower or team_lower in key:
+            return volume
+    return TEAM_BASELINE_VOLUMES["default"]
+
+def calculate_volume_velocity(current_volume: float, baseline_volume: float) -> dict:
+    """Calculate search volume velocity."""
+    if baseline_volume <= 0:
+        baseline_volume = 50
+    velocity_pct = ((current_volume - baseline_volume) / baseline_volume) * 100
+    
+    if velocity_pct >= 200:
+        tier, description = "EXTREME_SPIKE", "Massive unexplained interest"
+    elif velocity_pct >= 100:
+        tier, description = "HIGH_SPIKE", "Significant unusual activity"
+    elif velocity_pct >= 50:
+        tier, description = "ELEVATED", "Above normal interest"
+    elif velocity_pct >= 25:
+        tier, description = "MILD_ELEVATION", "Slightly elevated"
+    elif velocity_pct <= -50:
+        tier, description = "SUPPRESSED", "Unusually low interest"
+    else:
+        tier, description = "NORMAL", "Within normal range"
+    
+    return {"current_volume": current_volume, "baseline_volume": baseline_volume, "velocity_pct": round(velocity_pct, 1), "tier": tier, "description": description}
+
+def detect_insider_leak(team_name: str, current_volume: float, has_news: bool = False, news_sentiment: str = "neutral") -> dict:
+    """INSIDER LEAK - High volume + NO news = Someone knows."""
+    baseline = get_team_baseline_volume(team_name)
+    velocity = calculate_volume_velocity(current_volume, baseline)
+    is_silent_spike = velocity["velocity_pct"] >= 100 and not has_news
+    is_loud_spike = velocity["velocity_pct"] >= 100 and has_news
+    
+    if is_silent_spike:
+        if velocity["velocity_pct"] >= 200:
+            signal, confidence, recommendation = "STRONG_INSIDER_LEAK", 85, f"FADE {team_name}. Extreme silent spike ({velocity['velocity_pct']:.0f}%) with NO news."
+        else:
+            signal, confidence, recommendation = "INSIDER_LEAK_DETECTED", 72, f"FADE {team_name}. Silent spike ({velocity['velocity_pct']:.0f}%) with NO news."
+        action, edge_score = "FADE", 100 if velocity["velocity_pct"] >= 200 else 75
+    elif is_loud_spike:
+        signal, confidence, recommendation, action, edge_score = "PUBLIC_HYPE", 55, "News explains spike. Standard fade-the-public analysis.", "STANDARD_FADE", 40
+    else:
+        signal, confidence, recommendation, action, edge_score = "NO_LEAK_DETECTED", 50, "No unusual volume patterns.", "NEUTRAL", 0
+    
+    return {
+        "team": team_name, "signal_type": "INSIDER_LEAK", "velocity": velocity,
+        "has_news": has_news, "news_sentiment": news_sentiment,
+        "is_silent_spike": is_silent_spike, "is_loud_spike": is_loud_spike,
+        "signal": signal, "confidence": confidence, "recommendation": recommendation,
+        "action": action, "edge_score": edge_score,
+        "principle": "Silent Spike = Information asymmetry. Someone always knows first."
+    }
+
+def detect_main_character_syndrome(underdog_name: str, favorite_name: str, underdog_volume: float, favorite_volume: float, underdog_sentiment: str = "neutral", spread: float = 0) -> dict:
+    """MAIN CHARACTER SYNDROME - Underdog volume > Favorite = Universe chose upset."""
+    dog_baseline, fav_baseline = get_team_baseline_volume(underdog_name), get_team_baseline_volume(favorite_name)
+    dog_velocity, fav_velocity = calculate_volume_velocity(underdog_volume, dog_baseline), calculate_volume_velocity(favorite_volume, fav_baseline)
+    volume_ratio = underdog_volume / favorite_volume if favorite_volume > 0 else 999
+    baseline_ratio = dog_baseline / fav_baseline if fav_baseline > 0 else 1
+    adjusted_ratio = volume_ratio / baseline_ratio if baseline_ratio > 0 else volume_ratio
+    is_main_character = adjusted_ratio > 1.5
+    is_manic = underdog_sentiment in ["manic", "euphoric", "extreme"]
+    
+    if is_main_character and is_manic and dog_velocity["velocity_pct"] >= 100:
+        signal, confidence, recommendation = "EXTREME_MAIN_CHARACTER", 88, f"BET {underdog_name} (DOG). EXTREME Main Character syndrome."
+    elif is_main_character and dog_velocity["velocity_pct"] >= 50:
+        signal, confidence, recommendation = "STRONG_MAIN_CHARACTER", 78, f"BET {underdog_name} (DOG). STRONG Main Character energy."
+    elif is_main_character:
+        signal, confidence, recommendation = "MILD_MAIN_CHARACTER", 62, f"Lean {underdog_name}. Mild Main Character detected."
+    else:
+        signal, confidence, recommendation = "NO_MAIN_CHARACTER", 50, "No Main Character syndrome. Favorite volume dominates."
+    
+    edge_score = 100 if signal == "EXTREME_MAIN_CHARACTER" else 75 if signal == "STRONG_MAIN_CHARACTER" else 40 if signal == "MILD_MAIN_CHARACTER" else 0
+    
+    return {
+        "underdog": underdog_name, "favorite": favorite_name, "signal_type": "MAIN_CHARACTER",
+        "underdog_velocity": dog_velocity, "favorite_velocity": fav_velocity,
+        "volume_ratio": round(volume_ratio, 2), "adjusted_ratio": round(adjusted_ratio, 2),
+        "sentiment": underdog_sentiment, "spread": spread, "is_main_character": is_main_character,
+        "signal": signal, "confidence": confidence, "recommendation": recommendation,
+        "action": "BET_DOG" if is_main_character else "NEUTRAL", "edge_score": edge_score,
+        "principle": "The Hive Mind chose the upset."
+    }
+
+def detect_phantom_injury(player_name: str, player_volume: float, related_queries: list = None, has_official_report: bool = False, baseline_volume: float = None) -> dict:
+    """PHANTOM INJURY - Player spike + Injury queries + NO report = Hidden limitation."""
+    if baseline_volume is None:
+        baseline_volume = 50
+    velocity = calculate_volume_velocity(player_volume, baseline_volume)
+    
+    injury_queries = []
+    if related_queries:
+        for query in related_queries:
+            query_lower = query.lower()
+            for term in INJURY_RELATED_TERMS:
+                if term in query_lower:
+                    injury_queries.append(query)
+                    break
+    
+    injury_query_ratio = len(injury_queries) / len(related_queries) if related_queries else 0
+    is_phantom = velocity["velocity_pct"] >= 75 and injury_query_ratio >= 0.2 and not has_official_report
+    
+    if is_phantom and velocity["velocity_pct"] >= 150:
+        signal, confidence, recommendation = "STRONG_PHANTOM_INJURY", 82, f"BET UNDER on {player_name} props. Strong phantom injury signal."
+    elif is_phantom:
+        signal, confidence, recommendation = "PHANTOM_INJURY_DETECTED", 70, f"BET UNDER on {player_name} props. Phantom injury detected."
+    elif velocity["velocity_pct"] >= 100 and not related_queries:
+        signal, confidence, recommendation = "UNCLASSIFIED_SPIKE", 55, f"Player spike without injury queries. Monitor {player_name}."
+    else:
+        signal, confidence, recommendation = "NO_PHANTOM", 50, "No phantom injury signals."
+    
+    edge_score = 85 if signal == "STRONG_PHANTOM_INJURY" else 65 if signal == "PHANTOM_INJURY_DETECTED" else 0
+    
+    return {
+        "player": player_name, "signal_type": "PHANTOM_INJURY", "velocity": velocity,
+        "related_queries": related_queries or [], "injury_queries_found": injury_queries,
+        "injury_query_ratio": round(injury_query_ratio, 2), "has_official_report": has_official_report,
+        "is_phantom_injury": is_phantom, "signal": signal, "confidence": confidence,
+        "recommendation": recommendation, "action": "BET_UNDER" if is_phantom else "NEUTRAL",
+        "edge_score": edge_score, "principle": "The Hive sees physical weakness before stats reflect it."
+    }
+
+def calculate_noosphere_velocity(team_name: str, opponent_name: str = None, team_volume: float = None, opponent_volume: float = None, player_data: list = None, has_news: bool = False, is_underdog: bool = False) -> dict:
+    """Calculate composite Noosphere Velocity signal."""
+    signals, total_edge, actions = [], 0, []
+    
+    if team_volume:
+        insider = detect_insider_leak(team_name, team_volume, has_news)
+        signals.append({"type": "insider_leak", "data": insider})
+        total_edge += insider["edge_score"]
+        if insider["action"] != "NEUTRAL":
+            actions.append(insider["action"])
+    
+    if opponent_name and team_volume and opponent_volume and is_underdog:
+        main_char = detect_main_character_syndrome(team_name, opponent_name, team_volume, opponent_volume)
+        signals.append({"type": "main_character", "data": main_char})
+        total_edge += main_char["edge_score"]
+        if main_char["action"] != "NEUTRAL":
+            actions.append(main_char["action"])
+    
+    if player_data:
+        for player in player_data:
+            phantom = detect_phantom_injury(player.get("name", "Unknown"), player.get("volume", 0), player.get("related_queries"), player.get("has_report", False))
+            if phantom["is_phantom_injury"]:
+                signals.append({"type": "phantom_injury", "data": phantom})
+                total_edge += phantom["edge_score"]
+                actions.append(f"UNDER_{player.get('name', 'Unknown')}")
+    
+    active_signals = len([s for s in signals if s["data"].get("edge_score", 0) > 0])
+    
+    if active_signals >= 3:
+        confluence, message = "FULL_NOOSPHERE", "MAXIMUM INFORMATION ASYMMETRY. All three signals active."
+    elif active_signals == 2:
+        confluence, message = "DUAL_SIGNAL", "Strong Noosphere confluence. Two signals aligned."
+    elif active_signals == 1:
+        confluence, message = "SINGLE_SIGNAL", "Single Noosphere signal detected."
+    else:
+        confluence, message = "NO_SIGNAL", "No significant Noosphere activity."
+    
+    return {
+        "team": team_name, "opponent": opponent_name, "active_signals": active_signals,
+        "confluence_level": confluence, "confluence_message": message,
+        "average_edge_score": round(total_edge / len(signals)) if signals else 0,
+        "recommended_actions": list(set(actions)), "signals": signals,
+        "noosphere_principle": "Someone always knows. Information asymmetry is the edge."
+    }
+
+def get_noosphere_main_model_signal(noosphere_data: dict) -> dict:
+    """Convert Noosphere analysis to main model signal format."""
+    active, avg_edge = noosphere_data.get("active_signals", 0), noosphere_data.get("average_edge_score", 0)
+    
+    if active >= 2 and avg_edge >= 70:
+        score, contribution = 92, f"NOOSPHERE CONFLUENCE: {noosphere_data['confluence_level']}"
+    elif active >= 1 and avg_edge >= 50:
+        score, contribution = 75, f"Noosphere signal: {noosphere_data['confluence_message']}"
+    elif active >= 1:
+        score, contribution = 62, "Weak Noosphere signal detected"
+    else:
+        score, contribution = 50, "No Noosphere edge"
+    
+    return {"score": score, "contribution": contribution, "raw_data": noosphere_data}
 
 # ============================================================================
 # API ENDPOINTS
