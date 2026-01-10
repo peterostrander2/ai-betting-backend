@@ -335,6 +335,7 @@ SIGNAL_WEIGHTS = {
     # TIER 1: PROVEN EDGE (56%+ win rates)
     "sharp_money": 22,
     "line_edge": 18,
+    "noosphere_velocity": 17,
     "injury_vacuum": 16,
     "game_pace": 15,
     "travel_fatigue": 14,
