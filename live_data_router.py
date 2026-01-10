@@ -413,6 +413,59 @@ POWER_NUMBERS = {
     "sacred": [7, 12, 40, 72, 153, 666, 777, 888],
     "jarvis": [2178, 201, 33, 93, 322]  # v10.1
 }
+# ============================================================================
+# v14.0 NOOSPHERE VELOCITY - Team Search Volume Baselines
+# "Someone always knows." - Information asymmetry detection
+# ============================================================================
+
+TEAM_BASELINE_VOLUMES = {
+    # NBA Teams (normalized daily search volume index)
+    "lakers": 100, "warriors": 85, "celtics": 80, "bulls": 75, "knicks": 80,
+    "nets": 70, "heat": 72, "mavericks": 68, "suns": 65, "76ers": 62,
+    "bucks": 60, "nuggets": 58, "clippers": 55, "grizzlies": 50, "cavaliers": 48,
+    "hawks": 45, "raptors": 52, "timberwolves": 42, "pelicans": 40, "kings": 45,
+    "jazz": 38, "thunder": 44, "magic": 42, "pacers": 38, "wizards": 35,
+    "hornets": 32, "pistons": 35, "spurs": 48, "blazers": 40, "rockets": 55,
+    # NFL Teams
+    "chiefs": 90, "cowboys": 95, "eagles": 85, "49ers": 80, "bills": 70,
+    "ravens": 68, "dolphins": 65, "lions": 62, "packers": 75, "bengals": 60,
+    "jets": 58, "patriots": 72, "raiders": 55, "broncos": 52, "chargers": 50,
+    "seahawks": 55, "vikings": 52, "saints": 48, "falcons": 45, "bears": 60,
+    "browns": 48, "steelers": 65, "commanders": 42, "giants": 55, "rams": 50,
+    "cardinals": 40, "colts": 45, "jaguars": 38, "texans": 42, "titans": 40,
+    "buccaneers": 55, "panthers": 38,
+    # NHL Teams
+    "maple leafs": 70, "canadiens": 65, "rangers": 60, "bruins": 58, "blackhawks": 55,
+    "penguins": 52, "red wings": 48, "flyers": 50, "oilers": 55, "golden knights": 52,
+    "avalanche": 48, "lightning": 50, "kraken": 40, "wild": 35, "flames": 38,
+    # Default
+    "default": 50
+}
+
+INJURY_RELATED_TERMS = [
+    "injury", "injured", "hurt", "out", "questionable", "doubtful", "gtd",
+    "game time decision", "dnp", "did not practice", "limited", "knee",
+    "ankle", "hamstring", "concussion", "illness", "sick", "rest", "load management",
+    "scratch", "ir", "injured reserve", "day to day", "week to week"
+]
+
+# ============================================================================
+# v11.0 OMNI-GLITCH - Venue Atmospherics for Atmospheric Drag
+# ============================================================================
+
+VENUE_ATMOSPHERICS = {
+    "Denver Broncos": {"city": "Denver", "elevation_ft": 5280, "base_pressure": 24.63, "dome": False},
+    "Denver Nuggets": {"city": "Denver", "elevation_ft": 5280, "base_pressure": 24.63, "dome": True},
+    "Colorado Rockies": {"city": "Denver", "elevation_ft": 5280, "base_pressure": 24.63, "dome": False},
+    "Colorado Avalanche": {"city": "Denver", "elevation_ft": 5280, "base_pressure": 24.63, "dome": True},
+    "Utah Jazz": {"city": "Salt Lake City", "elevation_ft": 4226, "base_pressure": 25.70, "dome": True},
+    "Las Vegas Raiders": {"city": "Las Vegas", "elevation_ft": 2001, "base_pressure": 27.82, "dome": True},
+    "Vegas Golden Knights": {"city": "Las Vegas", "elevation_ft": 2001, "base_pressure": 27.82, "dome": True},
+    "Phoenix Suns": {"city": "Phoenix", "elevation_ft": 1086, "base_pressure": 28.89, "dome": True},
+    "Arizona Diamondbacks": {"city": "Phoenix", "elevation_ft": 1086, "base_pressure": 28.89, "dome": True},
+    "Arizona Cardinals": {"city": "Glendale", "elevation_ft": 1120, "base_pressure": 28.86, "dome": True},
+    "default": {"city": "Sea Level", "elevation_ft": 0, "base_pressure": 29.92, "dome": False}
+}
 
 def get_moon_phase() -> str:
     """Calculate current moon phase"""
