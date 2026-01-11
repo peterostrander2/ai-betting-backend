@@ -1,22 +1,42 @@
-# live_data_router.py v14.0 - NOOSPHERE VELOCITY EDITION
-# Research-Optimized + Esoteric Edge + SCALAR-SAVANT + OMNI-GLITCH + GANN PHYSICS + NOOSPHERE
+# live_data_router.py v14.1 - PRODUCTION HARDENED
+# Research-Optimized + Esoteric Edge + NOOSPHERE VELOCITY
+# Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
 from fastapi import APIRouter, HTTPException
 from typing import Optional, List, Dict, Any
 import httpx
 import os
+import logging
+import hashlib
+import asyncio
+import random
 from datetime import datetime, timedelta
 import math
-import random
 
-router = APIRouter(prefix="/live", tags=["live"])
+# ============================================================================
+# LOGGING SETUP
+# ============================================================================
 
-# API Keys - use environment variables with fallback
+logger = logging.getLogger("live_data")
+logger.setLevel(logging.INFO)
+
+# Add handler if none exists
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    ))
+    logger.addHandler(handler)
+
+# ============================================================================
+# CONFIGURATION (Environment Variables)
+# ============================================================================
+
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "ceb2e3a6a3302e0f38fd0d34150294e9")
-ODDS_API_BASE = "https://api.the-odds-api.com/v4"
+ODDS_API_BASE = os.getenv("ODDS_API_BASE", "https://api.the-odds-api.com/v4")
 
 PLAYBOOK_API_KEY = os.getenv("PLAYBOOK_API_KEY", "pbk_d6f65d6a74c53d5ef9b455a9a147c853b82b")
-PLAYBOOK_API_BASE = "https://api.playbook-api.com/v1"
+PLAYBOOK_API_BASE = os.getenv("PLAYBOOK_API_BASE", "https://api.playbook-api.com/v1")
 
 ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
@@ -27,6 +47,93 @@ SPORT_MAPPINGS = {
     "mlb": {"odds": "baseball_mlb", "espn": "baseball/mlb", "playbook": "mlb"},
     "nhl": {"odds": "icehockey_nhl", "espn": "hockey/nhl", "playbook": "nhl"},
 }
+
+# ============================================================================
+# SHARED HTTP CLIENT
+# ============================================================================
+
+_shared_client: Optional[httpx.AsyncClient] = None
+
+
+def get_shared_client() -> httpx.AsyncClient:
+    """Get or create a shared httpx AsyncClient for connection pooling."""
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(timeout=30.0)
+    return _shared_client
+
+
+async def close_shared_client():
+    """Close the shared client (call on app shutdown)."""
+    global _shared_client
+    if _shared_client is not None:
+        await _shared_client.aclose()
+        _shared_client = None
+
+
+# ============================================================================
+# FETCH WITH RETRIES HELPER
+# ============================================================================
+
+async def fetch_with_retries(
+    method: str,
+    url: str,
+    *,
+    params: Dict[str, Any] = None,
+    headers: Dict[str, str] = None,
+    max_retries: int = 2,
+    backoff_base: float = 0.5
+) -> Optional[httpx.Response]:
+    """
+    Fetch URL with retries and exponential backoff.
+    Returns Response on success, None on complete failure.
+    Rate-limited (429) responses are returned directly for caller to handle.
+    """
+    client = get_shared_client()
+    attempt = 0
+
+    while attempt <= max_retries:
+        try:
+            resp = await client.request(method, url, params=params, headers=headers)
+
+            # Return rate-limited responses for caller to handle
+            if resp.status_code == 429:
+                logger.warning("Rate limited by %s (attempt %d): %s",
+                             url, attempt, resp.text[:200] if resp.text else "No body")
+                return resp
+
+            return resp
+
+        except httpx.RequestError as e:
+            logger.exception("HTTP request failed (attempt %d/%d) %s: %s",
+                           attempt + 1, max_retries + 1, url, str(e))
+            if attempt < max_retries:
+                sleep_for = backoff_base * (2 ** attempt)
+                await asyncio.sleep(sleep_for)
+            attempt += 1
+
+    logger.error("All retries exhausted for %s", url)
+    return None
+
+
+# ============================================================================
+# DETERMINISTIC RNG FOR FALLBACK DATA
+# ============================================================================
+
+def deterministic_rng_for_game_id(game_id: Any) -> random.Random:
+    """
+    Create a deterministic Random instance seeded by game_id.
+    This ensures fallback splits are stable across requests for the same game.
+    """
+    seed = int(hashlib.md5(str(game_id).encode()).hexdigest()[:8], 16)
+    return random.Random(seed)
+
+
+# ============================================================================
+# ROUTER SETUP
+# ============================================================================
+
+router = APIRouter(prefix="/live", tags=["live"])
 
 # ============================================================================
 # JARVIS TRIGGERS - THE PROVEN EDGE NUMBERS
@@ -48,7 +155,7 @@ TESLA_NUMBERS = [3, 6, 9]
 # ============================================================================
 
 def calculate_date_numerology() -> Dict[str, Any]:
-    """Calculate numerology for today's date"""
+    """Calculate numerology for today's date."""
     today = datetime.now()
     digits = str(today.year) + str(today.month).zfill(2) + str(today.day).zfill(2)
 
@@ -90,8 +197,7 @@ def calculate_date_numerology() -> Dict[str, Any]:
 
 
 def get_moon_phase() -> Dict[str, Any]:
-    """Get current moon phase and betting implications"""
-    # Simplified moon phase calculation
+    """Get current moon phase and betting implications."""
     known_new_moon = datetime(2024, 1, 11)
     days_since = (datetime.now() - known_new_moon).days
     lunar_cycle = 29.53
@@ -110,11 +216,12 @@ def get_moon_phase() -> Dict[str, Any]:
 
     for start, end, name, meaning in phases:
         if start <= phase_day < end:
+            illumination = abs(14.76 - phase_day) / 14.76 * 100
             return {
                 "phase": name,
                 "meaning": meaning,
                 "phase_day": round(phase_day, 1),
-                "illumination": round(abs(14.76 - phase_day) / 14.76 * 100 if phase_day <= 14.76 else abs(phase_day - 14.76) / 14.76 * 100, 1),
+                "illumination": round(100 - illumination, 1),
                 "betting_edge": "VOLATILITY" if "Full" in name else "STABILITY" if "New" in name else "NEUTRAL"
             }
 
@@ -122,11 +229,10 @@ def get_moon_phase() -> Dict[str, Any]:
 
 
 def get_daily_energy() -> Dict[str, Any]:
-    """Get overall daily energy reading for betting"""
+    """Get overall daily energy reading for betting."""
     numerology = calculate_date_numerology()
     moon = get_moon_phase()
 
-    # Calculate energy score
     energy_score = 50
 
     if numerology.get("is_master_number_day"):
@@ -138,7 +244,6 @@ def get_daily_energy() -> Dict[str, Any]:
     elif moon.get("phase") == "New Moon":
         energy_score -= 10
 
-    # Day of week modifiers
     dow = datetime.now().weekday()
     day_modifiers = {
         0: ("Monday", -5, "Slow start"),
@@ -169,177 +274,321 @@ def get_daily_energy() -> Dict[str, Any]:
 
 @router.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint."""
     return {
         "status": "healthy",
-        "version": "14.0",
-        "codename": "NOOSPHERE_VELOCITY",
+        "version": "14.1",
+        "codename": "PRODUCTION_HARDENED",
         "timestamp": datetime.now().isoformat()
     }
 
 
 @router.get("/sharp/{sport}")
 async def get_sharp_money(sport: str):
-    """Get sharp money signals using Playbook API with Odds API fallback"""
+    """
+    Get sharp money signals using Playbook API with Odds API fallback.
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "source": "playbook" | "odds_api",
+        "count": N,
+        "data": [...]
+    }
+    """
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
     sport_config = SPORT_MAPPINGS[sport_lower]
-    signals = []
+    data = []
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # Try Playbook API first
+    try:
+        playbook_url = f"{PLAYBOOK_API_BASE}/sharp/{sport_config['playbook']}"
+        resp = await fetch_with_retries(
+            "GET", playbook_url,
+            headers={"Authorization": f"Bearer {PLAYBOOK_API_KEY}"}
+        )
+
+        if resp and resp.status_code == 200:
+            try:
+                json_body = resp.json()
+                games = json_body.get("games", [])
+                logger.info("Playbook sharp data retrieved for %s: %d games", sport, len(games))
+                return {"sport": sport.upper(), "source": "playbook", "count": len(games), "data": games}
+            except ValueError as e:
+                logger.error("Failed to parse Playbook response: %s", e)
+
+        if resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Playbook fetch failed for %s: %s", sport, e)
+
+    # Fallback to Odds API variance analysis
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={"apiKey": ODDS_API_KEY, "regions": "us", "markets": "spreads", "oddsFormat": "american"}
+        )
+
+        if not resp:
+            raise HTTPException(status_code=502, detail="Odds API unreachable after retries")
+
+        if resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
+
+        if resp.status_code != 200:
+            logger.warning("Odds API returned %s for %s", resp.status_code, sport)
+            raise HTTPException(status_code=502, detail=f"Odds API returned error: {resp.status_code}")
+
         try:
-            playbook_resp = await client.get(
-                f"{PLAYBOOK_API_BASE}/sharp/{sport_config['playbook']}",
-                headers={"Authorization": f"Bearer {PLAYBOOK_API_KEY}"}
-            )
-            if playbook_resp.status_code == 200:
-                return {"signals": playbook_resp.json().get("games", []), "source": "playbook", "sport": sport.upper()}
-        except Exception:
-            pass
+            games = resp.json()
+        except ValueError as e:
+            logger.error("Failed to parse Odds API response: %s", e)
+            raise HTTPException(status_code=502, detail="Invalid response from Odds API")
 
-        # Fallback: Odds API line variance analysis
-        try:
-            odds_resp = await client.get(
-                f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds",
-                params={"apiKey": ODDS_API_KEY, "regions": "us", "markets": "spreads", "oddsFormat": "american"}
-            )
-            if odds_resp.status_code == 200:
-                games = odds_resp.json()
-                for game in games:
-                    spreads = []
-                    for bm in game.get("bookmakers", []):
-                        for market in bm.get("markets", []):
-                            if market.get("key") == "spreads":
-                                for outcome in market.get("outcomes", []):
-                                    if outcome.get("name") == game.get("home_team"):
-                                        spreads.append(outcome.get("point", 0))
-                    if len(spreads) >= 3:
-                        variance = max(spreads) - min(spreads)
-                        if variance >= 1.5:
-                            signals.append({
-                                "game_id": game.get("id"),
-                                "home_team": game.get("home_team"),
-                                "away_team": game.get("away_team"),
-                                "line_variance": round(variance, 1),
-                                "signal_strength": "STRONG" if variance >= 2 else "MODERATE"
-                            })
-        except Exception:
-            pass
+        for game in games:
+            spreads = []
+            for bm in game.get("bookmakers", []):
+                for market in bm.get("markets", []):
+                    if market.get("key") == "spreads":
+                        for outcome in market.get("outcomes", []):
+                            if outcome.get("name") == game.get("home_team"):
+                                spreads.append(outcome.get("point", 0))
 
-    return {"signals": signals, "count": len(signals), "sport": sport.upper(), "source": "odds_api"}
+            if len(spreads) >= 3:
+                variance = max(spreads) - min(spreads)
+                if variance >= 1.5:
+                    data.append({
+                        "game_id": game.get("id"),
+                        "home_team": game.get("home_team"),
+                        "away_team": game.get("away_team"),
+                        "line_variance": round(variance, 1),
+                        "signal_strength": "STRONG" if variance >= 2 else "MODERATE"
+                    })
+
+        logger.info("Odds API sharp analysis for %s: %d signals found", sport, len(data))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Odds API processing failed for %s: %s", sport, e)
+        raise HTTPException(status_code=500, detail="Internal error processing odds data")
+
+    return {"sport": sport.upper(), "source": "odds_api", "count": len(data), "data": data}
 
 
 @router.get("/splits/{sport}")
 async def get_splits(sport: str):
-    """Betting splits with Playbook API + estimation fallback"""
+    """
+    Get betting splits with Playbook API + deterministic estimation fallback.
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "source": "playbook" | "estimated",
+        "count": N,
+        "data": [...]
+    }
+    """
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
     sport_config = SPORT_MAPPINGS[sport_lower]
-    splits = []
+    data = []
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # Try Playbook API first
+    try:
+        playbook_url = f"{PLAYBOOK_API_BASE}/splits/{sport_config['playbook']}"
+        resp = await fetch_with_retries(
+            "GET", playbook_url,
+            headers={"Authorization": f"Bearer {PLAYBOOK_API_KEY}"}
+        )
+
+        if resp and resp.status_code == 200:
+            try:
+                json_body = resp.json()
+                games = json_body.get("games", [])
+                logger.info("Playbook splits data retrieved for %s: %d games", sport, len(games))
+                return {"sport": sport.upper(), "source": "playbook", "count": len(games), "data": games}
+            except ValueError as e:
+                logger.error("Failed to parse Playbook splits response: %s", e)
+
+        if resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Playbook splits fetch failed for %s: %s", sport, e)
+
+    # Fallback to Odds API with deterministic estimation
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={"apiKey": ODDS_API_KEY, "regions": "us", "markets": "h2h", "oddsFormat": "american"}
+        )
+
+        if not resp:
+            raise HTTPException(status_code=502, detail="Odds API unreachable after retries")
+
+        if resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
+
+        if resp.status_code != 200:
+            logger.warning("Odds API returned %s for splits %s", resp.status_code, sport)
+            raise HTTPException(status_code=502, detail=f"Odds API returned error: {resp.status_code}")
+
         try:
-            playbook_resp = await client.get(
-                f"{PLAYBOOK_API_BASE}/splits/{sport_config['playbook']}",
-                headers={"Authorization": f"Bearer {PLAYBOOK_API_KEY}"}
-            )
-            if playbook_resp.status_code == 200:
-                return {"splits": playbook_resp.json().get("games", []), "source": "playbook", "sport": sport.upper()}
-        except Exception:
-            pass
+            games = resp.json()
+        except ValueError as e:
+            logger.error("Failed to parse Odds API splits response: %s", e)
+            raise HTTPException(status_code=502, detail="Invalid response from Odds API")
 
-        try:
-            odds_resp = await client.get(
-                f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds",
-                params={"apiKey": ODDS_API_KEY, "regions": "us", "markets": "h2h", "oddsFormat": "american"}
-            )
-            if odds_resp.status_code == 200:
-                for game in odds_resp.json():
-                    home_bet = random.randint(40, 60)
-                    home_money = home_bet + random.randint(-10, 10)
-                    splits.append({
-                        "game_id": game.get("id"),
-                        "home_team": game.get("home_team"),
-                        "away_team": game.get("away_team"),
-                        "spread_splits": {
-                            "home": {"bets_pct": home_bet, "money_pct": max(25, min(75, home_money))},
-                            "away": {"bets_pct": 100-home_bet, "money_pct": max(25, min(75, 100-home_money))}
-                        }
-                    })
-        except Exception:
-            pass
+        for game in games:
+            game_id = game.get("id", "")
+            # Use deterministic RNG so same game always gets same estimated splits
+            rng = deterministic_rng_for_game_id(game_id)
+            home_bet = rng.randint(40, 60)
+            home_money = home_bet + rng.randint(-10, 10)
 
-    return {"splits": splits, "count": len(splits), "sport": sport.upper(), "source": "estimated"}
+            data.append({
+                "game_id": game_id,
+                "home_team": game.get("home_team"),
+                "away_team": game.get("away_team"),
+                "spread_splits": {
+                    "home": {"bets_pct": home_bet, "money_pct": max(25, min(75, home_money))},
+                    "away": {"bets_pct": 100 - home_bet, "money_pct": max(25, min(75, 100 - home_money))}
+                }
+            })
+
+        logger.info("Odds API splits estimation for %s: %d games", sport, len(data))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Odds API splits processing failed for %s: %s", sport, e)
+        raise HTTPException(status_code=500, detail="Internal error processing splits data")
+
+    return {"sport": sport.upper(), "source": "estimated", "count": len(data), "data": data}
 
 
 @router.get("/props/{sport}")
 async def get_props(sport: str):
-    """Get player props for a sport"""
+    """
+    Get player props for a sport.
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "source": "odds_api",
+        "count": N,
+        "data": [...]
+    }
+    """
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
     sport_config = SPORT_MAPPINGS[sport_lower]
-    props = []
+    data = []
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "player_points,player_rebounds,player_assists,player_threes",
+                "oddsFormat": "american"
+            }
+        )
+
+        if not resp:
+            raise HTTPException(status_code=502, detail="Odds API unreachable after retries")
+
+        if resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
+
+        if resp.status_code != 200:
+            logger.warning("Odds API props returned %s for %s", resp.status_code, sport)
+            raise HTTPException(status_code=502, detail=f"Odds API returned error: {resp.status_code}")
+
         try:
-            odds_resp = await client.get(
-                f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds",
-                params={
-                    "apiKey": ODDS_API_KEY,
-                    "regions": "us",
-                    "markets": "player_points,player_rebounds,player_assists,player_threes",
-                    "oddsFormat": "american"
-                }
-            )
-            if odds_resp.status_code == 200:
-                for game in odds_resp.json():
-                    game_props = {
-                        "game_id": game.get("id"),
-                        "home_team": game.get("home_team"),
-                        "away_team": game.get("away_team"),
-                        "commence_time": game.get("commence_time"),
-                        "props": []
-                    }
-                    for bm in game.get("bookmakers", []):
-                        for market in bm.get("markets", []):
-                            if "player" in market.get("key", ""):
-                                for outcome in market.get("outcomes", []):
-                                    game_props["props"].append({
-                                        "player": outcome.get("description", ""),
-                                        "market": market.get("key"),
-                                        "line": outcome.get("point", 0),
-                                        "odds": outcome.get("price", -110),
-                                        "side": outcome.get("name"),
-                                        "book": bm.get("key")
-                                    })
-                    if game_props["props"]:
-                        props.append(game_props)
-        except Exception:
-            pass
+            games = resp.json()
+        except ValueError as e:
+            logger.error("Failed to parse Odds API props response: %s", e)
+            raise HTTPException(status_code=502, detail="Invalid response from Odds API")
 
-    return {"props": props, "count": len(props), "sport": sport.upper()}
+        for game in games:
+            game_props = {
+                "game_id": game.get("id"),
+                "home_team": game.get("home_team"),
+                "away_team": game.get("away_team"),
+                "commence_time": game.get("commence_time"),
+                "props": []
+            }
+
+            for bm in game.get("bookmakers", []):
+                for market in bm.get("markets", []):
+                    if "player" in market.get("key", ""):
+                        for outcome in market.get("outcomes", []):
+                            game_props["props"].append({
+                                "player": outcome.get("description", ""),
+                                "market": market.get("key"),
+                                "line": outcome.get("point", 0),
+                                "odds": outcome.get("price", -110),
+                                "side": outcome.get("name"),
+                                "book": bm.get("key")
+                            })
+
+            if game_props["props"]:
+                data.append(game_props)
+
+        logger.info("Props data retrieved for %s: %d games with props", sport, len(data))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Props fetch failed for %s: %s", sport, e)
+        raise HTTPException(status_code=500, detail="Internal error fetching props")
+
+    return {"sport": sport.upper(), "source": "odds_api", "count": len(data), "data": data}
 
 
 @router.get("/best-bets/{sport}")
 async def get_best_bets(sport: str):
-    """Get best bets combining sharp money and model predictions"""
+    """
+    Get best bets combining sharp money and model predictions.
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "source": "ai_model",
+        "count": N,
+        "daily_energy": "HIGH" | "MEDIUM" | "LOW",
+        "data": [...],
+        "timestamp": "ISO timestamp"
+    }
+    """
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
-    # Get sharp signals
+    # Get sharp signals (this now uses proper error handling)
     sharp_data = await get_sharp_money(sport)
     daily_energy = get_daily_energy()
 
-    best_bets = []
-    for signal in sharp_data.get("signals", []):
-        # Score the bet
+    data = []
+    for signal in sharp_data.get("data", []):
         score = 5.0
         if signal.get("signal_strength") == "STRONG":
             score += 2.0
@@ -352,7 +601,7 @@ async def get_best_bets(sport: str):
             if str(trigger_num) in game_str:
                 score += trigger_data["boost"] / 10
 
-        best_bets.append({
+        data.append({
             "game": f"{signal.get('away_team', 'Away')} @ {signal.get('home_team', 'Home')}",
             "home_team": signal.get("home_team"),
             "away_team": signal.get("away_team"),
@@ -363,26 +612,25 @@ async def get_best_bets(sport: str):
             "signal_strength": signal.get("signal_strength", "MODERATE")
         })
 
-    # Sort by score
-    best_bets.sort(key=lambda x: x["ai_score"], reverse=True)
+    data.sort(key=lambda x: x["ai_score"], reverse=True)
 
     return {
-        "best_bets": best_bets[:10],
-        "count": len(best_bets),
         "sport": sport.upper(),
+        "source": "ai_model",
+        "count": len(data),
         "daily_energy": daily_energy.get("rating", "MEDIUM"),
+        "data": data[:10],
         "timestamp": datetime.now().isoformat()
     }
 
 
 @router.get("/esoteric-edge")
 async def get_esoteric_edge():
-    """Get current esoteric edge analysis"""
+    """Get current esoteric edge analysis."""
     numerology = calculate_date_numerology()
     moon = get_moon_phase()
     energy = get_daily_energy()
 
-    # Build edge factors
     edge_factors = []
 
     if numerology.get("is_master_number_day"):
@@ -395,7 +643,7 @@ async def get_esoteric_edge():
         edge_factors.append({"factor": "Full Moon", "boost": 20, "description": "Maximum illumination - expect chaos"})
 
     for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
-        if trigger_num in [33, 93]:  # Check for daily relevance
+        if trigger_num in [33, 93]:
             today_num = sum(int(d) for d in datetime.now().strftime("%Y%m%d"))
             if today_num % trigger_num == 0:
                 edge_factors.append({
@@ -419,16 +667,16 @@ async def get_esoteric_edge():
 
 @router.get("/noosphere/status")
 async def get_noosphere_status():
-    """Noosphere Velocity - Global consciousness indicators"""
-    # Simulated global consciousness data
-    # In production, this would connect to actual data sources
-
-    coherence = random.uniform(0.3, 0.9)
+    """Noosphere Velocity - Global consciousness indicators."""
+    # Use deterministic RNG based on current hour for stable results within the hour
+    hour_seed = int(datetime.now().strftime("%Y%m%d%H"))
+    rng = random.Random(hour_seed)
+    coherence = rng.uniform(0.3, 0.9)
     anomaly_detected = coherence > 0.7
 
     return {
         "status": "ACTIVE",
-        "version": "14.0",
+        "version": "14.1",
         "global_coherence": round(coherence, 3),
         "anomaly_detected": anomaly_detected,
         "anomaly_strength": "STRONG" if coherence > 0.8 else "MODERATE" if coherence > 0.6 else "WEAK",
@@ -445,17 +693,12 @@ async def get_noosphere_status():
 
 @router.get("/gann-physics-status")
 async def get_gann_physics_status():
-    """GANN Physics - W.D. Gann's geometric principles applied to sports"""
+    """GANN Physics - W.D. Gann's geometric principles applied to sports."""
     today = datetime.now()
-
-    # 50% Retracement (Gravity Check)
     day_of_year = today.timetuple().tm_yday
+
     retracement_level = (day_of_year % 90) / 90 * 100
-
-    # Rule of Three (Exhaustion Node)
     rule_of_three = (day_of_year % 3 == 0)
-
-    # Annulifier Cycle (every 7 days)
     annulifier = (day_of_year % 7 == 0)
 
     return {
@@ -484,10 +727,9 @@ async def get_gann_physics_status():
 
 
 # ============================================================================
-# EXPORT FOR MAIN.PY
+# EXPORTS FOR MAIN.PY
 # ============================================================================
 
-# Create a class wrapper for compatibility
 class LiveDataRouter:
     def __init__(self):
         self.router = router
