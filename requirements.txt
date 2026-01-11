@@ -1,5 +1,6 @@
 # ============================================
-# Bookie-o-em v6.3.0 - 17 Signal System
+# Bookie-o-em v14.1 - PRODUCTION HARDENED
+# Live Sports API + Esoteric Edge System
 # ============================================
 
 # Core ML Libraries
