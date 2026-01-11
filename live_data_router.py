@@ -158,7 +158,7 @@ JARVIS_TRIGGERS = {
         "name": "THE IMMORTAL",
         "boost": 20,
         "tier": "LEGENDARY",
-        "description": "Only number where n4=reverse AND n4=66^4. Never collapses.",
+        "description": "Only number where n4=reverse AND n4=66^4. Never collapses.",
         "mathematical": True
     },
     201: {
