@@ -31,9 +31,129 @@ router = APIRouter(prefix="/live", tags=["live"])
 ODDS_API_KEY = "ceb2e3a6a3302e0f38fd0d34150294e9"
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
+# Playbook API - Sharp money, splits, injuries
+PLAYBOOK_API_KEY = "pbk_d6f65d6a74c53d5ef9b455a9a147c853b82b"
+PLAYBOOK_API_BASE = "https://api.playbook-api.com/v1"
+
+# ESPN API (free, no key required)
+ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
+
+# Sport mappings
+SPORT_MAPPINGS = {
+    "nba": {"odds": "basketball_nba", "espn": "basketball/nba", "playbook": "nba"},
+    "nfl": {"odds": "americanfootball_nfl", "espn": "football/nfl", "playbook": "nfl"},
+    "mlb": {"odds": "baseball_mlb", "espn": "baseball/mlb", "playbook": "mlb"},
+    "nhl": {"odds": "icehockey_nhl", "espn": "hockey/nhl", "playbook": "nhl"},
+}
+
 # ============================================================================
 # JARVIS TRIGGERS - THE PROVEN EDGE NUMBERS (v10.1 preserved)
 # ============================================================================
+
+@router.get("/live/sharp/{sport}")
+async def get_sharp_money(sport: str):
+    """Get sharp money signals using Playbook API with Odds API fallback"""
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+    
+    sport_config = SPORT_MAPPINGS[sport_lower]
+    signals = []
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # Try Playbook API first
+            playbook_resp = await client.get(
+                f"{PLAYBOOK_API_BASE}/sharp/{sport_config['playbook']}",
+                headers={"Authorization": f"Bearer {PLAYBOOK_API_KEY}"}
+            )
+            if playbook_resp.status_code == 200:
+                return {"signals": playbook_resp.json().get("games", []), "source": "playbook"}
+        except:
+            pass
+        
+        # Fallback: Odds API line variance analysis
+        try:
+            odds_resp = await client.get(
+                f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds",
+                params={"apiKey": ODDS_API_KEY, "regions": "us", "markets": "spreads", "oddsFormat": "american"}
+            )
+            if odds_resp.status_code == 200:
+                games = odds_resp.json()
+                for game in games:
+                    spreads = []
+                    for bm in game.get("bookmakers", []):
+                        for market in bm.get("markets", []):
+                            if market["key"] == "spreads":
+                                for outcome in market["outcomes"]:
+                                    if outcome["name"] == game.get("home_team"):
+                                        spreads.append(outcome.get("point", 0))
+                    if len(spreads) >= 3:
+                        variance = max(spreads) - min(spreads)
+                        if variance >= 1.5:
+                            signals.append({
+                                "game_id": game.get("id"),
+                                "home_team": game.get("home_team"),
+                                "away_team": game.get("away_team"),
+                                "line_variance": variance,
+                                "signal_strength": "STRONG" if variance >= 2 else "MODERATE"
+                            })
+        except:
+            pass
+    
+    return {"signals": signals, "count": len(signals), "sport": sport.upper(), "source": "odds_api"}
+@router.get("/live/sharp/{sport}")
+async def get_sharp_money(sport: str):
+    """Get sharp money signals using Playbook API with Odds API fallback"""
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+    
+    sport_config = SPORT_MAPPINGS[sport_lower]
+    signals = []
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # Try Playbook API first
+            playbook_resp = await client.get(
+                f"{PLAYBOOK_API_BASE}/sharp/{sport_config['playbook']}",
+                headers={"Authorization": f"Bearer {PLAYBOOK_API_KEY}"}
+            )
+            if playbook_resp.status_code == 200:
+                return {"signals": playbook_resp.json().get("games", []), "source": "playbook"}
+        except:
+            pass
+        
+        # Fallback: Odds API line variance analysis
+        try:
+            odds_resp = await client.get(
+                f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds",
+                params={"apiKey": ODDS_API_KEY, "regions": "us", "markets": "spreads", "oddsFormat": "american"}
+            )
+            if odds_resp.status_code == 200:
+                games = odds_resp.json()
+                for game in games:
+                    spreads = []
+                    for bm in game.get("bookmakers", []):
+                        for market in bm.get("markets", []):
+                            if market["key"] == "spreads":
+                                for outcome in market["outcomes"]:
+                                    if outcome["name"] == game.get("home_team"):
+                                        spreads.append(outcome.get("point", 0))
+                    if len(spreads) >= 3:
+                        variance = max(spreads) - min(spreads)
+                        if variance >= 1.5:
+                            signals.append({
+                                "game_id": game.get("id"),
+                                "home_team": game.get("home_team"),
+                                "away_team": game.get("away_team"),
+                                "line_variance": variance,
+                                "signal_strength": "STRONG" if variance >= 2 else "MODERATE"
+                            })
+        except:
+            pass
+    
+    return {"signals": signals, "count": len(signals), "sport": sport.upper(), "source": "odds_api"}
 
 JARVIS_TRIGGERS = {
     2178: {
