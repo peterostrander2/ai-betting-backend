@@ -257,6 +257,7 @@ The frontend is configured to use this backend URL. All `/live/*` endpoints are 
 4. ~~**Enable daily scheduler**~~ ✅ DONE - Auto-starts on app launch
 5. ~~**Integrate LSTM predictions**~~ ✅ READY - Code complete, needs `BALLDONTLIE_API_KEY` + training
 6. ~~**Add monitoring**~~ ✅ DONE - Prometheus metrics at `/metrics`
+7. ~~**Clean up legacy files**~~ ✅ DONE - Moved to `legacy/` folder
 
 ### How to Enable Redis Caching (Railway)
 1. Add a Redis service in Railway dashboard
