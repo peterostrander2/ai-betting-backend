@@ -2,7 +2,7 @@
 # Research-Optimized + Esoteric Edge + NOOSPHERE VELOCITY
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import Optional, List, Dict, Any
 import httpx
 import os
@@ -32,11 +32,28 @@ if not logger.handlers:
 # CONFIGURATION (Environment Variables)
 # ============================================================================
 
-ODDS_API_KEY = os.getenv("ODDS_API_KEY", "ceb2e3a6a3302e0f38fd0d34150294e9")
+# API Keys - REQUIRED: Set these in Railway environment variables
+ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 ODDS_API_BASE = os.getenv("ODDS_API_BASE", "https://api.the-odds-api.com/v4")
 
-PLAYBOOK_API_KEY = os.getenv("PLAYBOOK_API_KEY", "pbk_d6f65d6a74c53d5ef9b455a9a147c853b82b")
+PLAYBOOK_API_KEY = os.getenv("PLAYBOOK_API_KEY", "")
 PLAYBOOK_API_BASE = os.getenv("PLAYBOOK_API_BASE", "https://api.playbook-api.com/v1")
+
+# Log warning if API keys are missing
+if not ODDS_API_KEY:
+    logger.warning("ODDS_API_KEY not set - will use fallback data")
+if not PLAYBOOK_API_KEY:
+    logger.warning("PLAYBOOK_API_KEY not set - will use fallback data")
+
+# Authentication - Optional API key for endpoint protection
+# Set API_AUTH_KEY in Railway to enable authentication
+# Set API_AUTH_ENABLED=true to require auth (default: false)
+API_AUTH_KEY = os.getenv("API_AUTH_KEY", "")
+API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
+
+if API_AUTH_ENABLED and not API_AUTH_KEY:
+    logger.warning("API_AUTH_ENABLED is true but API_AUTH_KEY not set - auth disabled")
+    API_AUTH_ENABLED = False
 
 ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
@@ -117,6 +134,57 @@ async def fetch_with_retries(
 
 
 # ============================================================================
+# IN-MEMORY TTL CACHE
+# ============================================================================
+
+class TTLCache:
+    """Simple in-memory cache with TTL (time-to-live) support."""
+
+    def __init__(self, default_ttl: int = 300):
+        """Initialize cache with default TTL in seconds (default 5 minutes)."""
+        self._cache: Dict[str, tuple] = {}  # key -> (value, expires_at)
+        self._default_ttl = default_ttl
+
+    def get(self, key: str) -> Optional[Any]:
+        """Get value from cache if not expired."""
+        if key in self._cache:
+            value, expires_at = self._cache[key]
+            if datetime.now() < expires_at:
+                logger.debug("Cache HIT: %s", key)
+                return value
+            else:
+                # Expired, remove it
+                del self._cache[key]
+                logger.debug("Cache EXPIRED: %s", key)
+        return None
+
+    def set(self, key: str, value: Any, ttl: int = None) -> None:
+        """Set value in cache with optional custom TTL."""
+        ttl = ttl or self._default_ttl
+        expires_at = datetime.now() + timedelta(seconds=ttl)
+        self._cache[key] = (value, expires_at)
+        logger.debug("Cache SET: %s (TTL: %ds)", key, ttl)
+
+    def clear(self) -> None:
+        """Clear all cached values."""
+        self._cache.clear()
+        logger.info("Cache cleared")
+
+    def stats(self) -> Dict[str, Any]:
+        """Get cache statistics."""
+        now = datetime.now()
+        valid = sum(1 for _, (_, exp) in self._cache.items() if now < exp)
+        return {
+            "total_keys": len(self._cache),
+            "valid_keys": valid,
+            "expired_keys": len(self._cache) - valid
+        }
+
+# Global cache instance - 5 minute TTL for API responses
+api_cache = TTLCache(default_ttl=300)
+
+
+# ============================================================================
 # DETERMINISTIC RNG FOR FALLBACK DATA
 # ============================================================================
 
@@ -134,6 +202,28 @@ def deterministic_rng_for_game_id(game_id: Any) -> random.Random:
 # ============================================================================
 
 router = APIRouter(prefix="/live", tags=["live"])
+
+
+# ============================================================================
+# AUTHENTICATION DEPENDENCY
+# ============================================================================
+
+async def verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    """
+    Verify API key if authentication is enabled.
+    Pass X-API-Key header to authenticate.
+    """
+    if not API_AUTH_ENABLED:
+        return True  # Auth disabled, allow all
+
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="Missing X-API-Key header")
+
+    if x_api_key != API_AUTH_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+    return True
+
 
 # ============================================================================
 # JARVIS TRIGGERS - THE PROVEN EDGE NUMBERS
@@ -283,6 +373,22 @@ async def health_check():
     }
 
 
+@router.get("/cache/stats")
+async def cache_stats():
+    """Get cache statistics for debugging."""
+    return {
+        "cache": api_cache.stats(),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/cache/clear")
+async def cache_clear():
+    """Clear the API cache."""
+    api_cache.clear()
+    return {"status": "cache_cleared", "timestamp": datetime.now().isoformat()}
+
+
 @router.get("/sharp/{sport}")
 async def get_sharp_money(sport: str):
     """
@@ -300,6 +406,12 @@ async def get_sharp_money(sport: str):
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
+    # Check cache first
+    cache_key = f"sharp:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
 
@@ -316,7 +428,9 @@ async def get_sharp_money(sport: str):
                 json_body = resp.json()
                 games = json_body.get("games", [])
                 logger.info("Playbook sharp data retrieved for %s: %d games", sport, len(games))
-                return {"sport": sport.upper(), "source": "playbook", "count": len(games), "data": games}
+                result = {"sport": sport.upper(), "source": "playbook", "count": len(games), "data": games}
+                api_cache.set(cache_key, result)
+                return result
             except ValueError as e:
                 logger.error("Failed to parse Playbook response: %s", e)
 
@@ -380,7 +494,9 @@ async def get_sharp_money(sport: str):
         logger.exception("Odds API processing failed for %s: %s", sport, e)
         raise HTTPException(status_code=500, detail="Internal error processing odds data")
 
-    return {"sport": sport.upper(), "source": "odds_api", "count": len(data), "data": data}
+    result = {"sport": sport.upper(), "source": "odds_api", "count": len(data), "data": data}
+    api_cache.set(cache_key, result)
+    return result
 
 
 @router.get("/splits/{sport}")
@@ -400,6 +516,12 @@ async def get_splits(sport: str):
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
+    # Check cache first
+    cache_key = f"splits:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
 
@@ -416,7 +538,9 @@ async def get_splits(sport: str):
                 json_body = resp.json()
                 games = json_body.get("games", [])
                 logger.info("Playbook splits data retrieved for %s: %d games", sport, len(games))
-                return {"sport": sport.upper(), "source": "playbook", "count": len(games), "data": games}
+                result = {"sport": sport.upper(), "source": "playbook", "count": len(games), "data": games}
+                api_cache.set(cache_key, result)
+                return result
             except ValueError as e:
                 logger.error("Failed to parse Playbook splits response: %s", e)
 
@@ -477,7 +601,9 @@ async def get_splits(sport: str):
         logger.exception("Odds API splits processing failed for %s: %s", sport, e)
         raise HTTPException(status_code=500, detail="Internal error processing splits data")
 
-    return {"sport": sport.upper(), "source": "estimated", "count": len(data), "data": data}
+    result = {"sport": sport.upper(), "source": "estimated", "count": len(data), "data": data}
+    api_cache.set(cache_key, result)
+    return result
 
 
 @router.get("/props/{sport}")
@@ -496,6 +622,12 @@ async def get_props(sport: str):
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Check cache first
+    cache_key = f"props:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
@@ -561,7 +693,9 @@ async def get_props(sport: str):
         logger.exception("Props fetch failed for %s: %s", sport, e)
         raise HTTPException(status_code=500, detail="Internal error fetching props")
 
-    return {"sport": sport.upper(), "source": "odds_api", "count": len(data), "data": data}
+    result = {"sport": sport.upper(), "source": "odds_api", "count": len(data), "data": data}
+    api_cache.set(cache_key, result)
+    return result
 
 
 @router.get("/best-bets/{sport}")
@@ -582,6 +716,12 @@ async def get_best_bets(sport: str):
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Check cache first (shorter TTL since this includes daily energy)
+    cache_key = f"best-bets:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
 
     # Get sharp signals (this now uses proper error handling)
     sharp_data = await get_sharp_money(sport)
@@ -614,7 +754,7 @@ async def get_best_bets(sport: str):
 
     data.sort(key=lambda x: x["ai_score"], reverse=True)
 
-    return {
+    result = {
         "sport": sport.upper(),
         "source": "ai_model",
         "count": len(data),
@@ -622,6 +762,103 @@ async def get_best_bets(sport: str):
         "data": data[:10],
         "timestamp": datetime.now().isoformat()
     }
+    api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL for best-bets
+    return result
+
+
+@router.get("/lstm/status")
+async def lstm_status():
+    """Check LSTM model availability and status."""
+    try:
+        from lstm_brain import LSTMBrain, TF_AVAILABLE
+        return {
+            "available": True,
+            "tensorflow_available": TF_AVAILABLE,
+            "mode": "tensorflow" if TF_AVAILABLE else "numpy_fallback",
+            "note": "LSTM requires historical player data for predictions.",
+            "timestamp": datetime.now().isoformat()
+        }
+    except ImportError:
+        return {
+            "available": False,
+            "tensorflow_available": False,
+            "mode": "disabled",
+            "note": "LSTM module not available",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/grader/status")
+async def grader_status():
+    """Check auto-grader status and current weights."""
+    try:
+        from auto_grader import AutoGrader
+        grader = AutoGrader()
+        return {
+            "available": True,
+            "supported_sports": grader.SUPPORTED_SPORTS,
+            "predictions_logged": sum(len(p) for p in grader.predictions.values()),
+            "weights_loaded": bool(grader.weights),
+            "note": "Use /grader/weights/{sport} to see current weights",
+            "timestamp": datetime.now().isoformat()
+        }
+    except ImportError as e:
+        return {
+            "available": False,
+            "error": str(e),
+            "note": "Auto-grader module not available",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/grader/weights/{sport}")
+async def grader_weights(sport: str):
+    """Get current prediction weights for a sport."""
+    try:
+        from auto_grader import AutoGrader
+        from dataclasses import asdict
+        grader = AutoGrader()
+        sport_upper = sport.upper()
+
+        if sport_upper not in grader.weights:
+            raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+        weights = {}
+        for stat_type, config in grader.weights[sport_upper].items():
+            weights[stat_type] = asdict(config)
+
+        return {
+            "sport": sport_upper,
+            "weights": weights,
+            "timestamp": datetime.now().isoformat()
+        }
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+
+@router.get("/scheduler/status")
+async def scheduler_status():
+    """Check daily scheduler status."""
+    try:
+        from daily_scheduler import SCHEDULER_AVAILABLE, SchedulerConfig
+        return {
+            "available": True,
+            "apscheduler_available": SCHEDULER_AVAILABLE,
+            "audit_time": f"{SchedulerConfig.AUDIT_HOUR:02d}:{SchedulerConfig.AUDIT_MINUTE:02d} ET",
+            "supported_sports": list(SchedulerConfig.SPORT_STATS.keys()),
+            "retrain_thresholds": {
+                "mae": SchedulerConfig.RETRAIN_MAE_THRESHOLD,
+                "hit_rate": SchedulerConfig.RETRAIN_HIT_RATE_THRESHOLD
+            },
+            "note": "Scheduler runs daily audit at 6 AM ET",
+            "timestamp": datetime.now().isoformat()
+        }
+    except ImportError:
+        return {
+            "available": False,
+            "note": "Scheduler module not available",
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @router.get("/esoteric-edge")
