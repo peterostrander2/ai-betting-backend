@@ -391,13 +391,6 @@ def generate_fallback_betslip(sport: str, game_id: str, bet_type: str, selection
 
 
 # ============================================================================
-# ROUTER SETUP
-# ============================================================================
-
-router = APIRouter(prefix="/live", tags=["live"])
-
-
-# ============================================================================
 # AUTHENTICATION DEPENDENCY
 # ============================================================================
 
@@ -416,6 +409,13 @@ async def verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Ke
         raise HTTPException(status_code=403, detail="Invalid API key")
 
     return True
+
+
+# ============================================================================
+# ROUTER SETUP
+# ============================================================================
+
+router = APIRouter(prefix="/live", tags=["live"], dependencies=[Depends(verify_api_key)])
 
 
 # ============================================================================

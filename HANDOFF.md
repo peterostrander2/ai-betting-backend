@@ -251,9 +251,18 @@ The frontend is configured to use this backend URL. All `/live/*` endpoints are 
 ## Future Work
 
 ### High Priority
-1. **Enable authentication** - Set API keys in Railway for production security
+1. ~~**Enable authentication**~~ ✅ DONE - Auth wired to all `/live/*` endpoints
 2. **Add Redis caching** - Replace in-memory cache for multi-instance support
 3. **Integrate LSTM predictions** - Needs historical player data
+
+### How to Enable Authentication (Railway)
+Set these environment variables in Railway:
+```bash
+API_AUTH_ENABLED=true
+API_AUTH_KEY=your-secret-key-here
+```
+Clients must then pass `X-API-Key: your-secret-key-here` header.
+The root `/health` endpoint remains public for Railway health checks.
 
 ### Medium Priority
 4. **Database for predictions** - PostgreSQL for auto-grader storage
