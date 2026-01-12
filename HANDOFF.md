@@ -251,9 +251,59 @@ The frontend is configured to use this backend URL. All `/live/*` endpoints are 
 ## Future Work
 
 ### High Priority
-1. **Enable authentication** - Set API keys in Railway for production security
-2. **Add Redis caching** - Replace in-memory cache for multi-instance support
-3. **Integrate LSTM predictions** - Needs historical player data
+1. ~~**Enable authentication**~~ ✅ DONE - Auth wired to all `/live/*` endpoints
+2. ~~**Add Redis caching**~~ ✅ DONE - Hybrid cache with Redis backend + in-memory fallback
+3. ~~**Database for predictions**~~ ✅ DONE - PostgreSQL models for auto-grader
+4. ~~**Enable daily scheduler**~~ ✅ DONE - Auto-starts on app launch
+5. ~~**Integrate LSTM predictions**~~ ✅ READY - Code complete, needs `BALLDONTLIE_API_KEY` + training
+6. ~~**Add monitoring**~~ ✅ DONE - Prometheus metrics at `/metrics`
+7. ~~**Clean up legacy files**~~ ✅ DONE - Moved to `legacy/` folder
+
+### How to Enable Redis Caching (Railway)
+1. Add a Redis service in Railway dashboard
+2. Railway automatically sets `REDIS_URL` environment variable
+3. The app auto-detects Redis and switches from in-memory to Redis backend
+4. Check `/live/cache/stats` to verify: `"backend": "redis"`
+
+### How to Enable PostgreSQL Database (Railway)
+1. Add a PostgreSQL service in Railway dashboard
+2. Railway automatically sets `DATABASE_URL` environment variable
+3. Tables are auto-created on startup (predictions, weights, bias_history, daily_energy)
+4. Check `/database/status` to verify: `"enabled": true`
+
+### Daily Scheduler
+Scheduler auto-starts on app launch. Endpoints:
+- `GET /scheduler/status` - Check scheduler status
+- `POST /scheduler/start` - Start scheduler
+- `POST /scheduler/stop` - Stop scheduler
+- `POST /scheduler/run-audit` - Manually trigger daily audit
+- `POST /scheduler/run-cleanup` - Manually trigger cleanup
+
+### LSTM Training
+The LSTM brain is ready but needs historical data:
+1. Set `BALLDONTLIE_API_KEY` in Railway for NBA historical stats
+2. Run training: `python lstm_training_pipeline.py`
+3. Check status: `GET /live/lstm/status`
+
+### Prometheus Monitoring
+Metrics available at `/metrics` endpoint:
+- `bookie_requests_total` - HTTP request counts
+- `bookie_request_latency_seconds` - Request latency histogram
+- `bookie_predictions_total` - Predictions made
+- `bookie_smash_picks_total` - SMASH picks generated
+- `bookie_cache_hits_total` / `bookie_cache_misses_total`
+- `bookie_external_api_calls_total` - External API calls
+- `bookie_scheduler_runs_total` - Scheduler job runs
+- Check status: `GET /metrics/status`
+
+### How to Enable Authentication (Railway)
+Set these environment variables in Railway:
+```bash
+API_AUTH_ENABLED=true
+API_AUTH_KEY=your-secret-key-here
+```
+Clients must then pass `X-API-Key: your-secret-key-here` header.
+The root `/health` endpoint remains public for Railway health checks.
 
 ### Medium Priority
 4. **Database for predictions** - PostgreSQL for auto-grader storage

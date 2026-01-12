@@ -12,6 +12,14 @@ import asyncio
 import random
 from datetime import datetime, timedelta
 import math
+import json
+
+# Redis import with fallback
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
 
 # ============================================================================
 # LOGGING SETUP
@@ -54,6 +62,18 @@ API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 if API_AUTH_ENABLED and not API_AUTH_KEY:
     logger.warning("API_AUTH_ENABLED is true but API_AUTH_KEY not set - auth disabled")
     API_AUTH_ENABLED = False
+
+# Redis Configuration - Railway provides REDIS_URL when Redis service is attached
+# Falls back to in-memory cache if Redis is not available
+REDIS_URL = os.getenv("REDIS_URL", "")
+REDIS_ENABLED = bool(REDIS_URL) and REDIS_AVAILABLE
+
+if REDIS_URL and not REDIS_AVAILABLE:
+    logger.warning("REDIS_URL set but redis package not installed - using in-memory cache")
+elif REDIS_URL:
+    logger.info("Redis caching enabled")
+else:
+    logger.info("Redis not configured - using in-memory cache")
 
 ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
@@ -134,54 +154,127 @@ async def fetch_with_retries(
 
 
 # ============================================================================
-# IN-MEMORY TTL CACHE
+# HYBRID CACHE (Redis with in-memory fallback)
 # ============================================================================
 
-class TTLCache:
-    """Simple in-memory cache with TTL (time-to-live) support."""
+class HybridCache:
+    """
+    Cache with Redis backend and in-memory fallback.
+    Automatically falls back to in-memory if Redis is unavailable.
+    """
 
-    def __init__(self, default_ttl: int = 300):
+    def __init__(self, default_ttl: int = 300, prefix: str = "bookie"):
         """Initialize cache with default TTL in seconds (default 5 minutes)."""
-        self._cache: Dict[str, tuple] = {}  # key -> (value, expires_at)
         self._default_ttl = default_ttl
+        self._prefix = prefix
+        self._redis_client: Optional[Any] = None
+        self._memory_cache: Dict[str, tuple] = {}  # key -> (value, expires_at)
+        self._using_redis = False
+
+        # Try to connect to Redis if configured
+        if REDIS_ENABLED:
+            try:
+                self._redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+                self._redis_client.ping()
+                self._using_redis = True
+                logger.info("Redis cache connected successfully")
+            except Exception as e:
+                logger.warning("Redis connection failed, using in-memory cache: %s", e)
+                self._redis_client = None
+                self._using_redis = False
+
+    def _make_key(self, key: str) -> str:
+        """Create prefixed key for Redis."""
+        return f"{self._prefix}:{key}"
 
     def get(self, key: str) -> Optional[Any]:
         """Get value from cache if not expired."""
-        if key in self._cache:
-            value, expires_at = self._cache[key]
+        if self._using_redis and self._redis_client:
+            try:
+                redis_key = self._make_key(key)
+                value = self._redis_client.get(redis_key)
+                if value:
+                    logger.debug("Redis HIT: %s", key)
+                    return json.loads(value)
+                return None
+            except Exception as e:
+                logger.warning("Redis get failed, falling back to memory: %s", e)
+                self._using_redis = False
+
+        # In-memory fallback
+        if key in self._memory_cache:
+            value, expires_at = self._memory_cache[key]
             if datetime.now() < expires_at:
-                logger.debug("Cache HIT: %s", key)
+                logger.debug("Memory HIT: %s", key)
                 return value
             else:
-                # Expired, remove it
-                del self._cache[key]
-                logger.debug("Cache EXPIRED: %s", key)
+                del self._memory_cache[key]
+                logger.debug("Memory EXPIRED: %s", key)
         return None
 
     def set(self, key: str, value: Any, ttl: int = None) -> None:
         """Set value in cache with optional custom TTL."""
         ttl = ttl or self._default_ttl
+
+        if self._using_redis and self._redis_client:
+            try:
+                redis_key = self._make_key(key)
+                self._redis_client.setex(redis_key, ttl, json.dumps(value))
+                logger.debug("Redis SET: %s (TTL: %ds)", key, ttl)
+                return
+            except Exception as e:
+                logger.warning("Redis set failed, falling back to memory: %s", e)
+                self._using_redis = False
+
+        # In-memory fallback
         expires_at = datetime.now() + timedelta(seconds=ttl)
-        self._cache[key] = (value, expires_at)
-        logger.debug("Cache SET: %s (TTL: %ds)", key, ttl)
+        self._memory_cache[key] = (value, expires_at)
+        logger.debug("Memory SET: %s (TTL: %ds)", key, ttl)
 
     def clear(self) -> None:
         """Clear all cached values."""
-        self._cache.clear()
-        logger.info("Cache cleared")
+        if self._using_redis and self._redis_client:
+            try:
+                pattern = self._make_key("*")
+                keys = self._redis_client.keys(pattern)
+                if keys:
+                    self._redis_client.delete(*keys)
+                logger.info("Redis cache cleared (%d keys)", len(keys))
+            except Exception as e:
+                logger.warning("Redis clear failed: %s", e)
+
+        # Always clear memory cache too
+        self._memory_cache.clear()
+        logger.info("Memory cache cleared")
 
     def stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
-        now = datetime.now()
-        valid = sum(1 for _, (_, exp) in self._cache.items() if now < exp)
-        return {
-            "total_keys": len(self._cache),
-            "valid_keys": valid,
-            "expired_keys": len(self._cache) - valid
+        stats = {
+            "backend": "redis" if self._using_redis else "memory",
+            "redis_configured": REDIS_ENABLED,
+            "redis_connected": self._using_redis
         }
 
+        if self._using_redis and self._redis_client:
+            try:
+                pattern = self._make_key("*")
+                keys = self._redis_client.keys(pattern)
+                stats["redis_keys"] = len(keys)
+            except Exception:
+                stats["redis_keys"] = "error"
+
+        # Memory stats
+        now = datetime.now()
+        valid = sum(1 for _, (_, exp) in self._memory_cache.items() if now < exp)
+        stats["memory_total_keys"] = len(self._memory_cache)
+        stats["memory_valid_keys"] = valid
+        stats["memory_expired_keys"] = len(self._memory_cache) - valid
+
+        return stats
+
+
 # Global cache instance - 5 minute TTL for API responses
-api_cache = TTLCache(default_ttl=300)
+api_cache = HybridCache(default_ttl=300, prefix="bookie")
 
 
 # ============================================================================
@@ -391,13 +484,6 @@ def generate_fallback_betslip(sport: str, game_id: str, bet_type: str, selection
 
 
 # ============================================================================
-# ROUTER SETUP
-# ============================================================================
-
-router = APIRouter(prefix="/live", tags=["live"])
-
-
-# ============================================================================
 # AUTHENTICATION DEPENDENCY
 # ============================================================================
 
@@ -416,6 +502,13 @@ async def verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Ke
         raise HTTPException(status_code=403, detail="Invalid API key")
 
     return True
+
+
+# ============================================================================
+# ROUTER SETUP
+# ============================================================================
+
+router = APIRouter(prefix="/live", tags=["live"], dependencies=[Depends(verify_api_key)])
 
 
 # ============================================================================
