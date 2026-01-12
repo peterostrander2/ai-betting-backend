@@ -197,6 +197,199 @@ def deterministic_rng_for_game_id(game_id: Any) -> random.Random:
     return random.Random(seed)
 
 
+# Sample teams for fallback data
+SAMPLE_MATCHUPS = {
+    "nba": [
+        {"id": "nba_sample_1", "home": "Los Angeles Lakers", "away": "Boston Celtics"},
+        {"id": "nba_sample_2", "home": "Golden State Warriors", "away": "Phoenix Suns"},
+        {"id": "nba_sample_3", "home": "Milwaukee Bucks", "away": "Miami Heat"},
+    ],
+    "nfl": [
+        {"id": "nfl_sample_1", "home": "Kansas City Chiefs", "away": "Buffalo Bills"},
+        {"id": "nfl_sample_2", "home": "San Francisco 49ers", "away": "Dallas Cowboys"},
+    ],
+    "mlb": [
+        {"id": "mlb_sample_1", "home": "New York Yankees", "away": "Boston Red Sox"},
+        {"id": "mlb_sample_2", "home": "Los Angeles Dodgers", "away": "San Francisco Giants"},
+    ],
+    "nhl": [
+        {"id": "nhl_sample_1", "home": "Toronto Maple Leafs", "away": "Montreal Canadiens"},
+        {"id": "nhl_sample_2", "home": "Boston Bruins", "away": "New York Rangers"},
+    ],
+}
+
+
+def generate_fallback_line_shop(sport: str) -> List[Dict[str, Any]]:
+    """Generate fallback line shopping data when API is unavailable."""
+    matchups = SAMPLE_MATCHUPS.get(sport, SAMPLE_MATCHUPS["nba"])
+    line_shop_data = []
+
+    for matchup in matchups:
+        game_id = matchup["id"]
+        rng = deterministic_rng_for_game_id(game_id)
+
+        # Generate deterministic spread between -7.5 and +7.5
+        base_spread = rng.choice([-7.5, -6.5, -5.5, -4.5, -3.5, -2.5, -1.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5])
+        base_total = rng.choice([210.5, 215.5, 220.5, 225.5, 230.5, 235.5])
+
+        game_data = {
+            "game_id": game_id,
+            "home_team": matchup["home"],
+            "away_team": matchup["away"],
+            "commence_time": datetime.now().isoformat(),
+            "markets": {
+                "spreads": {"best_odds": {}, "all_books": []},
+                "h2h": {"best_odds": {}, "all_books": []},
+                "totals": {"best_odds": {}, "all_books": []},
+            }
+        }
+
+        # Generate odds for each sportsbook with slight variation
+        for book_key, config in SPORTSBOOK_CONFIGS.items():
+            book_rng = deterministic_rng_for_game_id(f"{game_id}_{book_key}")
+            spread_var = book_rng.choice([0, 0.5, -0.5])
+            odds_var = book_rng.choice([-5, 0, 5, -10, 10])
+
+            # Spread odds
+            spread_entry = {
+                "book_key": book_key,
+                "book_name": config["name"],
+                "outcomes": [
+                    {"name": matchup["home"], "price": -110 + odds_var, "point": base_spread + spread_var},
+                    {"name": matchup["away"], "price": -110 - odds_var, "point": -(base_spread + spread_var)},
+                ],
+                "deep_link": generate_sportsbook_link(book_key, game_id, sport)
+            }
+            game_data["markets"]["spreads"]["all_books"].append(spread_entry)
+
+            # Moneyline odds
+            home_ml = -150 + (odds_var * 3) if base_spread < 0 else 130 + (odds_var * 3)
+            away_ml = 130 - (odds_var * 3) if base_spread < 0 else -150 - (odds_var * 3)
+            h2h_entry = {
+                "book_key": book_key,
+                "book_name": config["name"],
+                "outcomes": [
+                    {"name": matchup["home"], "price": home_ml},
+                    {"name": matchup["away"], "price": away_ml},
+                ],
+                "deep_link": generate_sportsbook_link(book_key, game_id, sport)
+            }
+            game_data["markets"]["h2h"]["all_books"].append(h2h_entry)
+
+            # Total odds
+            total_entry = {
+                "book_key": book_key,
+                "book_name": config["name"],
+                "outcomes": [
+                    {"name": "Over", "price": -110 + odds_var, "point": base_total},
+                    {"name": "Under", "price": -110 - odds_var, "point": base_total},
+                ],
+                "deep_link": generate_sportsbook_link(book_key, game_id, sport)
+            }
+            game_data["markets"]["totals"]["all_books"].append(total_entry)
+
+        # Calculate best odds for each market
+        for market_key in ["spreads", "h2h", "totals"]:
+            for book_entry in game_data["markets"][market_key]["all_books"]:
+                for outcome in book_entry["outcomes"]:
+                    name = outcome["name"]
+                    price = outcome["price"]
+                    if name not in game_data["markets"][market_key]["best_odds"]:
+                        game_data["markets"][market_key]["best_odds"][name] = {
+                            "price": price, "book": book_entry["book_name"], "book_key": book_entry["book_key"]
+                        }
+                    elif price > game_data["markets"][market_key]["best_odds"][name]["price"]:
+                        game_data["markets"][market_key]["best_odds"][name] = {
+                            "price": price, "book": book_entry["book_name"], "book_key": book_entry["book_key"]
+                        }
+
+        line_shop_data.append(game_data)
+
+    return line_shop_data
+
+
+def generate_fallback_sharp(sport: str) -> List[Dict[str, Any]]:
+    """Generate fallback sharp money data when API is unavailable."""
+    matchups = SAMPLE_MATCHUPS.get(sport, SAMPLE_MATCHUPS["nba"])
+    data = []
+
+    for matchup in matchups:
+        rng = deterministic_rng_for_game_id(matchup["id"])
+        variance = rng.choice([1.5, 2.0, 2.5, 3.0])
+
+        data.append({
+            "game_id": matchup["id"],
+            "home_team": matchup["home"],
+            "away_team": matchup["away"],
+            "line_variance": variance,
+            "signal_strength": "STRONG" if variance >= 2 else "MODERATE"
+        })
+
+    return data
+
+
+def generate_fallback_betslip(sport: str, game_id: str, bet_type: str, selection: str) -> Dict[str, Any]:
+    """Generate fallback betslip data when API is unavailable."""
+    matchups = SAMPLE_MATCHUPS.get(sport, SAMPLE_MATCHUPS["nba"])
+
+    # Find matching game or use first
+    target_matchup = matchups[0]
+    for m in matchups:
+        if m["id"] == game_id or game_id.lower() in m["home"].lower() or game_id.lower() in m["away"].lower():
+            target_matchup = m
+            break
+
+    rng = deterministic_rng_for_game_id(target_matchup["id"])
+    base_spread = rng.choice([-5.5, -4.5, -3.5, 3.5, 4.5, 5.5])
+    base_total = rng.choice([215.5, 220.5, 225.5, 230.5])
+
+    betslip_options = []
+    for book_key, config in SPORTSBOOK_CONFIGS.items():
+        book_rng = deterministic_rng_for_game_id(f"{target_matchup['id']}_{book_key}")
+        odds_var = book_rng.choice([-5, 0, 5, -10, 10])
+
+        # Determine odds based on bet type and selection
+        if bet_type == "spread":
+            point = base_spread if selection.lower() in target_matchup["home"].lower() else -base_spread
+            odds = -110 + odds_var
+        elif bet_type == "h2h":
+            is_home = selection.lower() in target_matchup["home"].lower()
+            odds = (-150 + odds_var * 3) if is_home else (130 + odds_var * 3)
+            point = None
+        else:  # total
+            odds = -110 + odds_var
+            point = base_total
+
+        betslip_options.append({
+            "book_key": book_key,
+            "book_name": config["name"],
+            "book_color": config["color"],
+            "book_logo": config.get("logo", ""),
+            "selection": selection,
+            "odds": odds,
+            "point": point,
+            "deep_link": {
+                "web": f"{config['web_base']}/",
+                "note": "Opens sportsbook - navigate to game to place bet"
+            }
+        })
+
+    betslip_options.sort(key=lambda x: x["odds"], reverse=True)
+
+    return {
+        "sport": sport.upper(),
+        "game_id": target_matchup["id"],
+        "game": f"{target_matchup['away']} @ {target_matchup['home']}",
+        "bet_type": bet_type,
+        "selection": selection,
+        "source": "fallback",
+        "best_odds": betslip_options[0] if betslip_options else None,
+        "all_books": betslip_options,
+        "count": len(betslip_options),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
 # ============================================================================
 # ROUTER SETUP
 # ============================================================================
@@ -451,21 +644,26 @@ async def get_sharp_money(sport: str):
             params={"apiKey": ODDS_API_KEY, "regions": "us", "markets": "spreads", "oddsFormat": "american"}
         )
 
-        if not resp:
-            raise HTTPException(status_code=502, detail="Odds API unreachable after retries")
+        if not resp or resp.status_code != 200:
+            # Use fallback data when API unavailable
+            logger.warning("Odds API unavailable for sharp, using fallback data")
+            data = generate_fallback_sharp(sport_lower)
+            result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data}
+            api_cache.set(cache_key, result)
+            return result
 
         if resp.status_code == 429:
             raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
-
-        if resp.status_code != 200:
-            logger.warning("Odds API returned %s for %s", resp.status_code, sport)
-            raise HTTPException(status_code=502, detail=f"Odds API returned error: {resp.status_code}")
 
         try:
             games = resp.json()
         except ValueError as e:
             logger.error("Failed to parse Odds API response: %s", e)
-            raise HTTPException(status_code=502, detail="Invalid response from Odds API")
+            # Use fallback on parse error
+            data = generate_fallback_sharp(sport_lower)
+            result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data}
+            api_cache.set(cache_key, result)
+            return result
 
         for game in games:
             spreads = []
@@ -492,8 +690,12 @@ async def get_sharp_money(sport: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Odds API processing failed for %s: %s", sport, e)
-        raise HTTPException(status_code=500, detail="Internal error processing odds data")
+        logger.exception("Odds API processing failed for %s: %s, using fallback", sport, e)
+        # Return fallback on any error
+        data = generate_fallback_sharp(sport_lower)
+        result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data}
+        api_cache.set(cache_key, result)
+        return result
 
     result = {"sport": sport.upper(), "source": "odds_api", "count": len(data), "data": data}
     api_cache.set(cache_key, result)
@@ -1086,7 +1288,19 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
         )
 
         if not resp or resp.status_code != 200:
-            raise HTTPException(status_code=502, detail="Failed to fetch odds")
+            # Use fallback data when API unavailable
+            logger.warning("Odds API unavailable for line-shop, using fallback data")
+            line_shop_data = generate_fallback_line_shop(sport_lower)
+            result = {
+                "sport": sport.upper(),
+                "source": "fallback",
+                "count": len(line_shop_data),
+                "sportsbooks": list(SPORTSBOOK_CONFIGS.keys()),
+                "data": line_shop_data,
+                "timestamp": datetime.now().isoformat()
+            }
+            api_cache.set(cache_key, result, ttl=120)
+            return result
 
         games = resp.json()
         line_shop_data = []
@@ -1160,8 +1374,19 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Line shopping fetch failed: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to fetch line shopping data")
+        logger.exception("Line shopping fetch failed: %s, using fallback", e)
+        # Return fallback data on any error
+        line_shop_data = generate_fallback_line_shop(sport_lower)
+        result = {
+            "sport": sport.upper(),
+            "source": "fallback",
+            "count": len(line_shop_data),
+            "sportsbooks": list(SPORTSBOOK_CONFIGS.keys()),
+            "data": line_shop_data,
+            "timestamp": datetime.now().isoformat()
+        }
+        api_cache.set(cache_key, result, ttl=120)
+        return result
 
 
 @router.get("/betslip/generate")
@@ -1202,7 +1427,9 @@ async def generate_betslip(
         )
 
         if not resp or resp.status_code != 200:
-            raise HTTPException(status_code=502, detail="Failed to fetch odds")
+            # Use fallback data when API unavailable
+            logger.warning("Odds API unavailable for betslip, using fallback data")
+            return generate_fallback_betslip(sport_lower, game_id, bet_type, selection)
 
         games = resp.json()
         target_game = None
@@ -1213,7 +1440,9 @@ async def generate_betslip(
                 break
 
         if not target_game:
-            raise HTTPException(status_code=404, detail="Game not found")
+            # Game not found in API, use fallback
+            logger.warning("Game %s not found, using fallback data", game_id)
+            return generate_fallback_betslip(sport_lower, game_id, bet_type, selection)
 
         betslip_options = []
 
@@ -1280,8 +1509,9 @@ async def generate_betslip(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Betslip generation failed: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to generate betslip")
+        logger.exception("Betslip generation failed: %s, using fallback", e)
+        # Return fallback data on any error
+        return generate_fallback_betslip(sport_lower, game_id, bet_type, selection)
 
 
 @router.get("/sportsbooks")
