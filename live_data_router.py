@@ -227,6 +227,7 @@ async def verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Ke
 
 # ============================================================================
 # JARVIS TRIGGERS - THE PROVEN EDGE NUMBERS
+# Weight: boost / 5 = max +4.0 points (doubled from original /10)
 # ============================================================================
 
 JARVIS_TRIGGERS = {
@@ -735,11 +736,11 @@ async def get_best_bets(sport: str):
         if daily_energy.get("overall_score", 50) >= 70:
             score += 1.0
 
-        # Apply JARVIS trigger boost
+        # Apply JARVIS trigger boost (doubled weight - /5 instead of /10)
         game_str = f"{signal.get('home_team', '')}{signal.get('away_team', '')}"
         for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
             if str(trigger_num) in game_str:
-                score += trigger_data["boost"] / 10
+                score += trigger_data["boost"] / 5  # JARVIS now 2x weight
 
         data.append({
             "game": f"{signal.get('away_team', 'Away')} @ {signal.get('home_team', 'Home')}",
