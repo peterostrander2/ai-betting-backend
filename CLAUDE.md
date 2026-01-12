@@ -19,9 +19,12 @@
 | **Odds API** | Live odds, lines, betting data, historical props | `ODDS_API_KEY` |
 | **Playbook API** | Player stats, game logs, sharp money, splits (all 5 sports) | `PLAYBOOK_API_KEY` |
 
-**DO NOT** add or suggest other free APIs (ESPN, BallDontLie, etc.) - use our paid APIs instead.
+**Default to our paid APIs first.** These cover all 5 sports: **NBA, NFL, MLB, NHL, NCAAB**
 
-These cover all 5 sports: **NBA, NFL, MLB, NHL, NCAAB**
+**Exception:** You may suggest alternative APIs if:
+1. You explain WHY it's better than our paid APIs (data not available, better quality, etc.)
+2. You get approval before implementing
+3. There's a clear benefit over what we're already paying for
 
 ---
 
