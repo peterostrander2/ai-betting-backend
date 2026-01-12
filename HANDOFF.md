@@ -279,11 +279,21 @@ Scheduler auto-starts on app launch. Endpoints:
 - `POST /scheduler/run-audit` - Manually trigger daily audit
 - `POST /scheduler/run-cleanup` - Manually trigger cleanup
 
-### LSTM Training
-The LSTM brain is ready but needs historical data:
-1. Set `BALLDONTLIE_API_KEY` in Railway for NBA historical stats
-2. Run training: `python lstm_training_pipeline.py`
-3. Check status: `GET /live/lstm/status`
+### LSTM Training - All 5 Sports
+Data sources for each sport:
+| Sport | API | Key Required? |
+|-------|-----|---------------|
+| NBA | BallDontLie | Yes - `BALLDONTLIE_API_KEY` |
+| NFL | ESPN Public API | No |
+| MLB | MLB Stats API | No |
+| NHL | NHL Stats API | No |
+| NCAAB | ESPN Public API | No |
+
+Setup:
+1. Set `BALLDONTLIE_API_KEY` in Railway (get free key from balldontlie.io)
+2. Optional: Set `SPORTSDATAIO_API_KEY` for premium data (all sports)
+3. Run training: `python lstm_training_pipeline.py`
+4. Check status: `GET /live/lstm/status`
 
 ### Prometheus Monitoring
 Metrics available at `/metrics` endpoint:

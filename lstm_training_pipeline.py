@@ -41,10 +41,18 @@ except ImportError:
 
 class TrainingConfig:
     """Training configuration."""
-    
-    # API Keys
+
+    # API Keys - Set in Railway environment variables
+    # NBA: BallDontLie (requires free API key from balldontlie.io)
     BALLDONTLIE_API_KEY = os.environ.get("BALLDONTLIE_API_KEY", "")
-    
+
+    # NFL/NCAAB: Uses ESPN public API (no key required)
+    # MLB: Uses MLB Stats API (no key required)
+    # NHL: Uses NHL Stats API (no key required)
+
+    # Optional: SportsDataIO for premium data (all sports)
+    SPORTSDATAIO_API_KEY = os.environ.get("SPORTSDATAIO_API_KEY", "")
+
     # Training parameters
     SEQUENCE_LENGTH = 15  # Games per sequence
     NUM_FEATURES = 6      # [stat, mins, home_away, vacuum, def_rank, pace]
@@ -165,16 +173,150 @@ class HistoricalDataFetcher:
         """Fetch NBA player list."""
         if not TrainingConfig.BALLDONTLIE_API_KEY:
             return []
-        
+
         headers = {"Authorization": TrainingConfig.BALLDONTLIE_API_KEY}
         url = "https://api.balldontlie.io/v1/players"
-        
+
         try:
             response = requests.get(url, headers=headers, params={"per_page": per_page}, timeout=10)
             if response.status_code == 200:
                 return response.json().get("data", [])
             return []
         except:
+            return []
+
+    @classmethod
+    def fetch_nfl_games(cls, player_name: str, season: int = 2025) -> List[Dict]:
+        """Fetch NFL player game logs from ESPN API (no key required)."""
+        # ESPN public API for NFL player stats
+        url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/athletes"
+
+        try:
+            # Search for player
+            response = requests.get(url, params={"search": player_name}, timeout=10)
+            if response.status_code != 200:
+                return []
+
+            data = response.json()
+            athletes = data.get("athletes", [])
+            if not athletes:
+                logger.debug(f"NFL player not found: {player_name}")
+                return []
+
+            player_id = athletes[0].get("id")
+
+            # Get player game log
+            stats_url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/athletes/{player_id}/gamelog"
+            stats_response = requests.get(stats_url, timeout=10)
+
+            if stats_response.status_code == 200:
+                return stats_response.json().get("events", [])
+            return []
+        except Exception as e:
+            logger.debug(f"Error fetching NFL games: {e}")
+            return []
+
+    @classmethod
+    def fetch_mlb_games(cls, player_id: int, season: int = 2025) -> List[Dict]:
+        """Fetch MLB player game logs from MLB Stats API (no key required)."""
+        url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
+
+        try:
+            params = {
+                "stats": "gameLog",
+                "season": season,
+                "group": "hitting"
+            }
+            response = requests.get(url, params=params, timeout=15)
+
+            if response.status_code == 200:
+                data = response.json()
+                stats = data.get("stats", [])
+                if stats:
+                    return stats[0].get("splits", [])
+            return []
+        except Exception as e:
+            logger.debug(f"Error fetching MLB games: {e}")
+            return []
+
+    @classmethod
+    def fetch_mlb_players(cls, season: int = 2025) -> List[Dict]:
+        """Fetch active MLB players from MLB Stats API."""
+        url = "https://statsapi.mlb.com/api/v1/sports/1/players"
+
+        try:
+            params = {"season": season}
+            response = requests.get(url, params=params, timeout=15)
+            if response.status_code == 200:
+                return response.json().get("people", [])
+            return []
+        except:
+            return []
+
+    @classmethod
+    def fetch_nhl_games(cls, player_id: int, season: str = "20242025") -> List[Dict]:
+        """Fetch NHL player game logs from NHL Stats API (no key required)."""
+        url = f"https://api-web.nhle.com/v1/player/{player_id}/game-log/{season}/2"
+
+        try:
+            response = requests.get(url, timeout=15)
+            if response.status_code == 200:
+                return response.json().get("gameLog", [])
+            return []
+        except Exception as e:
+            logger.debug(f"Error fetching NHL games: {e}")
+            return []
+
+    @classmethod
+    def fetch_nhl_players(cls) -> List[Dict]:
+        """Fetch active NHL players."""
+        # Get from NHL API teams roster
+        teams_url = "https://api-web.nhle.com/v1/standings/now"
+        players = []
+
+        try:
+            response = requests.get(teams_url, timeout=10)
+            if response.status_code != 200:
+                return []
+
+            standings = response.json().get("standings", [])
+            for team in standings[:10]:  # Limit to first 10 teams
+                team_abbrev = team.get("teamAbbrev", {}).get("default", "")
+                if team_abbrev:
+                    roster_url = f"https://api-web.nhle.com/v1/roster/{team_abbrev}/current"
+                    roster_resp = requests.get(roster_url, timeout=10)
+                    if roster_resp.status_code == 200:
+                        roster = roster_resp.json()
+                        for pos in ["forwards", "defensemen", "goalies"]:
+                            players.extend(roster.get(pos, []))
+            return players
+        except:
+            return []
+
+    @classmethod
+    def fetch_ncaab_games(cls, player_name: str, team: str = None) -> List[Dict]:
+        """Fetch NCAAB player game logs from ESPN API (no key required)."""
+        url = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/athletes"
+
+        try:
+            response = requests.get(url, params={"search": player_name}, timeout=10)
+            if response.status_code != 200:
+                return []
+
+            data = response.json()
+            athletes = data.get("athletes", [])
+            if not athletes:
+                return []
+
+            player_id = athletes[0].get("id")
+            stats_url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/athletes/{player_id}/gamelog"
+            stats_response = requests.get(stats_url, timeout=10)
+
+            if stats_response.status_code == 200:
+                return stats_response.json().get("events", [])
+            return []
+        except Exception as e:
+            logger.debug(f"Error fetching NCAAB games: {e}")
             return []
 
 
