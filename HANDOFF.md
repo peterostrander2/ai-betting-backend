@@ -252,8 +252,14 @@ The frontend is configured to use this backend URL. All `/live/*` endpoints are 
 
 ### High Priority
 1. ~~**Enable authentication**~~ ✅ DONE - Auth wired to all `/live/*` endpoints
-2. **Add Redis caching** - Replace in-memory cache for multi-instance support
+2. ~~**Add Redis caching**~~ ✅ DONE - Hybrid cache with Redis backend + in-memory fallback
 3. **Integrate LSTM predictions** - Needs historical player data
+
+### How to Enable Redis Caching (Railway)
+1. Add a Redis service in Railway dashboard
+2. Railway automatically sets `REDIS_URL` environment variable
+3. The app auto-detects Redis and switches from in-memory to Redis backend
+4. Check `/live/cache/stats` to verify: `"backend": "redis"`
 
 ### How to Enable Authentication (Railway)
 Set these environment variables in Railway:
