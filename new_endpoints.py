@@ -1,4 +1,12 @@
-# new_endpoints.py - Complete API Integration
+# new_endpoints.py - DEPRECATED
+# ============================================
+# WARNING: This file is DEPRECATED and NOT IN USE.
+# All functionality has been moved to live_data_router.py
+#
+# This file is kept for reference only.
+# DO NOT USE - use live_data_router.py instead.
+# ============================================
+# Original: Complete API Integration
 # Add to your FastAPI backend on Railway
 
 import os
