@@ -254,7 +254,8 @@ The frontend is configured to use this backend URL. All `/live/*` endpoints are 
 1. ~~**Enable authentication**~~ ✅ DONE - Auth wired to all `/live/*` endpoints
 2. ~~**Add Redis caching**~~ ✅ DONE - Hybrid cache with Redis backend + in-memory fallback
 3. ~~**Database for predictions**~~ ✅ DONE - PostgreSQL models for auto-grader
-4. **Integrate LSTM predictions** - Needs historical player data
+4. ~~**Enable daily scheduler**~~ ✅ DONE - Auto-starts on app launch
+5. **Integrate LSTM predictions** - Needs historical player data
 
 ### How to Enable Redis Caching (Railway)
 1. Add a Redis service in Railway dashboard
@@ -267,6 +268,14 @@ The frontend is configured to use this backend URL. All `/live/*` endpoints are 
 2. Railway automatically sets `DATABASE_URL` environment variable
 3. Tables are auto-created on startup (predictions, weights, bias_history, daily_energy)
 4. Check `/database/status` to verify: `"enabled": true`
+
+### Daily Scheduler
+Scheduler auto-starts on app launch. Endpoints:
+- `GET /scheduler/status` - Check scheduler status
+- `POST /scheduler/start` - Start scheduler
+- `POST /scheduler/stop` - Stop scheduler
+- `POST /scheduler/run-audit` - Manually trigger daily audit
+- `POST /scheduler/run-cleanup` - Manually trigger cleanup
 
 ### How to Enable Authentication (Railway)
 Set these environment variables in Railway:

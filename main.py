@@ -20,6 +20,7 @@ import uvicorn
 
 from live_data_router import router as live_router, close_shared_client
 from database import init_database, get_database_status, DB_ENABLED
+from daily_scheduler import scheduler_router, init_scheduler, get_scheduler
 
 app = FastAPI(
     title="Bookie-o-em API",
@@ -36,18 +37,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the live data router
+# Include routers
 app.include_router(live_router)
+app.include_router(scheduler_router)
 
-# Startup event - initialize database
+# Startup event - initialize database and scheduler
 @app.on_event("startup")
 async def startup_event():
     init_database()
+    # Initialize and start daily scheduler
+    scheduler = init_scheduler()
+    scheduler.start()
 
-# Shutdown event - clean up shared httpx client
+# Shutdown event - clean up shared httpx client and scheduler
 @app.on_event("shutdown")
 async def shutdown_event():
     await close_shared_client()
+    scheduler = get_scheduler()
+    if scheduler:
+        scheduler.stop()
 
 
 # Root endpoint
