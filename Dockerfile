@@ -14,8 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application
 COPY . .
 
-# Expose port
+# Expose port (Railway sets PORT env var)
 EXPOSE 8000
 
-# Run the app
-CMD ["python", "prediction_api.py"]
+# Run with uvicorn - Railway sets PORT dynamically
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
