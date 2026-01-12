@@ -255,7 +255,8 @@ The frontend is configured to use this backend URL. All `/live/*` endpoints are 
 2. ~~**Add Redis caching**~~ ✅ DONE - Hybrid cache with Redis backend + in-memory fallback
 3. ~~**Database for predictions**~~ ✅ DONE - PostgreSQL models for auto-grader
 4. ~~**Enable daily scheduler**~~ ✅ DONE - Auto-starts on app launch
-5. **Integrate LSTM predictions** - Needs historical player data
+5. ~~**Integrate LSTM predictions**~~ ✅ READY - Code complete, needs `BALLDONTLIE_API_KEY` + training
+6. ~~**Add monitoring**~~ ✅ DONE - Prometheus metrics at `/metrics`
 
 ### How to Enable Redis Caching (Railway)
 1. Add a Redis service in Railway dashboard
@@ -276,6 +277,23 @@ Scheduler auto-starts on app launch. Endpoints:
 - `POST /scheduler/stop` - Stop scheduler
 - `POST /scheduler/run-audit` - Manually trigger daily audit
 - `POST /scheduler/run-cleanup` - Manually trigger cleanup
+
+### LSTM Training
+The LSTM brain is ready but needs historical data:
+1. Set `BALLDONTLIE_API_KEY` in Railway for NBA historical stats
+2. Run training: `python lstm_training_pipeline.py`
+3. Check status: `GET /live/lstm/status`
+
+### Prometheus Monitoring
+Metrics available at `/metrics` endpoint:
+- `bookie_requests_total` - HTTP request counts
+- `bookie_request_latency_seconds` - Request latency histogram
+- `bookie_predictions_total` - Predictions made
+- `bookie_smash_picks_total` - SMASH picks generated
+- `bookie_cache_hits_total` / `bookie_cache_misses_total`
+- `bookie_external_api_calls_total` - External API calls
+- `bookie_scheduler_runs_total` - Scheduler job runs
+- Check status: `GET /metrics/status`
 
 ### How to Enable Authentication (Railway)
 Set these environment variables in Railway:
