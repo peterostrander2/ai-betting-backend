@@ -965,6 +965,345 @@ async def get_gann_physics_status():
 
 
 # ============================================================================
+# SPORTSBOOK DEEP LINKS - Click-to-Bet Feature
+# ============================================================================
+
+SPORTSBOOK_CONFIGS = {
+    "draftkings": {
+        "name": "DraftKings",
+        "web_base": "https://sportsbook.draftkings.com",
+        "app_scheme": "dksb://",
+        "color": "#53d337",
+        "logo": "https://upload.wikimedia.org/wikipedia/en/b/b8/DraftKings_logo.svg"
+    },
+    "fanduel": {
+        "name": "FanDuel",
+        "web_base": "https://sportsbook.fanduel.com",
+        "app_scheme": "fanduel://",
+        "color": "#1493ff",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/8/83/FanDuel_logo.svg"
+    },
+    "betmgm": {
+        "name": "BetMGM",
+        "web_base": "https://sports.betmgm.com",
+        "app_scheme": "betmgm://",
+        "color": "#c4a44a",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/2/2e/BetMGM_logo.svg"
+    },
+    "caesars": {
+        "name": "Caesars",
+        "web_base": "https://www.caesars.com/sportsbook-and-casino",
+        "app_scheme": "caesarssportsbook://",
+        "color": "#0a2240",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/6/6e/Caesars_Sportsbook_logo.svg"
+    },
+    "pointsbetus": {
+        "name": "PointsBet",
+        "web_base": "https://pointsbet.com",
+        "app_scheme": "pointsbet://",
+        "color": "#ed1c24",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/3/3c/PointsBet_logo.svg"
+    },
+    "williamhill_us": {
+        "name": "William Hill",
+        "web_base": "https://www.williamhill.com/us",
+        "app_scheme": "williamhill://",
+        "color": "#00314d",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/a/a2/William_Hill_logo.svg"
+    },
+    "barstool": {
+        "name": "Barstool",
+        "web_base": "https://www.barstoolsportsbook.com",
+        "app_scheme": "barstool://",
+        "color": "#c41230",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/4/4a/Barstool_Sports_logo.svg"
+    },
+    "betrivers": {
+        "name": "BetRivers",
+        "web_base": "https://www.betrivers.com",
+        "app_scheme": "betrivers://",
+        "color": "#1b365d",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/8/85/BetRivers_logo.svg"
+    }
+}
+
+
+def generate_sportsbook_link(book_key: str, event_id: str, sport: str) -> Dict[str, str]:
+    """Generate deep link for a sportsbook event."""
+    config = SPORTSBOOK_CONFIGS.get(book_key)
+    if not config:
+        return None
+
+    # Web link that works universally (sportsbooks redirect to app if installed)
+    # Most sportsbooks use similar URL patterns for events
+    sport_paths = {
+        "nba": "basketball/nba",
+        "nfl": "football/nfl",
+        "mlb": "baseball/mlb",
+        "nhl": "hockey/nhl"
+    }
+    sport_path = sport_paths.get(sport.lower(), sport.lower())
+
+    return {
+        "book_key": book_key,
+        "name": config["name"],
+        "web_url": f"{config['web_base']}/{sport_path}",
+        "color": config["color"],
+        "logo": config.get("logo", "")
+    }
+
+
+@router.get("/line-shop/{sport}")
+async def get_line_shopping(sport: str, game_id: Optional[str] = None):
+    """
+    Get odds from multiple sportsbooks for line shopping.
+    Returns best odds for each side of each bet.
+
+    Response includes deep links for each sportsbook.
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Check cache
+    cache_key = f"line-shop:{sport_lower}:{game_id or 'all'}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "spreads,h2h,totals",
+                "oddsFormat": "american"
+            }
+        )
+
+        if not resp or resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Failed to fetch odds")
+
+        games = resp.json()
+        line_shop_data = []
+
+        for game in games:
+            if game_id and game.get("id") != game_id:
+                continue
+
+            game_data = {
+                "game_id": game.get("id"),
+                "home_team": game.get("home_team"),
+                "away_team": game.get("away_team"),
+                "commence_time": game.get("commence_time"),
+                "markets": {}
+            }
+
+            # Organize by market type
+            for bookmaker in game.get("bookmakers", []):
+                book_key = bookmaker.get("key")
+                book_name = bookmaker.get("title")
+
+                for market in bookmaker.get("markets", []):
+                    market_key = market.get("key")
+
+                    if market_key not in game_data["markets"]:
+                        game_data["markets"][market_key] = {
+                            "best_odds": {},
+                            "all_books": []
+                        }
+
+                    book_entry = {
+                        "book_key": book_key,
+                        "book_name": book_name,
+                        "outcomes": market.get("outcomes", []),
+                        "deep_link": generate_sportsbook_link(book_key, game.get("id"), sport_lower)
+                    }
+                    game_data["markets"][market_key]["all_books"].append(book_entry)
+
+                    # Track best odds for each outcome
+                    for outcome in market.get("outcomes", []):
+                        outcome_name = outcome.get("name")
+                        price = outcome.get("price", -110)
+
+                        if outcome_name not in game_data["markets"][market_key]["best_odds"]:
+                            game_data["markets"][market_key]["best_odds"][outcome_name] = {
+                                "price": price,
+                                "book": book_name,
+                                "book_key": book_key
+                            }
+                        elif price > game_data["markets"][market_key]["best_odds"][outcome_name]["price"]:
+                            game_data["markets"][market_key]["best_odds"][outcome_name] = {
+                                "price": price,
+                                "book": book_name,
+                                "book_key": book_key
+                            }
+
+            line_shop_data.append(game_data)
+
+        result = {
+            "sport": sport.upper(),
+            "source": "odds_api",
+            "count": len(line_shop_data),
+            "sportsbooks": list(SPORTSBOOK_CONFIGS.keys()),
+            "data": line_shop_data,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        api_cache.set(cache_key, result, ttl=120)  # 2 min cache for line shopping
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Line shopping fetch failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch line shopping data")
+
+
+@router.get("/betslip/generate")
+async def generate_betslip(
+    sport: str,
+    game_id: str,
+    bet_type: str,  # spread, h2h, total
+    selection: str,  # team name or over/under
+    book: Optional[str] = None  # specific book, or returns all
+):
+    """
+    Generate deep links for placing a specific bet across sportsbooks.
+
+    Frontend uses this to create the "click to bet" modal.
+
+    Example:
+        /live/betslip/generate?sport=nba&game_id=xyz&bet_type=spread&selection=Lakers
+
+    Returns links for all sportsbooks (or specific book if specified).
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Get current odds for this game
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": bet_type + "s" if bet_type in ["spread", "total"] else bet_type,
+                "oddsFormat": "american"
+            }
+        )
+
+        if not resp or resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Failed to fetch odds")
+
+        games = resp.json()
+        target_game = None
+
+        for game in games:
+            if game.get("id") == game_id:
+                target_game = game
+                break
+
+        if not target_game:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        betslip_options = []
+
+        for bookmaker in target_game.get("bookmakers", []):
+            book_key = bookmaker.get("key")
+
+            # Filter by specific book if requested
+            if book and book_key != book:
+                continue
+
+            # Skip if we don't have config for this book
+            if book_key not in SPORTSBOOK_CONFIGS:
+                continue
+
+            book_config = SPORTSBOOK_CONFIGS[book_key]
+
+            for market in bookmaker.get("markets", []):
+                market_key = market.get("key")
+
+                # Match the requested bet type
+                if bet_type == "spread" and market_key != "spreads":
+                    continue
+                if bet_type == "h2h" and market_key != "h2h":
+                    continue
+                if bet_type == "total" and market_key != "totals":
+                    continue
+
+                for outcome in market.get("outcomes", []):
+                    outcome_name = outcome.get("name", "")
+
+                    # Match the selection
+                    if selection.lower() not in outcome_name.lower():
+                        continue
+
+                    betslip_options.append({
+                        "book_key": book_key,
+                        "book_name": book_config["name"],
+                        "book_color": book_config["color"],
+                        "book_logo": book_config.get("logo", ""),
+                        "selection": outcome_name,
+                        "odds": outcome.get("price", -110),
+                        "point": outcome.get("point"),  # spread/total line
+                        "deep_link": {
+                            "web": f"{book_config['web_base']}/",
+                            "note": "Opens sportsbook - navigate to game to place bet"
+                        }
+                    })
+
+        # Sort by best odds (highest for positive, least negative for negative)
+        betslip_options.sort(key=lambda x: x["odds"], reverse=True)
+
+        return {
+            "sport": sport.upper(),
+            "game_id": game_id,
+            "game": f"{target_game.get('away_team')} @ {target_game.get('home_team')}",
+            "bet_type": bet_type,
+            "selection": selection,
+            "best_odds": betslip_options[0] if betslip_options else None,
+            "all_books": betslip_options,
+            "count": len(betslip_options),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Betslip generation failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to generate betslip")
+
+
+@router.get("/sportsbooks")
+async def list_sportsbooks():
+    """List all supported sportsbooks with their branding info."""
+    return {
+        "count": len(SPORTSBOOK_CONFIGS),
+        "sportsbooks": [
+            {
+                "key": key,
+                "name": config["name"],
+                "color": config["color"],
+                "logo": config.get("logo", ""),
+                "web_url": config["web_base"]
+            }
+            for key, config in SPORTSBOOK_CONFIGS.items()
+        ],
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# ============================================================================
 # EXPORTS FOR MAIN.PY
 # ============================================================================
 
