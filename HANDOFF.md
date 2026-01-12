@@ -280,20 +280,14 @@ Scheduler auto-starts on app launch. Endpoints:
 - `POST /scheduler/run-cleanup` - Manually trigger cleanup
 
 ### LSTM Training - All 5 Sports
-Data sources for each sport:
-| Sport | API | Key Required? |
-|-------|-----|---------------|
-| NBA | BallDontLie | Yes - `BALLDONTLIE_API_KEY` |
-| NFL | ESPN Public API | No |
-| MLB | MLB Stats API | No |
-| NHL | NHL Stats API | No |
-| NCAAB | ESPN Public API | No |
+Uses your existing Playbook API and Odds API for all sports:
+- **Playbook API**: Player game logs for NBA, NFL, MLB, NHL, NCAAB
+- **Odds API**: Historical prop lines
 
-Setup:
-1. Set `BALLDONTLIE_API_KEY` in Railway (get free key from balldontlie.io)
-2. Optional: Set `SPORTSDATAIO_API_KEY` for premium data (all sports)
-3. Run training: `python lstm_training_pipeline.py`
-4. Check status: `GET /live/lstm/status`
+No additional API keys needed - uses `PLAYBOOK_API_KEY` and `ODDS_API_KEY` already in Railway.
+
+Run training: `python lstm_training_pipeline.py`
+Check status: `GET /live/lstm/status`
 
 ### Prometheus Monitoring
 Metrics available at `/metrics` endpoint:
