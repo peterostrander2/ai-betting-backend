@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from live_data_router import router as live_router, close_shared_client
+from database import init_database, get_database_status, DB_ENABLED
 
 app = FastAPI(
     title="Bookie-o-em API",
@@ -37,6 +38,11 @@ app.add_middleware(
 
 # Include the live data router
 app.include_router(live_router)
+
+# Startup event - initialize database
+@app.on_event("startup")
+async def startup_event():
+    init_database()
 
 # Shutdown event - clean up shared httpx client
 @app.on_event("shutdown")
@@ -70,7 +76,13 @@ async def root():
 # Health check at root level (some frontends expect this)
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "version": "14.1"}
+    return {"status": "healthy", "version": "14.2", "database": DB_ENABLED}
+
+
+# Database status endpoint
+@app.get("/database/status")
+async def database_status():
+    return get_database_status()
 
 # Esoteric today energy (frontend expects this at /esoteric/today-energy)
 @app.get("/esoteric/today-energy")
