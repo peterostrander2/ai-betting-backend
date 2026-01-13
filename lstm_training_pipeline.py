@@ -41,10 +41,14 @@ except ImportError:
 
 class TrainingConfig:
     """Training configuration."""
-    
-    # API Keys
-    BALLDONTLIE_API_KEY = os.environ.get("BALLDONTLIE_API_KEY", "")
-    
+
+    # Use your existing API keys from Railway
+    PLAYBOOK_API_KEY = os.environ.get("PLAYBOOK_API_KEY", "")
+    PLAYBOOK_API_BASE = os.environ.get("PLAYBOOK_API_BASE", "https://api.playbook-api.com/v1")
+
+    ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
+    ODDS_API_BASE = os.environ.get("ODDS_API_BASE", "https://api.the-odds-api.com/v4")
+
     # Training parameters
     SEQUENCE_LENGTH = 15  # Games per sequence
     NUM_FEATURES = 6      # [stat, mins, home_away, vacuum, def_rank, pace]
@@ -111,70 +115,131 @@ class TrainingSequence:
 
 
 # ============================================================
-# HISTORICAL DATA FETCHER
+# HISTORICAL DATA FETCHER - Uses Playbook API
 # ============================================================
 
 class HistoricalDataFetcher:
-    """Fetches historical game data from various sources."""
-    
+    """
+    Fetches historical game data from Playbook API.
+    Uses the same API keys you already have configured in Railway.
+    """
+
+    SPORT_MAPPINGS = {
+        "NBA": "nba",
+        "NFL": "nfl",
+        "MLB": "mlb",
+        "NHL": "nhl",
+        "NCAAB": "ncaab"
+    }
+
     @classmethod
-    def fetch_nba_games(cls, player_id: int, season: int = 2025) -> List[Dict]:
-        """Fetch NBA player game logs from BallDontLie API."""
-        if not TrainingConfig.BALLDONTLIE_API_KEY:
-            logger.warning("BALLDONTLIE_API_KEY not set - using synthetic data")
-            return []
-        
-        headers = {"Authorization": TrainingConfig.BALLDONTLIE_API_KEY}
-        url = f"https://api.balldontlie.io/v1/stats"
-        
-        all_games = []
-        cursor = None
-        
-        try:
-            while True:
-                params = {
-                    "player_ids[]": player_id,
-                    "seasons[]": season,
-                    "per_page": 100
-                }
-                if cursor:
-                    params["cursor"] = cursor
-                
-                response = requests.get(url, headers=headers, params=params, timeout=15)
-                
-                if response.status_code != 200:
-                    logger.error(f"BallDontLie error: {response.status_code}")
-                    break
-                
-                data = response.json()
-                all_games.extend(data.get("data", []))
-                
-                cursor = data.get("meta", {}).get("next_cursor")
-                if not cursor:
-                    break
-            
-            logger.info(f"Fetched {len(all_games)} games for player {player_id}")
-            return all_games
-            
-        except Exception as e:
-            logger.error(f"Error fetching NBA games: {e}")
-            return []
-    
+    def _get_headers(cls) -> Dict[str, str]:
+        """Get authorization headers for Playbook API."""
+        return {"Authorization": f"Bearer {TrainingConfig.PLAYBOOK_API_KEY}"}
+
     @classmethod
-    def fetch_nba_players(cls, per_page: int = 100) -> List[Dict]:
-        """Fetch NBA player list."""
-        if not TrainingConfig.BALLDONTLIE_API_KEY:
+    def fetch_player_games(cls, sport: str, player_name: str, season: int = 2025) -> List[Dict]:
+        """
+        Fetch player game logs from Playbook API.
+        Works for all 5 sports: NBA, NFL, MLB, NHL, NCAAB.
+        """
+        if not TrainingConfig.PLAYBOOK_API_KEY:
+            logger.warning("PLAYBOOK_API_KEY not set - using synthetic data")
             return []
-        
-        headers = {"Authorization": TrainingConfig.BALLDONTLIE_API_KEY}
-        url = "https://api.balldontlie.io/v1/players"
-        
+
+        sport_key = cls.SPORT_MAPPINGS.get(sport.upper(), sport.lower())
+        url = f"{TrainingConfig.PLAYBOOK_API_BASE}/players/{sport_key}/gamelog"
+
         try:
-            response = requests.get(url, headers=headers, params={"per_page": per_page}, timeout=10)
+            params = {
+                "player": player_name,
+                "season": season
+            }
+            response = requests.get(
+                url,
+                headers=cls._get_headers(),
+                params=params,
+                timeout=15
+            )
+
             if response.status_code == 200:
-                return response.json().get("data", [])
+                data = response.json()
+                games = data.get("games", data.get("data", []))
+                logger.info(f"Fetched {len(games)} games for {player_name} ({sport})")
+                return games
+            elif response.status_code == 404:
+                logger.debug(f"Player not found: {player_name}")
+                return []
+            else:
+                logger.warning(f"Playbook API error {response.status_code} for {player_name}")
+                return []
+
+        except Exception as e:
+            logger.error(f"Error fetching {sport} games for {player_name}: {e}")
             return []
-        except:
+
+    @classmethod
+    def fetch_players(cls, sport: str, limit: int = 100) -> List[Dict]:
+        """Fetch player list from Playbook API."""
+        if not TrainingConfig.PLAYBOOK_API_KEY:
+            return []
+
+        sport_key = cls.SPORT_MAPPINGS.get(sport.upper(), sport.lower())
+        url = f"{TrainingConfig.PLAYBOOK_API_BASE}/players/{sport_key}"
+
+        try:
+            response = requests.get(
+                url,
+                headers=cls._get_headers(),
+                params={"limit": limit},
+                timeout=15
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("players", data.get("data", []))
+            return []
+
+        except Exception as e:
+            logger.debug(f"Error fetching {sport} players: {e}")
+            return []
+
+    @classmethod
+    def fetch_historical_props(cls, sport: str, days_back: int = 30) -> List[Dict]:
+        """
+        Fetch historical prop lines from Odds API.
+        Useful for getting actual lines players faced.
+        """
+        if not TrainingConfig.ODDS_API_KEY:
+            return []
+
+        sport_keys = {
+            "NBA": "basketball_nba",
+            "NFL": "americanfootball_nfl",
+            "MLB": "baseball_mlb",
+            "NHL": "icehockey_nhl",
+            "NCAAB": "basketball_ncaab"
+        }
+
+        sport_key = sport_keys.get(sport.upper())
+        if not sport_key:
+            return []
+
+        url = f"{TrainingConfig.ODDS_API_BASE}/historical/sports/{sport_key}/odds"
+
+        try:
+            response = requests.get(
+                url,
+                params={"apiKey": TrainingConfig.ODDS_API_KEY},
+                timeout=15
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            return []
+
+        except Exception as e:
+            logger.debug(f"Error fetching historical props: {e}")
             return []
 
 

@@ -20,7 +20,7 @@ import uvicorn
 
 from fastapi.responses import Response
 from live_data_router import router as live_router, close_shared_client
-from database import init_database, get_database_status, DB_ENABLED
+import database
 from daily_scheduler import scheduler_router, init_scheduler, get_scheduler
 from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILABLE
 
@@ -46,7 +46,7 @@ app.include_router(scheduler_router)
 # Startup event - initialize database and scheduler
 @app.on_event("startup")
 async def startup_event():
-    init_database()
+    database.init_database()
     # Initialize and start daily scheduler
     scheduler = init_scheduler()
     scheduler.start()
@@ -86,13 +86,13 @@ async def root():
 # Health check at root level (some frontends expect this)
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "version": "14.2", "database": DB_ENABLED}
+    return {"status": "healthy", "version": "14.2", "database": database.DB_ENABLED}
 
 
 # Database status endpoint
 @app.get("/database/status")
 async def database_status():
-    return get_database_status()
+    return database.get_database_status()
 
 
 # Prometheus metrics endpoint

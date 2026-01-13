@@ -279,11 +279,15 @@ Scheduler auto-starts on app launch. Endpoints:
 - `POST /scheduler/run-audit` - Manually trigger daily audit
 - `POST /scheduler/run-cleanup` - Manually trigger cleanup
 
-### LSTM Training
-The LSTM brain is ready but needs historical data:
-1. Set `BALLDONTLIE_API_KEY` in Railway for NBA historical stats
-2. Run training: `python lstm_training_pipeline.py`
-3. Check status: `GET /live/lstm/status`
+### LSTM Training - All 5 Sports
+Uses your existing Playbook API and Odds API for all sports:
+- **Playbook API**: Player game logs for NBA, NFL, MLB, NHL, NCAAB
+- **Odds API**: Historical prop lines
+
+No additional API keys needed - uses `PLAYBOOK_API_KEY` and `ODDS_API_KEY` already in Railway.
+
+Run training: `python lstm_training_pipeline.py`
+Check status: `GET /live/lstm/status`
 
 ### Prometheus Monitoring
 Metrics available at `/metrics` endpoint:

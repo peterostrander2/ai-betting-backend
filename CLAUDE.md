@@ -10,6 +10,24 @@
 
 ---
 
+## IMPORTANT: Paid APIs - Always Use These
+
+**We pay for Odds API and Playbook API. Always use these for any data needs:**
+
+| API | Purpose | Key |
+|-----|---------|-----|
+| **Odds API** | Live odds, lines, betting data, historical props | `ODDS_API_KEY` |
+| **Playbook API** | Player stats, game logs, sharp money, splits (all 5 sports) | `PLAYBOOK_API_KEY` |
+
+**Default to our paid APIs first.** These cover all 5 sports: **NBA, NFL, MLB, NHL, NCAAB**
+
+**Exception:** You may suggest alternative APIs if:
+1. You explain WHY it's better than our paid APIs (data not available, better quality, etc.)
+2. You get approval before implementing
+3. There's a clear benefit over what we're already paying for
+
+---
+
 ## Architecture
 
 ### Core Files (Active)
