@@ -28,6 +28,14 @@
 
 ---
 
+## Authentication
+
+**API Authentication is ENABLED.** Key stored in Railway environment variables (`API_AUTH_KEY`).
+- All `/live/*` endpoints require `X-API-Key` header
+- `/health` endpoint is public (for Railway health checks)
+
+---
+
 ## Architecture
 
 ### Core Files (Active)
