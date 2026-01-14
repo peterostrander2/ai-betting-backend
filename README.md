@@ -1,8 +1,10 @@
-# Bookie-o-em v14.1 - AI Sports Betting Backend
+# Bookie-o-em v15.0 - JARVIS SAVANT EDITION
 
-> "Someone always knows." - NOOSPHERE VELOCITY
+> "Competition + Variance. Edges from esoteric resonance + exoteric inefficiencies." - JARVIS v7.3
 
-Production-hardened FastAPI backend for AI-powered sports betting predictions with live odds, sharp money detection, and esoteric edge analysis.
+Production-hardened FastAPI backend for AI-powered sports betting predictions with live odds, sharp money detection, confluence scoring, and esoteric edge analysis.
+
+**YTD Record:** +94.40u (as of January 8, 2026)
 
 ## Quick Start
 
@@ -30,11 +32,20 @@ Visit `http://localhost:8000/docs` for interactive API documentation.
 | `GET /live/sharp/{sport}` | Sharp money signals |
 | `GET /live/splits/{sport}` | Betting splits (public %) |
 | `GET /live/props/{sport}` | Player props |
-| `GET /live/best-bets/{sport}` | AI-scored best bets |
+| `GET /live/best-bets/{sport}` | AI-scored best bets with confluence |
 | `GET /live/esoteric-edge` | Esoteric edge analysis |
 | `GET /live/noosphere/status` | Global consciousness indicators |
 | `GET /live/gann-physics-status` | GANN physics module |
 | `GET /esoteric/today-energy` | Today's energy reading |
+
+### JARVIS Savant Engine Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /live/validate-immortal` | 2178 mathematical proof (THE IMMORTAL) |
+| `GET /live/jarvis-triggers` | All trigger numbers and properties |
+| `GET /live/check-trigger/{value}` | Test any number for triggers |
+| `GET /live/confluence/{sport}` | Detailed confluence analysis |
 
 **Supported Sports:** `nba`, `nfl`, `mlb`, `nhl`
 
@@ -121,12 +132,48 @@ The project is configured for Railway:
 
 | Version | Codename | Key Features |
 |---------|----------|--------------|
-| **v14.1** | PRODUCTION_HARDENED | Retries, logging, rate limits, deterministic fallbacks |
+| **v15.0** | JARVIS_SAVANT | Confluence scoring, dual-score system, 67/33 blend, bet tiers |
+| v14.1 | PRODUCTION_HARDENED | Retries, logging, rate limits, deterministic fallbacks |
 | v14.0 | NOOSPHERE_VELOCITY | Global consciousness indicators, 3 modules |
 | v13.0 | GANN_PHYSICS | W.D. Gann geometric principles |
 | v11.0 | OMNI_GLITCH | Vortex math, Shannon entropy, 6 modules |
 | v10.4 | SCALAR_SAVANT | Bio-sine wave, chrome resonance, 6 modules |
 | v10.1 | RESEARCH_OPTIMIZED | +94.40u YTD edge system |
+
+## JARVIS Savant Engine v7.3
+
+The core scoring system that combines research and esoteric signals.
+
+### Confluence System
+```
+Research Score (0-10)          Esoteric Score (0-10)
+├─ 8 AI Models                 ├─ Gematria (52% weight)
+└─ 8 Pillars                   ├─ Public Fade (-13%)
+                               ├─ Mid-Spread (+20%)
+                               └─ Moon/Tesla/Fibonacci
+
+BLENDED = 0.67 × (RS/10) + 0.33 × (ES/10) + confluence_boost
+```
+
+### Confluence Levels
+| Level | Boost | Requirements |
+|-------|-------|--------------|
+| IMMORTAL | +10 | 2178 detected + both ≥7.5 + aligned ≥80% |
+| JARVIS_PERFECT | +7 | Trigger + both ≥7.5 + aligned ≥80% |
+| PERFECT | +5 | Both ≥7.5 + aligned ≥80% |
+| STRONG | +3 | Both high OR aligned ≥70% |
+| MODERATE | +1 | Aligned ≥60% |
+| DIVERGENT | +0 | Models disagree |
+
+### Bet Tiers
+| Tier | Threshold | Units |
+|------|-----------|-------|
+| GOLD_STAR | ≥72% | 2.0u |
+| EDGE_LEAN | ≥68% | 1.0u |
+| MONITOR | ≥60% | 0.0u |
+| PASS | <60% | 0.0u |
+
+See `JARVIS_ENGINE.md` for complete documentation.
 
 ## Esoteric Edge System
 

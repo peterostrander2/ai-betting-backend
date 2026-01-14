@@ -3,7 +3,7 @@
 ## Project Overview
 
 **Bookie-o-em** - AI Sports Prop Betting Backend
-**Version:** v14.2 PRODUCTION HARDENED
+**Version:** v15.0 JARVIS SAVANT EDITION
 **Stack:** Python 3.11+, FastAPI, Railway deployment
 **Frontend:** bookie-member-app (separate repo)
 **Production URL:** https://web-production-7b2a.up.railway.app
@@ -56,11 +56,24 @@
 
 ---
 
-## Signal Architecture (Dual Engine)
+## Signal Architecture (JARVIS SAVANT ENGINE v7.3)
 
-### Scoring Formula
+### Confluence Scoring System
 ```
-SMASH PICK = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
+┌─────────────────────────────────────────────────────────────┐
+│  RESEARCH SCORE (0-10)        ESOTERIC SCORE (0-10)        │
+│  ├─ 8 AI Models (0-8)         ├─ Gematria (52% weight)     │
+│  └─ 8 Pillars (0-8)           ├─ Public Fade (-13%)        │
+│      scaled to 0-10           ├─ Mid-Spread (+20%)         │
+│                               ├─ Moon/Numerology            │
+│                               └─ Tesla/Fibonacci/Vortex     │
+│                                                              │
+│  BLENDED = 0.67 × (RS/10) + 0.33 × (ES/10) + confluence    │
+│                                                              │
+│  BET TIERS:                                                  │
+│  ≥72% → GOLD_STAR (2u)  |  ≥68% → EDGE_LEAN (1u)           │
+│  ≥60% → MONITOR         |  <60% → PASS                      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### Components
@@ -71,12 +84,25 @@ SMASH PICK = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
 2. **8 Pillars** (max 8 pts) - `advanced_ml_backend.py`
    - Sharp Split, Reverse Line, Hospital Fade, Situational Spot, Expert Consensus, Prop Correlation, Hook Discipline, Volume Discipline
 
-3. **JARVIS Triggers** (max 4 pts) - `live_data_router.py:233-239`
-   - Gematria signals: 2178, 201, 33, 93, 322
-   - Weight: `boost / 5` (doubled from original /10)
+3. **JARVIS Savant Engine** (full system) - `live_data_router.py:673-1618`
+   - `JarvisSavantEngine` class with complete confluence scoring
+   - Gematria signals: 2178 (IMMORTAL), 201, 33, 93, 322
+   - Public Fade: -13% when ≥65% on chalk
+   - Mid-Spread Amplifier: +20% for +4 to +9 (Goldilocks zone)
+   - Large Spread Trap: -20% for ≥14 pts
+   - NHL Dog Protocol: 0.5u ML when RS ≥9.3 + public ≥65%
+   - Dynamic weights: 30-55% gematria based on triggers
 
-4. **Esoteric Edge** (18 modules) - `live_data_router.py`
-   - NOOSPHERE VELOCITY, GANN PHYSICS, SCALAR-SAVANT, OMNI-GLITCH
+4. **Confluence Levels** - `calculate_confluence()`
+   - IMMORTAL: 2178 + both ≥7.5 + aligned ≥80% → +10 boost
+   - JARVIS_PERFECT: Trigger + both ≥7.5 + aligned → +7 boost
+   - PERFECT: Both ≥7.5 + aligned ≥80% → +5 boost
+   - STRONG: Both high OR aligned ≥70% → +3 boost
+   - MODERATE: Aligned ≥60% → +1 boost
+   - DIVERGENT: Models disagree → +0 boost
+
+5. **Esoteric Edge** (18 modules) - `live_data_router.py`
+   - NOOSPHERE VELOCITY, GANN PHYSICS, Moon Phase, Tesla 3-6-9, Fibonacci, Vortex Math
 
 ---
 
@@ -197,11 +223,19 @@ GET /live/health                # Router health
 GET /live/sharp/{sport}         # Sharp money (cached 5m)
 GET /live/splits/{sport}        # Betting splits (cached 5m)
 GET /live/props/{sport}         # Player props (cached 5m)
-GET /live/best-bets/{sport}     # AI best bets (cached 2m)
+GET /live/best-bets/{sport}     # AI best bets with confluence (cached 2m)
 GET /live/esoteric-edge         # Esoteric analysis
 GET /live/noosphere/status      # Noosphere velocity
 GET /live/gann-physics-status   # GANN physics
 GET /esoteric/today-energy      # Daily energy
+```
+
+### JARVIS Savant Engine Endpoints
+```
+GET /live/validate-immortal     # 2178 mathematical proof
+GET /live/jarvis-triggers       # All trigger numbers and properties
+GET /live/check-trigger/{value} # Test any number for triggers
+GET /live/confluence/{sport}    # Detailed confluence analysis
 ```
 
 ### Click-to-Bet Endpoints (NEW)
@@ -284,8 +318,26 @@ When providing file updates for PRs (especially for frontend repos), **always pr
 
 ### Modify Scoring
 - AI Models: `advanced_ml_backend.py` → `MasterPredictionSystem`
-- JARVIS: `live_data_router.py:233-239` → `JARVIS_TRIGGERS`
+- Pillars: `advanced_ml_backend.py` → `PillarsAnalyzer`
+- JARVIS Engine: `live_data_router.py:673-1618` → `JarvisSavantEngine`
+- Triggers: `live_data_router.py:544-550` → `JARVIS_TRIGGERS`
+- Confluence: `live_data_router.py` → `calculate_confluence()`
+- Gematria: `live_data_router.py` → `calculate_gematria_signal()`
+- Public Fade: `live_data_router.py` → `calculate_public_fade_signal()`
+- Spread Zones: `live_data_router.py` → `calculate_mid_spread_signal()`, `calculate_large_spread_trap()`
 - Esoteric: `live_data_router.py` → `get_daily_energy()`
+
+### JARVIS Weights (Dynamic)
+```python
+# Normal weights
+gematria: 30%, numerology: 20%, astro: 15%, vedic: 10%, sacred: 10%, fib_phi: 8%, vortex: 7%
+
+# When JARVIS triggered
+gematria: 45%, numerology: 18%, astro: 12%, vedic: 8%, sacred: 5%, fib_phi: 6%, vortex: 6%
+
+# When IMMORTAL (2178) detected
+gematria: 55%, numerology: 15%, astro: 10%, vedic: 5%, sacred: 5%, fib_phi: 5%, vortex: 5%
+```
 
 ### Debug Deployment
 1. Check Railway logs
