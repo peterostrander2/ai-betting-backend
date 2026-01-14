@@ -1476,17 +1476,13 @@ class JarvisSavantEngine:
         research_raw = ai_score + pillar_score
         research_score = min(10, (research_raw / 16) * 10)
 
-        # Calculate ESOTERIC SCORE (JARVIS + Esoteric factors)
+        # Calculate ESOTERIC SCORE (JARVIS + Esoteric + Astro/Vedic factors)
         esoteric_components = []
 
         # Gematria (52% when IMMORTAL, 45% when triggered, 30% otherwise)
         esoteric_components.append(gematria["influence"] * weights["gematria"] * 10)
 
-        # Numerology (moon phase influence)
-        moon_influence = 0.7 if moon.get("phase") == "Full Moon" else 0.5
-        esoteric_components.append(moon_influence * weights["astro"] * 10)
-
-        # Daily energy
+        # Numerology (date-based)
         energy_influence = daily_energy.get("overall_score", 50) / 100
         esoteric_components.append(energy_influence * weights["numerology"] * 10)
 
@@ -1497,6 +1493,35 @@ class JarvisSavantEngine:
         # Master number boost
         if numerology.get("is_master_number_day"):
             esoteric_components.append(1.0 * weights["sacred"] * 10)
+
+        # PHASE 2: Astro/Vedic components (13% astro + 10% vedic = 23%)
+        try:
+            astro_data = calculate_astro_score(sport)
+            astro_influence = astro_data["astro_score"] / 10  # Normalize to 0-1
+
+            # Planetary hour component (part of astro weight)
+            planetary_component = astro_data["components"]["planetary_hour"]["influence"]
+            esoteric_components.append(planetary_component * weights["astro"] * 10)
+
+            # Nakshatra component (part of vedic weight)
+            nakshatra_component = astro_data["components"]["nakshatra"]["influence"]
+            esoteric_components.append(nakshatra_component * weights["vedic"] * 10)
+
+            # Retrograde penalty (applied to both)
+            if astro_data["components"]["retrograde"]["any_active"]:
+                retrograde_penalty = 1 - astro_data["components"]["retrograde"]["influence"]
+                esoteric_components.append(-retrograde_penalty * 2)  # Penalty up to -1.4 points
+        except Exception:
+            # Fallback to moon phase if astro calculation fails
+            moon_influence = 0.7 if moon.get("phase") == "Full Moon" else 0.5
+            esoteric_components.append(moon_influence * weights["astro"] * 10)
+
+        # Fibonacci/Phi component (check if spread aligns with Fib numbers)
+        if spread and abs(spread) in [1.5, 2, 3, 5, 8, 13]:
+            esoteric_components.append(0.7 * weights["fib_phi"] * 10)
+
+        # Vortex component (already in gematria reduction, add small boost)
+        esoteric_components.append(0.5 * weights["vortex"] * 10)
 
         esoteric_raw = sum(esoteric_components)
 
@@ -1616,6 +1641,414 @@ def get_jarvis_engine() -> JarvisSavantEngine:
         _jarvis_engine = JarvisSavantEngine()
         logger.info("JarvisSavantEngine v7.3 initialized")
     return _jarvis_engine
+
+
+# ============================================================================
+# PHASE 2: VEDIC/ASTRO MODULE
+# Weight: 13% astro + 10% vedic = 23% of esoteric score
+# Components: Planetary Hours, Retrograde Detection, Nakshatra Positions
+# ============================================================================
+
+# Planetary hour rulers in Chaldean order
+# Each day starts with its ruling planet, then follows this sequence
+PLANETARY_SEQUENCE = ["Saturn", "Jupiter", "Mars", "Sun", "Venus", "Mercury", "Moon"]
+
+# Day rulers (Sunday=0, Monday=1, etc.)
+DAY_RULERS = {
+    0: "Sun",      # Sunday
+    1: "Moon",     # Monday
+    2: "Mars",     # Tuesday
+    3: "Mercury",  # Wednesday
+    4: "Jupiter",  # Thursday
+    5: "Venus",    # Friday
+    6: "Saturn"    # Saturday
+}
+
+# Planetary characteristics for betting
+PLANET_BETTING_INFLUENCE = {
+    "Sun": {
+        "influence": 0.75,
+        "characteristics": "Authority, confidence, favorites perform",
+        "bet_signal": "CHALK_FRIENDLY",
+        "sports_boost": ["NBA", "NFL"]  # High-profile sports
+    },
+    "Moon": {
+        "influence": 0.65,
+        "characteristics": "Emotion, volatility, home teams favored",
+        "bet_signal": "HOME_EDGE",
+        "sports_boost": ["NHL", "MLB"]  # Night games
+    },
+    "Mars": {
+        "influence": 0.80,
+        "characteristics": "Aggression, underdogs fight, high scoring",
+        "bet_signal": "DOG_WARRIOR",
+        "sports_boost": ["NFL", "NHL"]  # Physical sports
+    },
+    "Mercury": {
+        "influence": 0.55,
+        "characteristics": "Speed, unpredictability, communication errors",
+        "bet_signal": "CHAOS_FACTOR",
+        "sports_boost": ["NBA"]  # Fast-paced
+    },
+    "Jupiter": {
+        "influence": 0.85,
+        "characteristics": "Expansion, luck, overs, big favorites cover",
+        "bet_signal": "EXPANSION_PLAY",
+        "sports_boost": ["NBA", "NFL"]  # High scoring potential
+    },
+    "Venus": {
+        "influence": 0.60,
+        "characteristics": "Harmony, low variance, unders, close games",
+        "bet_signal": "UNDER_LEAN",
+        "sports_boost": ["MLB", "NHL"]  # Lower scoring
+    },
+    "Saturn": {
+        "influence": 0.70,
+        "characteristics": "Restriction, discipline, defense, unders",
+        "bet_signal": "DEFENSIVE_GRIND",
+        "sports_boost": ["NFL", "NHL"]  # Defensive sports
+    }
+}
+
+# 27 Nakshatras (Lunar Mansions) with betting characteristics
+NAKSHATRAS = [
+    {"name": "Ashwini", "ruler": "Ketu", "nature": "swift", "betting": "quick_action", "influence": 0.70},
+    {"name": "Bharani", "ruler": "Venus", "nature": "fierce", "betting": "high_risk", "influence": 0.65},
+    {"name": "Krittika", "ruler": "Sun", "nature": "mixed", "betting": "favorites", "influence": 0.75},
+    {"name": "Rohini", "ruler": "Moon", "nature": "fixed", "betting": "home_teams", "influence": 0.80},
+    {"name": "Mrigashira", "ruler": "Mars", "nature": "soft", "betting": "careful", "influence": 0.55},
+    {"name": "Ardra", "ruler": "Rahu", "nature": "sharp", "betting": "upsets", "influence": 0.85},
+    {"name": "Punarvasu", "ruler": "Jupiter", "nature": "movable", "betting": "overs", "influence": 0.75},
+    {"name": "Pushya", "ruler": "Saturn", "nature": "light", "betting": "unders", "influence": 0.90},  # Most auspicious
+    {"name": "Ashlesha", "ruler": "Mercury", "nature": "sharp", "betting": "avoid", "influence": 0.40},
+    {"name": "Magha", "ruler": "Ketu", "nature": "fierce", "betting": "dogs", "influence": 0.70},
+    {"name": "Purva Phalguni", "ruler": "Venus", "nature": "fierce", "betting": "favorites", "influence": 0.65},
+    {"name": "Uttara Phalguni", "ruler": "Sun", "nature": "fixed", "betting": "chalk", "influence": 0.75},
+    {"name": "Hasta", "ruler": "Moon", "nature": "light", "betting": "skill_games", "influence": 0.80},
+    {"name": "Chitra", "ruler": "Mars", "nature": "soft", "betting": "props", "influence": 0.70},
+    {"name": "Swati", "ruler": "Rahu", "nature": "movable", "betting": "line_movement", "influence": 0.75},
+    {"name": "Vishakha", "ruler": "Jupiter", "nature": "mixed", "betting": "parlays", "influence": 0.65},
+    {"name": "Anuradha", "ruler": "Saturn", "nature": "soft", "betting": "defense", "influence": 0.80},
+    {"name": "Jyeshtha", "ruler": "Mercury", "nature": "sharp", "betting": "veteran_edge", "influence": 0.70},
+    {"name": "Mula", "ruler": "Ketu", "nature": "sharp", "betting": "destruction", "influence": 0.50},
+    {"name": "Purva Ashadha", "ruler": "Venus", "nature": "fierce", "betting": "momentum", "influence": 0.75},
+    {"name": "Uttara Ashadha", "ruler": "Sun", "nature": "fixed", "betting": "champions", "influence": 0.85},
+    {"name": "Shravana", "ruler": "Moon", "nature": "movable", "betting": "listen_sharps", "influence": 0.80},
+    {"name": "Dhanishta", "ruler": "Mars", "nature": "movable", "betting": "aggressive", "influence": 0.75},
+    {"name": "Shatabhisha", "ruler": "Rahu", "nature": "movable", "betting": "healing", "influence": 0.70},
+    {"name": "Purva Bhadrapada", "ruler": "Jupiter", "nature": "fierce", "betting": "risk_on", "influence": 0.65},
+    {"name": "Uttara Bhadrapada", "ruler": "Saturn", "nature": "fixed", "betting": "patience", "influence": 0.80},
+    {"name": "Revati", "ruler": "Mercury", "nature": "soft", "betting": "completion", "influence": 0.75}
+]
+
+# Mercury Retrograde periods for 2026 (approximate)
+MERCURY_RETROGRADE_2026 = [
+    {"start": (2026, 1, 25), "end": (2026, 2, 14)},
+    {"start": (2026, 5, 19), "end": (2026, 6, 11)},
+    {"start": (2026, 9, 17), "end": (2026, 10, 9)}
+]
+
+# Venus Retrograde 2026 (approximate - every 18 months)
+VENUS_RETROGRADE_2026 = [
+    {"start": (2026, 3, 2), "end": (2026, 4, 12)}
+]
+
+# Mars Retrograde 2026 (approximate - every 26 months)
+MARS_RETROGRADE_2026 = [
+    {"start": (2026, 12, 6), "end": (2027, 2, 24)}
+]
+
+
+def calculate_planetary_hour(dt: Optional[datetime] = None) -> Dict[str, Any]:
+    """
+    Calculate the current planetary hour based on Chaldean order.
+
+    Each day has 24 planetary hours (12 day, 12 night).
+    Day hours start at sunrise, night hours at sunset.
+    For simplicity, we use 6 AM as sunrise and 6 PM as sunset.
+    """
+    if dt is None:
+        dt = datetime.now()
+
+    weekday = dt.weekday()  # Monday=0, Sunday=6
+    # Adjust to Sunday=0 for our DAY_RULERS
+    day_index = (weekday + 1) % 7
+
+    day_ruler = DAY_RULERS[day_index]
+
+    # Calculate hour of day (0-23)
+    hour = dt.hour
+
+    # Determine if day or night hour
+    # Day hours: 6 AM - 6 PM (6-17)
+    # Night hours: 6 PM - 6 AM (18-23, 0-5)
+    if 6 <= hour < 18:
+        is_day = True
+        hour_of_period = hour - 6  # 0-11
+    else:
+        is_day = False
+        if hour >= 18:
+            hour_of_period = hour - 18  # 0-5
+        else:
+            hour_of_period = hour + 6  # 6-11
+
+    # Find starting index in planetary sequence for this day's ruler
+    day_ruler_index = PLANETARY_SEQUENCE.index(day_ruler)
+
+    # For night hours, we start from the 13th hour position
+    # (12 day hours have passed)
+    if not is_day:
+        offset = 12 + hour_of_period
+    else:
+        offset = hour_of_period
+
+    # Calculate current planetary hour ruler
+    current_index = (day_ruler_index + offset) % 7
+    current_ruler = PLANETARY_SEQUENCE[current_index]
+
+    # Get planetary influence
+    planet_info = PLANET_BETTING_INFLUENCE[current_ruler]
+
+    return {
+        "datetime": dt.isoformat(),
+        "day_ruler": day_ruler,
+        "current_hour_ruler": current_ruler,
+        "is_day_hour": is_day,
+        "hour_of_period": hour_of_period + 1,  # 1-indexed for display
+        "influence": planet_info["influence"],
+        "characteristics": planet_info["characteristics"],
+        "bet_signal": planet_info["bet_signal"],
+        "sports_boost": planet_info["sports_boost"]
+    }
+
+
+def is_planet_retrograde(planet: str, dt: Optional[datetime] = None) -> Dict[str, Any]:
+    """
+    Check if a planet is retrograde.
+
+    Retrograde periods cause disruption and reversals.
+    Mercury: Communication issues, upsets more likely
+    Venus: Value plays backfire
+    Mars: Aggression misfires, underdogs struggle
+    """
+    if dt is None:
+        dt = datetime.now()
+
+    date_tuple = (dt.year, dt.month, dt.day)
+
+    retrograde_periods = {
+        "Mercury": MERCURY_RETROGRADE_2026,
+        "Venus": VENUS_RETROGRADE_2026,
+        "Mars": MARS_RETROGRADE_2026
+    }
+
+    if planet not in retrograde_periods:
+        return {"planet": planet, "retrograde": False, "applicable": False}
+
+    for period in retrograde_periods[planet]:
+        start = period["start"]
+        end = period["end"]
+
+        # Convert to comparable format
+        if start <= date_tuple <= end:
+            return {
+                "planet": planet,
+                "retrograde": True,
+                "period_start": f"{start[0]}-{start[1]:02d}-{start[2]:02d}",
+                "period_end": f"{end[0]}-{end[1]:02d}-{end[2]:02d}",
+                "betting_impact": get_retrograde_impact(planet)
+            }
+
+    return {
+        "planet": planet,
+        "retrograde": False,
+        "next_retrograde": get_next_retrograde(planet, dt)
+    }
+
+
+def get_retrograde_impact(planet: str) -> Dict[str, Any]:
+    """Get the betting impact of a retrograde planet."""
+    impacts = {
+        "Mercury": {
+            "modifier": -0.10,
+            "description": "Communication breakdowns, miscues, upsets more likely",
+            "recommendation": "FADE FAVORITES - chaos factor elevated",
+            "avoid": ["heavy chalk", "complex parlays"]
+        },
+        "Venus": {
+            "modifier": -0.08,
+            "description": "Value plays misfire, beauty doesn't win",
+            "recommendation": "CONTRARIAN VALUE - perceived value traps",
+            "avoid": ["value plays", "public dogs"]
+        },
+        "Mars": {
+            "modifier": -0.12,
+            "description": "Aggression backfires, underdogs can't capitalize",
+            "recommendation": "DEFENSIVE POSTURE - low variance plays",
+            "avoid": ["underdog ML", "aggressive dogs"]
+        }
+    }
+    return impacts.get(planet, {"modifier": 0, "description": "Unknown"})
+
+
+def get_next_retrograde(planet: str, dt: datetime) -> Optional[str]:
+    """Get the next retrograde period for a planet."""
+    retrograde_periods = {
+        "Mercury": MERCURY_RETROGRADE_2026,
+        "Venus": VENUS_RETROGRADE_2026,
+        "Mars": MARS_RETROGRADE_2026
+    }
+
+    if planet not in retrograde_periods:
+        return None
+
+    date_tuple = (dt.year, dt.month, dt.day)
+
+    for period in retrograde_periods[planet]:
+        if period["start"] > date_tuple:
+            return f"{period['start'][0]}-{period['start'][1]:02d}-{period['start'][2]:02d}"
+
+    return "Next year"
+
+
+def calculate_nakshatra(dt: Optional[datetime] = None) -> Dict[str, Any]:
+    """
+    Calculate the current Nakshatra (lunar mansion).
+
+    The Moon transits through all 27 Nakshatras in ~27.3 days.
+    Each Nakshatra spans 13°20' of the zodiac.
+
+    This is a simplified calculation based on lunar cycle position.
+    For precise calculations, ephemeris data would be needed.
+    """
+    if dt is None:
+        dt = datetime.now()
+
+    # Known new moon for reference
+    known_new_moon = datetime(2024, 1, 11)
+    days_since = (dt - known_new_moon).days
+
+    # Lunar cycle is ~27.3 days for sidereal month (nakshatra-based)
+    sidereal_month = 27.3
+    nakshatra_position = (days_since % sidereal_month) / sidereal_month
+
+    # Calculate nakshatra index (0-26)
+    nakshatra_index = int(nakshatra_position * 27) % 27
+    nakshatra = NAKSHATRAS[nakshatra_index]
+
+    # Calculate pada (quarter) - each nakshatra has 4 padas
+    pada_position = (nakshatra_position * 27) % 1
+    pada = int(pada_position * 4) + 1
+
+    return {
+        "nakshatra": nakshatra["name"],
+        "nakshatra_index": nakshatra_index + 1,  # 1-indexed
+        "pada": pada,
+        "ruler": nakshatra["ruler"],
+        "nature": nakshatra["nature"],
+        "betting_type": nakshatra["betting"],
+        "influence": nakshatra["influence"],
+        "moon_age_days": round(days_since % sidereal_month, 1)
+    }
+
+
+def get_retrograde_status() -> Dict[str, Any]:
+    """Get retrograde status for all tracked planets."""
+    dt = datetime.now()
+    return {
+        "mercury": is_planet_retrograde("Mercury", dt),
+        "venus": is_planet_retrograde("Venus", dt),
+        "mars": is_planet_retrograde("Mars", dt),
+        "any_retrograde": any([
+            is_planet_retrograde("Mercury", dt).get("retrograde", False),
+            is_planet_retrograde("Venus", dt).get("retrograde", False),
+            is_planet_retrograde("Mars", dt).get("retrograde", False)
+        ])
+    }
+
+
+def calculate_astro_score(sport: str = "") -> Dict[str, Any]:
+    """
+    Calculate the complete astro/vedic score.
+
+    Weight breakdown:
+    - Planetary Hour: 40% of astro score
+    - Nakshatra: 35% of astro score
+    - Retrograde Status: 25% of astro score
+    """
+    planetary_hour = calculate_planetary_hour()
+    nakshatra = calculate_nakshatra()
+    retrogrades = get_retrograde_status()
+
+    # Calculate component scores (0-1 scale)
+    planetary_influence = planetary_hour["influence"]
+
+    # Boost if sport matches planetary hour boost
+    sport_upper = sport.upper()
+    if sport_upper in planetary_hour.get("sports_boost", []):
+        planetary_influence = min(1.0, planetary_influence + 0.10)
+
+    nakshatra_influence = nakshatra["influence"]
+
+    # Retrograde penalty
+    retrograde_penalty = 0
+    if retrogrades["any_retrograde"]:
+        for planet in ["mercury", "venus", "mars"]:
+            if retrogrades[planet].get("retrograde", False):
+                impact = retrogrades[planet].get("betting_impact", {})
+                retrograde_penalty += abs(impact.get("modifier", 0))
+
+    retrograde_influence = max(0.3, 1.0 - retrograde_penalty)
+
+    # Weighted combination
+    # Planetary Hour: 40%, Nakshatra: 35%, Retrograde: 25%
+    astro_score = (
+        planetary_influence * 0.40 +
+        nakshatra_influence * 0.35 +
+        retrograde_influence * 0.25
+    )
+
+    # Scale to 0-10
+    astro_score_scaled = astro_score * 10
+
+    return {
+        "astro_score": round(astro_score_scaled, 2),
+        "components": {
+            "planetary_hour": {
+                "ruler": planetary_hour["current_hour_ruler"],
+                "influence": planetary_influence,
+                "signal": planetary_hour["bet_signal"],
+                "sports_boost": planetary_hour["sports_boost"]
+            },
+            "nakshatra": {
+                "name": nakshatra["nakshatra"],
+                "ruler": nakshatra["ruler"],
+                "influence": nakshatra_influence,
+                "betting_type": nakshatra["betting_type"]
+            },
+            "retrograde": {
+                "any_active": retrogrades["any_retrograde"],
+                "influence": retrograde_influence,
+                "details": retrogrades
+            }
+        },
+        "overall_signal": _get_astro_signal(astro_score_scaled, planetary_hour, nakshatra),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+def _get_astro_signal(score: float, planetary: Dict, nakshatra: Dict) -> str:
+    """Generate an overall astro betting signal."""
+    if score >= 8.0:
+        return f"COSMIC ALIGNMENT - {planetary['current_hour_ruler']} hour + {nakshatra['nakshatra']} nakshatra favor betting"
+    elif score >= 6.5:
+        return f"FAVORABLE - {planetary['bet_signal']} signal active"
+    elif score >= 5.0:
+        return f"NEUTRAL - Standard variance expected"
+    elif score >= 3.5:
+        return f"CAUTION - {nakshatra['nature']} energy may cause upsets"
+    else:
+        return f"AVOID - Cosmic conditions unfavorable"
 
 
 # ============================================================================
@@ -2597,6 +3030,134 @@ async def get_confluence_analysis(sport: str):
         },
         "timestamp": datetime.now().isoformat()
     }
+
+
+@router.get("/astro-status")
+async def get_astro_status(sport: Optional[str] = None):
+    """
+    Get current Vedic/Astro status for betting.
+
+    Components:
+    - Planetary Hour: Current ruling planet and betting signal
+    - Nakshatra: Current lunar mansion and betting type
+    - Retrograde Status: Mercury, Venus, Mars retrograde check
+
+    Optional: Pass ?sport=nba to get sport-specific boost information.
+    """
+    astro = calculate_astro_score(sport or "")
+    planetary_hour = calculate_planetary_hour()
+    nakshatra = calculate_nakshatra()
+    retrogrades = get_retrograde_status()
+
+    return {
+        "status": "ACTIVE",
+        "version": "v2.0",
+        "sport_filter": sport.upper() if sport else "ALL",
+        "astro_score": astro["astro_score"],
+        "overall_signal": astro["overall_signal"],
+        "planetary_hour": {
+            "day_ruler": planetary_hour["day_ruler"],
+            "current_ruler": planetary_hour["current_hour_ruler"],
+            "is_day_hour": planetary_hour["is_day_hour"],
+            "hour_of_period": planetary_hour["hour_of_period"],
+            "influence": planetary_hour["influence"],
+            "bet_signal": planetary_hour["bet_signal"],
+            "characteristics": planetary_hour["characteristics"],
+            "sports_boost": planetary_hour["sports_boost"]
+        },
+        "nakshatra": {
+            "name": nakshatra["nakshatra"],
+            "index": nakshatra["nakshatra_index"],
+            "pada": nakshatra["pada"],
+            "ruler": nakshatra["ruler"],
+            "nature": nakshatra["nature"],
+            "betting_type": nakshatra["betting_type"],
+            "influence": nakshatra["influence"]
+        },
+        "retrograde": {
+            "any_active": retrogrades["any_retrograde"],
+            "mercury": retrogrades["mercury"],
+            "venus": retrogrades["venus"],
+            "mars": retrogrades["mars"]
+        },
+        "betting_guidance": _get_astro_betting_guidance(astro, planetary_hour, nakshatra, retrogrades),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+def _get_astro_betting_guidance(astro: Dict, planetary: Dict, nakshatra: Dict, retro: Dict) -> Dict[str, Any]:
+    """Generate specific betting guidance based on astro conditions."""
+    guidance = {
+        "recommended_plays": [],
+        "avoid": [],
+        "special_conditions": []
+    }
+
+    # Planetary hour signals
+    bet_signal = planetary["bet_signal"]
+    if bet_signal == "CHALK_FRIENDLY":
+        guidance["recommended_plays"].append("Favorites on the spread")
+    elif bet_signal == "DOG_WARRIOR":
+        guidance["recommended_plays"].append("Underdogs with margin")
+    elif bet_signal == "EXPANSION_PLAY":
+        guidance["recommended_plays"].append("Overs and high-scoring games")
+    elif bet_signal == "UNDER_LEAN":
+        guidance["recommended_plays"].append("Unders and low totals")
+    elif bet_signal == "DEFENSIVE_GRIND":
+        guidance["recommended_plays"].append("Defensive teams and unders")
+    elif bet_signal == "HOME_EDGE":
+        guidance["recommended_plays"].append("Home teams")
+    elif bet_signal == "CHAOS_FACTOR":
+        guidance["avoid"].append("Heavy favorites - chaos expected")
+
+    # Nakshatra guidance
+    betting_type = nakshatra["betting_type"]
+    if betting_type == "upsets":
+        guidance["recommended_plays"].append("Underdog plays")
+    elif betting_type == "favorites":
+        guidance["recommended_plays"].append("Strong chalk")
+    elif betting_type == "avoid":
+        guidance["avoid"].append("Major plays - unfavorable nakshatra")
+    elif betting_type == "props":
+        guidance["recommended_plays"].append("Player props")
+    elif betting_type == "listen_sharps":
+        guidance["special_conditions"].append("Sharp money more reliable today")
+
+    # Retrograde warnings
+    if retro["any_retrograde"]:
+        if retro["mercury"].get("retrograde"):
+            guidance["avoid"].append("Complex parlays - Mercury retrograde")
+            guidance["special_conditions"].append("Communication errors likely - watch for referee chaos")
+        if retro["venus"].get("retrograde"):
+            guidance["avoid"].append("Perceived value plays - Venus retrograde")
+        if retro["mars"].get("retrograde"):
+            guidance["avoid"].append("Aggressive underdog ML - Mars retrograde")
+
+    # Score-based overall
+    if astro["astro_score"] >= 8.0:
+        guidance["special_conditions"].append("COSMIC ALIGNMENT - Higher conviction plays")
+    elif astro["astro_score"] <= 4.0:
+        guidance["special_conditions"].append("UNFAVORABLE CONDITIONS - Reduce exposure")
+
+    return guidance
+
+
+@router.get("/planetary-hour")
+async def get_planetary_hour():
+    """Get detailed planetary hour information."""
+    return calculate_planetary_hour()
+
+
+@router.get("/nakshatra")
+async def get_nakshatra():
+    """Get current Nakshatra (lunar mansion) information."""
+    return calculate_nakshatra()
+
+
+@router.get("/retrograde-status")
+async def get_retrograde_status_endpoint():
+    """Get retrograde status for Mercury, Venus, and Mars."""
+    return get_retrograde_status()
 
 
 @router.get("/noosphere/status")
