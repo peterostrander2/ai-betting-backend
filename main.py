@@ -111,10 +111,26 @@ async def metrics_status():
 @app.get("/esoteric/today-energy")
 async def esoteric_today_energy():
     from live_data_router import calculate_date_numerology, get_moon_phase, get_daily_energy
+    daily = get_daily_energy()
+    moon = get_moon_phase()
+    numerology = calculate_date_numerology()
+
+    # Map overall_score (0-100) to overall_energy (0-10 scale)
+    overall_energy = round(daily.get("overall_score", 50) / 10, 1)
+
+    # Map rating to betting_outlook
+    rating = daily.get("rating", "MEDIUM")
+    outlook_map = {"HIGH": "FAVORABLE", "MEDIUM": "NEUTRAL", "LOW": "UNFAVORABLE"}
+    betting_outlook = outlook_map.get(rating, "NEUTRAL")
+
     return {
-        "date_numerology": calculate_date_numerology(),
-        "moon_phase": get_moon_phase(),
-        "daily_energy": get_daily_energy()
+        # Top-level fields frontend expects
+        "betting_outlook": betting_outlook,
+        "overall_energy": overall_energy,
+        # Detailed data
+        "date_numerology": numerology,
+        "moon_phase": moon,
+        "daily_energy": daily
     }
 
 if __name__ == "__main__":
