@@ -1050,8 +1050,13 @@ async def get_best_bets(sport: str):
     # Get MasterPredictionSystem
     mps = get_master_prediction_system()
 
-    # Fetch real data from APIs
-    props_data = await get_props(sport)
+    # Fetch real data from APIs (with fallback for props)
+    try:
+        props_data = await get_props(sport)
+    except HTTPException:
+        props_data = {"data": []}  # Fallback if props API fails
+        logger.warning("Props fetch failed for %s, using sharp money only", sport)
+
     sharp_data = await get_sharp_money(sport)
     daily_energy = get_daily_energy()
 
@@ -1205,6 +1210,76 @@ async def get_best_bets(sport: str):
                 "expected_value": round(ev, 2),
                 "jarvis_triggers": jarvis_triggers_hit,
                 "sharp_signal": sharp_signal.get("signal_strength", "NONE")
+            })
+
+    # === FALLBACK: Game-level picks from sharp money if no props ===
+    if not data and sharp_data.get("data"):
+        logger.info("No props available, generating game-level picks from sharp money")
+        for signal in sharp_data.get("data", []):
+            home_team = signal.get("home_team", "")
+            away_team = signal.get("away_team", "")
+            game_str = f"{home_team}{away_team}"
+
+            # Base score from sharp signal
+            ai_score = 5.0
+            if signal.get("signal_strength") == "STRONG":
+                ai_score = 7.0
+            elif signal.get("signal_strength") == "MODERATE":
+                ai_score = 6.0
+
+            pillar_score = 3.0 if signal.get("line_variance", 0) > 1.0 else 2.0
+
+            # JARVIS triggers
+            jarvis_score = 0.0
+            jarvis_triggers_hit = []
+            for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
+                if str(trigger_num) in game_str:
+                    jarvis_boost = trigger_data["boost"] / 5
+                    jarvis_score += jarvis_boost
+                    jarvis_triggers_hit.append({
+                        "number": trigger_num,
+                        "name": trigger_data["name"],
+                        "boost": round(jarvis_boost, 2)
+                    })
+            jarvis_score = min(4.0, jarvis_score)
+
+            # Esoteric boost
+            esoteric_boost = 1.0 if daily_energy.get("overall_score", 50) >= 70 else 0.0
+
+            total_score = ai_score + pillar_score + jarvis_score + esoteric_boost
+
+            if total_score >= 16:
+                confidence = "SMASH"
+            elif total_score >= 12:
+                confidence = "HIGH"
+            elif total_score >= 8:
+                confidence = "MEDIUM"
+            else:
+                confidence = "LOW"
+
+            data.append({
+                "player": "GAME PICK",
+                "market": "moneyline",
+                "line": 0,
+                "side": signal.get("side", "HOME"),
+                "odds": -110,
+                "game": f"{away_team} @ {home_team}",
+                "home_team": home_team,
+                "away_team": away_team,
+                "predicted_value": 0,
+                "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
+                "total_score": round(total_score, 2),
+                "confidence": confidence,
+                "scoring_breakdown": {
+                    "ai_models": round(ai_score, 2),
+                    "pillars": round(pillar_score, 2),
+                    "jarvis": round(jarvis_score, 2),
+                    "esoteric": round(esoteric_boost, 2)
+                },
+                "probability": 0.55,
+                "expected_value": 0,
+                "jarvis_triggers": jarvis_triggers_hit,
+                "sharp_signal": signal.get("signal_strength", "MODERATE")
             })
 
     # Sort by total score (highest first) and take top 20
