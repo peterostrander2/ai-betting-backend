@@ -2242,18 +2242,20 @@ async def generate_betslip(
 @router.get("/sportsbooks")
 async def list_sportsbooks():
     """List all supported sportsbooks with their branding info."""
+    sportsbooks_list = [
+        {
+            "key": key,
+            "name": config["name"],
+            "color": config["color"],
+            "logo": config.get("logo", ""),
+            "web_url": config["web_base"]
+        }
+        for key, config in SPORTSBOOK_CONFIGS.items()
+    ]
     return {
         "count": len(SPORTSBOOK_CONFIGS),
-        "sportsbooks": [
-            {
-                "key": key,
-                "name": config["name"],
-                "color": config["color"],
-                "logo": config.get("logo", ""),
-                "web_url": config["web_base"]
-            }
-            for key, config in SPORTSBOOK_CONFIGS.items()
-        ],
+        "active_count": len(sportsbooks_list),  # Frontend expects this field
+        "sportsbooks": sportsbooks_list,
         "timestamp": datetime.now().isoformat()
     }
 
