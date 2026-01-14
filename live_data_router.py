@@ -1,4 +1,4 @@
-# live_data_router.py v14.1 - PRODUCTION HARDENED
+# live_data_router.py v14.5 - CLICK-TO-BET ENHANCEMENTS
 # Research-Optimized + Esoteric Edge + NOOSPHERE VELOCITY
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
@@ -2918,6 +2918,384 @@ async def get_esoteric_analysis(
 
     except ImportError:
         raise HTTPException(status_code=503, detail="Esoteric analysis module not available")
+
+
+# ============================================================================
+# CLICK-TO-BET ENHANCEMENTS v2.0
+# ============================================================================
+
+# In-memory storage for user preferences and bet tracking
+# In production, this should use Redis or a database
+_user_preferences: Dict[str, Dict[str, Any]] = {}
+_tracked_bets: List[Dict[str, Any]] = []
+
+
+@router.get("/user/preferences/{user_id}")
+async def get_user_preferences(user_id: str):
+    """
+    Get user's sportsbook preferences.
+
+    Returns:
+    - favorite_books: List of preferred sportsbooks (in order)
+    - default_bet_amount: Default stake amount
+    - notifications: Notification preferences
+    """
+    prefs = _user_preferences.get(user_id, {
+        "user_id": user_id,
+        "favorite_books": ["draftkings", "fanduel", "betmgm"],
+        "default_bet_amount": 25,
+        "auto_best_odds": True,
+        "notifications": {
+            "smash_alerts": True,
+            "odds_movement": True,
+            "bet_results": True
+        },
+        "created_at": datetime.now().isoformat()
+    })
+
+    return prefs
+
+
+@router.post("/user/preferences/{user_id}")
+async def save_user_preferences(user_id: str, prefs: Dict[str, Any]):
+    """
+    Save user's sportsbook preferences.
+
+    Request Body:
+    {
+        "favorite_books": ["fanduel", "draftkings", "caesars"],
+        "default_bet_amount": 50,
+        "auto_best_odds": true,
+        "notifications": {
+            "smash_alerts": true,
+            "odds_movement": false,
+            "bet_results": true
+        }
+    }
+    """
+    # Validate favorite_books
+    valid_books = list(SPORTSBOOK_CONFIGS.keys())
+    favorite_books = prefs.get("favorite_books", [])
+    validated_books = [b for b in favorite_books if b in valid_books]
+
+    _user_preferences[user_id] = {
+        "user_id": user_id,
+        "favorite_books": validated_books if validated_books else ["draftkings", "fanduel", "betmgm"],
+        "default_bet_amount": prefs.get("default_bet_amount", 25),
+        "auto_best_odds": prefs.get("auto_best_odds", True),
+        "notifications": prefs.get("notifications", {
+            "smash_alerts": True,
+            "odds_movement": True,
+            "bet_results": True
+        }),
+        "updated_at": datetime.now().isoformat()
+    }
+
+    return {"status": "saved", "preferences": _user_preferences[user_id]}
+
+
+@router.post("/bets/track")
+async def track_bet(bet_data: Dict[str, Any]):
+    """
+    Track a bet that was placed through the click-to-bet flow.
+
+    Request Body:
+    {
+        "user_id": "user_123",
+        "sport": "NBA",
+        "game_id": "game_xyz",
+        "game": "Lakers vs Celtics",
+        "bet_type": "spread",
+        "selection": "Lakers",
+        "line": -3.5,
+        "odds": -110,
+        "sportsbook": "draftkings",
+        "stake": 25,
+        "ai_score": 8.5,
+        "confluence_level": "STRONG"
+    }
+
+    Returns bet_id for later grading.
+    """
+    required_fields = ["sport", "game_id", "bet_type", "selection", "odds", "sportsbook"]
+    for field in required_fields:
+        if field not in bet_data:
+            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+
+    bet_id = f"BET_{bet_data['sport']}_{bet_data['game_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    tracked_bet = {
+        "bet_id": bet_id,
+        "user_id": bet_data.get("user_id", "anonymous"),
+        "sport": bet_data["sport"].upper(),
+        "game_id": bet_data["game_id"],
+        "game": bet_data.get("game", "Unknown Game"),
+        "bet_type": bet_data["bet_type"],
+        "selection": bet_data["selection"],
+        "line": bet_data.get("line"),
+        "odds": bet_data["odds"],
+        "sportsbook": bet_data["sportsbook"],
+        "stake": bet_data.get("stake", 0),
+        "potential_payout": calculate_payout(bet_data.get("stake", 0), bet_data["odds"]),
+        "ai_score": bet_data.get("ai_score"),
+        "confluence_level": bet_data.get("confluence_level"),
+        "status": "PENDING",
+        "result": None,
+        "placed_at": datetime.now().isoformat()
+    }
+
+    _tracked_bets.append(tracked_bet)
+
+    return {
+        "status": "tracked",
+        "bet_id": bet_id,
+        "bet": tracked_bet,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/bets/grade/{bet_id}")
+async def grade_bet(bet_id: str, result_data: Dict[str, Any]):
+    """
+    Grade a tracked bet with actual result.
+
+    Request Body:
+    {
+        "result": "WIN",  // WIN, LOSS, PUSH
+        "actual_score": "Lakers 110, Celtics 105"  // Optional
+    }
+    """
+    result = result_data.get("result", "").upper()
+    if result not in ["WIN", "LOSS", "PUSH"]:
+        raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
+
+    for bet in _tracked_bets:
+        if bet["bet_id"] == bet_id:
+            bet["status"] = "GRADED"
+            bet["result"] = result
+            bet["actual_score"] = result_data.get("actual_score")
+            bet["graded_at"] = datetime.now().isoformat()
+
+            # Calculate actual profit/loss
+            if result == "WIN":
+                bet["profit"] = bet["potential_payout"] - bet["stake"]
+            elif result == "LOSS":
+                bet["profit"] = -bet["stake"]
+            else:  # PUSH
+                bet["profit"] = 0
+
+            return {"status": "graded", "bet": bet}
+
+    raise HTTPException(status_code=404, detail=f"Bet not found: {bet_id}")
+
+
+@router.get("/bets/history")
+async def get_bet_history(
+    user_id: Optional[str] = None,
+    sport: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50
+):
+    """
+    Get bet history with optional filters.
+
+    Supports filtering by:
+    - user_id: Filter by user
+    - sport: Filter by sport (NBA, NFL, etc.)
+    - status: Filter by status (PENDING, GRADED)
+    """
+    filtered_bets = _tracked_bets.copy()
+
+    if user_id:
+        filtered_bets = [b for b in filtered_bets if b.get("user_id") == user_id]
+    if sport:
+        filtered_bets = [b for b in filtered_bets if b.get("sport") == sport.upper()]
+    if status:
+        filtered_bets = [b for b in filtered_bets if b.get("status") == status.upper()]
+
+    # Sort by placed_at descending
+    filtered_bets.sort(key=lambda x: x.get("placed_at", ""), reverse=True)
+
+    # Calculate stats
+    graded_bets = [b for b in filtered_bets if b.get("status") == "GRADED"]
+    wins = len([b for b in graded_bets if b.get("result") == "WIN"])
+    losses = len([b for b in graded_bets if b.get("result") == "LOSS"])
+    pushes = len([b for b in graded_bets if b.get("result") == "PUSH"])
+    total_profit = sum(b.get("profit", 0) for b in graded_bets)
+
+    return {
+        "bets": filtered_bets[:limit],
+        "count": len(filtered_bets[:limit]),
+        "total_tracked": len(filtered_bets),
+        "stats": {
+            "graded": len(graded_bets),
+            "pending": len(filtered_bets) - len(graded_bets),
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "win_rate": round(wins / len(graded_bets) * 100, 1) if graded_bets else 0,
+            "total_profit": round(total_profit, 2),
+            "roi": round(total_profit / sum(b.get("stake", 1) for b in graded_bets) * 100, 1) if graded_bets else 0
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/quick-betslip/{sport}/{game_id}")
+async def quick_betslip(
+    sport: str,
+    game_id: str,
+    user_id: Optional[str] = None
+):
+    """
+    Generate a quick betslip for a game with user's preferred sportsbooks prioritized.
+
+    One-click flow for SMASH picks:
+    1. Gets current best odds across all books
+    2. Prioritizes user's favorite books
+    3. Returns ready-to-click betslip with deep links
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Get user preferences
+    user_prefs = _user_preferences.get(user_id, {}) if user_id else {}
+    favorite_books = user_prefs.get("favorite_books", ["draftkings", "fanduel", "betmgm"])
+    default_stake = user_prefs.get("default_bet_amount", 25)
+
+    # Get line shopping data
+    cache_key = f"line-shop:{sport_lower}:{game_id}"
+    cached = api_cache.get(cache_key)
+
+    if cached and "data" in cached:
+        game_data = next((g for g in cached["data"] if g.get("game_id") == game_id), None)
+    else:
+        game_data = None
+
+    if not game_data:
+        # Use fallback
+        game_data = {
+            "game_id": game_id,
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "markets": {}
+        }
+
+    # Build quick betslip with prioritized books
+    betslip_options = []
+
+    for book_key in favorite_books:
+        if book_key in SPORTSBOOK_CONFIGS:
+            config = SPORTSBOOK_CONFIGS[book_key]
+            betslip_options.append({
+                "book_key": book_key,
+                "book_name": config["name"],
+                "book_color": config["color"],
+                "book_logo": config.get("logo", ""),
+                "is_favorite": True,
+                "priority": favorite_books.index(book_key) + 1,
+                "deep_link": generate_enhanced_deep_link(book_key, sport_lower, game_id, game_data)
+            })
+
+    # Add remaining books
+    for book_key, config in SPORTSBOOK_CONFIGS.items():
+        if book_key not in favorite_books:
+            betslip_options.append({
+                "book_key": book_key,
+                "book_name": config["name"],
+                "book_color": config["color"],
+                "book_logo": config.get("logo", ""),
+                "is_favorite": False,
+                "priority": 99,
+                "deep_link": generate_enhanced_deep_link(book_key, sport_lower, game_id, game_data)
+            })
+
+    return {
+        "sport": sport.upper(),
+        "game_id": game_id,
+        "game": game_data,
+        "default_stake": default_stake,
+        "sportsbooks": betslip_options,
+        "user_preferences_applied": user_id is not None,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+def calculate_payout(stake: float, odds: int) -> float:
+    """Calculate potential payout from American odds."""
+    if stake <= 0:
+        return 0
+    if odds > 0:
+        return stake + (stake * odds / 100)
+    else:
+        return stake + (stake * 100 / abs(odds))
+
+
+def generate_enhanced_deep_link(book_key: str, sport: str, game_id: str, game_data: Dict) -> Dict[str, str]:
+    """Generate enhanced deep links with sport-specific URLs."""
+    config = SPORTSBOOK_CONFIGS.get(book_key)
+    if not config:
+        return {"web": "#", "note": "Unknown sportsbook"}
+
+    sport_paths = {
+        "nba": {
+            "draftkings": "basketball/nba",
+            "fanduel": "navigation/nba",
+            "betmgm": "sports/basketball/104/nba",
+            "caesars": "us/nba",
+            "pointsbetus": "sports/basketball/nba",
+            "williamhill_us": "sports/basketball/nba",
+            "barstool": "sports/basketball/nba",
+            "betrivers": "sports/basketball/nba"
+        },
+        "nfl": {
+            "draftkings": "football/nfl",
+            "fanduel": "navigation/nfl",
+            "betmgm": "sports/football/100/nfl",
+            "caesars": "us/nfl",
+            "pointsbetus": "sports/football/nfl",
+            "williamhill_us": "sports/football/nfl",
+            "barstool": "sports/football/nfl",
+            "betrivers": "sports/football/nfl"
+        },
+        "mlb": {
+            "draftkings": "baseball/mlb",
+            "fanduel": "navigation/mlb",
+            "betmgm": "sports/baseball/103/mlb",
+            "caesars": "us/mlb",
+            "pointsbetus": "sports/baseball/mlb",
+            "williamhill_us": "sports/baseball/mlb",
+            "barstool": "sports/baseball/mlb",
+            "betrivers": "sports/baseball/mlb"
+        },
+        "nhl": {
+            "draftkings": "hockey/nhl",
+            "fanduel": "navigation/nhl",
+            "betmgm": "sports/hockey/102/nhl",
+            "caesars": "us/nhl",
+            "pointsbetus": "sports/hockey/nhl",
+            "williamhill_us": "sports/hockey/nhl",
+            "barstool": "sports/hockey/nhl",
+            "betrivers": "sports/hockey/nhl"
+        }
+    }
+
+    sport_path = sport_paths.get(sport, {}).get(book_key, sport)
+
+    home_team = game_data.get("home_team", "").replace(" ", "-").lower()
+    away_team = game_data.get("away_team", "").replace(" ", "-").lower()
+
+    # Build URL with game context when possible
+    base_url = config["web_base"]
+    full_url = f"{base_url}/{sport_path}"
+
+    return {
+        "web": full_url,
+        "app_scheme": config.get("app_scheme", ""),
+        "sport_path": sport_path,
+        "note": f"Opens {config['name']} {sport.upper()} page"
+    }
 
 
 # ============================================================================
