@@ -679,9 +679,15 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "version": "14.3",
-        "codename": "JARVIS_SAVANT",
-        "features": ["Phase 1: Confluence Core", "Phase 2: Vedic/Astro", "Phase 3: Learning Loop"],
+        "version": "14.4",
+        "codename": "JARVIS_SAVANT_v10.1",
+        "features": [
+            "Phase 1: Confluence Core",
+            "Phase 2: Vedic/Astro",
+            "Phase 3: Learning Loop",
+            "v10.1 Dual-Score Confluence",
+            "v10.1 Bet Tier System"
+        ],
         "timestamp": datetime.now().isoformat()
     }
 
@@ -1067,21 +1073,43 @@ async def get_best_bets(sport: str):
     # Get learned weights for esoteric scoring
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
-    # Helper function to calculate scores with full esoteric integration
+    # Helper function to calculate scores with v10.1 dual-score confluence
     def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50):
+        # =====================================================================
+        # v10.1 DUAL-SCORE CONFLUENCE SYSTEM
+        # =====================================================================
+        # RESEARCH SCORE (0-10): 8 AI Models (0-8) + 8 Pillars (0-8) scaled to 0-10
+        # ESOTERIC SCORE (0-10): JARVIS (0-4) + Gematria + Public Fade + Mid-Spread + Esoteric Edge
+        # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
+        # =====================================================================
+
+        # --- RESEARCH SCORE CALCULATION ---
         ai_score = base_ai
         if sharp_signal.get("signal_strength") == "STRONG":
             ai_score += 2.0
         elif sharp_signal.get("signal_strength") == "MODERATE":
             ai_score += 1.0
+        ai_score = min(8.0, ai_score)
 
         pillar_score = 3.0 if sharp_signal.get("line_variance", 0) > 1.0 else 2.0
+        pillar_score = min(8.0, pillar_score)
 
-        # JARVIS triggers (using full engine if available)
+        # Research score: (ai + pillar) / 16 * 10 = normalized to 0-10
+        research_score = (ai_score + pillar_score) / 16 * 10
+
+        # --- ESOTERIC SCORE CALCULATION ---
         jarvis_score = 0.0
         jarvis_triggers_hit = []
-        confluence_level = "WEAK"
-        astro_boost = 0.0
+        immortal_detected = False
+        jarvis_triggered = False
+        gematria_contribution = 0.0
+        public_fade_contribution = 0.0
+        mid_spread_contribution = 0.0
+        astro_contribution = 0.0
+        esoteric_edge = 0.0
+        fib_contribution = 0.0
+        vortex_contribution = 0.0
+        trap_deduction = 0.0
 
         if jarvis:
             # Full JARVIS trigger check
@@ -1095,9 +1123,13 @@ async def get_best_bets(sport: str):
                     "match_type": trig.get("match_type", "DIRECT"),
                     "boost": round(jarvis_boost, 2)
                 })
+                # Check for IMMORTAL 2178
+                if trig["number"] == 2178:
+                    immortal_detected = True
             jarvis_score = min(4.0, jarvis_score)
+            jarvis_triggered = len(jarvis_triggers_hit) > 0
 
-            # Full gematria signal
+            # Full gematria and signals
             if player_name and home_team:
                 gematria = jarvis.calculate_gematria_signal(player_name, home_team, away_team)
                 public_fade = jarvis.calculate_public_fade_signal(public_pct)
@@ -1107,19 +1139,30 @@ async def get_best_bets(sport: str):
                 # Get astro score
                 astro = vedic.calculate_astro_score() if vedic else {"overall_score": 50}
 
-                # Calculate confluence
-                confluence = jarvis.calculate_confluence(
-                    gematria_signal=gematria,
-                    public_fade=public_fade,
-                    mid_spread=mid_spread,
-                    trap_signal=trap,
-                    astro_score=astro,
-                    sharp_signal=sharp_signal
-                )
-                confluence_level = confluence.get("level", "WEAK")
+                # Gematria contribution (52% weight per v10.1)
+                if gematria.get("triggered"):
+                    gematria_contribution = gematria.get("influence", 0) * 0.52 * 2
 
-                # Add astro boost
-                astro_boost = (astro["overall_score"] - 50) / 50 * esoteric_weights.get("astro", 0.13) * 2
+                # Public fade contribution (graduated per v10.1)
+                public_fade_contribution = public_fade.get("influence", 0)
+
+                # Mid-spread contribution
+                mid_spread_contribution = mid_spread.get("modifier", 0)
+
+                # Trap deduction
+                trap_deduction = trap.get("modifier", 0)
+
+                # Astro contribution
+                astro_contribution = (astro["overall_score"] - 50) / 50 * esoteric_weights.get("astro", 0.13) * 2
+
+                # Fibonacci alignment (v10.1 Fix #7)
+                fib_alignment = jarvis.calculate_fibonacci_alignment(float(spread) if spread else 0)
+                fib_contribution = fib_alignment.get("modifier", 0)
+
+                # Vortex pattern check (v10.1 Fix #8)
+                vortex_value = int(abs(spread * 10)) if spread else 0
+                vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
+                vortex_contribution = vortex_pattern.get("modifier", 0)
         else:
             # Fallback to simple trigger check
             for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
@@ -1131,48 +1174,105 @@ async def get_best_bets(sport: str):
                         "name": trigger_data["name"],
                         "boost": round(jarvis_boost, 2)
                     })
+                    if trigger_num == 2178:
+                        immortal_detected = True
             jarvis_score = min(4.0, jarvis_score)
+            jarvis_triggered = len(jarvis_triggers_hit) > 0
 
-        # Esoteric boost (enhanced with learned weights)
-        esoteric_boost = 0.0
+        # Esoteric edge from daily energy (0-2)
         if daily_energy.get("overall_score", 50) >= 85:
-            esoteric_boost = 2.0
+            esoteric_edge = 2.0
         elif daily_energy.get("overall_score", 50) >= 70:
-            esoteric_boost = 1.0
+            esoteric_edge = 1.0
 
-        # Add astro boost
-        esoteric_boost += max(0, astro_boost)
+        # Esoteric score: JARVIS (0-4) + contributions (scaled to fit 0-10)
+        # Base: JARVIS 0-4, Edge 0-2, Gematria 0-1, Astro 0-0.5, Mid-spread 0-0.2, etc
+        # Max theoretical: 4 + 2 + 1 + 0.5 + 0.2 + fib + vortex ~ 8-9
+        esoteric_raw = (
+            jarvis_score +
+            esoteric_edge +
+            gematria_contribution +
+            max(0, astro_contribution) +
+            mid_spread_contribution +
+            fib_contribution +
+            vortex_contribution +
+            public_fade_contribution +  # Usually negative
+            trap_deduction
+        )
+        esoteric_score = max(0, min(10, esoteric_raw * 1.25))  # Scale to 0-10
 
-        # Confluence multiplier
-        confluence_multipliers = {
-            "GODMODE": 1.5, "LEGENDARY": 1.3, "STRONG": 1.2,
-            "MODERATE": 1.1, "WEAK": 1.0, "AVOID": 0.8
-        }
-        confluence_mult = confluence_multipliers.get(confluence_level, 1.0)
-
-        total_score = (ai_score + pillar_score + jarvis_score + esoteric_boost) * confluence_mult
-
-        if total_score >= 18:
-            confidence = "SMASH"
-        elif total_score >= 14:
-            confidence = "HIGH"
-        elif total_score >= 10:
-            confidence = "MEDIUM"
+        # --- v10.1 DUAL-SCORE CONFLUENCE ---
+        if jarvis:
+            confluence = jarvis.calculate_confluence(
+                research_score=research_score,
+                esoteric_score=esoteric_score,
+                immortal_detected=immortal_detected,
+                jarvis_triggered=jarvis_triggered
+            )
         else:
-            confidence = "LOW"
+            # Fallback confluence calculation
+            alignment = 1 - abs(research_score - esoteric_score) / 10
+            alignment_pct = alignment * 100
+            both_high = research_score >= 7.5 and esoteric_score >= 7.5
+            if immortal_detected and both_high and alignment_pct >= 80:
+                confluence = {"level": "IMMORTAL", "boost": 10, "alignment_pct": alignment_pct}
+            elif jarvis_triggered and both_high and alignment_pct >= 80:
+                confluence = {"level": "JARVIS_PERFECT", "boost": 7, "alignment_pct": alignment_pct}
+            elif both_high and alignment_pct >= 80:
+                confluence = {"level": "PERFECT", "boost": 5, "alignment_pct": alignment_pct}
+            elif alignment_pct >= 70:
+                confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
+            elif alignment_pct >= 60:
+                confluence = {"level": "MODERATE", "boost": 1, "alignment_pct": alignment_pct}
+            else:
+                confluence = {"level": "DIVERGENT", "boost": 0, "alignment_pct": alignment_pct}
+
+        confluence_level = confluence.get("level", "DIVERGENT")
+        confluence_boost = confluence.get("boost", 0)
+
+        # --- v10.1 FINAL SCORE FORMULA ---
+        # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
+        final_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence_boost
+
+        # --- v10.1 BET TIER DETERMINATION ---
+        if jarvis:
+            bet_tier = jarvis.determine_bet_tier(final_score, confluence)
+        else:
+            if final_score >= 9.0:
+                bet_tier = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
+            elif final_score >= 7.5:
+                bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
+            elif final_score >= 6.0:
+                bet_tier = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
+            else:
+                bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
+
+        # Map to confidence levels for backward compatibility
+        confidence_map = {
+            "GOLD_STAR": "SMASH",
+            "EDGE_LEAN": "HIGH",
+            "MONITOR": "MEDIUM",
+            "PASS": "LOW"
+        }
+        confidence = confidence_map.get(bet_tier.get("tier", "PASS"), "LOW")
 
         return {
-            "total_score": round(total_score, 2),
+            "total_score": round(final_score, 2),
             "confidence": confidence,
             "confluence_level": confluence_level,
+            "bet_tier": bet_tier,
             "scoring_breakdown": {
+                "research_score": round(research_score, 2),
+                "esoteric_score": round(esoteric_score, 2),
                 "ai_models": round(ai_score, 2),
                 "pillars": round(pillar_score, 2),
                 "jarvis": round(jarvis_score, 2),
-                "esoteric": round(esoteric_boost, 2),
-                "confluence_multiplier": confluence_mult
+                "esoteric_edge": round(esoteric_edge, 2),
+                "confluence_boost": confluence_boost,
+                "alignment_pct": confluence.get("alignment_pct", 0)
             },
-            "jarvis_triggers": jarvis_triggers_hit
+            "jarvis_triggers": jarvis_triggers_hit,
+            "immortal_detected": immortal_detected
         }
 
     # ============================================
@@ -2461,18 +2561,21 @@ async def get_confluence_analysis(
     opponent: str = "Opponent",
     spread: float = 0,
     total: float = 220,
-    public_pct: float = 50
+    public_pct: float = 50,
+    research_score: float = 7.0  # v10.1: Allow passing external research score
 ):
     """
-    Calculate confluence analysis for a pick.
+    Calculate v10.1 dual-score confluence analysis for a pick.
 
-    THE HEART - 6 levels of signal agreement:
-    - GODMODE (6/6): All signals agree
-    - LEGENDARY (5/6): Strong multi-factor alignment
-    - STRONG (4/6): Solid confluence
-    - MODERATE (3/6): Actionable
-    - WEAK (2/6): Monitor only
-    - AVOID (0-1/6): Signals conflict
+    THE HEART - v10.1 Alignment System:
+    - IMMORTAL (+10): 2178 + both ≥7.5 + alignment ≥80%
+    - JARVIS_PERFECT (+7): Trigger + both ≥7.5 + alignment ≥80%
+    - PERFECT (+5): both ≥7.5 + alignment ≥80%
+    - STRONG (+3): Both high OR aligned ≥70%
+    - MODERATE (+1): Aligned ≥60%
+    - DIVERGENT (+0): Models disagree
+
+    Alignment = 1 - |research - esoteric| / 10
     """
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
@@ -2480,9 +2583,12 @@ async def get_confluence_analysis(
 
     jarvis = get_jarvis_savant()
     vedic = get_vedic_astro()
+    learning = get_esoteric_loop()
 
     if not jarvis or not vedic:
         raise HTTPException(status_code=503, detail="Esoteric engines not available")
+
+    esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
     # Calculate all signals
     gematria = jarvis.calculate_gematria_signal(player, team, opponent)
@@ -2491,34 +2597,81 @@ async def get_confluence_analysis(
     trap = jarvis.calculate_large_spread_trap(spread, total)
     astro = vedic.calculate_astro_score()
 
-    # Calculate confluence
-    confluence = jarvis.calculate_confluence(
-        gematria_signal=gematria,
-        public_fade=public_fade,
-        mid_spread=mid_spread,
-        trap_signal=trap,
-        astro_score=astro,
-        sharp_signal=None
+    # v10.1: Fibonacci alignment and Vortex pattern
+    fib_alignment = jarvis.calculate_fibonacci_alignment(float(spread) if spread else 0)
+    vortex_value = int(abs(spread * 10)) if spread else 0
+    vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
+
+    # Check for JARVIS triggers in player/team names
+    game_str = f"{player}{team}{opponent}"
+    trigger_result = jarvis.check_jarvis_trigger(game_str)
+    jarvis_triggered = len(trigger_result.get("triggers_hit", [])) > 0
+    immortal_detected = any(t["number"] == 2178 for t in trigger_result.get("triggers_hit", []))
+
+    # Calculate JARVIS score from triggers
+    jarvis_score = 0.0
+    for trig in trigger_result.get("triggers_hit", []):
+        jarvis_score += trig["boost"] / 5
+    jarvis_score = min(4.0, jarvis_score)
+
+    # v10.1: Calculate esoteric score
+    gematria_contribution = gematria.get("influence", 0) * 0.52 * 2 if gematria.get("triggered") else 0
+    astro_contribution = (astro["overall_score"] - 50) / 50 * esoteric_weights.get("astro", 0.13) * 2
+
+    esoteric_raw = (
+        jarvis_score +
+        gematria_contribution +
+        max(0, astro_contribution) +
+        mid_spread.get("modifier", 0) +
+        fib_alignment.get("modifier", 0) +
+        vortex_pattern.get("modifier", 0) +
+        public_fade.get("influence", 0) +
+        trap.get("modifier", 0)
     )
+    esoteric_score = max(0, min(10, esoteric_raw * 1.25))
+
+    # v10.1: Calculate dual-score confluence
+    confluence = jarvis.calculate_confluence(
+        research_score=research_score,
+        esoteric_score=esoteric_score,
+        immortal_detected=immortal_detected,
+        jarvis_triggered=jarvis_triggered
+    )
+
+    # v10.1: Calculate final score and bet tier
+    final_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence.get("boost", 0)
+    bet_tier = jarvis.determine_bet_tier(final_score, confluence)
 
     return {
         "sport": sport.upper(),
+        "version": "v10.1",
         "input": {
             "player": player,
             "team": team,
             "opponent": opponent,
             "spread": spread,
             "total": total,
-            "public_pct": public_pct
+            "public_pct": public_pct,
+            "research_score": research_score
         },
         "signals": {
             "gematria": gematria,
             "public_fade": public_fade,
             "mid_spread": mid_spread,
             "trap": trap,
-            "astro": astro
+            "astro": astro,
+            "fibonacci": fib_alignment,
+            "vortex": vortex_pattern
+        },
+        "jarvis_triggers": trigger_result.get("triggers_hit", []),
+        "scoring": {
+            "research_score": round(research_score, 2),
+            "esoteric_score": round(esoteric_score, 2),
+            "final_score": round(final_score, 2),
+            "formula": "FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost"
         },
         "confluence": confluence,
+        "bet_tier": bet_tier,
         "timestamp": datetime.now().isoformat()
     }
 
