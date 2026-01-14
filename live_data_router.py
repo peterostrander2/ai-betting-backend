@@ -3056,6 +3056,8 @@ async def get_esoteric_analysis(
 # In production, this should use Redis or a database
 _user_preferences: Dict[str, Dict[str, Any]] = {}
 _tracked_bets: List[Dict[str, Any]] = []
+_parlay_slips: Dict[str, List[Dict[str, Any]]] = {}  # user_id -> list of parlay legs
+_placed_parlays: List[Dict[str, Any]] = []  # Tracked parlays
 
 
 @router.get("/user/preferences/{user_id}")
@@ -3349,6 +3351,399 @@ async def quick_betslip(
         "timestamp": datetime.now().isoformat()
     }
 
+
+# ============================================================================
+# PARLAY BUILDER
+# ============================================================================
+
+def american_to_decimal(american_odds: int) -> float:
+    """Convert American odds to decimal odds."""
+    if american_odds > 0:
+        return 1 + (american_odds / 100)
+    else:
+        return 1 + (100 / abs(american_odds))
+
+
+def decimal_to_american(decimal_odds: float) -> int:
+    """Convert decimal odds to American odds."""
+    if decimal_odds >= 2.0:
+        return int(round((decimal_odds - 1) * 100))
+    else:
+        return int(round(-100 / (decimal_odds - 1)))
+
+
+def calculate_parlay_odds(legs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Calculate combined parlay odds from individual legs.
+    Returns decimal odds, American odds, and implied probability.
+    """
+    if not legs:
+        return {"decimal": 1.0, "american": -10000, "implied_probability": 100.0}
+
+    combined_decimal = 1.0
+    for leg in legs:
+        leg_odds = leg.get("odds", -110)
+        combined_decimal *= american_to_decimal(leg_odds)
+
+    combined_american = decimal_to_american(combined_decimal)
+    implied_prob = (1 / combined_decimal) * 100
+
+    return {
+        "decimal": round(combined_decimal, 3),
+        "american": combined_american,
+        "implied_probability": round(implied_prob, 2)
+    }
+
+
+@router.get("/parlay/{user_id}")
+async def get_parlay_slip(user_id: str):
+    """
+    Get current parlay slip for a user.
+
+    Returns all legs in the parlay with calculated combined odds.
+    """
+    legs = _parlay_slips.get(user_id, [])
+    combined = calculate_parlay_odds(legs)
+
+    return {
+        "user_id": user_id,
+        "legs": legs,
+        "leg_count": len(legs),
+        "combined_odds": combined,
+        "max_legs": 12,
+        "can_add_more": len(legs) < 12,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/parlay/add")
+async def add_parlay_leg(leg_data: Dict[str, Any]):
+    """
+    Add a leg to a user's parlay slip.
+
+    Request Body:
+    {
+        "user_id": "user_123",
+        "sport": "NBA",
+        "game_id": "game_xyz",
+        "game": "Lakers vs Celtics",
+        "bet_type": "spread",
+        "selection": "Lakers",
+        "line": -3.5,
+        "odds": -110,
+        "ai_score": 8.5
+    }
+
+    Returns updated parlay slip with combined odds.
+    """
+    required_fields = ["user_id", "sport", "game_id", "bet_type", "selection", "odds"]
+    for field in required_fields:
+        if field not in leg_data:
+            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+
+    user_id = leg_data["user_id"]
+
+    # Initialize slip if needed
+    if user_id not in _parlay_slips:
+        _parlay_slips[user_id] = []
+
+    # Check max legs
+    if len(_parlay_slips[user_id]) >= 12:
+        raise HTTPException(status_code=400, detail="Maximum 12 legs per parlay")
+
+    # Check for duplicate game/bet_type
+    for existing in _parlay_slips[user_id]:
+        if existing["game_id"] == leg_data["game_id"] and existing["bet_type"] == leg_data["bet_type"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Already have a {leg_data['bet_type']} bet for this game"
+            )
+
+    leg_id = f"LEG_{user_id}_{len(_parlay_slips[user_id])}_{datetime.now().strftime('%H%M%S')}"
+
+    new_leg = {
+        "leg_id": leg_id,
+        "sport": leg_data["sport"].upper(),
+        "game_id": leg_data["game_id"],
+        "game": leg_data.get("game", "Unknown Game"),
+        "bet_type": leg_data["bet_type"],
+        "selection": leg_data["selection"],
+        "line": leg_data.get("line"),
+        "odds": leg_data["odds"],
+        "ai_score": leg_data.get("ai_score"),
+        "added_at": datetime.now().isoformat()
+    }
+
+    _parlay_slips[user_id].append(new_leg)
+    combined = calculate_parlay_odds(_parlay_slips[user_id])
+
+    return {
+        "status": "added",
+        "leg": new_leg,
+        "parlay": {
+            "legs": _parlay_slips[user_id],
+            "leg_count": len(_parlay_slips[user_id]),
+            "combined_odds": combined
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.delete("/parlay/remove/{user_id}/{leg_id}")
+async def remove_parlay_leg(user_id: str, leg_id: str):
+    """
+    Remove a specific leg from a user's parlay slip.
+    """
+    if user_id not in _parlay_slips:
+        raise HTTPException(status_code=404, detail="No parlay slip found for user")
+
+    original_len = len(_parlay_slips[user_id])
+    _parlay_slips[user_id] = [leg for leg in _parlay_slips[user_id] if leg["leg_id"] != leg_id]
+
+    if len(_parlay_slips[user_id]) == original_len:
+        raise HTTPException(status_code=404, detail=f"Leg {leg_id} not found")
+
+    combined = calculate_parlay_odds(_parlay_slips[user_id])
+
+    return {
+        "status": "removed",
+        "removed_leg_id": leg_id,
+        "parlay": {
+            "legs": _parlay_slips[user_id],
+            "leg_count": len(_parlay_slips[user_id]),
+            "combined_odds": combined
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.delete("/parlay/clear/{user_id}")
+async def clear_parlay_slip(user_id: str):
+    """
+    Clear all legs from a user's parlay slip.
+    """
+    removed_count = len(_parlay_slips.get(user_id, []))
+    _parlay_slips[user_id] = []
+
+    return {
+        "status": "cleared",
+        "removed_count": removed_count,
+        "parlay": {
+            "legs": [],
+            "leg_count": 0,
+            "combined_odds": {"decimal": 1.0, "american": -10000, "implied_probability": 100.0}
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/parlay/place")
+async def place_parlay(parlay_data: Dict[str, Any]):
+    """
+    Track a parlay bet that was placed.
+
+    Request Body:
+    {
+        "user_id": "user_123",
+        "sportsbook": "draftkings",
+        "stake": 25,
+        "use_current_slip": true  // OR provide "legs" array
+    }
+
+    If use_current_slip is true, uses the user's current parlay slip.
+    Otherwise, provide a "legs" array directly.
+    """
+    user_id = parlay_data.get("user_id", "anonymous")
+    sportsbook = parlay_data.get("sportsbook")
+    stake = parlay_data.get("stake", 0)
+
+    if not sportsbook:
+        raise HTTPException(status_code=400, detail="sportsbook is required")
+
+    # Get legs from current slip or from request
+    if parlay_data.get("use_current_slip", True):
+        legs = _parlay_slips.get(user_id, [])
+    else:
+        legs = parlay_data.get("legs", [])
+
+    if len(legs) < 2:
+        raise HTTPException(status_code=400, detail="Parlay requires at least 2 legs")
+
+    combined = calculate_parlay_odds(legs)
+
+    # Calculate potential payout
+    if stake > 0:
+        potential_payout = round(stake * combined["decimal"], 2)
+    else:
+        potential_payout = 0
+
+    parlay_id = f"PARLAY_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    tracked_parlay = {
+        "parlay_id": parlay_id,
+        "user_id": user_id,
+        "legs": legs,
+        "leg_count": len(legs),
+        "combined_odds": combined,
+        "sportsbook": sportsbook,
+        "stake": stake,
+        "potential_payout": potential_payout,
+        "status": "PENDING",
+        "result": None,
+        "placed_at": datetime.now().isoformat()
+    }
+
+    _placed_parlays.append(tracked_parlay)
+
+    # Clear the slip after placing
+    if parlay_data.get("use_current_slip", True):
+        _parlay_slips[user_id] = []
+
+    return {
+        "status": "placed",
+        "parlay": tracked_parlay,
+        "message": f"Parlay with {len(legs)} legs tracked. Open {sportsbook} to place bet.",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/parlay/grade/{parlay_id}")
+async def grade_parlay(parlay_id: str, grade_data: Dict[str, Any]):
+    """
+    Grade a placed parlay with WIN, LOSS, or PUSH.
+
+    Request Body:
+    {
+        "result": "WIN"  // or "LOSS" or "PUSH"
+    }
+    """
+    result = grade_data.get("result", "").upper()
+    if result not in ["WIN", "LOSS", "PUSH"]:
+        raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
+
+    for parlay in _placed_parlays:
+        if parlay["parlay_id"] == parlay_id:
+            parlay["status"] = "GRADED"
+            parlay["result"] = result
+            parlay["graded_at"] = datetime.now().isoformat()
+
+            # Calculate profit/loss
+            if result == "WIN":
+                parlay["profit"] = parlay["potential_payout"] - parlay["stake"]
+            elif result == "LOSS":
+                parlay["profit"] = -parlay["stake"]
+            else:  # PUSH
+                parlay["profit"] = 0
+
+            return {
+                "status": "graded",
+                "parlay": parlay,
+                "timestamp": datetime.now().isoformat()
+            }
+
+    raise HTTPException(status_code=404, detail=f"Parlay {parlay_id} not found")
+
+
+@router.get("/parlay/history")
+async def get_parlay_history(
+    user_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50
+):
+    """
+    Get parlay history with stats.
+
+    Supports filtering by:
+    - user_id: Filter by user
+    - status: Filter by status (PENDING, GRADED)
+    """
+    filtered = _placed_parlays.copy()
+
+    if user_id:
+        filtered = [p for p in filtered if p.get("user_id") == user_id]
+    if status:
+        filtered = [p for p in filtered if p.get("status") == status.upper()]
+
+    # Sort by placed_at descending
+    filtered.sort(key=lambda x: x.get("placed_at", ""), reverse=True)
+
+    # Calculate stats
+    graded = [p for p in filtered if p.get("status") == "GRADED"]
+    wins = len([p for p in graded if p.get("result") == "WIN"])
+    losses = len([p for p in graded if p.get("result") == "LOSS"])
+    pushes = len([p for p in graded if p.get("result") == "PUSH"])
+    total_profit = sum(p.get("profit", 0) for p in graded)
+    total_staked = sum(p.get("stake", 0) for p in graded)
+
+    return {
+        "parlays": filtered[:limit],
+        "count": len(filtered[:limit]),
+        "total_tracked": len(filtered),
+        "stats": {
+            "graded": len(graded),
+            "pending": len(filtered) - len(graded),
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "win_rate": round(wins / len(graded) * 100, 1) if graded else 0,
+            "total_profit": round(total_profit, 2),
+            "roi": round(total_profit / total_staked * 100, 1) if total_staked > 0 else 0
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/parlay/calculate")
+async def calculate_parlay(calc_data: Dict[str, Any]):
+    """
+    Calculate parlay odds and payout without saving.
+
+    Request Body:
+    {
+        "legs": [
+            {"odds": -110},
+            {"odds": +150},
+            {"odds": -105}
+        ],
+        "stake": 25
+    }
+
+    Useful for preview/what-if calculations.
+    """
+    legs = calc_data.get("legs", [])
+    stake = calc_data.get("stake", 0)
+
+    if not legs:
+        raise HTTPException(status_code=400, detail="At least one leg required")
+
+    combined = calculate_parlay_odds(legs)
+
+    if stake > 0:
+        potential_payout = round(stake * combined["decimal"], 2)
+        profit = round(potential_payout - stake, 2)
+    else:
+        potential_payout = 0
+        profit = 0
+
+    return {
+        "leg_count": len(legs),
+        "combined_odds": combined,
+        "stake": stake,
+        "potential_payout": potential_payout,
+        "profit_if_win": profit,
+        "example_payouts": {
+            "$10": round(10 * combined["decimal"], 2),
+            "$25": round(25 * combined["decimal"], 2),
+            "$50": round(50 * combined["decimal"], 2),
+            "$100": round(100 * combined["decimal"], 2)
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
 
 def calculate_payout(stake: float, odds: int) -> float:
     """Calculate potential payout from American odds."""

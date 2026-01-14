@@ -218,6 +218,18 @@ GET  /live/bets/history                   # Bet history with stats
 ```
 See `FRONTEND_HANDOFF_CLICK_TO_BET.md` for frontend integration guide.
 
+### Parlay Builder Endpoints
+```
+GET    /live/parlay/{user_id}                   # Get current parlay slip
+POST   /live/parlay/add                         # Add leg to parlay
+DELETE /live/parlay/remove/{user_id}/{leg_id}   # Remove leg
+DELETE /live/parlay/clear/{user_id}             # Clear parlay slip
+POST   /live/parlay/place                       # Track placed parlay
+POST   /live/parlay/grade/{parlay_id}           # Grade parlay (WIN/LOSS/PUSH)
+GET    /live/parlay/history                     # Parlay history with stats
+POST   /live/parlay/calculate                   # Preview odds calculation
+```
+
 ### Management Endpoints
 ```
 GET /live/cache/stats           # Cache statistics

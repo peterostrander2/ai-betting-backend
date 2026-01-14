@@ -531,6 +531,95 @@ The `bookie-member-app` frontend has these components ready:
 
 ---
 
+## Parlay Builder (DEPLOYED)
+
+### New Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/live/parlay/{user_id}` | GET | Get current parlay slip |
+| `/live/parlay/add` | POST | Add leg to parlay |
+| `/live/parlay/remove/{user_id}/{leg_id}` | DELETE | Remove leg from parlay |
+| `/live/parlay/clear/{user_id}` | DELETE | Clear all legs |
+| `/live/parlay/place` | POST | Track placed parlay |
+| `/live/parlay/grade/{parlay_id}` | POST | Grade parlay WIN/LOSS/PUSH |
+| `/live/parlay/history` | GET | Get parlay history with stats |
+| `/live/parlay/calculate` | POST | Calculate odds without saving |
+
+### Parlay Leg Schema
+
+```json
+{
+  "leg_id": "LEG_user123_0_153045",
+  "sport": "NBA",
+  "game_id": "game_xyz",
+  "game": "Lakers vs Celtics",
+  "bet_type": "spread",
+  "selection": "Lakers",
+  "line": -3.5,
+  "odds": -110,
+  "ai_score": 8.5,
+  "added_at": "2026-01-14T15:30:45Z"
+}
+```
+
+### Combined Odds Calculation
+
+```json
+{
+  "decimal": 5.958,
+  "american": 496,
+  "implied_probability": 16.78
+}
+```
+
+### Example: Build a 3-Leg Parlay
+
+```bash
+# Add first leg
+curl -X POST https://web-production-7b2a.up.railway.app/live/parlay/add \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "user123", "sport": "NBA", "game_id": "game1", "bet_type": "spread", "selection": "Lakers", "odds": -110}'
+
+# Add second leg
+curl -X POST https://web-production-7b2a.up.railway.app/live/parlay/add \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "user123", "sport": "NFL", "game_id": "game2", "bet_type": "h2h", "selection": "Chiefs", "odds": +150}'
+
+# Add third leg
+curl -X POST https://web-production-7b2a.up.railway.app/live/parlay/add \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "user123", "sport": "NHL", "game_id": "game3", "bet_type": "h2h", "selection": "Bruins", "odds": -105}'
+
+# Get current slip with combined odds
+curl https://web-production-7b2a.up.railway.app/live/parlay/user123
+
+# Place the parlay
+curl -X POST https://web-production-7b2a.up.railway.app/live/parlay/place \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "user123", "sportsbook": "draftkings", "stake": 25}'
+```
+
+### Quick Calculate (Preview)
+
+```bash
+curl -X POST https://web-production-7b2a.up.railway.app/live/parlay/calculate \
+  -H "Content-Type: application/json" \
+  -d '{"legs": [{"odds": -110}, {"odds": +150}, {"odds": -105}], "stake": 25}'
+
+# Response:
+{
+  "leg_count": 3,
+  "combined_odds": {"decimal": 5.958, "american": 496, "implied_probability": 16.78},
+  "stake": 25,
+  "potential_payout": 148.95,
+  "profit_if_win": 123.95,
+  "example_payouts": {"$10": 59.58, "$25": 148.95, "$50": 297.9, "$100": 595.8}
+}
+```
+
+---
+
 ## Session Continuity Notes (Updated)
 
 ### User Preferences:
@@ -538,14 +627,14 @@ The `bookie-member-app` frontend has these components ready:
 
 ### If Starting a New Session:
 1. **Current Branch:** `main` (all features merged)
-2. **Status:** PRODUCTION READY - All v10.1 features + Click-to-Bet + True Deep Links deployed
-3. **Router Version:** v14.6
+2. **Status:** PRODUCTION READY - All v10.1 features + Click-to-Bet + Parlay Builder deployed
+3. **Router Version:** v14.7
 
 ### Key Files:
 | File | Version | Description |
 |------|---------|-------------|
 | `jarvis_savant_engine.py` | v7.4 | Complete scoring engine with v10.1 spec |
-| `live_data_router.py` | v14.5 | 21 endpoints + click-to-bet v2.0 |
+| `live_data_router.py` | v14.7 | 29 endpoints + click-to-bet + parlay builder |
 | `advanced_ml_backend.py` | - | 8 AI Models + 8 Pillars |
 | `SCORING_PHASES.md` | - | This documentation file |
 | `FRONTEND_HANDOFF_CLICK_TO_BET.md` | - | Frontend integration guide |
@@ -565,10 +654,18 @@ The `bookie-member-app` frontend has these components ready:
   - Bet history with stats (win rate, ROI)
   - Quick betslip with user prefs
   - Enhanced sport-specific deep links
+- **Parlay Builder:**
+  - Add/remove legs dynamically
+  - Real-time combined odds calculation
+  - American to decimal conversion
+  - Max 12 legs per parlay
+  - Parlay tracking and grading
+  - Parlay history with stats
 
 ---
 
 **Document Status: COMPLETE**
 **All Phases: IMPLEMENTED AND TESTED**
 **Click-to-Bet: DEPLOYED**
+**Parlay Builder: DEPLOYED**
 **Ready for: PRODUCTION USE**
