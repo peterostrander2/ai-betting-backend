@@ -1023,6 +1023,7 @@ async def get_props(sport: str):
 async def get_best_bets(sport: str):
     """
     Get best bets using full 8 AI Models + 8 Pillars + JARVIS + Esoteric scoring.
+    Returns TWO categories: props (player props) and game_picks (spreads, totals, ML).
 
     Scoring Formula:
     TOTAL = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
@@ -1030,10 +1031,9 @@ async def get_best_bets(sport: str):
     Response Schema:
     {
         "sport": "NBA",
-        "source": "master_prediction_system",
-        "count": N,
+        "props": [...],       // Player props
+        "game_picks": [...],  // Spreads, totals, moneylines
         "daily_energy": {...},
-        "data": [...],
         "timestamp": "ISO timestamp"
     }
     """
@@ -1041,7 +1041,7 @@ async def get_best_bets(sport: str):
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
-    # Check cache first (shorter TTL since this includes daily energy)
+    # Check cache first
     cache_key = f"best-bets:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
@@ -1049,250 +1049,230 @@ async def get_best_bets(sport: str):
 
     # Get MasterPredictionSystem
     mps = get_master_prediction_system()
-
-    # Fetch real data from APIs (with fallback for props)
-    try:
-        props_data = await get_props(sport)
-    except HTTPException:
-        props_data = {"data": []}  # Fallback if props API fails
-        logger.warning("Props fetch failed for %s, using sharp money only", sport)
-
-    sharp_data = await get_sharp_money(sport)
     daily_energy = get_daily_energy()
 
-    # Build sharp money lookup by game
+    # Fetch sharp money for both categories
+    sharp_data = await get_sharp_money(sport)
     sharp_lookup = {}
     for signal in sharp_data.get("data", []):
         game_key = f"{signal.get('away_team')}@{signal.get('home_team')}"
         sharp_lookup[game_key] = signal
 
-    data = []
+    # Helper function to calculate scores
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0):
+        ai_score = base_ai
+        if sharp_signal.get("signal_strength") == "STRONG":
+            ai_score += 2.0
+        elif sharp_signal.get("signal_strength") == "MODERATE":
+            ai_score += 1.0
 
-    # Process each game's props
-    for game in props_data.get("data", []):
-        home_team = game.get("home_team", "")
-        away_team = game.get("away_team", "")
-        game_key = f"{away_team}@{home_team}"
-        game_str = f"{home_team}{away_team}"
+        pillar_score = 3.0 if sharp_signal.get("line_variance", 0) > 1.0 else 2.0
 
-        # Get sharp signal for this game
-        sharp_signal = sharp_lookup.get(game_key, {})
+        # JARVIS triggers
+        jarvis_score = 0.0
+        jarvis_triggers_hit = []
+        for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
+            if str(trigger_num) in game_str:
+                jarvis_boost = trigger_data["boost"] / 5
+                jarvis_score += jarvis_boost
+                jarvis_triggers_hit.append({
+                    "number": trigger_num,
+                    "name": trigger_data["name"],
+                    "boost": round(jarvis_boost, 2)
+                })
+        jarvis_score = min(4.0, jarvis_score)
 
-        # Process each prop
-        for prop in game.get("props", []):
-            player = prop.get("player", "Unknown")
-            market = prop.get("market", "")
-            line = prop.get("line", 0)
-            odds = prop.get("odds", -110)
-            side = prop.get("side", "Over")
+        # Esoteric boost
+        esoteric_boost = 0.0
+        if daily_energy.get("overall_score", 50) >= 85:
+            esoteric_boost = 2.0
+        elif daily_energy.get("overall_score", 50) >= 70:
+            esoteric_boost = 1.0
 
-            # Skip if not Over/Under
-            if side not in ["Over", "Under"]:
-                continue
+        total_score = ai_score + pillar_score + jarvis_score + esoteric_boost
 
-            # Build game_data for MasterPredictionSystem
-            game_data = {
-                "features": np.random.randn(10),  # Will be replaced with real features
-                "recent_games": [line * 0.9, line * 1.1, line * 0.95, line * 1.05, line],
-                "line": line,
-                "player_id": hashlib.md5(player.encode()).hexdigest()[:8],
-                "opponent_id": hashlib.md5(home_team.encode()).hexdigest()[:8],
-                "player_stats": {
-                    "expected_value": line,
-                    "std_dev": line * 0.25 if line > 0 else 5.0
-                },
-                "game_id": game.get("game_id"),
-                "current_line": line,
-                "opening_line": line * 0.98,  # Estimate
-                "time_until_game": 24,  # Hours
-                "betting_percentages": {
-                    "over_percent": 55 if side == "Over" else 45,
-                    "under_percent": 45 if side == "Over" else 55
-                },
-                "schedule": {
-                    "days_rest": 2,
-                    "travel_miles": 500,
-                    "games_in_last_7": 3
-                },
-                "injuries": [],
-                "depth_chart": {},
-                "betting_odds": odds,
-                "sharp_action": sharp_signal.get("signal_strength", "NONE"),
-                "line_movement": sharp_signal.get("line_variance", 0)
+        if total_score >= 16:
+            confidence = "SMASH"
+        elif total_score >= 12:
+            confidence = "HIGH"
+        elif total_score >= 8:
+            confidence = "MEDIUM"
+        else:
+            confidence = "LOW"
+
+        return {
+            "total_score": round(total_score, 2),
+            "confidence": confidence,
+            "scoring_breakdown": {
+                "ai_models": round(ai_score, 2),
+                "pillars": round(pillar_score, 2),
+                "jarvis": round(jarvis_score, 2),
+                "esoteric": round(esoteric_boost, 2)
+            },
+            "jarvis_triggers": jarvis_triggers_hit
+        }
+
+    # ============================================
+    # CATEGORY 1: PLAYER PROPS
+    # ============================================
+    props_picks = []
+    try:
+        props_data = await get_props(sport)
+        for game in props_data.get("data", []):
+            home_team = game.get("home_team", "")
+            away_team = game.get("away_team", "")
+            game_key = f"{away_team}@{home_team}"
+            game_str = f"{home_team}{away_team}"
+            sharp_signal = sharp_lookup.get(game_key, {})
+
+            for prop in game.get("props", []):
+                player = prop.get("player", "Unknown")
+                market = prop.get("market", "")
+                line = prop.get("line", 0)
+                odds = prop.get("odds", -110)
+                side = prop.get("side", "Over")
+
+                if side not in ["Over", "Under"]:
+                    continue
+
+                # Calculate score
+                score_data = calculate_pick_score(game_str + player, sharp_signal, base_ai=5.0)
+
+                props_picks.append({
+                    "player": player,
+                    "market": market,
+                    "line": line,
+                    "side": side,
+                    "odds": odds,
+                    "game": f"{away_team} @ {home_team}",
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "recommendation": f"{side.upper()} {line}",
+                    **score_data,
+                    "sharp_signal": sharp_signal.get("signal_strength", "NONE")
+                })
+    except HTTPException:
+        logger.warning("Props fetch failed for %s", sport)
+
+    # Sort props by score and take top 10
+    props_picks.sort(key=lambda x: x["total_score"], reverse=True)
+    top_props = props_picks[:10]
+
+    # ============================================
+    # CATEGORY 2: GAME PICKS (Spreads, Totals, ML)
+    # ============================================
+    game_picks = []
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    try:
+        # Fetch game odds (spreads, totals, moneylines)
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "spreads,h2h,totals",
+                "oddsFormat": "american"
             }
+        )
 
-            # === SCORING COMPONENT 1: AI Models (0-8 points) ===
-            ai_score = 0.0
-            pillar_score = 0.0
+        if resp and resp.status_code == 200:
+            games = resp.json()
+            for game in games:
+                home_team = game.get("home_team", "")
+                away_team = game.get("away_team", "")
+                game_key = f"{away_team}@{home_team}"
+                game_str = f"{home_team}{away_team}"
+                sharp_signal = sharp_lookup.get(game_key, {})
 
-            if mps:
-                try:
-                    prediction = mps.generate_comprehensive_prediction(game_data)
-                    ai_score = min(8.0, prediction.get("ai_score", 5.0) * 0.8)
-                    pillar_score = min(8.0, prediction.get("pillar_score", 0) * 0.8)
-                    predicted_value = prediction.get("predicted_value", line)
-                    recommendation = prediction.get("recommendation", "NO BET")
-                    probability = prediction.get("probability", 0.5)
-                    ev = prediction.get("expected_value", 0)
-                except Exception as e:
-                    logger.warning("MPS prediction failed: %s", e)
-                    ai_score = 4.0
-                    pillar_score = 2.0
-                    predicted_value = line
-                    recommendation = side.upper()
-                    probability = 0.5
-                    ev = 0
-            else:
-                # Fallback scoring without MPS
-                ai_score = 4.0 + (1.0 if sharp_signal.get("signal_strength") == "STRONG" else 0)
-                pillar_score = 2.0
-                predicted_value = line
-                recommendation = side.upper()
-                probability = 0.5
-                ev = 0
+                for bm in game.get("bookmakers", [])[:1]:  # Just use first book for now
+                    for market in bm.get("markets", []):
+                        market_key = market.get("key", "")
 
-            # === SCORING COMPONENT 2: Pillars (already in pillar_score) ===
+                        for outcome in market.get("outcomes", []):
+                            pick_name = outcome.get("name", "")
+                            odds = outcome.get("price", -110)
+                            point = outcome.get("point")
 
-            # === SCORING COMPONENT 3: JARVIS Triggers (0-4 points) ===
-            jarvis_score = 0.0
-            jarvis_triggers_hit = []
-            for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
-                if str(trigger_num) in game_str or str(trigger_num) in player:
-                    jarvis_boost = trigger_data["boost"] / 5  # Max +4.0
-                    jarvis_score += jarvis_boost
-                    jarvis_triggers_hit.append({
-                        "number": trigger_num,
-                        "name": trigger_data["name"],
-                        "boost": round(jarvis_boost, 2)
-                    })
-            jarvis_score = min(4.0, jarvis_score)  # Cap at 4
+                            # Build display info
+                            if market_key == "spreads":
+                                pick_type = "SPREAD"
+                                display = f"{pick_name} {point:+.1f}" if point else pick_name
+                            elif market_key == "h2h":
+                                pick_type = "MONEYLINE"
+                                display = f"{pick_name} ML"
+                            elif market_key == "totals":
+                                pick_type = "TOTAL"
+                                display = f"{pick_name} {point}" if point else pick_name
+                            else:
+                                continue
 
-            # === SCORING COMPONENT 4: Esoteric Boost ===
-            esoteric_boost = 0.0
-            if daily_energy.get("overall_score", 50) >= 70:
-                esoteric_boost = 1.0
-            elif daily_energy.get("overall_score", 50) >= 85:
-                esoteric_boost = 2.0
+                            # Calculate score
+                            score_data = calculate_pick_score(game_str, sharp_signal, base_ai=4.5)
 
-            # === TOTAL SCORE ===
-            total_score = ai_score + pillar_score + jarvis_score + esoteric_boost
+                            game_picks.append({
+                                "pick_type": pick_type,
+                                "pick": display,
+                                "team": pick_name if market_key != "totals" else None,
+                                "line": point,
+                                "odds": odds,
+                                "game": f"{away_team} @ {home_team}",
+                                "home_team": home_team,
+                                "away_team": away_team,
+                                "market": market_key,
+                                "recommendation": display,
+                                **score_data,
+                                "sharp_signal": sharp_signal.get("signal_strength", "NONE")
+                            })
+    except Exception as e:
+        logger.warning("Game odds fetch failed: %s", e)
 
-            # Determine confidence level
-            if total_score >= 16:
-                confidence = "SMASH"
-            elif total_score >= 12:
-                confidence = "HIGH"
-            elif total_score >= 8:
-                confidence = "MEDIUM"
-            else:
-                confidence = "LOW"
-
-            data.append({
-                "player": player,
-                "market": market,
-                "line": line,
-                "side": side,
-                "odds": odds,
-                "game": f"{away_team} @ {home_team}",
-                "home_team": home_team,
-                "away_team": away_team,
-                "predicted_value": round(predicted_value, 2),
-                "recommendation": recommendation,
-                "total_score": round(total_score, 2),
-                "confidence": confidence,
-                "scoring_breakdown": {
-                    "ai_models": round(ai_score, 2),
-                    "pillars": round(pillar_score, 2),
-                    "jarvis": round(jarvis_score, 2),
-                    "esoteric": round(esoteric_boost, 2)
-                },
-                "probability": round(probability, 3),
-                "expected_value": round(ev, 2),
-                "jarvis_triggers": jarvis_triggers_hit,
-                "sharp_signal": sharp_signal.get("signal_strength", "NONE")
-            })
-
-    # === FALLBACK: Game-level picks from sharp money if no props ===
-    if not data and sharp_data.get("data"):
-        logger.info("No props available, generating game-level picks from sharp money")
+    # Fallback to sharp money if no game picks
+    if not game_picks and sharp_data.get("data"):
         for signal in sharp_data.get("data", []):
             home_team = signal.get("home_team", "")
             away_team = signal.get("away_team", "")
             game_str = f"{home_team}{away_team}"
 
-            # Base score from sharp signal
-            ai_score = 5.0
-            if signal.get("signal_strength") == "STRONG":
-                ai_score = 7.0
-            elif signal.get("signal_strength") == "MODERATE":
-                ai_score = 6.0
+            score_data = calculate_pick_score(game_str, signal, base_ai=5.0)
 
-            pillar_score = 3.0 if signal.get("line_variance", 0) > 1.0 else 2.0
-
-            # JARVIS triggers
-            jarvis_score = 0.0
-            jarvis_triggers_hit = []
-            for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
-                if str(trigger_num) in game_str:
-                    jarvis_boost = trigger_data["boost"] / 5
-                    jarvis_score += jarvis_boost
-                    jarvis_triggers_hit.append({
-                        "number": trigger_num,
-                        "name": trigger_data["name"],
-                        "boost": round(jarvis_boost, 2)
-                    })
-            jarvis_score = min(4.0, jarvis_score)
-
-            # Esoteric boost
-            esoteric_boost = 1.0 if daily_energy.get("overall_score", 50) >= 70 else 0.0
-
-            total_score = ai_score + pillar_score + jarvis_score + esoteric_boost
-
-            if total_score >= 16:
-                confidence = "SMASH"
-            elif total_score >= 12:
-                confidence = "HIGH"
-            elif total_score >= 8:
-                confidence = "MEDIUM"
-            else:
-                confidence = "LOW"
-
-            data.append({
-                "player": "GAME PICK",
-                "market": "moneyline",
-                "line": 0,
-                "side": signal.get("side", "HOME"),
+            game_picks.append({
+                "pick_type": "SHARP",
+                "pick": f"Sharp on {signal.get('side', 'HOME')}",
+                "team": home_team if signal.get("side") == "HOME" else away_team,
+                "line": signal.get("line_variance", 0),
                 "odds": -110,
                 "game": f"{away_team} @ {home_team}",
                 "home_team": home_team,
                 "away_team": away_team,
-                "predicted_value": 0,
+                "market": "sharp_money",
                 "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
-                "total_score": round(total_score, 2),
-                "confidence": confidence,
-                "scoring_breakdown": {
-                    "ai_models": round(ai_score, 2),
-                    "pillars": round(pillar_score, 2),
-                    "jarvis": round(jarvis_score, 2),
-                    "esoteric": round(esoteric_boost, 2)
-                },
-                "probability": 0.55,
-                "expected_value": 0,
-                "jarvis_triggers": jarvis_triggers_hit,
+                **score_data,
                 "sharp_signal": signal.get("signal_strength", "MODERATE")
             })
 
-    # Sort by total score (highest first) and take top 20
-    data.sort(key=lambda x: x["total_score"], reverse=True)
-    top_picks = data[:20]
+    # Sort game picks by score and take top 10
+    game_picks.sort(key=lambda x: x["total_score"], reverse=True)
+    top_game_picks = game_picks[:10]
 
+    # ============================================
+    # BUILD FINAL RESPONSE
+    # ============================================
     result = {
         "sport": sport.upper(),
         "source": "master_prediction_system",
-        "count": len(top_picks),
-        "total_props_analyzed": len(data),
+        "props": {
+            "count": len(top_props),
+            "total_analyzed": len(props_picks),
+            "picks": top_props
+        },
+        "game_picks": {
+            "count": len(top_game_picks),
+            "total_analyzed": len(game_picks),
+            "picks": top_game_picks
+        },
         "daily_energy": daily_energy,
-        "data": top_picks,
         "timestamp": datetime.now().isoformat()
     }
     api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
