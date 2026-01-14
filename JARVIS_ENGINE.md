@@ -342,12 +342,62 @@ Sum digits until single digit (preserve master numbers 11, 22, 33):
 
 ---
 
-## Future Phases
+## Phase 2: Vedic/Astro Module
+
+Weight: 13% astro + 10% vedic = 23% of esoteric score
+
+### Planetary Hours (40% of astro score)
+
+Each hour of the day is ruled by a planet in Chaldean order:
+
+| Planet | Influence | Bet Signal | Sports Boost |
+|--------|-----------|------------|--------------|
+| Sun | 0.75 | CHALK_FRIENDLY | NBA, NFL |
+| Moon | 0.65 | HOME_EDGE | NHL, MLB |
+| Mars | 0.80 | DOG_WARRIOR | NFL, NHL |
+| Mercury | 0.55 | CHAOS_FACTOR | NBA |
+| Jupiter | 0.85 | EXPANSION_PLAY | NBA, NFL |
+| Venus | 0.60 | UNDER_LEAN | MLB, NHL |
+| Saturn | 0.70 | DEFENSIVE_GRIND | NFL, NHL |
+
+### Nakshatras (35% of astro score)
+
+27 lunar mansions with betting characteristics:
+
+| Nakshatra | Ruler | Nature | Betting Type | Influence |
+|-----------|-------|--------|--------------|-----------|
+| Pushya | Saturn | light | unders | 0.90 (most auspicious) |
+| Ardra | Rahu | sharp | upsets | 0.85 |
+| Uttara Ashadha | Sun | fixed | champions | 0.85 |
+| Rohini | Moon | fixed | home_teams | 0.80 |
+| Shravana | Moon | movable | listen_sharps | 0.80 |
+| Ashlesha | Mercury | sharp | avoid | 0.40 (avoid betting) |
+
+### Retrograde Status (25% of astro score)
+
+| Planet | Effect | Modifier | Recommendation |
+|--------|--------|----------|----------------|
+| Mercury | Communication chaos | -10% | Fade favorites, avoid parlays |
+| Venus | Value traps | -8% | Contrarian value fails |
+| Mars | Aggression backfires | -12% | Avoid underdog ML |
+
+### Endpoints
+
+```
+GET /live/astro-status?sport=nba  # Full astro analysis
+GET /live/planetary-hour          # Current hour ruler
+GET /live/nakshatra               # Current lunar mansion
+GET /live/retrograde-status       # Mercury/Venus/Mars check
+```
+
+---
+
+## Phases Status
 
 | Phase | Component | Status |
 |-------|-----------|--------|
 | 1 | Confluence Core | ✅ Complete |
-| 2 | Vedic/Astro (planetary hours, retrogrades) | Pending |
+| 2 | Vedic/Astro (planetary hours, nakshatras, retrogrades) | ✅ Complete |
 | 3 | Learning Loop (result tracking, weight adjustment) | Pending |
 | 4 | Boss Override endpoint | Pending |
 
