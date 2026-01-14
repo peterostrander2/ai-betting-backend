@@ -553,6 +553,258 @@ POWER_NUMBERS = [11, 22, 33, 44, 55, 66, 77, 88, 99]
 TESLA_NUMBERS = [3, 6, 9]
 
 # ============================================================================
+# JARVIS SAVANT ENGINE v7.3 - FULL INTEGRATION
+# Philosophy: Competition + variance. Gematria dominant + exoteric inefficiencies.
+# YTD Record: +94.40u (as of January 8, 2026)
+# ============================================================================
+
+JARVIS_CONFIG = {
+    "version": "v7.3",
+    "straight_betting_only": True,
+
+    # Core RS Weights (Boss approved gematria boost)
+    "rs_weights": {
+        "gematria": 0.52,      # 52% - dominant factor
+        "numerology": 0.20,
+        "astro": 0.13,
+        "vedic": 0.10,
+        "sacred": 0.05,
+        "fib_phi": 0.05,
+        "vortex": 0.05,
+    },
+
+    # Public Fade (Exoteric King) - CRUSH THE CHALK
+    "public_fade_threshold": 65,  # ≥65% public on chalk = fade
+    "public_fade_penalty": -0.13,  # -13% probability adjustment
+
+    # Mid-Spread Priority (Boss zone +4 to +9)
+    "mid_spread_range": (4, 9),
+    "mid_spread_amplifier": 0.20,  # +20% boost
+
+    # Large Spread Trap Gate (Kings 41-pt, Rice 31-pt lessons)
+    "large_spread_threshold": 14,
+    "large_spread_penalty": -0.20,  # -20% trap gate
+
+    # NHL ML Dog Protocol v5.9
+    "nhl_ml_dog": {
+        "enabled": True,
+        "rs_threshold": 9.3,
+        "public_chalk_threshold": 65,
+        "outright_threshold": 35,
+        "units": 0.5
+    },
+
+    # Betting Tiers
+    "gold_star_threshold": 72,    # 2u bet
+    "edge_lean_threshold": 68,    # 1u bet
+    "ml_dog_lotto_units": 0.5,
+
+    # Blended Probability Formula
+    "rs_weight": 0.67,    # 67% Ritual Score
+    "quant_weight": 0.33  # 33% Quantitative
+}
+
+# Gematria Cipher Values (English Ordinal - most common)
+GEMATRIA_ORDINAL = {
+    'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9,
+    'j': 10, 'k': 11, 'l': 12, 'm': 13, 'n': 14, 'o': 15, 'p': 16, 'q': 17,
+    'r': 18, 's': 19, 't': 20, 'u': 21, 'v': 22, 'w': 23, 'x': 24, 'y': 25, 'z': 26
+}
+
+def calculate_gematria(text: str) -> Dict[str, int]:
+    """Calculate gematria values for text using multiple ciphers."""
+    text = text.lower().replace(" ", "")
+
+    # English Ordinal
+    ordinal = sum(GEMATRIA_ORDINAL.get(c, 0) for c in text)
+
+    # Reverse Ordinal
+    reverse = sum(27 - GEMATRIA_ORDINAL.get(c, 0) for c in text if c in GEMATRIA_ORDINAL)
+
+    # Reduction (sum digits until single digit)
+    reduction = ordinal
+    while reduction > 9:
+        reduction = sum(int(d) for d in str(reduction))
+
+    return {
+        "ordinal": ordinal,
+        "reverse": reverse,
+        "reduction": reduction,
+        "mod9": ordinal % 9 if ordinal % 9 != 0 else 9
+    }
+
+def check_gematria_triggers(home_team: str, away_team: str, line: float = None, total: float = None) -> Dict:
+    """
+    Check gematria triggers for a matchup.
+    Returns hits on sacred numbers and total gematria score.
+    """
+    hits = []
+    score = 0.0
+
+    # Calculate gematria for teams
+    home_gem = calculate_gematria(home_team)
+    away_gem = calculate_gematria(away_team)
+    combined = home_gem["ordinal"] + away_gem["ordinal"]
+
+    # Check for sacred number hits
+    sacred_numbers = [33, 93, 201, 322, 2178, 666, 777, 888, 111, 222, 333]
+
+    for gem_type, gem_val in [("home_ordinal", home_gem["ordinal"]),
+                               ("away_ordinal", away_gem["ordinal"]),
+                               ("combined", combined),
+                               ("home_reverse", home_gem["reverse"]),
+                               ("away_reverse", away_gem["reverse"])]:
+        for sacred in sacred_numbers:
+            if gem_val == sacred or abs(gem_val - sacred) <= 2:
+                hits.append({"type": gem_type, "value": gem_val, "sacred": sacred})
+                # Weight by trigger importance
+                if sacred in [201, 33, 93]:
+                    score += 2.0
+                elif sacred in [322, 2178]:
+                    score += 3.0
+                else:
+                    score += 1.0
+
+    # Check line and total for sacred numbers
+    if line is not None:
+        line_str = str(abs(line)).replace(".", "")
+        for sacred in [33, 93, 7, 11, 22]:
+            if str(sacred) in line_str:
+                hits.append({"type": "line", "value": line, "sacred": sacred})
+                score += 1.5
+
+    if total is not None:
+        for sacred in [201, 222, 333, 211, 220]:
+            if abs(total - sacred) <= 3:
+                hits.append({"type": "total", "value": total, "sacred": sacred})
+                score += 2.0
+
+    # Date numerology bonus
+    today = datetime.now()
+    date_sum = sum(int(d) for d in f"{today.year}{today.month:02d}{today.day:02d}")
+    if date_sum in sacred_numbers or date_sum % 33 == 0:
+        hits.append({"type": "date", "value": date_sum, "sacred": date_sum})
+        score += 1.5
+
+    return {
+        "hits": hits,
+        "hit_count": len(hits),
+        "gematria_score": min(10.0, score),  # Cap at 10
+        "home_gematria": home_gem,
+        "away_gematria": away_gem
+    }
+
+def calculate_jarvis_rs(
+    gematria_data: Dict,
+    public_pct: float = 50,
+    line_value: float = None,
+    sport: str = "NBA"
+) -> Dict:
+    """
+    Calculate JARVIS Ritual Score (RS) with all fused upgrades.
+
+    RS = Gematria (52%) + Numerology (20%) + Astro (13%) + Vedic (10%) + Sacred (5%)
+
+    Plus:
+    - Public Fade: -13% when public ≥65% on chalk
+    - Mid-Spread Amplifier: +20% for lines +4 to +9
+    - Large Spread Trap: -20% for lines ≥14
+    """
+    config = JARVIS_CONFIG
+    base_rs = 5.0  # Neutral base
+
+    # ===== GEMATRIA COMPONENT (52%) =====
+    gematria_score = gematria_data.get("gematria_score", 0)
+    gematria_contrib = (gematria_score / 10) * 5.2  # Max 5.2 points from gematria
+
+    # ===== NUMEROLOGY + OTHER COMPONENTS (48%) =====
+    # Date numerology
+    numerology = calculate_date_numerology()
+    numerology_score = 2.0 if numerology.get("is_master_number_day") else 1.0
+    if numerology.get("tesla_energy"):
+        numerology_score += 0.5
+
+    other_contrib = numerology_score * 0.48  # Max ~2.4 points
+
+    # Calculate base RS
+    rs = base_rs + gematria_contrib + other_contrib
+
+    # ===== PUBLIC FADE ADJUSTMENT =====
+    public_fade_applied = False
+    if public_pct >= config["public_fade_threshold"]:
+        # Public is heavy on chalk - FADE IT
+        rs_adjustment = config["public_fade_penalty"] * 10  # -1.3 points
+        rs += rs_adjustment
+        public_fade_applied = True
+
+    # ===== MID-SPREAD AMPLIFIER =====
+    mid_spread_boost = False
+    if line_value is not None:
+        abs_line = abs(line_value)
+        min_spread, max_spread = config["mid_spread_range"]
+        if min_spread <= abs_line <= max_spread:
+            rs *= (1 + config["mid_spread_amplifier"])  # +20%
+            mid_spread_boost = True
+
+    # ===== LARGE SPREAD TRAP GATE =====
+    large_spread_trap = False
+    if line_value is not None:
+        if abs(line_value) >= config["large_spread_threshold"]:
+            rs *= (1 + config["large_spread_penalty"])  # -20%
+            large_spread_trap = True
+
+    # Cap RS at 10
+    rs = min(10.0, max(0.0, rs))
+
+    return {
+        "rs": round(rs, 2),
+        "gematria_contrib": round(gematria_contrib, 2),
+        "public_fade_applied": public_fade_applied,
+        "public_pct": public_pct,
+        "mid_spread_boost": mid_spread_boost,
+        "large_spread_trap": large_spread_trap,
+        "gematria_hits": gematria_data.get("hit_count", 0)
+    }
+
+def get_jarvis_bet_recommendation(blended_prob: float, sport: str, is_dog: bool, rs: float, public_chalk: float) -> Dict:
+    """
+    Get JARVIS betting recommendation based on blended probability.
+
+    Tiers:
+    - Gold Star (2u): blended ≥72%
+    - Edge Lean (1u): blended ≥68%
+    - ML Dog Lotto (0.5u): NHL dog with RS ≥9.3 and public chalk ≥65%
+    """
+    config = JARVIS_CONFIG
+    recommendation = {"units": 0, "tier": "NO_BET", "reasoning": []}
+
+    # Gold Star
+    if blended_prob >= config["gold_star_threshold"]:
+        recommendation["units"] = 2.0
+        recommendation["tier"] = "GOLD_STAR"
+        recommendation["reasoning"].append(f"Blended {blended_prob:.1f}% ≥ 72% threshold")
+
+    # Edge Lean
+    elif blended_prob >= config["edge_lean_threshold"]:
+        recommendation["units"] = 1.0
+        recommendation["tier"] = "EDGE_LEAN"
+        recommendation["reasoning"].append(f"Blended {blended_prob:.1f}% ≥ 68% threshold")
+
+    # NHL ML Dog Protocol
+    if sport.upper() == "NHL" and is_dog:
+        nhl_config = config["nhl_ml_dog"]
+        if (rs >= nhl_config["rs_threshold"] and
+            public_chalk >= nhl_config["public_chalk_threshold"]):
+            recommendation["ml_dog_lotto"] = True
+            recommendation["ml_dog_units"] = nhl_config["units"]
+            recommendation["reasoning"].append(
+                f"NHL ML Dog: RS {rs:.1f} ≥ {nhl_config['rs_threshold']}, "
+                f"Public {public_chalk:.0f}% ≥ {nhl_config['public_chalk_threshold']}%"
+            )
+
+    return recommendation
+
+# ============================================================================
 # ESOTERIC HELPER FUNCTIONS (exported for main.py)
 # ============================================================================
 
@@ -1410,14 +1662,53 @@ async def get_best_bets(sport: str):
         pillars_detail["total"] = round(pillar_score, 2)
 
         # ========================================
-        # SECTION 3: JARVIS TRIGGERS (0-4 points)
+        # SECTION 3: JARVIS SAVANT ENGINE (0-4 points)
+        # Full gematria + public fade + mid-spread amplifier
         # ========================================
-        jarvis_score, jarvis_triggers_hit = check_jarvis_triggers(
+
+        # Get public betting percentage
+        public_pct = splits_signal.get("spread_splits", {}).get("home", {}).get("bets_pct", 50)
+
+        # Run full gematria analysis on team names
+        gematria_data = check_gematria_triggers(
+            home_team=home_team or "",
+            away_team=away_team or "",
+            line=line_value or prop_line,
+            total=total_value
+        )
+
+        # Calculate JARVIS Ritual Score with all fused upgrades
+        jarvis_rs_data = calculate_jarvis_rs(
+            gematria_data=gematria_data,
+            public_pct=public_pct,
+            line_value=line_value or prop_line,
+            sport=sport_lower
+        )
+
+        # Scale RS (0-10) to JARVIS points (0-4)
+        jarvis_score = (jarvis_rs_data["rs"] / 10) * 4.0
+
+        # Also run basic numeric triggers
+        basic_jarvis_score, jarvis_triggers_hit = check_jarvis_triggers(
             line_value=line_value,
             total_value=total_value,
             prop_line=prop_line,
             odds_value=odds_value
         )
+
+        # Combine: take higher of RS-based or numeric triggers
+        if basic_jarvis_score > jarvis_score:
+            jarvis_score = basic_jarvis_score
+
+        jarvis_detail = {
+            "rs": jarvis_rs_data["rs"],
+            "gematria_hits": gematria_data.get("hit_count", 0),
+            "gematria_score": gematria_data.get("gematria_score", 0),
+            "public_fade_applied": jarvis_rs_data.get("public_fade_applied", False),
+            "mid_spread_boost": jarvis_rs_data.get("mid_spread_boost", False),
+            "large_spread_trap": jarvis_rs_data.get("large_spread_trap", False),
+            "numeric_triggers": jarvis_triggers_hit
+        }
 
         # ========================================
         # SECTION 4: ESOTERIC EDGE (0-2 points)
@@ -1432,6 +1723,27 @@ async def get_best_bets(sport: str):
         # ========================================
         # Max possible: 8 + 8 + 4 + 2 = 22 points
         total_score = ai_score + pillar_score + jarvis_score + esoteric_boost
+
+        # ========================================
+        # BLENDED PROBABILITY (JARVIS Formula)
+        # 67% Ritual Score + 33% Quantitative
+        # ========================================
+        quant_prob = min(100, (ai_score / 8) * 50 + (pillar_score / 8) * 30 + 20)
+        blended_prob = (JARVIS_CONFIG["rs_weight"] * (jarvis_rs_data["rs"] * 10)) + \
+                       (JARVIS_CONFIG["quant_weight"] * quant_prob)
+        blended_prob = min(100, max(0, blended_prob))
+
+        # ========================================
+        # BET RECOMMENDATION (Gold Star, Edge Lean, NHL Dog)
+        # ========================================
+        is_dog = (line_value and line_value > 0) or (odds_value and odds_value > 100)
+        bet_rec = get_jarvis_bet_recommendation(
+            blended_prob=blended_prob,
+            sport=sport_lower,
+            is_dog=is_dog,
+            rs=jarvis_rs_data["rs"],
+            public_chalk=public_pct
+        )
 
         # Confidence tiers based on total score
         if total_score >= 18:
@@ -1451,6 +1763,7 @@ async def get_best_bets(sport: str):
             "total_score": round(total_score, 2),
             "confidence": confidence,
             "confidence_pct": round(confidence_pct),
+            "blended_probability": round(blended_prob, 1),
             "scoring_breakdown": {
                 "ai_models": round(ai_score, 2),
                 "pillars": round(pillar_score, 2),
@@ -1459,8 +1772,10 @@ async def get_best_bets(sport: str):
             },
             "ai_models_detail": ai_models_detail,
             "pillars_detail": pillars_detail,
+            "jarvis_detail": jarvis_detail,
             "jarvis_triggers": jarvis_triggers_hit,
             "esoteric_factors": esoteric_factors,
+            "bet_recommendation": bet_rec,
             "max_possible": 22.0
         }
 
