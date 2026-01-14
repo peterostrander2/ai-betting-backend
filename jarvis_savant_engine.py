@@ -1,22 +1,40 @@
 """
-JARVIS SAVANT ENGINE v7.3 - The Complete Scoring System
+JARVIS SAVANT ENGINE v7.4 - The Complete Scoring System
 =========================================================
 Phase 1: Confluence Core (Gematria, JARVIS Triggers, Confluence)
 Phase 2: Vedic/Astro Module (Planetary Hours, Nakshatras, Retrograde)
 Phase 3: Learning Loop (Result Tracking, Weight Adjustment)
 
-THE FORMULA:
-ESOTERIC SCORE (0-10):
-├── Gematria:    30-55% (dynamic based on triggers)
-├── Numerology:  15-20%
-├── Astro:       13%
-│   ├── Planetary Hour: 40%
-│   ├── Nakshatra:      35%
-│   └── Retrograde:     25%
-├── Vedic:       10%
-├── Sacred:       5-10%
-├── Fibonacci:    5-8%
-└── Vortex:       5-7%
+THE FORMULA (v10.1 Spec Aligned):
+┌─────────────────────────────────────────────────────────────┐
+│                    BOOKIE-O-EM CONFLUENCE                    │
+├─────────────────────────────────────────────────────────────┤
+│  RESEARCH SCORE (0-10)              ESOTERIC SCORE (0-10)   │
+│  ├─ 8 AI Models (0-8)               ├─ JARVIS RS (0-4)      │
+│  └─ 8 Pillars (0-8)                 ├─ Gematria (52%)       │
+│      scaled to 0-10                 ├─ Public Fade (-13%)   │
+│                                     ├─ Mid-Spread (+20%)    │
+│                                     └─ Esoteric Edge (0-2)  │
+│                                                              │
+│  Alignment = 1 - |research - esoteric| / 10                 │
+│                                                              │
+│  CONFLUENCE LEVELS:                                          │
+│  IMMORTAL (+10): 2178 + both ≥7.5 + alignment ≥80%          │
+│  JARVIS_PERFECT (+7): Trigger + both ≥7.5 + alignment ≥80%  │
+│  PERFECT (+5): both ≥7.5 + alignment ≥80%                   │
+│  STRONG (+3): Both high OR aligned ≥70%                     │
+│  MODERATE (+1): Aligned ≥60%                                │
+│  DIVERGENT (+0): Models disagree                            │
+│                                                              │
+│  FINAL = (research × 0.67) + (esoteric × 0.33) + boost      │
+│                                                              │
+│  BET TIERS:                                                  │
+│  GOLD_STAR (2u): FINAL ≥ 9.0                                │
+│  EDGE_LEAN (1u): FINAL ≥ 7.5                                │
+│  ML_DOG_LOTTO (0.5u): NHL Dog Protocol                      │
+│  MONITOR: FINAL ≥ 6.0                                        │
+│  PASS: FINAL < 6.0                                           │
+└─────────────────────────────────────────────────────────────┘
 
 2178: THE IMMORTAL - Only number where n^4 = reverse AND n^4 = 66^4
 """
@@ -124,7 +142,9 @@ JARVIS_TRIGGERS = {
 
 POWER_NUMBERS = [11, 22, 33, 44, 55, 66, 77, 88, 99]
 TESLA_NUMBERS = [3, 6, 9]
-FIBONACCI_SEQUENCE = [1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233]
+FIBONACCI_SEQUENCE = [1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610]
+VORTEX_PATTERN = [1, 2, 4, 8, 7, 5]  # Tesla's vortex math: doubling sequence mod 9
+PHI = 1.618033988749895  # Golden ratio
 
 # Gematria tables
 SIMPLE_GEMATRIA = {chr(i): i - 96 for i in range(97, 123)}  # a=1, b=2, etc.
@@ -223,7 +243,7 @@ class JarvisSavantEngine:
     - Blended Probability: 67/33 formula (67% model, 33% esoteric)
     """
 
-    VERSION = "7.3"
+    VERSION = "7.4"
 
     def __init__(self):
         self.triggers = JARVIS_TRIGGERS
@@ -432,24 +452,59 @@ class JarvisSavantEngine:
 
     def calculate_public_fade_signal(self, public_pct: float) -> Dict[str, Any]:
         """
-        Calculate public fade signal.
+        Calculate public fade signal with graduated adjustments.
 
-        -13% adjustment in crush zone (>70% public on one side).
+        PUBLIC FADE CRUSH ZONE (v10.1 spec):
+        ≥80% public on chalk  →  -0.95 influence
+        ≥75% public on chalk  →  -0.85 influence
+        ≥70% public on chalk  →  -0.75 influence
+        ≥65% public on chalk  →  -0.65 influence
         """
-        is_crush_zone = public_pct > 70 or public_pct < 30
-
-        if is_crush_zone:
-            if public_pct > 70:
-                signal = "FADE_PUBLIC"
-                adjustment = -0.13
-                explanation = f"Public at {public_pct}% - CRUSH ZONE. Fade the public side."
-            else:
-                signal = "FOLLOW_PUBLIC"
-                adjustment = -0.13
-                explanation = f"Public at {public_pct}% - Contrarian value on public side."
+        # Graduated fade based on public percentage
+        if public_pct >= 80:
+            signal = "FADE_PUBLIC"
+            adjustment = -0.95
+            is_crush_zone = True
+            explanation = f"Public at {public_pct}% - MAXIMUM CRUSH ZONE. Strong fade."
+        elif public_pct >= 75:
+            signal = "FADE_PUBLIC"
+            adjustment = -0.85
+            is_crush_zone = True
+            explanation = f"Public at {public_pct}% - HIGH CRUSH ZONE. Fade recommended."
+        elif public_pct >= 70:
+            signal = "FADE_PUBLIC"
+            adjustment = -0.75
+            is_crush_zone = True
+            explanation = f"Public at {public_pct}% - CRUSH ZONE. Fade the public side."
+        elif public_pct >= 65:
+            signal = "FADE_PUBLIC"
+            adjustment = -0.65
+            is_crush_zone = True
+            explanation = f"Public at {public_pct}% - EARLY CRUSH. Consider fading."
+        elif public_pct <= 20:
+            signal = "FOLLOW_PUBLIC"
+            adjustment = -0.95
+            is_crush_zone = True
+            explanation = f"Public at {public_pct}% - Extreme contrarian. Follow public."
+        elif public_pct <= 25:
+            signal = "FOLLOW_PUBLIC"
+            adjustment = -0.85
+            is_crush_zone = True
+            explanation = f"Public at {public_pct}% - Strong contrarian value."
+        elif public_pct <= 30:
+            signal = "FOLLOW_PUBLIC"
+            adjustment = -0.75
+            is_crush_zone = True
+            explanation = f"Public at {public_pct}% - Contrarian value on public side."
+        elif public_pct <= 35:
+            signal = "LEAN_PUBLIC"
+            adjustment = -0.65
+            is_crush_zone = False
+            explanation = f"Public at {public_pct}% - Slight contrarian lean."
         else:
             signal = "NEUTRAL"
             adjustment = 0.0
+            is_crush_zone = False
             explanation = f"Public at {public_pct}% - No strong fade signal."
 
         return {
@@ -468,23 +523,27 @@ class JarvisSavantEngine:
         """
         Calculate mid-spread signal.
 
-        +20% boost in Goldilocks zone (spread between 3 and 7).
+        +20% boost in Goldilocks zone (spread between +4 and +9) per v10.1 spec.
         """
         abs_spread = abs(spread)
 
-        # Goldilocks zone: 3-7 points (most predictable)
-        if 3 <= abs_spread <= 7:
+        # Goldilocks zone: 4-9 points (most predictable range per spec)
+        if 4 <= abs_spread <= 9:
             signal = "GOLDILOCKS"
             adjustment = 0.20
-            explanation = f"Spread {spread} in Goldilocks zone. Most predictable range."
-        elif abs_spread < 3:
+            explanation = f"Spread {spread} in Goldilocks zone (+4 to +9). Most predictable range."
+        elif abs_spread < 4:
             signal = "PICKEM"
             adjustment = 0.0
             explanation = f"Spread {spread} is pick'em territory. High variance."
-        elif abs_spread > 10:
+        elif abs_spread >= 14:
+            signal = "TRAP_ZONE"
+            adjustment = -0.20
+            explanation = f"Spread {spread} in trap zone. Fade large favorites."
+        elif abs_spread > 9:
             signal = "BLOWOUT"
             adjustment = -0.10
-            explanation = f"Spread {spread} indicates blowout. Garbage time risk."
+            explanation = f"Spread {spread} indicates potential blowout. Garbage time risk."
         else:
             signal = "STANDARD"
             adjustment = 0.05
@@ -541,10 +600,89 @@ class JarvisSavantEngine:
         }
 
     # ========================================================================
-    # CONFLUENCE - THE HEART
+    # CONFLUENCE - THE HEART (v10.1 Dual-Score Alignment System)
     # ========================================================================
 
     def calculate_confluence(
+        self,
+        research_score: float,
+        esoteric_score: float,
+        immortal_detected: bool = False,
+        jarvis_triggered: bool = False
+    ) -> Dict[str, Any]:
+        """
+        THE HEART - Calculate confluence using dual-score alignment.
+
+        v10.1 Spec Formula:
+        Alignment = 1 - |research - esoteric| / 10
+
+        CONFLUENCE LEVELS:
+        - IMMORTAL (+10): 2178 + both ≥7.5 + alignment ≥80%
+        - JARVIS_PERFECT (+7): Trigger + both ≥7.5 + alignment ≥80%
+        - PERFECT (+5): both ≥7.5 + alignment ≥80%
+        - STRONG (+3): Both high OR aligned ≥70%
+        - MODERATE (+1): Aligned ≥60%
+        - DIVERGENT (+0): Models disagree
+        """
+        # Calculate alignment percentage (0-100%)
+        alignment = 1 - abs(research_score - esoteric_score) / 10
+        alignment_pct = alignment * 100
+
+        # Check conditions
+        both_high = research_score >= 7.5 and esoteric_score >= 7.5
+        either_high = research_score >= 7.5 or esoteric_score >= 7.5
+        aligned_80 = alignment_pct >= 80
+        aligned_70 = alignment_pct >= 70
+        aligned_60 = alignment_pct >= 60
+
+        # Determine confluence level based on v10.1 spec
+        if immortal_detected and both_high and aligned_80:
+            level = "IMMORTAL"
+            boost = 10
+            color = "rainbow"
+            action = "IMMORTAL CONFLUENCE - MAXIMUM SMASH"
+        elif jarvis_triggered and both_high and aligned_80:
+            level = "JARVIS_PERFECT"
+            boost = 7
+            color = "gold"
+            action = "JARVIS PERFECT - STRONG SMASH"
+        elif both_high and aligned_80:
+            level = "PERFECT"
+            boost = 5
+            color = "purple"
+            action = "PERFECT CONFLUENCE - PLAY"
+        elif (both_high or either_high) and aligned_70:
+            level = "STRONG"
+            boost = 3
+            color = "green"
+            action = "STRONG CONFLUENCE - LEAN"
+        elif aligned_60:
+            level = "MODERATE"
+            boost = 1
+            color = "blue"
+            action = "MODERATE - MONITOR"
+        else:
+            level = "DIVERGENT"
+            boost = 0
+            color = "red"
+            action = "DIVERGENT - PASS"
+
+        return {
+            "research_score": research_score,
+            "esoteric_score": esoteric_score,
+            "alignment": round(alignment, 4),
+            "alignment_pct": round(alignment_pct, 1),
+            "level": level,
+            "boost": boost,
+            "color": color,
+            "action": action,
+            "immortal_detected": immortal_detected,
+            "jarvis_triggered": jarvis_triggered,
+            "both_high": both_high,
+            "aligned_80": aligned_80
+        }
+
+    def calculate_confluence_legacy(
         self,
         gematria_signal: Dict,
         public_fade: Dict,
@@ -554,85 +692,40 @@ class JarvisSavantEngine:
         sharp_signal: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """
-        THE HEART - Calculate confluence of all signals.
-
-        6 levels of signal agreement:
-        - GODMODE (6/6): All signals agree
-        - LEGENDARY (5/6): Strong multi-factor alignment
-        - STRONG (4/6): Solid confluence
-        - MODERATE (3/6): Actionable
-        - WEAK (2/6): Monitor only
-        - AVOID (0-1/6): Signals conflict
+        Legacy confluence calculation (signal counting method).
+        Kept for backward compatibility.
         """
         signals = []
 
-        # Gematria signal
         if gematria_signal.get("signal") in ["STRONG", "MODERATE"]:
             signals.append("GEMATRIA")
-
-        # Public fade signal
         if public_fade.get("signal") == "FADE_PUBLIC":
             signals.append("PUBLIC_FADE")
-
-        # Mid spread signal
         if mid_spread.get("signal") == "GOLDILOCKS":
             signals.append("GOLDILOCKS")
-
-        # Trap signal (inverted - CLEAR is positive)
         if trap_signal.get("signal") == "CLEAR":
             signals.append("NO_TRAP")
-
-        # Astro signal
         if astro_score and astro_score.get("overall_score", 0) > 60:
             signals.append("ASTRO")
-
-        # Sharp signal
         if sharp_signal and sharp_signal.get("signal_strength") == "STRONG":
             signals.append("SHARP")
 
-        # Calculate confluence level
         signal_count = len(signals)
 
         if signal_count >= 6:
-            level = "GODMODE"
-            color = "gold"
-            action = "SMASH WITH CONFIDENCE"
-            multiplier = 1.5
-        elif signal_count >= 5:
-            level = "LEGENDARY"
-            color = "purple"
-            action = "STRONG PLAY"
-            multiplier = 1.3
+            level, boost = "PERFECT", 5
         elif signal_count >= 4:
-            level = "STRONG"
-            color = "green"
-            action = "PLAY"
-            multiplier = 1.2
+            level, boost = "STRONG", 3
         elif signal_count >= 3:
-            level = "MODERATE"
-            color = "blue"
-            action = "LEAN"
-            multiplier = 1.1
-        elif signal_count >= 2:
-            level = "WEAK"
-            color = "yellow"
-            action = "MONITOR"
-            multiplier = 1.0
+            level, boost = "MODERATE", 1
         else:
-            level = "AVOID"
-            color = "red"
-            action = "PASS"
-            multiplier = 0.8
+            level, boost = "DIVERGENT", 0
 
         return {
             "signals_hit": signals,
             "signal_count": signal_count,
-            "max_signals": 6,
             "level": level,
-            "color": color,
-            "action": action,
-            "multiplier": multiplier,
-            "confluence_score": round(signal_count / 6 * 100, 1)
+            "boost": boost
         }
 
     # ========================================================================
@@ -676,49 +769,204 @@ class JarvisSavantEngine:
 
     def determine_bet_tier(
         self,
+        final_score: float,
         confluence: Dict,
-        blended_probability: Dict,
-        total_score: float
+        nhl_dog_protocol: bool = False
     ) -> Dict[str, Any]:
         """
-        Determine bet tier based on all factors.
+        Determine bet tier based on FINAL score (v10.1 spec).
 
-        Tiers:
-        - GOLD_STAR: Highest confidence (Confluence LEGENDARY+ AND >70% probability)
-        - EDGE_LEAN: Moderate confidence (Confluence STRONG+ AND >60% probability)
-        - SPRINKLE: Low confidence (Confluence MODERATE AND >55% probability)
-        - PASS: Not actionable
+        FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
+
+        Tiers (v10.1 spec):
+        - GOLD_STAR (2u): FINAL ≥ 9.0
+        - EDGE_LEAN (1u): FINAL ≥ 7.5
+        - ML_DOG_LOTTO (0.5u): NHL Dog Protocol triggered
+        - MONITOR (0u): FINAL ≥ 6.0
+        - PASS: FINAL < 6.0
         """
-        confluence_level = confluence.get("level", "AVOID")
-        probability = blended_probability.get("blended_probability", 50)
-        edge = blended_probability.get("edge", 0)
+        confluence_level = confluence.get("level", "DIVERGENT")
 
-        # Determine tier
-        if confluence_level in ["GODMODE", "LEGENDARY"] and probability >= 70:
+        # NHL Dog Protocol takes precedence if triggered
+        if nhl_dog_protocol:
+            tier = "ML_DOG_LOTTO"
+            unit_size = 0.5
+            explanation = "NHL Dog Protocol triggered. ML dog lotto play."
+        # Standard tier determination based on final score
+        elif final_score >= 9.0:
             tier = "GOLD_STAR"
-            unit_size = 3.0
-            explanation = "Maximum confidence. Full unit play."
-        elif confluence_level in ["LEGENDARY", "STRONG"] and probability >= 60:
-            tier = "EDGE_LEAN"
             unit_size = 2.0
-            explanation = "Strong edge detected. Standard play."
-        elif confluence_level in ["STRONG", "MODERATE"] and probability >= 55:
-            tier = "SPRINKLE"
+            explanation = "GOLD STAR - Maximum confidence. 2 unit play."
+        elif final_score >= 7.5:
+            tier = "EDGE_LEAN"
             unit_size = 1.0
-            explanation = "Moderate edge. Small play."
+            explanation = "EDGE LEAN - Strong edge detected. 1 unit play."
+        elif final_score >= 6.0:
+            tier = "MONITOR"
+            unit_size = 0.0
+            explanation = "MONITOR - Track but no action."
         else:
             tier = "PASS"
             unit_size = 0.0
-            explanation = "Insufficient edge. Monitor only."
+            explanation = "PASS - Insufficient edge."
 
         return {
             "tier": tier,
             "unit_size": unit_size,
             "explanation": explanation,
+            "final_score": round(final_score, 2),
             "confluence_level": confluence_level,
-            "blended_probability": probability,
-            "edge": edge,
-            "total_score": total_score
+            "nhl_dog_protocol": nhl_dog_protocol
+        }
+
+    # ========================================================================
+    # NHL DOG PROTOCOL (v10.1 spec)
+    # ========================================================================
+
+    def calculate_nhl_dog_protocol(
+        self,
+        is_puck_line_dog: bool,
+        research_score: float,
+        public_on_favorite_pct: float
+    ) -> Dict[str, Any]:
+        """
+        NHL Dog Protocol - Special trigger for ML dog plays.
+
+        NHL DOG PROTOCOL TRIGGERS (v10.1 spec):
+        ┌─────────────────────────────────────────────┐
+        │ Puck line dog (+1.5)        ✓              │
+        │ Research Score ≥9.3         ✓              │
+        │ Public ≥65% on favorite     ✓              │
+        │ All 3 = 0.5u ML DOG OF DAY                 │
+        └─────────────────────────────────────────────┘
+        """
+        triggers = {
+            "puck_line_dog": is_puck_line_dog,
+            "research_score_high": research_score >= 9.3,
+            "public_on_favorite": public_on_favorite_pct >= 65
+        }
+
+        all_triggered = all(triggers.values())
+        trigger_count = sum(1 for v in triggers.values() if v)
+
+        return {
+            "triggers": triggers,
+            "trigger_count": trigger_count,
+            "all_triggered": all_triggered,
+            "recommendation": "0.5u ML DOG OF DAY" if all_triggered else "NOT TRIGGERED",
+            "research_score": research_score,
+            "public_on_favorite_pct": public_on_favorite_pct,
+            "explanation": (
+                "NHL DOG PROTOCOL ACTIVE - Take the ML dog!" if all_triggered
+                else f"NHL Dog Protocol: {trigger_count}/3 triggers hit"
+            )
+        }
+
+    # ========================================================================
+    # FIBONACCI LINE ALIGNMENT (Fix #7)
+    # ========================================================================
+
+    def calculate_fibonacci_alignment(self, line: float) -> Dict[str, Any]:
+        """
+        Check if a betting line aligns with Fibonacci numbers.
+
+        Lines that align with Fibonacci (or Phi ratios) are considered
+        more "harmonically balanced" and may indicate fair value.
+        """
+        abs_line = abs(line)
+
+        # Check direct Fibonacci match
+        is_fib = abs_line in FIBONACCI_SEQUENCE
+
+        # Check if close to a Fibonacci number (within 0.5)
+        nearest_fib = min(FIBONACCI_SEQUENCE, key=lambda x: abs(x - abs_line))
+        distance_to_fib = abs(abs_line - nearest_fib)
+        near_fib = distance_to_fib <= 0.5
+
+        # Check Phi ratio alignment (line / PHI or line * PHI)
+        phi_aligned = False
+        phi_ratio = None
+        for fib in FIBONACCI_SEQUENCE[:10]:
+            if fib > 0:
+                ratio = abs_line / fib
+                if 1.5 <= ratio <= 1.7:  # Close to PHI (1.618)
+                    phi_aligned = True
+                    phi_ratio = round(ratio, 3)
+                    break
+
+        # Calculate score modifier
+        if is_fib:
+            score_mod = 0.10
+            signal = "FIB_EXACT"
+        elif near_fib:
+            score_mod = 0.05
+            signal = "FIB_NEAR"
+        elif phi_aligned:
+            score_mod = 0.07
+            signal = "PHI_ALIGNED"
+        else:
+            score_mod = 0.0
+            signal = "NO_FIB"
+
+        return {
+            "line": line,
+            "is_fibonacci": is_fib,
+            "near_fibonacci": near_fib,
+            "nearest_fib": nearest_fib,
+            "distance_to_fib": round(distance_to_fib, 2),
+            "phi_aligned": phi_aligned,
+            "phi_ratio": phi_ratio,
+            "signal": signal,
+            "score_modifier": score_mod
+        }
+
+    # ========================================================================
+    # VORTEX PATTERN CHECK (Fix #8)
+    # ========================================================================
+
+    def calculate_vortex_pattern(self, value: int) -> Dict[str, Any]:
+        """
+        Check if a value follows Tesla's vortex math pattern: 1-2-4-8-7-5
+
+        The vortex pattern is the doubling sequence reduced to single digits:
+        1 → 2 → 4 → 8 → 16(7) → 32(5) → 64(1) → repeat
+
+        Values that reduce to 3, 6, or 9 are outside the vortex (Tesla's "key").
+        """
+        # Reduce to single digit
+        reduction = value
+        while reduction > 9:
+            reduction = sum(int(d) for d in str(reduction))
+
+        in_vortex = reduction in VORTEX_PATTERN
+        is_tesla_key = reduction in TESLA_NUMBERS
+
+        # Find position in vortex sequence
+        vortex_position = None
+        if in_vortex:
+            vortex_position = VORTEX_PATTERN.index(reduction)
+
+        # Calculate score modifier
+        if is_tesla_key:
+            score_mod = 0.15  # Tesla numbers are most powerful
+            signal = f"TESLA_{reduction}"
+        elif in_vortex:
+            score_mod = 0.08
+            signal = f"VORTEX_{reduction}"
+        else:
+            score_mod = 0.0
+            signal = "NO_VORTEX"
+
+        return {
+            "value": value,
+            "reduction": reduction,
+            "in_vortex": in_vortex,
+            "is_tesla_key": is_tesla_key,
+            "vortex_position": vortex_position,
+            "signal": signal,
+            "score_modifier": score_mod,
+            "vortex_pattern": VORTEX_PATTERN,
+            "tesla_numbers": TESLA_NUMBERS
         }
 
 
@@ -1026,16 +1274,17 @@ class EsotericLearningLoop:
 
     STORAGE_PATH = "./esoteric_learning_data"
 
-    # Default weights (can be learned)
+    # Default weights (v10.1 spec aligned)
     DEFAULT_WEIGHTS = {
-        "gematria": 0.40,        # 30-55% dynamic
-        "numerology": 0.17,      # 15-20%
-        "astro": 0.13,           # 13%
-        "vedic": 0.10,           # 10%
-        "sacred": 0.08,          # 5-10%
-        "fibonacci": 0.07,       # 5-8%
-        "vortex": 0.05           # 5-7%
+        "gematria": 0.52,        # 52% - Boss approved dominant weight
+        "numerology": 0.20,      # 20% - Date-based
+        "astro": 0.13,           # 13% - Moon phase
+        "vedic": 0.10,           # 10% - Future expansion
+        "sacred": 0.05,          # 5%  - Power numbers
+        "fib_phi": 0.05,         # 5%  - Fibonacci alignment
+        "vortex": 0.05           # 5%  - 3-6-9 and 1-2-4-8-7-5 patterns
     }
+    # Note: Weights should sum to 1.10 to account for overlap - normalized on use
 
     def __init__(self):
         self.picks: List[EsotericPickRecord] = []
