@@ -1,7 +1,7 @@
 # JARVIS SAVANT ENGINE v7.4 - Complete Status Document
 
 **Last Updated:** 2026-01-14
-**Status:** ALL PHASES COMPLETE + v10.1 SPEC ALIGNED + ROUTER INTEGRATED
+**Status:** ALL PHASES COMPLETE + v10.1 SPEC ALIGNED + CLICK-TO-BET v2.0
 
 ---
 
@@ -34,14 +34,15 @@
 ```python
 {
     "status": "healthy",
-    "version": "14.4",
+    "version": "14.5",
     "codename": "JARVIS_SAVANT_v10.1",
     "features": [
         "Phase 1: Confluence Core",
         "Phase 2: Vedic/Astro",
         "Phase 3: Learning Loop",
         "v10.1 Dual-Score Confluence",
-        "v10.1 Bet Tier System"
+        "v10.1 Bet Tier System",
+        "Click-to-Bet v2.0"
     ]
 }
 ```
@@ -418,6 +419,153 @@ aa76daf docs: Add comprehensive Phase 1-3 audit documentation
 
 ---
 
+---
+
+## Click-to-Bet v2.0 (DEPLOYED)
+
+### New Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/live/sportsbooks` | GET | List 8 supported sportsbooks with branding |
+| `/live/line-shop/{sport}` | GET | Compare odds across all books |
+| `/live/betslip/generate` | GET | Generate betslip for specific bet |
+| `/live/user/preferences/{user_id}` | GET | Get user's favorite sportsbooks |
+| `/live/user/preferences/{user_id}` | POST | Save user preferences |
+| `/live/bets/track` | POST | Track a placed bet |
+| `/live/bets/grade/{bet_id}` | POST | Grade bet with WIN/LOSS/PUSH |
+| `/live/bets/history` | GET | Get bet history with stats |
+| `/live/quick-betslip/{sport}/{game_id}` | GET | Quick betslip with user prefs |
+
+### Supported Sportsbooks (8)
+
+| Book | Key | Color | Status |
+|------|-----|-------|--------|
+| DraftKings | `draftkings` | #53d337 | Active |
+| FanDuel | `fanduel` | #1493ff | Active |
+| BetMGM | `betmgm` | #c4a44a | Active |
+| Caesars | `caesars` | #0a2240 | Active |
+| PointsBet | `pointsbetus` | #ed1c24 | Active |
+| William Hill | `williamhill_us` | #00314d | Active |
+| Barstool | `barstool` | #c41230 | Active |
+| BetRivers | `betrivers` | #1b365d | Active |
+
+### User Preferences Schema
+
+```json
+{
+  "user_id": "user_123",
+  "favorite_books": ["fanduel", "draftkings", "caesars"],
+  "default_bet_amount": 50,
+  "auto_best_odds": true,
+  "notifications": {
+    "smash_alerts": true,
+    "odds_movement": true,
+    "bet_results": true
+  }
+}
+```
+
+### Bet Tracking Schema
+
+```json
+{
+  "bet_id": "BET_NBA_game123_20260114123456",
+  "user_id": "user_123",
+  "sport": "NBA",
+  "game_id": "game_xyz",
+  "game": "Lakers vs Celtics",
+  "bet_type": "spread",
+  "selection": "Lakers",
+  "line": -3.5,
+  "odds": -110,
+  "sportsbook": "draftkings",
+  "stake": 25,
+  "potential_payout": 47.73,
+  "ai_score": 8.5,
+  "confluence_level": "STRONG",
+  "status": "PENDING",
+  "result": null
+}
+```
+
+### Bet History Stats
+
+```json
+{
+  "stats": {
+    "graded": 50,
+    "pending": 5,
+    "wins": 28,
+    "losses": 20,
+    "pushes": 2,
+    "win_rate": 58.3,
+    "total_profit": 245.50,
+    "roi": 12.5
+  }
+}
+```
+
+### The Complete User Flow
+
+```
+1. User sees SMASH BET card on SmashSpots page
+2. Clicks "Place Bet" button
+3. BetslipModal opens showing all 8 sportsbooks
+4. User's favorite books shown first (from preferences)
+5. Best odds highlighted with green "BEST" badge
+6. User clicks preferred sportsbook
+7. Deep link opens sportsbook's sport-specific page
+8. Bet auto-tracked in /live/bets/track
+9. After game: grade via /live/bets/grade/{bet_id}
+10. View stats via /live/bets/history
+```
+
+### Frontend Integration
+
+The `bookie-member-app` frontend has these components ready:
+- `BetslipModal.jsx` - Complete modal with sportsbook grid
+- `PlaceBetButton.jsx` - Reusable button component
+- `SmashSpots.jsx` - Already integrated with PlaceBetButton
+- `api.js` - All API functions for click-to-bet
+
+---
+
+## Session Continuity Notes (Updated)
+
+### If Starting a New Session:
+1. **Current Branch:** `main` (all features merged)
+2. **Status:** PRODUCTION READY - All v10.1 features + Click-to-Bet deployed
+3. **Router Version:** v14.5
+
+### Key Files:
+| File | Version | Description |
+|------|---------|-------------|
+| `jarvis_savant_engine.py` | v7.4 | Complete scoring engine with v10.1 spec |
+| `live_data_router.py` | v14.5 | 21 endpoints + click-to-bet v2.0 |
+| `advanced_ml_backend.py` | - | 8 AI Models + 8 Pillars |
+| `SCORING_PHASES.md` | - | This documentation file |
+| `FRONTEND_HANDOFF_CLICK_TO_BET.md` | - | Frontend integration guide |
+
+### What's Implemented:
+- 17 Signals (8 AI + 4 Esoteric + 5 Live Data)
+- 8 Pillars of Execution
+- v10.1 Dual-Score Confluence System
+- Bet Tier System (GOLD_STAR, EDGE_LEAN, ML_DOG_LOTTO, MONITOR, PASS)
+- NHL Dog Protocol
+- Fibonacci & Vortex Pattern Detection
+- Learning Loop with weight adjustment
+- **Click-to-Bet v2.0:**
+  - 8 sportsbooks with branding
+  - User preferences (favorite books, default stake)
+  - Bet tracking with grading
+  - Bet history with stats (win rate, ROI)
+  - Quick betslip with user prefs
+  - Enhanced sport-specific deep links
+
+---
+
 **Document Status: COMPLETE**
 **All Phases: IMPLEMENTED AND TESTED**
-**Ready for: PRODUCTION MERGE**
+**Click-to-Bet: DEPLOYED**
+**Ready for: PRODUCTION USE**
