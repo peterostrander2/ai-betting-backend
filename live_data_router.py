@@ -1058,8 +1058,140 @@ async def get_best_bets(sport: str):
         game_key = f"{signal.get('away_team')}@{signal.get('home_team')}"
         sharp_lookup[game_key] = signal
 
-    # Helper function to calculate scores
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0):
+    # Helper function to check JARVIS triggers against numeric values
+    def check_jarvis_triggers(line_value=None, total_value=None, prop_line=None, odds_value=None):
+        """
+        Check JARVIS sacred numbers against actual betting values.
+
+        JARVIS triggers fire when:
+        - Line/spread contains trigger (e.g., -3.0 for 33, spread of 3.3)
+        - Total is a trigger number (e.g., 201, 220 contains 22)
+        - Prop line matches (e.g., 33.5 points)
+        - Date numerology aligns
+        """
+        jarvis_score = 0.0
+        triggers_hit = []
+
+        # Collect all numeric values to check
+        values_to_check = []
+        if line_value is not None:
+            values_to_check.append(("line", abs(float(line_value))))
+        if total_value is not None:
+            values_to_check.append(("total", float(total_value)))
+        if prop_line is not None:
+            values_to_check.append(("prop", float(prop_line)))
+        if odds_value is not None:
+            values_to_check.append(("odds", abs(int(odds_value))))
+
+        # Check date numerology
+        today = datetime.now()
+        date_sum = sum(int(d) for d in f"{today.year}{today.month:02d}{today.day:02d}")
+        date_reduced = date_sum
+        while date_reduced > 99:
+            date_reduced = sum(int(d) for d in str(date_reduced))
+        values_to_check.append(("date", date_reduced))
+        values_to_check.append(("date_sum", date_sum))
+
+        for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
+            triggered = False
+            trigger_source = None
+
+            for source, value in values_to_check:
+                # Direct match (33 in 33.5, 201 total)
+                if trigger_num <= 100:
+                    # For small triggers, check if value starts with or contains trigger
+                    value_str = str(value).replace(".", "")
+                    if str(trigger_num) in value_str:
+                        triggered = True
+                        trigger_source = source
+                        break
+                    # Also check if value rounds to trigger
+                    if abs(value - trigger_num) < 1:
+                        triggered = True
+                        trigger_source = source
+                        break
+                else:
+                    # For large triggers (201, 322, 2178), check totals and sums
+                    if source in ["total", "date_sum"] and abs(value - trigger_num) < 2:
+                        triggered = True
+                        trigger_source = source
+                        break
+
+            if triggered:
+                boost = trigger_data["boost"] / 5  # Max 4 points
+                jarvis_score += boost
+                triggers_hit.append({
+                    "number": trigger_num,
+                    "name": trigger_data["name"],
+                    "source": trigger_source,
+                    "boost": round(boost, 2)
+                })
+
+        return min(4.0, jarvis_score), triggers_hit
+
+    # Helper function to calculate esoteric boost
+    def calculate_esoteric_boost(line_value=None, prop_line=None):
+        """
+        Calculate esoteric boost based on daily energy and pick alignment.
+
+        Factors:
+        - Daily energy score (base)
+        - Power numbers in lines (11, 22, 33, etc.)
+        - Tesla numbers (3, 6, 9)
+        - Moon phase alignment
+        """
+        boost = 0.0
+        factors = []
+
+        # Base boost from daily energy
+        energy_score = daily_energy.get("overall_score", 50)
+        if energy_score >= 85:
+            boost += 1.5
+            factors.append("HIGH_ENERGY_DAY")
+        elif energy_score >= 70:
+            boost += 1.0
+            factors.append("GOOD_ENERGY_DAY")
+        elif energy_score >= 55:
+            boost += 0.5
+            factors.append("NEUTRAL_ENERGY")
+
+        # Check for power numbers in lines
+        check_values = []
+        if line_value is not None:
+            check_values.append(abs(float(line_value)))
+        if prop_line is not None:
+            check_values.append(float(prop_line))
+
+        for val in check_values:
+            val_int = int(val)
+            val_decimal = int((val % 1) * 10)
+
+            # Power number check (11, 22, 33, etc.)
+            if val_int in POWER_NUMBERS or val_decimal in [1, 2, 3, 4, 5, 6, 7, 8, 9] and val_int % 11 == 0:
+                boost += 0.5
+                factors.append(f"POWER_NUMBER_{val_int}")
+                break
+
+            # Tesla number check (3, 6, 9)
+            if val_int % 3 == 0 or val_decimal in [3, 6, 9]:
+                boost += 0.3
+                factors.append(f"TESLA_ALIGNMENT_{val}")
+                break
+
+        # Moon phase bonus
+        moon_data = daily_energy.get("moon_summary", {})
+        moon_phase = moon_data.get("phase", "")
+        if moon_phase == "Full Moon":
+            boost += 0.5
+            factors.append("FULL_MOON")
+        elif moon_phase in ["Waxing Gibbous", "First Quarter"]:
+            boost += 0.2
+            factors.append("WAXING_MOON")
+
+        return min(2.0, boost), factors
+
+    # Main scoring function
+    def calculate_pick_score(sharp_signal, base_ai=5.0, line_value=None, total_value=None, prop_line=None, odds_value=None):
         ai_score = base_ai
         if sharp_signal.get("signal_strength") == "STRONG":
             ai_score += 2.0
@@ -1068,26 +1200,19 @@ async def get_best_bets(sport: str):
 
         pillar_score = 3.0 if sharp_signal.get("line_variance", 0) > 1.0 else 2.0
 
-        # JARVIS triggers
-        jarvis_score = 0.0
-        jarvis_triggers_hit = []
-        for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
-            if str(trigger_num) in game_str:
-                jarvis_boost = trigger_data["boost"] / 5
-                jarvis_score += jarvis_boost
-                jarvis_triggers_hit.append({
-                    "number": trigger_num,
-                    "name": trigger_data["name"],
-                    "boost": round(jarvis_boost, 2)
-                })
-        jarvis_score = min(4.0, jarvis_score)
+        # JARVIS triggers - now checks actual numeric values
+        jarvis_score, jarvis_triggers_hit = check_jarvis_triggers(
+            line_value=line_value,
+            total_value=total_value,
+            prop_line=prop_line,
+            odds_value=odds_value
+        )
 
-        # Esoteric boost
-        esoteric_boost = 0.0
-        if daily_energy.get("overall_score", 50) >= 85:
-            esoteric_boost = 2.0
-        elif daily_energy.get("overall_score", 50) >= 70:
-            esoteric_boost = 1.0
+        # Esoteric boost - now considers pick-specific factors
+        esoteric_boost, esoteric_factors = calculate_esoteric_boost(
+            line_value=line_value,
+            prop_line=prop_line
+        )
 
         total_score = ai_score + pillar_score + jarvis_score + esoteric_boost
 
@@ -1109,7 +1234,8 @@ async def get_best_bets(sport: str):
                 "jarvis": round(jarvis_score, 2),
                 "esoteric": round(esoteric_boost, 2)
             },
-            "jarvis_triggers": jarvis_triggers_hit
+            "jarvis_triggers": jarvis_triggers_hit,
+            "esoteric_factors": esoteric_factors
         }
 
     # ============================================
@@ -1122,7 +1248,6 @@ async def get_best_bets(sport: str):
             home_team = game.get("home_team", "")
             away_team = game.get("away_team", "")
             game_key = f"{away_team}@{home_team}"
-            game_str = f"{home_team}{away_team}"
             sharp_signal = sharp_lookup.get(game_key, {})
 
             for prop in game.get("props", []):
@@ -1135,8 +1260,13 @@ async def get_best_bets(sport: str):
                 if side not in ["Over", "Under"]:
                     continue
 
-                # Calculate score
-                score_data = calculate_pick_score(game_str + player, sharp_signal, base_ai=5.0)
+                # Calculate score with JARVIS checking the prop line
+                score_data = calculate_pick_score(
+                    sharp_signal=sharp_signal,
+                    base_ai=5.0,
+                    prop_line=line,
+                    odds_value=odds
+                )
 
                 props_picks.append({
                     "player": player,
@@ -1183,7 +1313,6 @@ async def get_best_bets(sport: str):
                 home_team = game.get("home_team", "")
                 away_team = game.get("away_team", "")
                 game_key = f"{away_team}@{home_team}"
-                game_str = f"{home_team}{away_team}"
                 sharp_signal = sharp_lookup.get(game_key, {})
 
                 for bm in game.get("bookmakers", [])[:1]:  # Just use first book for now
@@ -1208,8 +1337,14 @@ async def get_best_bets(sport: str):
                             else:
                                 continue
 
-                            # Calculate score
-                            score_data = calculate_pick_score(game_str, sharp_signal, base_ai=4.5)
+                            # Calculate score - JARVIS checks line/total values
+                            score_data = calculate_pick_score(
+                                sharp_signal=sharp_signal,
+                                base_ai=4.5,
+                                line_value=point if market_key == "spreads" else None,
+                                total_value=point if market_key == "totals" else None,
+                                odds_value=odds
+                            )
 
                             game_picks.append({
                                 "pick_type": pick_type,
@@ -1233,15 +1368,19 @@ async def get_best_bets(sport: str):
         for signal in sharp_data.get("data", []):
             home_team = signal.get("home_team", "")
             away_team = signal.get("away_team", "")
-            game_str = f"{home_team}{away_team}"
+            line_variance = signal.get("line_variance", 0)
 
-            score_data = calculate_pick_score(game_str, signal, base_ai=5.0)
+            score_data = calculate_pick_score(
+                sharp_signal=signal,
+                base_ai=5.0,
+                line_value=line_variance
+            )
 
             game_picks.append({
                 "pick_type": "SHARP",
                 "pick": f"Sharp on {signal.get('side', 'HOME')}",
                 "team": home_team if signal.get("side") == "HOME" else away_team,
-                "line": signal.get("line_variance", 0),
+                "line": line_variance,
                 "odds": -110,
                 "game": f"{away_team} @ {home_team}",
                 "home_team": home_team,
