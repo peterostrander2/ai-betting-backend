@@ -1,4 +1,4 @@
-# live_data_router.py v14.5 - CLICK-TO-BET ENHANCEMENTS
+# live_data_router.py v14.6 - TRUE DEEP LINKS
 # Research-Optimized + Esoteric Edge + NOOSPHERE VELOCITY
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
@@ -1852,6 +1852,104 @@ def generate_sportsbook_link(book_key: str, event_id: str, sport: str) -> Dict[s
     }
 
 
+def generate_true_deep_link(book_key: str, event_id: str, sport: str, outcomes: List[Dict]) -> Dict[str, Any]:
+    """
+    Generate TRUE deep links that open the bet slip with selection pre-populated.
+
+    Uses outcome sids from The Odds API to construct direct bet placement links.
+
+    Deep Link Formats:
+    - DraftKings: https://sportsbook.draftkings.com/event/{eventId}?outcomes={outcomeId}
+    - FanDuel: https://sportsbook.fanduel.com/addToBetslip?marketId={marketId}&selectionId={selectionId}
+    - BetMGM: https://sports.betmgm.com/en/sports/events/{eventId}
+    - Others: Sport-specific pages (fallback)
+    """
+    config = SPORTSBOOK_CONFIGS.get(book_key)
+    if not config:
+        return {"web": "#", "note": "Unknown sportsbook"}
+
+    # Extract first outcome's sid if available (for single-click deep link)
+    first_outcome_sid = None
+    first_outcome_link = None
+    if outcomes:
+        first_outcome_sid = outcomes[0].get("sid")
+        first_outcome_link = outcomes[0].get("link")
+
+    # If API provided a direct link, use it
+    if first_outcome_link:
+        return {
+            "web": first_outcome_link,
+            "mobile": first_outcome_link,
+            "type": "direct_betslip",
+            "note": f"Opens {config['name']} with bet pre-populated"
+        }
+
+    # Build book-specific deep links using sids
+    sport_path = {
+        "nba": "basketball/nba",
+        "nfl": "football/nfl",
+        "mlb": "baseball/mlb",
+        "nhl": "hockey/nhl"
+    }.get(sport.lower(), sport.lower())
+
+    base_url = config["web_base"]
+
+    # Book-specific deep link construction
+    if book_key == "draftkings" and first_outcome_sid:
+        # DraftKings uses outcome IDs in URL
+        return {
+            "web": f"{base_url}/event/{event_id}?outcomes={first_outcome_sid}",
+            "mobile": f"dksb://sb/addbet/{first_outcome_sid}",
+            "type": "betslip",
+            "note": f"Opens DraftKings with bet on slip"
+        }
+
+    elif book_key == "fanduel" and first_outcome_sid:
+        # FanDuel uses marketId and selectionId - sid format may be "marketId.selectionId"
+        parts = str(first_outcome_sid).split(".")
+        if len(parts) >= 2:
+            market_id = parts[0]
+            selection_id = parts[1] if len(parts) > 1 else first_outcome_sid
+            return {
+                "web": f"{base_url}/addToBetslip?marketId={market_id}&selectionId={selection_id}",
+                "mobile": f"fanduel://sportsbook/addToBetslip?marketId={market_id}&selectionId={selection_id}",
+                "type": "betslip",
+                "note": f"Opens FanDuel with bet on slip"
+            }
+        else:
+            return {
+                "web": f"{base_url}/{sport_path}",
+                "mobile": config.get("app_scheme", ""),
+                "type": "sport_page",
+                "note": f"Opens FanDuel {sport.upper()} page"
+            }
+
+    elif book_key == "betmgm" and event_id:
+        # BetMGM uses event IDs
+        return {
+            "web": f"{base_url}/en/sports/events/{event_id}",
+            "mobile": f"betmgm://sports/event/{event_id}",
+            "type": "event",
+            "note": f"Opens BetMGM event page"
+        }
+
+    elif book_key == "caesars" and event_id:
+        return {
+            "web": f"{base_url}/us/{sport_path}/event/{event_id}",
+            "mobile": f"caesarssportsbook://event/{event_id}",
+            "type": "event",
+            "note": f"Opens Caesars event page"
+        }
+
+    # Fallback: Sport-specific page
+    return {
+        "web": f"{base_url}/{sport_path}",
+        "mobile": config.get("app_scheme", ""),
+        "type": "sport_page",
+        "note": f"Opens {config['name']} {sport.upper()} page"
+    }
+
+
 @router.get("/line-shop/{sport}")
 async def get_line_shopping(sport: str, game_id: Optional[str] = None):
     """
@@ -1880,7 +1978,9 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
                 "apiKey": ODDS_API_KEY,
                 "regions": "us",
                 "markets": "spreads,h2h,totals",
-                "oddsFormat": "american"
+                "oddsFormat": "american",
+                "includeLinks": "true",
+                "includeSids": "true"
             }
         )
 
@@ -1928,11 +2028,27 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
                             "all_books": []
                         }
 
+                    # Extract deep links from API response (if available)
+                    api_link = bookmaker.get("link")  # Direct link from Odds API
+
+                    # Build outcomes with sids and links
+                    outcomes_with_links = []
+                    for outcome in market.get("outcomes", []):
+                        outcome_data = {
+                            "name": outcome.get("name"),
+                            "price": outcome.get("price"),
+                            "point": outcome.get("point"),
+                            "sid": outcome.get("sid"),  # Source ID for deep links
+                            "link": outcome.get("link")  # Direct bet link if available
+                        }
+                        outcomes_with_links.append(outcome_data)
+
                     book_entry = {
                         "book_key": book_key,
                         "book_name": book_name,
-                        "outcomes": market.get("outcomes", []),
-                        "deep_link": generate_sportsbook_link(book_key, game.get("id"), sport_lower)
+                        "outcomes": outcomes_with_links,
+                        "api_link": api_link,
+                        "deep_link": generate_true_deep_link(book_key, game.get("id"), sport_lower, outcomes_with_links)
                     }
                     game_data["markets"][market_key]["all_books"].append(book_entry)
 
@@ -2019,7 +2135,9 @@ async def generate_betslip(
                 "apiKey": ODDS_API_KEY,
                 "regions": "us",
                 "markets": bet_type + "s" if bet_type in ["spread", "total"] else bet_type,
-                "oddsFormat": "american"
+                "oddsFormat": "american",
+                "includeLinks": "true",
+                "includeSids": "true"
             }
         )
 
@@ -2074,6 +2192,18 @@ async def generate_betslip(
                     if selection.lower() not in outcome_name.lower():
                         continue
 
+                    # Extract sid and link from API response for true deep links
+                    outcome_sid = outcome.get("sid")
+                    outcome_link = outcome.get("link")
+
+                    # Generate true deep link using API data
+                    deep_link = generate_true_deep_link(
+                        book_key,
+                        game_id,
+                        sport_lower,
+                        [{"sid": outcome_sid, "link": outcome_link}]
+                    )
+
                     betslip_options.append({
                         "book_key": book_key,
                         "book_name": book_config["name"],
@@ -2082,10 +2212,8 @@ async def generate_betslip(
                         "selection": outcome_name,
                         "odds": outcome.get("price", -110),
                         "point": outcome.get("point"),  # spread/total line
-                        "deep_link": {
-                            "web": f"{book_config['web_base']}/",
-                            "note": "Opens sportsbook - navigate to game to place bet"
-                        }
+                        "sid": outcome_sid,  # Include sid for custom link building
+                        "deep_link": deep_link
                     })
 
         # Sort by best odds (highest for positive, least negative for negative)
