@@ -258,41 +258,40 @@ class JarvisSavantEngine:
 
     def validate_2178(self) -> Dict[str, Any]:
         """
-        Mathematical proof that 2178 is THE IMMORTAL number.
+        Properties of 2178 - THE IMMORTAL number.
 
-        Properties:
-        1. 2178^4 = 22,497,682,178,656 (contains 2178 at position 7-10)
-        2. Reverse(2178) = 8712
-        3. 8712^4 = 57,596,201,768,256 (contains 8712 at position 7-10)
-        4. Both contain their source number within the 4th power
-        5. 2+1+7+8 = 18 = 1+8 = 9 (Tesla completion)
-        6. 8+7+1+2 = 18 = 1+8 = 9 (Mirror completion)
+        Sacred Properties:
+        1. 2178 × 4 = 8712 (its own reverse!)
+        2. 2+1+7+8 = 18 = 1+8 = 9 (Tesla completion)
+        3. 8+7+1+2 = 18 = 1+8 = 9 (Mirror completion)
+        4. Only 4-digit number where n × 4 = reverse(n)
+        5. Self-referential palindromic multiplication
         """
         n = 2178
         n_reverse = 8712
 
-        n_pow4 = n ** 4  # 22,497,682,178,656
-        n_reverse_pow4 = n_reverse ** 4  # 57,596,201,768,256
-
-        # Check if original number appears in its 4th power
-        n_in_pow4 = str(n) in str(n_pow4)
-        reverse_in_pow4 = str(n_reverse) in str(n_reverse_pow4)
+        # The TRUE immortal property: 2178 × 4 = 8712 (its reverse!)
+        n_times_4 = n * 4
+        is_reverse_multiple = n_times_4 == n_reverse
 
         # Calculate reductions
         n_reduction = sum(int(d) for d in str(n))  # 2+1+7+8 = 18
         final_reduction = sum(int(d) for d in str(n_reduction))  # 1+8 = 9
 
+        # Verify reverse also reduces to 9
+        reverse_reduction = sum(int(d) for d in str(n_reverse))  # 8+7+1+2 = 18
+        reverse_final = sum(int(d) for d in str(reverse_reduction))  # 1+8 = 9
+
         return {
             "number": n,
             "reverse": n_reverse,
-            "n_to_4th_power": n_pow4,
-            "reverse_to_4th_power": n_reverse_pow4,
-            "n_appears_in_pow4": n_in_pow4,
-            "reverse_appears_in_pow4": reverse_in_pow4,
+            "n_times_4": n_times_4,
+            "is_reverse_multiple": is_reverse_multiple,
             "digital_root": final_reduction,
-            "is_immortal": n_in_pow4 and reverse_in_pow4 and final_reduction == 9,
-            "proof": "2178 is the ONLY 4-digit number where both n^4 and reverse(n)^4 contain their source",
-            "significance": "THE IMMORTAL - Never collapses, always self-referential"
+            "reverse_digital_root": reverse_final,
+            "is_immortal": is_reverse_multiple and final_reduction == 9,
+            "proof": "2178 × 4 = 8712 (its own reverse). Only 4-digit number with this property.",
+            "significance": "THE IMMORTAL - Self-referential through multiplication"
         }
 
     # ========================================================================
@@ -433,6 +432,12 @@ class JarvisSavantEngine:
         # Calculate signal strength (0-1)
         signal_strength = min(1.0, (combined_trigger["total_boost"] + matchup_trigger["total_boost"]) / 20)
 
+        # Determine if triggered (any JARVIS trigger hit)
+        triggered = combined_trigger["trigger_count"] > 0 or matchup_trigger["trigger_count"] > 0
+
+        # Calculate influence for scoring (-1 to 1 scale)
+        influence = signal_strength if triggered else signal_strength * 0.5
+
         return {
             "player_gematria": player_gem,
             "team_gematria": team_gem,
@@ -443,7 +448,9 @@ class JarvisSavantEngine:
             "matchup_trigger": matchup_trigger,
             "weight": base_weight,
             "signal_strength": signal_strength,
-            "signal": "STRONG" if signal_strength > 0.7 else "MODERATE" if signal_strength > 0.4 else "WEAK"
+            "signal": "STRONG" if signal_strength > 0.7 else "MODERATE" if signal_strength > 0.4 else "WEAK",
+            "triggered": triggered,
+            "influence": influence
         }
 
     # ========================================================================
@@ -512,6 +519,7 @@ class JarvisSavantEngine:
             "is_crush_zone": is_crush_zone,
             "signal": signal,
             "adjustment": adjustment,
+            "influence": adjustment,  # Alias for router compatibility
             "explanation": explanation
         }
 
@@ -554,6 +562,7 @@ class JarvisSavantEngine:
             "abs_spread": abs_spread,
             "signal": signal,
             "adjustment": adjustment,
+            "modifier": adjustment,  # Alias for router compatibility
             "explanation": explanation
         }
 
@@ -596,6 +605,7 @@ class JarvisSavantEngine:
             "signal": signal,
             "is_trap": is_trap,
             "adjustment": adjustment,
+            "modifier": adjustment,  # Alias for router compatibility
             "explanation": explanation
         }
 
@@ -917,7 +927,8 @@ class JarvisSavantEngine:
             "phi_aligned": phi_aligned,
             "phi_ratio": phi_ratio,
             "signal": signal,
-            "score_modifier": score_mod
+            "score_modifier": score_mod,
+            "modifier": score_mod  # Alias for router compatibility
         }
 
     # ========================================================================
@@ -965,6 +976,7 @@ class JarvisSavantEngine:
             "vortex_position": vortex_position,
             "signal": signal,
             "score_modifier": score_mod,
+            "modifier": score_mod,  # Alias for router compatibility
             "vortex_pattern": VORTEX_PATTERN,
             "tesla_numbers": TESLA_NUMBERS
         }
