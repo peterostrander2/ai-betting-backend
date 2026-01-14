@@ -1,4 +1,4 @@
-# live_data_router.py v14.1 - PRODUCTION HARDENED
+# live_data_router.py v14.6 - TRUE DEEP LINKS
 # Research-Optimized + Esoteric Edge + NOOSPHERE VELOCITY
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
@@ -679,9 +679,15 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "version": "14.3",
-        "codename": "JARVIS_SAVANT",
-        "features": ["Phase 1: Confluence Core", "Phase 2: Vedic/Astro", "Phase 3: Learning Loop"],
+        "version": "14.4",
+        "codename": "JARVIS_SAVANT_v10.1",
+        "features": [
+            "Phase 1: Confluence Core",
+            "Phase 2: Vedic/Astro",
+            "Phase 3: Learning Loop",
+            "v10.1 Dual-Score Confluence",
+            "v10.1 Bet Tier System"
+        ],
         "timestamp": datetime.now().isoformat()
     }
 
@@ -1067,21 +1073,43 @@ async def get_best_bets(sport: str):
     # Get learned weights for esoteric scoring
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
-    # Helper function to calculate scores with full esoteric integration
+    # Helper function to calculate scores with v10.1 dual-score confluence
     def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50):
+        # =====================================================================
+        # v10.1 DUAL-SCORE CONFLUENCE SYSTEM
+        # =====================================================================
+        # RESEARCH SCORE (0-10): 8 AI Models (0-8) + 8 Pillars (0-8) scaled to 0-10
+        # ESOTERIC SCORE (0-10): JARVIS (0-4) + Gematria + Public Fade + Mid-Spread + Esoteric Edge
+        # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
+        # =====================================================================
+
+        # --- RESEARCH SCORE CALCULATION ---
         ai_score = base_ai
         if sharp_signal.get("signal_strength") == "STRONG":
             ai_score += 2.0
         elif sharp_signal.get("signal_strength") == "MODERATE":
             ai_score += 1.0
+        ai_score = min(8.0, ai_score)
 
         pillar_score = 3.0 if sharp_signal.get("line_variance", 0) > 1.0 else 2.0
+        pillar_score = min(8.0, pillar_score)
 
-        # JARVIS triggers (using full engine if available)
+        # Research score: (ai + pillar) / 16 * 10 = normalized to 0-10
+        research_score = (ai_score + pillar_score) / 16 * 10
+
+        # --- ESOTERIC SCORE CALCULATION ---
         jarvis_score = 0.0
         jarvis_triggers_hit = []
-        confluence_level = "WEAK"
-        astro_boost = 0.0
+        immortal_detected = False
+        jarvis_triggered = False
+        gematria_contribution = 0.0
+        public_fade_contribution = 0.0
+        mid_spread_contribution = 0.0
+        astro_contribution = 0.0
+        esoteric_edge = 0.0
+        fib_contribution = 0.0
+        vortex_contribution = 0.0
+        trap_deduction = 0.0
 
         if jarvis:
             # Full JARVIS trigger check
@@ -1095,9 +1123,13 @@ async def get_best_bets(sport: str):
                     "match_type": trig.get("match_type", "DIRECT"),
                     "boost": round(jarvis_boost, 2)
                 })
+                # Check for IMMORTAL 2178
+                if trig["number"] == 2178:
+                    immortal_detected = True
             jarvis_score = min(4.0, jarvis_score)
+            jarvis_triggered = len(jarvis_triggers_hit) > 0
 
-            # Full gematria signal
+            # Full gematria and signals
             if player_name and home_team:
                 gematria = jarvis.calculate_gematria_signal(player_name, home_team, away_team)
                 public_fade = jarvis.calculate_public_fade_signal(public_pct)
@@ -1107,19 +1139,30 @@ async def get_best_bets(sport: str):
                 # Get astro score
                 astro = vedic.calculate_astro_score() if vedic else {"overall_score": 50}
 
-                # Calculate confluence
-                confluence = jarvis.calculate_confluence(
-                    gematria_signal=gematria,
-                    public_fade=public_fade,
-                    mid_spread=mid_spread,
-                    trap_signal=trap,
-                    astro_score=astro,
-                    sharp_signal=sharp_signal
-                )
-                confluence_level = confluence.get("level", "WEAK")
+                # Gematria contribution (52% weight per v10.1)
+                if gematria.get("triggered"):
+                    gematria_contribution = gematria.get("influence", 0) * 0.52 * 2
 
-                # Add astro boost
-                astro_boost = (astro["overall_score"] - 50) / 50 * esoteric_weights.get("astro", 0.13) * 2
+                # Public fade contribution (graduated per v10.1)
+                public_fade_contribution = public_fade.get("influence", 0)
+
+                # Mid-spread contribution
+                mid_spread_contribution = mid_spread.get("modifier", 0)
+
+                # Trap deduction
+                trap_deduction = trap.get("modifier", 0)
+
+                # Astro contribution
+                astro_contribution = (astro["overall_score"] - 50) / 50 * esoteric_weights.get("astro", 0.13) * 2
+
+                # Fibonacci alignment (v10.1 Fix #7)
+                fib_alignment = jarvis.calculate_fibonacci_alignment(float(spread) if spread else 0)
+                fib_contribution = fib_alignment.get("modifier", 0)
+
+                # Vortex pattern check (v10.1 Fix #8)
+                vortex_value = int(abs(spread * 10)) if spread else 0
+                vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
+                vortex_contribution = vortex_pattern.get("modifier", 0)
         else:
             # Fallback to simple trigger check
             for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
@@ -1131,48 +1174,105 @@ async def get_best_bets(sport: str):
                         "name": trigger_data["name"],
                         "boost": round(jarvis_boost, 2)
                     })
+                    if trigger_num == 2178:
+                        immortal_detected = True
             jarvis_score = min(4.0, jarvis_score)
+            jarvis_triggered = len(jarvis_triggers_hit) > 0
 
-        # Esoteric boost (enhanced with learned weights)
-        esoteric_boost = 0.0
+        # Esoteric edge from daily energy (0-2)
         if daily_energy.get("overall_score", 50) >= 85:
-            esoteric_boost = 2.0
+            esoteric_edge = 2.0
         elif daily_energy.get("overall_score", 50) >= 70:
-            esoteric_boost = 1.0
+            esoteric_edge = 1.0
 
-        # Add astro boost
-        esoteric_boost += max(0, astro_boost)
+        # Esoteric score: JARVIS (0-4) + contributions (scaled to fit 0-10)
+        # Base: JARVIS 0-4, Edge 0-2, Gematria 0-1, Astro 0-0.5, Mid-spread 0-0.2, etc
+        # Max theoretical: 4 + 2 + 1 + 0.5 + 0.2 + fib + vortex ~ 8-9
+        esoteric_raw = (
+            jarvis_score +
+            esoteric_edge +
+            gematria_contribution +
+            max(0, astro_contribution) +
+            mid_spread_contribution +
+            fib_contribution +
+            vortex_contribution +
+            public_fade_contribution +  # Usually negative
+            trap_deduction
+        )
+        esoteric_score = max(0, min(10, esoteric_raw * 1.25))  # Scale to 0-10
 
-        # Confluence multiplier
-        confluence_multipliers = {
-            "GODMODE": 1.5, "LEGENDARY": 1.3, "STRONG": 1.2,
-            "MODERATE": 1.1, "WEAK": 1.0, "AVOID": 0.8
-        }
-        confluence_mult = confluence_multipliers.get(confluence_level, 1.0)
-
-        total_score = (ai_score + pillar_score + jarvis_score + esoteric_boost) * confluence_mult
-
-        if total_score >= 18:
-            confidence = "SMASH"
-        elif total_score >= 14:
-            confidence = "HIGH"
-        elif total_score >= 10:
-            confidence = "MEDIUM"
+        # --- v10.1 DUAL-SCORE CONFLUENCE ---
+        if jarvis:
+            confluence = jarvis.calculate_confluence(
+                research_score=research_score,
+                esoteric_score=esoteric_score,
+                immortal_detected=immortal_detected,
+                jarvis_triggered=jarvis_triggered
+            )
         else:
-            confidence = "LOW"
+            # Fallback confluence calculation
+            alignment = 1 - abs(research_score - esoteric_score) / 10
+            alignment_pct = alignment * 100
+            both_high = research_score >= 7.5 and esoteric_score >= 7.5
+            if immortal_detected and both_high and alignment_pct >= 80:
+                confluence = {"level": "IMMORTAL", "boost": 10, "alignment_pct": alignment_pct}
+            elif jarvis_triggered and both_high and alignment_pct >= 80:
+                confluence = {"level": "JARVIS_PERFECT", "boost": 7, "alignment_pct": alignment_pct}
+            elif both_high and alignment_pct >= 80:
+                confluence = {"level": "PERFECT", "boost": 5, "alignment_pct": alignment_pct}
+            elif alignment_pct >= 70:
+                confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
+            elif alignment_pct >= 60:
+                confluence = {"level": "MODERATE", "boost": 1, "alignment_pct": alignment_pct}
+            else:
+                confluence = {"level": "DIVERGENT", "boost": 0, "alignment_pct": alignment_pct}
+
+        confluence_level = confluence.get("level", "DIVERGENT")
+        confluence_boost = confluence.get("boost", 0)
+
+        # --- v10.1 FINAL SCORE FORMULA ---
+        # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
+        final_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence_boost
+
+        # --- v10.1 BET TIER DETERMINATION ---
+        if jarvis:
+            bet_tier = jarvis.determine_bet_tier(final_score, confluence)
+        else:
+            if final_score >= 9.0:
+                bet_tier = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
+            elif final_score >= 7.5:
+                bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
+            elif final_score >= 6.0:
+                bet_tier = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
+            else:
+                bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
+
+        # Map to confidence levels for backward compatibility
+        confidence_map = {
+            "GOLD_STAR": "SMASH",
+            "EDGE_LEAN": "HIGH",
+            "MONITOR": "MEDIUM",
+            "PASS": "LOW"
+        }
+        confidence = confidence_map.get(bet_tier.get("tier", "PASS"), "LOW")
 
         return {
-            "total_score": round(total_score, 2),
+            "total_score": round(final_score, 2),
             "confidence": confidence,
             "confluence_level": confluence_level,
+            "bet_tier": bet_tier,
             "scoring_breakdown": {
+                "research_score": round(research_score, 2),
+                "esoteric_score": round(esoteric_score, 2),
                 "ai_models": round(ai_score, 2),
                 "pillars": round(pillar_score, 2),
                 "jarvis": round(jarvis_score, 2),
-                "esoteric": round(esoteric_boost, 2),
-                "confluence_multiplier": confluence_mult
+                "esoteric_edge": round(esoteric_edge, 2),
+                "confluence_boost": confluence_boost,
+                "alignment_pct": confluence.get("alignment_pct", 0)
             },
-            "jarvis_triggers": jarvis_triggers_hit
+            "jarvis_triggers": jarvis_triggers_hit,
+            "immortal_detected": immortal_detected
         }
 
     # ============================================
@@ -1752,6 +1852,104 @@ def generate_sportsbook_link(book_key: str, event_id: str, sport: str) -> Dict[s
     }
 
 
+def generate_true_deep_link(book_key: str, event_id: str, sport: str, outcomes: List[Dict]) -> Dict[str, Any]:
+    """
+    Generate TRUE deep links that open the bet slip with selection pre-populated.
+
+    Uses outcome sids from The Odds API to construct direct bet placement links.
+
+    Deep Link Formats:
+    - DraftKings: https://sportsbook.draftkings.com/event/{eventId}?outcomes={outcomeId}
+    - FanDuel: https://sportsbook.fanduel.com/addToBetslip?marketId={marketId}&selectionId={selectionId}
+    - BetMGM: https://sports.betmgm.com/en/sports/events/{eventId}
+    - Others: Sport-specific pages (fallback)
+    """
+    config = SPORTSBOOK_CONFIGS.get(book_key)
+    if not config:
+        return {"web": "#", "note": "Unknown sportsbook"}
+
+    # Extract first outcome's sid if available (for single-click deep link)
+    first_outcome_sid = None
+    first_outcome_link = None
+    if outcomes:
+        first_outcome_sid = outcomes[0].get("sid")
+        first_outcome_link = outcomes[0].get("link")
+
+    # If API provided a direct link, use it
+    if first_outcome_link:
+        return {
+            "web": first_outcome_link,
+            "mobile": first_outcome_link,
+            "type": "direct_betslip",
+            "note": f"Opens {config['name']} with bet pre-populated"
+        }
+
+    # Build book-specific deep links using sids
+    sport_path = {
+        "nba": "basketball/nba",
+        "nfl": "football/nfl",
+        "mlb": "baseball/mlb",
+        "nhl": "hockey/nhl"
+    }.get(sport.lower(), sport.lower())
+
+    base_url = config["web_base"]
+
+    # Book-specific deep link construction
+    if book_key == "draftkings" and first_outcome_sid:
+        # DraftKings uses outcome IDs in URL
+        return {
+            "web": f"{base_url}/event/{event_id}?outcomes={first_outcome_sid}",
+            "mobile": f"dksb://sb/addbet/{first_outcome_sid}",
+            "type": "betslip",
+            "note": f"Opens DraftKings with bet on slip"
+        }
+
+    elif book_key == "fanduel" and first_outcome_sid:
+        # FanDuel uses marketId and selectionId - sid format may be "marketId.selectionId"
+        parts = str(first_outcome_sid).split(".")
+        if len(parts) >= 2:
+            market_id = parts[0]
+            selection_id = parts[1] if len(parts) > 1 else first_outcome_sid
+            return {
+                "web": f"{base_url}/addToBetslip?marketId={market_id}&selectionId={selection_id}",
+                "mobile": f"fanduel://sportsbook/addToBetslip?marketId={market_id}&selectionId={selection_id}",
+                "type": "betslip",
+                "note": f"Opens FanDuel with bet on slip"
+            }
+        else:
+            return {
+                "web": f"{base_url}/{sport_path}",
+                "mobile": config.get("app_scheme", ""),
+                "type": "sport_page",
+                "note": f"Opens FanDuel {sport.upper()} page"
+            }
+
+    elif book_key == "betmgm" and event_id:
+        # BetMGM uses event IDs
+        return {
+            "web": f"{base_url}/en/sports/events/{event_id}",
+            "mobile": f"betmgm://sports/event/{event_id}",
+            "type": "event",
+            "note": f"Opens BetMGM event page"
+        }
+
+    elif book_key == "caesars" and event_id:
+        return {
+            "web": f"{base_url}/us/{sport_path}/event/{event_id}",
+            "mobile": f"caesarssportsbook://event/{event_id}",
+            "type": "event",
+            "note": f"Opens Caesars event page"
+        }
+
+    # Fallback: Sport-specific page
+    return {
+        "web": f"{base_url}/{sport_path}",
+        "mobile": config.get("app_scheme", ""),
+        "type": "sport_page",
+        "note": f"Opens {config['name']} {sport.upper()} page"
+    }
+
+
 @router.get("/line-shop/{sport}")
 async def get_line_shopping(sport: str, game_id: Optional[str] = None):
     """
@@ -1780,7 +1978,9 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
                 "apiKey": ODDS_API_KEY,
                 "regions": "us",
                 "markets": "spreads,h2h,totals",
-                "oddsFormat": "american"
+                "oddsFormat": "american",
+                "includeLinks": "true",
+                "includeSids": "true"
             }
         )
 
@@ -1828,11 +2028,27 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
                             "all_books": []
                         }
 
+                    # Extract deep links from API response (if available)
+                    api_link = bookmaker.get("link")  # Direct link from Odds API
+
+                    # Build outcomes with sids and links
+                    outcomes_with_links = []
+                    for outcome in market.get("outcomes", []):
+                        outcome_data = {
+                            "name": outcome.get("name"),
+                            "price": outcome.get("price"),
+                            "point": outcome.get("point"),
+                            "sid": outcome.get("sid"),  # Source ID for deep links
+                            "link": outcome.get("link")  # Direct bet link if available
+                        }
+                        outcomes_with_links.append(outcome_data)
+
                     book_entry = {
                         "book_key": book_key,
                         "book_name": book_name,
-                        "outcomes": market.get("outcomes", []),
-                        "deep_link": generate_sportsbook_link(book_key, game.get("id"), sport_lower)
+                        "outcomes": outcomes_with_links,
+                        "api_link": api_link,
+                        "deep_link": generate_true_deep_link(book_key, game.get("id"), sport_lower, outcomes_with_links)
                     }
                     game_data["markets"][market_key]["all_books"].append(book_entry)
 
@@ -1919,7 +2135,9 @@ async def generate_betslip(
                 "apiKey": ODDS_API_KEY,
                 "regions": "us",
                 "markets": bet_type + "s" if bet_type in ["spread", "total"] else bet_type,
-                "oddsFormat": "american"
+                "oddsFormat": "american",
+                "includeLinks": "true",
+                "includeSids": "true"
             }
         )
 
@@ -1974,6 +2192,18 @@ async def generate_betslip(
                     if selection.lower() not in outcome_name.lower():
                         continue
 
+                    # Extract sid and link from API response for true deep links
+                    outcome_sid = outcome.get("sid")
+                    outcome_link = outcome.get("link")
+
+                    # Generate true deep link using API data
+                    deep_link = generate_true_deep_link(
+                        book_key,
+                        game_id,
+                        sport_lower,
+                        [{"sid": outcome_sid, "link": outcome_link}]
+                    )
+
                     betslip_options.append({
                         "book_key": book_key,
                         "book_name": book_config["name"],
@@ -1982,10 +2212,8 @@ async def generate_betslip(
                         "selection": outcome_name,
                         "odds": outcome.get("price", -110),
                         "point": outcome.get("point"),  # spread/total line
-                        "deep_link": {
-                            "web": f"{book_config['web_base']}/",
-                            "note": "Opens sportsbook - navigate to game to place bet"
-                        }
+                        "sid": outcome_sid,  # Include sid for custom link building
+                        "deep_link": deep_link
                     })
 
         # Sort by best odds (highest for positive, least negative for negative)
@@ -2461,18 +2689,21 @@ async def get_confluence_analysis(
     opponent: str = "Opponent",
     spread: float = 0,
     total: float = 220,
-    public_pct: float = 50
+    public_pct: float = 50,
+    research_score: float = 7.0  # v10.1: Allow passing external research score
 ):
     """
-    Calculate confluence analysis for a pick.
+    Calculate v10.1 dual-score confluence analysis for a pick.
 
-    THE HEART - 6 levels of signal agreement:
-    - GODMODE (6/6): All signals agree
-    - LEGENDARY (5/6): Strong multi-factor alignment
-    - STRONG (4/6): Solid confluence
-    - MODERATE (3/6): Actionable
-    - WEAK (2/6): Monitor only
-    - AVOID (0-1/6): Signals conflict
+    THE HEART - v10.1 Alignment System:
+    - IMMORTAL (+10): 2178 + both ≥7.5 + alignment ≥80%
+    - JARVIS_PERFECT (+7): Trigger + both ≥7.5 + alignment ≥80%
+    - PERFECT (+5): both ≥7.5 + alignment ≥80%
+    - STRONG (+3): Both high OR aligned ≥70%
+    - MODERATE (+1): Aligned ≥60%
+    - DIVERGENT (+0): Models disagree
+
+    Alignment = 1 - |research - esoteric| / 10
     """
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
@@ -2480,9 +2711,12 @@ async def get_confluence_analysis(
 
     jarvis = get_jarvis_savant()
     vedic = get_vedic_astro()
+    learning = get_esoteric_loop()
 
     if not jarvis or not vedic:
         raise HTTPException(status_code=503, detail="Esoteric engines not available")
+
+    esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
     # Calculate all signals
     gematria = jarvis.calculate_gematria_signal(player, team, opponent)
@@ -2491,34 +2725,81 @@ async def get_confluence_analysis(
     trap = jarvis.calculate_large_spread_trap(spread, total)
     astro = vedic.calculate_astro_score()
 
-    # Calculate confluence
-    confluence = jarvis.calculate_confluence(
-        gematria_signal=gematria,
-        public_fade=public_fade,
-        mid_spread=mid_spread,
-        trap_signal=trap,
-        astro_score=astro,
-        sharp_signal=None
+    # v10.1: Fibonacci alignment and Vortex pattern
+    fib_alignment = jarvis.calculate_fibonacci_alignment(float(spread) if spread else 0)
+    vortex_value = int(abs(spread * 10)) if spread else 0
+    vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
+
+    # Check for JARVIS triggers in player/team names
+    game_str = f"{player}{team}{opponent}"
+    trigger_result = jarvis.check_jarvis_trigger(game_str)
+    jarvis_triggered = len(trigger_result.get("triggers_hit", [])) > 0
+    immortal_detected = any(t["number"] == 2178 for t in trigger_result.get("triggers_hit", []))
+
+    # Calculate JARVIS score from triggers
+    jarvis_score = 0.0
+    for trig in trigger_result.get("triggers_hit", []):
+        jarvis_score += trig["boost"] / 5
+    jarvis_score = min(4.0, jarvis_score)
+
+    # v10.1: Calculate esoteric score
+    gematria_contribution = gematria.get("influence", 0) * 0.52 * 2 if gematria.get("triggered") else 0
+    astro_contribution = (astro["overall_score"] - 50) / 50 * esoteric_weights.get("astro", 0.13) * 2
+
+    esoteric_raw = (
+        jarvis_score +
+        gematria_contribution +
+        max(0, astro_contribution) +
+        mid_spread.get("modifier", 0) +
+        fib_alignment.get("modifier", 0) +
+        vortex_pattern.get("modifier", 0) +
+        public_fade.get("influence", 0) +
+        trap.get("modifier", 0)
     )
+    esoteric_score = max(0, min(10, esoteric_raw * 1.25))
+
+    # v10.1: Calculate dual-score confluence
+    confluence = jarvis.calculate_confluence(
+        research_score=research_score,
+        esoteric_score=esoteric_score,
+        immortal_detected=immortal_detected,
+        jarvis_triggered=jarvis_triggered
+    )
+
+    # v10.1: Calculate final score and bet tier
+    final_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence.get("boost", 0)
+    bet_tier = jarvis.determine_bet_tier(final_score, confluence)
 
     return {
         "sport": sport.upper(),
+        "version": "v10.1",
         "input": {
             "player": player,
             "team": team,
             "opponent": opponent,
             "spread": spread,
             "total": total,
-            "public_pct": public_pct
+            "public_pct": public_pct,
+            "research_score": research_score
         },
         "signals": {
             "gematria": gematria,
             "public_fade": public_fade,
             "mid_spread": mid_spread,
             "trap": trap,
-            "astro": astro
+            "astro": astro,
+            "fibonacci": fib_alignment,
+            "vortex": vortex_pattern
+        },
+        "jarvis_triggers": trigger_result.get("triggers_hit", []),
+        "scoring": {
+            "research_score": round(research_score, 2),
+            "esoteric_score": round(esoteric_score, 2),
+            "final_score": round(final_score, 2),
+            "formula": "FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost"
         },
         "confluence": confluence,
+        "bet_tier": bet_tier,
         "timestamp": datetime.now().isoformat()
     }
 
@@ -2765,6 +3046,779 @@ async def get_esoteric_analysis(
 
     except ImportError:
         raise HTTPException(status_code=503, detail="Esoteric analysis module not available")
+
+
+# ============================================================================
+# CLICK-TO-BET ENHANCEMENTS v2.0
+# ============================================================================
+
+# In-memory storage for user preferences and bet tracking
+# In production, this should use Redis or a database
+_user_preferences: Dict[str, Dict[str, Any]] = {}
+_tracked_bets: List[Dict[str, Any]] = []
+_parlay_slips: Dict[str, List[Dict[str, Any]]] = {}  # user_id -> list of parlay legs
+_placed_parlays: List[Dict[str, Any]] = []  # Tracked parlays
+
+
+@router.get("/user/preferences/{user_id}")
+async def get_user_preferences(user_id: str):
+    """
+    Get user's sportsbook preferences.
+
+    Returns:
+    - favorite_books: List of preferred sportsbooks (in order)
+    - default_bet_amount: Default stake amount
+    - notifications: Notification preferences
+    """
+    prefs = _user_preferences.get(user_id, {
+        "user_id": user_id,
+        "favorite_books": ["draftkings", "fanduel", "betmgm"],
+        "default_bet_amount": 25,
+        "auto_best_odds": True,
+        "notifications": {
+            "smash_alerts": True,
+            "odds_movement": True,
+            "bet_results": True
+        },
+        "created_at": datetime.now().isoformat()
+    })
+
+    return prefs
+
+
+@router.post("/user/preferences/{user_id}")
+async def save_user_preferences(user_id: str, prefs: Dict[str, Any]):
+    """
+    Save user's sportsbook preferences.
+
+    Request Body:
+    {
+        "favorite_books": ["fanduel", "draftkings", "caesars"],
+        "default_bet_amount": 50,
+        "auto_best_odds": true,
+        "notifications": {
+            "smash_alerts": true,
+            "odds_movement": false,
+            "bet_results": true
+        }
+    }
+    """
+    # Validate favorite_books
+    valid_books = list(SPORTSBOOK_CONFIGS.keys())
+    favorite_books = prefs.get("favorite_books", [])
+    validated_books = [b for b in favorite_books if b in valid_books]
+
+    _user_preferences[user_id] = {
+        "user_id": user_id,
+        "favorite_books": validated_books if validated_books else ["draftkings", "fanduel", "betmgm"],
+        "default_bet_amount": prefs.get("default_bet_amount", 25),
+        "auto_best_odds": prefs.get("auto_best_odds", True),
+        "notifications": prefs.get("notifications", {
+            "smash_alerts": True,
+            "odds_movement": True,
+            "bet_results": True
+        }),
+        "updated_at": datetime.now().isoformat()
+    }
+
+    return {"status": "saved", "preferences": _user_preferences[user_id]}
+
+
+@router.post("/bets/track")
+async def track_bet(bet_data: Dict[str, Any]):
+    """
+    Track a bet that was placed through the click-to-bet flow.
+
+    Request Body:
+    {
+        "user_id": "user_123",
+        "sport": "NBA",
+        "game_id": "game_xyz",
+        "game": "Lakers vs Celtics",
+        "bet_type": "spread",
+        "selection": "Lakers",
+        "line": -3.5,
+        "odds": -110,
+        "sportsbook": "draftkings",
+        "stake": 25,
+        "ai_score": 8.5,
+        "confluence_level": "STRONG"
+    }
+
+    Returns bet_id for later grading.
+    """
+    required_fields = ["sport", "game_id", "bet_type", "selection", "odds", "sportsbook"]
+    for field in required_fields:
+        if field not in bet_data:
+            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+
+    bet_id = f"BET_{bet_data['sport']}_{bet_data['game_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    tracked_bet = {
+        "bet_id": bet_id,
+        "user_id": bet_data.get("user_id", "anonymous"),
+        "sport": bet_data["sport"].upper(),
+        "game_id": bet_data["game_id"],
+        "game": bet_data.get("game", "Unknown Game"),
+        "bet_type": bet_data["bet_type"],
+        "selection": bet_data["selection"],
+        "line": bet_data.get("line"),
+        "odds": bet_data["odds"],
+        "sportsbook": bet_data["sportsbook"],
+        "stake": bet_data.get("stake", 0),
+        "potential_payout": calculate_payout(bet_data.get("stake", 0), bet_data["odds"]),
+        "ai_score": bet_data.get("ai_score"),
+        "confluence_level": bet_data.get("confluence_level"),
+        "status": "PENDING",
+        "result": None,
+        "placed_at": datetime.now().isoformat()
+    }
+
+    _tracked_bets.append(tracked_bet)
+
+    return {
+        "status": "tracked",
+        "bet_id": bet_id,
+        "bet": tracked_bet,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/bets/grade/{bet_id}")
+async def grade_bet(bet_id: str, result_data: Dict[str, Any]):
+    """
+    Grade a tracked bet with actual result.
+
+    Request Body:
+    {
+        "result": "WIN",  // WIN, LOSS, PUSH
+        "actual_score": "Lakers 110, Celtics 105"  // Optional
+    }
+    """
+    result = result_data.get("result", "").upper()
+    if result not in ["WIN", "LOSS", "PUSH"]:
+        raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
+
+    for bet in _tracked_bets:
+        if bet["bet_id"] == bet_id:
+            bet["status"] = "GRADED"
+            bet["result"] = result
+            bet["actual_score"] = result_data.get("actual_score")
+            bet["graded_at"] = datetime.now().isoformat()
+
+            # Calculate actual profit/loss
+            if result == "WIN":
+                bet["profit"] = bet["potential_payout"] - bet["stake"]
+            elif result == "LOSS":
+                bet["profit"] = -bet["stake"]
+            else:  # PUSH
+                bet["profit"] = 0
+
+            return {"status": "graded", "bet": bet}
+
+    raise HTTPException(status_code=404, detail=f"Bet not found: {bet_id}")
+
+
+@router.get("/bets/history")
+async def get_bet_history(
+    user_id: Optional[str] = None,
+    sport: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50
+):
+    """
+    Get bet history with optional filters.
+
+    Supports filtering by:
+    - user_id: Filter by user
+    - sport: Filter by sport (NBA, NFL, etc.)
+    - status: Filter by status (PENDING, GRADED)
+    """
+    filtered_bets = _tracked_bets.copy()
+
+    if user_id:
+        filtered_bets = [b for b in filtered_bets if b.get("user_id") == user_id]
+    if sport:
+        filtered_bets = [b for b in filtered_bets if b.get("sport") == sport.upper()]
+    if status:
+        filtered_bets = [b for b in filtered_bets if b.get("status") == status.upper()]
+
+    # Sort by placed_at descending
+    filtered_bets.sort(key=lambda x: x.get("placed_at", ""), reverse=True)
+
+    # Calculate stats
+    graded_bets = [b for b in filtered_bets if b.get("status") == "GRADED"]
+    wins = len([b for b in graded_bets if b.get("result") == "WIN"])
+    losses = len([b for b in graded_bets if b.get("result") == "LOSS"])
+    pushes = len([b for b in graded_bets if b.get("result") == "PUSH"])
+    total_profit = sum(b.get("profit", 0) for b in graded_bets)
+
+    return {
+        "bets": filtered_bets[:limit],
+        "count": len(filtered_bets[:limit]),
+        "total_tracked": len(filtered_bets),
+        "stats": {
+            "graded": len(graded_bets),
+            "pending": len(filtered_bets) - len(graded_bets),
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "win_rate": round(wins / len(graded_bets) * 100, 1) if graded_bets else 0,
+            "total_profit": round(total_profit, 2),
+            "roi": round(total_profit / sum(b.get("stake", 1) for b in graded_bets) * 100, 1) if graded_bets else 0
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/quick-betslip/{sport}/{game_id}")
+async def quick_betslip(
+    sport: str,
+    game_id: str,
+    user_id: Optional[str] = None
+):
+    """
+    Generate a quick betslip for a game with user's preferred sportsbooks prioritized.
+
+    One-click flow for SMASH picks:
+    1. Gets current best odds across all books
+    2. Prioritizes user's favorite books
+    3. Returns ready-to-click betslip with deep links
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Get user preferences
+    user_prefs = _user_preferences.get(user_id, {}) if user_id else {}
+    favorite_books = user_prefs.get("favorite_books", ["draftkings", "fanduel", "betmgm"])
+    default_stake = user_prefs.get("default_bet_amount", 25)
+
+    # Get line shopping data
+    cache_key = f"line-shop:{sport_lower}:{game_id}"
+    cached = api_cache.get(cache_key)
+
+    if cached and "data" in cached:
+        game_data = next((g for g in cached["data"] if g.get("game_id") == game_id), None)
+    else:
+        game_data = None
+
+    if not game_data:
+        # Use fallback
+        game_data = {
+            "game_id": game_id,
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "markets": {}
+        }
+
+    # Build quick betslip with prioritized books
+    betslip_options = []
+
+    for book_key in favorite_books:
+        if book_key in SPORTSBOOK_CONFIGS:
+            config = SPORTSBOOK_CONFIGS[book_key]
+            betslip_options.append({
+                "book_key": book_key,
+                "book_name": config["name"],
+                "book_color": config["color"],
+                "book_logo": config.get("logo", ""),
+                "is_favorite": True,
+                "priority": favorite_books.index(book_key) + 1,
+                "deep_link": generate_enhanced_deep_link(book_key, sport_lower, game_id, game_data)
+            })
+
+    # Add remaining books
+    for book_key, config in SPORTSBOOK_CONFIGS.items():
+        if book_key not in favorite_books:
+            betslip_options.append({
+                "book_key": book_key,
+                "book_name": config["name"],
+                "book_color": config["color"],
+                "book_logo": config.get("logo", ""),
+                "is_favorite": False,
+                "priority": 99,
+                "deep_link": generate_enhanced_deep_link(book_key, sport_lower, game_id, game_data)
+            })
+
+    return {
+        "sport": sport.upper(),
+        "game_id": game_id,
+        "game": game_data,
+        "default_stake": default_stake,
+        "sportsbooks": betslip_options,
+        "user_preferences_applied": user_id is not None,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# ============================================================================
+# PARLAY BUILDER
+# ============================================================================
+
+def american_to_decimal(american_odds: int) -> float:
+    """Convert American odds to decimal odds."""
+    if american_odds > 0:
+        return 1 + (american_odds / 100)
+    else:
+        return 1 + (100 / abs(american_odds))
+
+
+def decimal_to_american(decimal_odds: float) -> int:
+    """Convert decimal odds to American odds."""
+    if decimal_odds >= 2.0:
+        return int(round((decimal_odds - 1) * 100))
+    else:
+        return int(round(-100 / (decimal_odds - 1)))
+
+
+def calculate_parlay_odds(legs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Calculate combined parlay odds from individual legs.
+    Returns decimal odds, American odds, and implied probability.
+    """
+    if not legs:
+        return {"decimal": 1.0, "american": -10000, "implied_probability": 100.0}
+
+    combined_decimal = 1.0
+    for leg in legs:
+        leg_odds = leg.get("odds", -110)
+        combined_decimal *= american_to_decimal(leg_odds)
+
+    combined_american = decimal_to_american(combined_decimal)
+    implied_prob = (1 / combined_decimal) * 100
+
+    return {
+        "decimal": round(combined_decimal, 3),
+        "american": combined_american,
+        "implied_probability": round(implied_prob, 2)
+    }
+
+
+@router.get("/parlay/{user_id}")
+async def get_parlay_slip(user_id: str):
+    """
+    Get current parlay slip for a user.
+
+    Returns all legs in the parlay with calculated combined odds.
+    """
+    legs = _parlay_slips.get(user_id, [])
+    combined = calculate_parlay_odds(legs)
+
+    return {
+        "user_id": user_id,
+        "legs": legs,
+        "leg_count": len(legs),
+        "combined_odds": combined,
+        "max_legs": 12,
+        "can_add_more": len(legs) < 12,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/parlay/add")
+async def add_parlay_leg(leg_data: Dict[str, Any]):
+    """
+    Add a leg to a user's parlay slip.
+
+    Request Body:
+    {
+        "user_id": "user_123",
+        "sport": "NBA",
+        "game_id": "game_xyz",
+        "game": "Lakers vs Celtics",
+        "bet_type": "spread",
+        "selection": "Lakers",
+        "line": -3.5,
+        "odds": -110,
+        "ai_score": 8.5
+    }
+
+    Returns updated parlay slip with combined odds.
+    """
+    required_fields = ["user_id", "sport", "game_id", "bet_type", "selection", "odds"]
+    for field in required_fields:
+        if field not in leg_data:
+            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+
+    user_id = leg_data["user_id"]
+
+    # Initialize slip if needed
+    if user_id not in _parlay_slips:
+        _parlay_slips[user_id] = []
+
+    # Check max legs
+    if len(_parlay_slips[user_id]) >= 12:
+        raise HTTPException(status_code=400, detail="Maximum 12 legs per parlay")
+
+    # Check for duplicate game/bet_type
+    for existing in _parlay_slips[user_id]:
+        if existing["game_id"] == leg_data["game_id"] and existing["bet_type"] == leg_data["bet_type"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Already have a {leg_data['bet_type']} bet for this game"
+            )
+
+    leg_id = f"LEG_{user_id}_{len(_parlay_slips[user_id])}_{datetime.now().strftime('%H%M%S')}"
+
+    new_leg = {
+        "leg_id": leg_id,
+        "sport": leg_data["sport"].upper(),
+        "game_id": leg_data["game_id"],
+        "game": leg_data.get("game", "Unknown Game"),
+        "bet_type": leg_data["bet_type"],
+        "selection": leg_data["selection"],
+        "line": leg_data.get("line"),
+        "odds": leg_data["odds"],
+        "ai_score": leg_data.get("ai_score"),
+        "added_at": datetime.now().isoformat()
+    }
+
+    _parlay_slips[user_id].append(new_leg)
+    combined = calculate_parlay_odds(_parlay_slips[user_id])
+
+    return {
+        "status": "added",
+        "leg": new_leg,
+        "parlay": {
+            "legs": _parlay_slips[user_id],
+            "leg_count": len(_parlay_slips[user_id]),
+            "combined_odds": combined
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.delete("/parlay/remove/{user_id}/{leg_id}")
+async def remove_parlay_leg(user_id: str, leg_id: str):
+    """
+    Remove a specific leg from a user's parlay slip.
+    """
+    if user_id not in _parlay_slips:
+        raise HTTPException(status_code=404, detail="No parlay slip found for user")
+
+    original_len = len(_parlay_slips[user_id])
+    _parlay_slips[user_id] = [leg for leg in _parlay_slips[user_id] if leg["leg_id"] != leg_id]
+
+    if len(_parlay_slips[user_id]) == original_len:
+        raise HTTPException(status_code=404, detail=f"Leg {leg_id} not found")
+
+    combined = calculate_parlay_odds(_parlay_slips[user_id])
+
+    return {
+        "status": "removed",
+        "removed_leg_id": leg_id,
+        "parlay": {
+            "legs": _parlay_slips[user_id],
+            "leg_count": len(_parlay_slips[user_id]),
+            "combined_odds": combined
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.delete("/parlay/clear/{user_id}")
+async def clear_parlay_slip(user_id: str):
+    """
+    Clear all legs from a user's parlay slip.
+    """
+    removed_count = len(_parlay_slips.get(user_id, []))
+    _parlay_slips[user_id] = []
+
+    return {
+        "status": "cleared",
+        "removed_count": removed_count,
+        "parlay": {
+            "legs": [],
+            "leg_count": 0,
+            "combined_odds": {"decimal": 1.0, "american": -10000, "implied_probability": 100.0}
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/parlay/place")
+async def place_parlay(parlay_data: Dict[str, Any]):
+    """
+    Track a parlay bet that was placed.
+
+    Request Body:
+    {
+        "user_id": "user_123",
+        "sportsbook": "draftkings",
+        "stake": 25,
+        "use_current_slip": true  // OR provide "legs" array
+    }
+
+    If use_current_slip is true, uses the user's current parlay slip.
+    Otherwise, provide a "legs" array directly.
+    """
+    user_id = parlay_data.get("user_id", "anonymous")
+    sportsbook = parlay_data.get("sportsbook")
+    stake = parlay_data.get("stake", 0)
+
+    if not sportsbook:
+        raise HTTPException(status_code=400, detail="sportsbook is required")
+
+    # Get legs from current slip or from request
+    if parlay_data.get("use_current_slip", True):
+        legs = _parlay_slips.get(user_id, [])
+    else:
+        legs = parlay_data.get("legs", [])
+
+    if len(legs) < 2:
+        raise HTTPException(status_code=400, detail="Parlay requires at least 2 legs")
+
+    combined = calculate_parlay_odds(legs)
+
+    # Calculate potential payout
+    if stake > 0:
+        potential_payout = round(stake * combined["decimal"], 2)
+    else:
+        potential_payout = 0
+
+    parlay_id = f"PARLAY_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    tracked_parlay = {
+        "parlay_id": parlay_id,
+        "user_id": user_id,
+        "legs": legs,
+        "leg_count": len(legs),
+        "combined_odds": combined,
+        "sportsbook": sportsbook,
+        "stake": stake,
+        "potential_payout": potential_payout,
+        "status": "PENDING",
+        "result": None,
+        "placed_at": datetime.now().isoformat()
+    }
+
+    _placed_parlays.append(tracked_parlay)
+
+    # Clear the slip after placing
+    if parlay_data.get("use_current_slip", True):
+        _parlay_slips[user_id] = []
+
+    return {
+        "status": "placed",
+        "parlay": tracked_parlay,
+        "message": f"Parlay with {len(legs)} legs tracked. Open {sportsbook} to place bet.",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/parlay/grade/{parlay_id}")
+async def grade_parlay(parlay_id: str, grade_data: Dict[str, Any]):
+    """
+    Grade a placed parlay with WIN, LOSS, or PUSH.
+
+    Request Body:
+    {
+        "result": "WIN"  // or "LOSS" or "PUSH"
+    }
+    """
+    result = grade_data.get("result", "").upper()
+    if result not in ["WIN", "LOSS", "PUSH"]:
+        raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
+
+    for parlay in _placed_parlays:
+        if parlay["parlay_id"] == parlay_id:
+            parlay["status"] = "GRADED"
+            parlay["result"] = result
+            parlay["graded_at"] = datetime.now().isoformat()
+
+            # Calculate profit/loss
+            if result == "WIN":
+                parlay["profit"] = parlay["potential_payout"] - parlay["stake"]
+            elif result == "LOSS":
+                parlay["profit"] = -parlay["stake"]
+            else:  # PUSH
+                parlay["profit"] = 0
+
+            return {
+                "status": "graded",
+                "parlay": parlay,
+                "timestamp": datetime.now().isoformat()
+            }
+
+    raise HTTPException(status_code=404, detail=f"Parlay {parlay_id} not found")
+
+
+@router.get("/parlay/history")
+async def get_parlay_history(
+    user_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50
+):
+    """
+    Get parlay history with stats.
+
+    Supports filtering by:
+    - user_id: Filter by user
+    - status: Filter by status (PENDING, GRADED)
+    """
+    filtered = _placed_parlays.copy()
+
+    if user_id:
+        filtered = [p for p in filtered if p.get("user_id") == user_id]
+    if status:
+        filtered = [p for p in filtered if p.get("status") == status.upper()]
+
+    # Sort by placed_at descending
+    filtered.sort(key=lambda x: x.get("placed_at", ""), reverse=True)
+
+    # Calculate stats
+    graded = [p for p in filtered if p.get("status") == "GRADED"]
+    wins = len([p for p in graded if p.get("result") == "WIN"])
+    losses = len([p for p in graded if p.get("result") == "LOSS"])
+    pushes = len([p for p in graded if p.get("result") == "PUSH"])
+    total_profit = sum(p.get("profit", 0) for p in graded)
+    total_staked = sum(p.get("stake", 0) for p in graded)
+
+    return {
+        "parlays": filtered[:limit],
+        "count": len(filtered[:limit]),
+        "total_tracked": len(filtered),
+        "stats": {
+            "graded": len(graded),
+            "pending": len(filtered) - len(graded),
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "win_rate": round(wins / len(graded) * 100, 1) if graded else 0,
+            "total_profit": round(total_profit, 2),
+            "roi": round(total_profit / total_staked * 100, 1) if total_staked > 0 else 0
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/parlay/calculate")
+async def calculate_parlay(calc_data: Dict[str, Any]):
+    """
+    Calculate parlay odds and payout without saving.
+
+    Request Body:
+    {
+        "legs": [
+            {"odds": -110},
+            {"odds": +150},
+            {"odds": -105}
+        ],
+        "stake": 25
+    }
+
+    Useful for preview/what-if calculations.
+    """
+    legs = calc_data.get("legs", [])
+    stake = calc_data.get("stake", 0)
+
+    if not legs:
+        raise HTTPException(status_code=400, detail="At least one leg required")
+
+    combined = calculate_parlay_odds(legs)
+
+    if stake > 0:
+        potential_payout = round(stake * combined["decimal"], 2)
+        profit = round(potential_payout - stake, 2)
+    else:
+        potential_payout = 0
+        profit = 0
+
+    return {
+        "leg_count": len(legs),
+        "combined_odds": combined,
+        "stake": stake,
+        "potential_payout": potential_payout,
+        "profit_if_win": profit,
+        "example_payouts": {
+            "$10": round(10 * combined["decimal"], 2),
+            "$25": round(25 * combined["decimal"], 2),
+            "$50": round(50 * combined["decimal"], 2),
+            "$100": round(100 * combined["decimal"], 2)
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def calculate_payout(stake: float, odds: int) -> float:
+    """Calculate potential payout from American odds."""
+    if stake <= 0:
+        return 0
+    if odds > 0:
+        return stake + (stake * odds / 100)
+    else:
+        return stake + (stake * 100 / abs(odds))
+
+
+def generate_enhanced_deep_link(book_key: str, sport: str, game_id: str, game_data: Dict) -> Dict[str, str]:
+    """Generate enhanced deep links with sport-specific URLs."""
+    config = SPORTSBOOK_CONFIGS.get(book_key)
+    if not config:
+        return {"web": "#", "note": "Unknown sportsbook"}
+
+    sport_paths = {
+        "nba": {
+            "draftkings": "basketball/nba",
+            "fanduel": "navigation/nba",
+            "betmgm": "sports/basketball/104/nba",
+            "caesars": "us/nba",
+            "pointsbetus": "sports/basketball/nba",
+            "williamhill_us": "sports/basketball/nba",
+            "barstool": "sports/basketball/nba",
+            "betrivers": "sports/basketball/nba"
+        },
+        "nfl": {
+            "draftkings": "football/nfl",
+            "fanduel": "navigation/nfl",
+            "betmgm": "sports/football/100/nfl",
+            "caesars": "us/nfl",
+            "pointsbetus": "sports/football/nfl",
+            "williamhill_us": "sports/football/nfl",
+            "barstool": "sports/football/nfl",
+            "betrivers": "sports/football/nfl"
+        },
+        "mlb": {
+            "draftkings": "baseball/mlb",
+            "fanduel": "navigation/mlb",
+            "betmgm": "sports/baseball/103/mlb",
+            "caesars": "us/mlb",
+            "pointsbetus": "sports/baseball/mlb",
+            "williamhill_us": "sports/baseball/mlb",
+            "barstool": "sports/baseball/mlb",
+            "betrivers": "sports/baseball/mlb"
+        },
+        "nhl": {
+            "draftkings": "hockey/nhl",
+            "fanduel": "navigation/nhl",
+            "betmgm": "sports/hockey/102/nhl",
+            "caesars": "us/nhl",
+            "pointsbetus": "sports/hockey/nhl",
+            "williamhill_us": "sports/hockey/nhl",
+            "barstool": "sports/hockey/nhl",
+            "betrivers": "sports/hockey/nhl"
+        }
+    }
+
+    sport_path = sport_paths.get(sport, {}).get(book_key, sport)
+
+    home_team = game_data.get("home_team", "").replace(" ", "-").lower()
+    away_team = game_data.get("away_team", "").replace(" ", "-").lower()
+
+    # Build URL with game context when possible
+    base_url = config["web_base"]
+    full_url = f"{base_url}/{sport_path}"
+
+    return {
+        "web": full_url,
+        "app_scheme": config.get("app_scheme", ""),
+        "sport_path": sport_path,
+        "note": f"Opens {config['name']} {sport.upper()} page"
+    }
 
 
 # ============================================================================

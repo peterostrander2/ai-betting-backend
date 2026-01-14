@@ -373,12 +373,96 @@ const handlePlaceBet = (bet) => {
 
 ---
 
-## Future Enhancements
+## v2.0 Enhancements (NOW IMPLEMENTED)
 
-1. **True Deep Links** - Partner with OpticOdds or sportsbook affiliates to get direct bet placement URLs
-2. **User Preferences** - Let users save preferred sportsbooks
-3. **Bet Tracking** - Track which bets users placed for grading
-4. **Parlay Builder** - Combine multiple bets
+### 1. User Preferences (DONE)
+```bash
+# Get user preferences
+curl https://web-production-7b2a.up.railway.app/live/user/preferences/user123
+
+# Save user preferences
+curl -X POST https://web-production-7b2a.up.railway.app/live/user/preferences/user123 \
+  -H "Content-Type: application/json" \
+  -d '{"favorite_books": ["fanduel", "draftkings"], "default_bet_amount": 50}'
+```
+
+### 2. Bet Tracking (DONE)
+```bash
+# Track a bet
+curl -X POST https://web-production-7b2a.up.railway.app/live/bets/track \
+  -H "Content-Type: application/json" \
+  -d '{"sport": "NBA", "game_id": "xyz", "bet_type": "spread", "selection": "Lakers", "odds": -110, "sportsbook": "draftkings", "stake": 25}'
+
+# Grade a bet
+curl -X POST https://web-production-7b2a.up.railway.app/live/bets/grade/BET_NBA_xyz_123 \
+  -H "Content-Type: application/json" \
+  -d '{"result": "WIN"}'
+
+# Get bet history
+curl https://web-production-7b2a.up.railway.app/live/bets/history
+```
+
+### 3. Quick Betslip with User Prefs (DONE)
+```bash
+# Quick betslip (prioritizes user's favorite books)
+curl "https://web-production-7b2a.up.railway.app/live/quick-betslip/nba/game123?user_id=user123"
+```
+
+### 4. Enhanced Deep Links (DONE)
+- Sport-specific URLs for all 8 sportsbooks
+- Example: DraftKings NBA → `sportsbook.draftkings.com/basketball/nba`
+
+### 5. Parlay Builder (DONE)
+
+Build multi-leg parlays with automatic odds calculation:
+
+```bash
+# Add legs to parlay slip
+curl -X POST https://web-production-7b2a.up.railway.app/live/parlay/add \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "user123", "sport": "NBA", "game_id": "game1", "bet_type": "spread", "selection": "Lakers", "odds": -110}'
+
+# View current parlay slip
+curl https://web-production-7b2a.up.railway.app/live/parlay/user123
+
+# Calculate odds preview
+curl -X POST https://web-production-7b2a.up.railway.app/live/parlay/calculate \
+  -H "Content-Type: application/json" \
+  -d '{"legs": [{"odds": -110}, {"odds": +150}], "stake": 25}'
+
+# Place parlay (tracks it)
+curl -X POST https://web-production-7b2a.up.railway.app/live/parlay/place \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "user123", "sportsbook": "draftkings", "stake": 25}'
+
+# View parlay history
+curl https://web-production-7b2a.up.railway.app/live/parlay/history
+```
+
+**Frontend Integration:**
+```tsx
+// Add "Add to Parlay" button to bet cards
+<button onClick={() => api.addParlayLeg({
+  user_id: userId,
+  sport: bet.sport,
+  game_id: bet.game_id,
+  bet_type: 'spread',
+  selection: bet.selection,
+  odds: bet.odds
+})}>
+  Add to Parlay
+</button>
+
+// Show parlay slip with combined odds
+const slip = await api.getParlaySlip(userId);
+// slip.combined_odds = { decimal: 5.958, american: 496, implied_probability: 16.78 }
+```
+
+---
+
+## Future Enhancements (TODO)
+
+1. **True Deep Links** - Partner with OpticOdds for direct bet placement URLs
 
 ---
 
@@ -394,8 +478,22 @@ curl https://web-production-7b2a.up.railway.app/live/line-shop/nba
 
 # Generate betslip
 curl "https://web-production-7b2a.up.railway.app/live/betslip/generate?sport=nba&game_id=TEST&bet_type=spread&selection=Lakers"
+
+# User preferences
+curl https://web-production-7b2a.up.railway.app/live/user/preferences/user123
+
+# Bet tracking
+curl https://web-production-7b2a.up.railway.app/live/bets/history
+
+# Quick betslip
+curl "https://web-production-7b2a.up.railway.app/live/quick-betslip/nba/game123"
+
+# Parlay builder
+curl https://web-production-7b2a.up.railway.app/live/parlay/user123
+curl https://web-production-7b2a.up.railway.app/live/parlay/history
 ```
 
 ---
 
-*Backend ready. Frontend implementation pending.*
+*Backend: v14.7 DEPLOYED*
+*Frontend: api.js updated, BetslipModal ready, Parlay Builder ready*
