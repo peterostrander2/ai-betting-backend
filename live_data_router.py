@@ -1051,12 +1051,33 @@ async def get_best_bets(sport: str):
     mps = get_master_prediction_system()
     daily_energy = get_daily_energy()
 
-    # Fetch sharp money for both categories
-    sharp_data = await get_sharp_money(sport)
+    # ============================================
+    # FETCH ALL DATA SOURCES IN PARALLEL
+    # ============================================
+    sharp_data, splits_data = await asyncio.gather(
+        get_sharp_money(sport),
+        get_splits(sport),
+        return_exceptions=True
+    )
+
+    # Handle any fetch errors gracefully
+    if isinstance(sharp_data, Exception):
+        logger.warning("Sharp data fetch failed: %s", sharp_data)
+        sharp_data = {"data": []}
+    if isinstance(splits_data, Exception):
+        logger.warning("Splits data fetch failed: %s", splits_data)
+        splits_data = {"data": []}
+
+    # Build lookup dictionaries for fast access
     sharp_lookup = {}
     for signal in sharp_data.get("data", []):
         game_key = f"{signal.get('away_team')}@{signal.get('home_team')}"
         sharp_lookup[game_key] = signal
+
+    splits_lookup = {}
+    for split in splits_data.get("data", []):
+        game_key = f"{split.get('away_team')}@{split.get('home_team')}"
+        splits_lookup[game_key] = split
 
     # Helper function to check JARVIS triggers against numeric values
     def check_jarvis_triggers(line_value=None, total_value=None, prop_line=None, odds_value=None):
@@ -1190,17 +1211,207 @@ async def get_best_bets(sport: str):
 
         return min(2.0, boost), factors
 
-    # Main scoring function
-    def calculate_pick_score(sharp_signal, base_ai=5.0, line_value=None, total_value=None, prop_line=None, odds_value=None):
-        ai_score = base_ai
+    # ============================================
+    # COMPREHENSIVE SCORING FUNCTION
+    # Uses: 8 AI Models + 8 Pillars + JARVIS + Esoteric
+    # ============================================
+    def calculate_comprehensive_score(
+        sharp_signal: Dict,
+        splits_signal: Dict,
+        line_value: float = None,
+        total_value: float = None,
+        prop_line: float = None,
+        odds_value: int = None,
+        player_name: str = None,
+        home_team: str = None,
+        away_team: str = None,
+        market_type: str = "spread"  # spread, total, prop, ml
+    ) -> Dict:
+        """
+        MASTER SCORING FUNCTION - Combines ALL signals:
+
+        1. 8 AI Models (via MasterPredictionSystem or signal-based fallback)
+        2. 8 Pillars of Execution
+        3. JARVIS Triggers (sacred numbers in lines/totals/dates)
+        4. Esoteric Edge (daily energy, power numbers, moon phase)
+
+        Returns comprehensive scoring with full breakdown.
+        """
+        ai_models_detail = {}
+        pillars_detail = {}
+
+        # ========================================
+        # SECTION 1: 8 AI MODELS (0-8 points)
+        # ========================================
+        ai_score = 0.0
+
+        if mps and MASTER_PREDICTION_AVAILABLE:
+            # Build game_data for MasterPredictionSystem
+            try:
+                game_data = {
+                    'features': np.array([
+                        sharp_signal.get("line_variance", 0),
+                        splits_signal.get("spread_splits", {}).get("home", {}).get("money_pct", 50) / 100,
+                        odds_value / 100 if odds_value else -1.1,
+                        line_value or prop_line or 0,
+                    ]),
+                    'recent_games': [],  # Would need historical data
+                    'line': line_value or prop_line or 0,
+                    'player_stats': {
+                        'expected_value': prop_line or line_value or 0,
+                        'std_dev': 6.5
+                    },
+                    'current_line': line_value or prop_line or 0,
+                    'opening_line': (line_value or prop_line or 0) * 0.95,  # Estimate
+                    'betting_odds': odds_value or -110,
+                    'betting_percentages': splits_signal.get("spread_splits", {}),
+                    'schedule': {'days_rest': 2, 'travel_miles': 0, 'games_in_last_7': 3},
+                    'injuries': [],
+                    'depth_chart': {}
+                }
+
+                # Call MasterPredictionSystem
+                mps_result = mps.generate_comprehensive_prediction(game_data)
+
+                # Extract AI score (0-10 from MPS, scale to 0-8)
+                raw_ai = mps_result.get('ai_score', 5.0)
+                ai_score = min(8.0, raw_ai * 0.8)
+
+                # Extract individual model factors
+                ai_models_detail = {
+                    "ensemble": mps_result.get('factors', {}).get('ensemble', 0),
+                    "lstm": mps_result.get('factors', {}).get('lstm', 0),
+                    "matchup": mps_result.get('factors', {}).get('matchup', 0),
+                    "monte_carlo": mps_result.get('factors', {}).get('monte_carlo', 0),
+                    "line_movement": mps_result.get('factors', {}).get('line_movement', 0),
+                    "rest_factor": mps_result.get('factors', {}).get('rest_factor', 1.0),
+                    "injury_impact": mps_result.get('factors', {}).get('injury_impact', 0),
+                    "edge_calc": mps_result.get('factors', {}).get('edge', 0)
+                }
+
+                # Extract pillar scores
+                pillars_detail = mps_result.get('pillars', {}).get('scores', {})
+
+            except Exception as e:
+                logger.warning("MasterPredictionSystem failed, using signal-based fallback: %s", e)
+                mps_result = None
+        else:
+            mps_result = None
+
+        # Signal-based AI scoring (fallback or enhancement)
+        if not mps_result or ai_score < 4.0:
+            signal_ai = 4.0  # Base score
+
+            # Model 1: Sharp Money Signal (Line Movement proxy)
+            if sharp_signal.get("signal_strength") == "STRONG":
+                signal_ai += 1.5
+                ai_models_detail["sharp_signal"] = "STRONG (+1.5)"
+            elif sharp_signal.get("signal_strength") == "MODERATE":
+                signal_ai += 0.75
+                ai_models_detail["sharp_signal"] = "MODERATE (+0.75)"
+
+            # Model 2: Line Variance (indicates sharp action)
+            line_var = sharp_signal.get("line_variance", 0)
+            if line_var >= 2.0:
+                signal_ai += 1.0
+                ai_models_detail["line_variance"] = f"{line_var} (LARGE +1.0)"
+            elif line_var >= 1.0:
+                signal_ai += 0.5
+                ai_models_detail["line_variance"] = f"{line_var} (MODERATE +0.5)"
+
+            # Model 3: Betting Splits (Sharp vs Public)
+            home_money = splits_signal.get("spread_splits", {}).get("home", {}).get("money_pct", 50)
+            home_bets = splits_signal.get("spread_splits", {}).get("home", {}).get("bets_pct", 50)
+
+            # Reverse line movement: Money disagrees with bets = sharp action
+            if abs(home_money - home_bets) >= 15:
+                signal_ai += 1.0
+                ai_models_detail["reverse_line"] = f"Money {home_money}% vs Bets {home_bets}% (+1.0)"
+            elif abs(home_money - home_bets) >= 8:
+                signal_ai += 0.5
+                ai_models_detail["reverse_line"] = f"Money {home_money}% vs Bets {home_bets}% (+0.5)"
+
+            # Use higher of MPS or signal-based
+            ai_score = max(ai_score, min(8.0, signal_ai))
+
+        # ========================================
+        # SECTION 2: 8 PILLARS (0-8 points)
+        # ========================================
+        pillar_score = 0.0
+        pillars_triggered = []
+
+        # Pillar 1: Sharp Split (money vs bets divergence)
+        home_money = splits_signal.get("spread_splits", {}).get("home", {}).get("money_pct", 50)
+        home_bets = splits_signal.get("spread_splits", {}).get("home", {}).get("bets_pct", 50)
+        split_diff = abs(home_money - home_bets)
+        if split_diff >= 20:
+            pillar_score += 1.0
+            pillars_triggered.append({"pillar": "SHARP_SPLIT", "value": split_diff, "points": 1.0})
+        elif split_diff >= 10:
+            pillar_score += 0.5
+            pillars_triggered.append({"pillar": "SHARP_SPLIT", "value": split_diff, "points": 0.5})
+
+        # Pillar 2: Reverse Line Movement
+        line_var = sharp_signal.get("line_variance", 0)
+        if line_var >= 2.0:
+            pillar_score += 1.0
+            pillars_triggered.append({"pillar": "REVERSE_LINE", "value": line_var, "points": 1.0})
+        elif line_var >= 1.5:
+            pillar_score += 0.5
+            pillars_triggered.append({"pillar": "REVERSE_LINE", "value": line_var, "points": 0.5})
+
+        # Pillar 3: Hook Discipline (key numbers in spreads)
+        if line_value is not None:
+            abs_line = abs(line_value)
+            key_numbers = [3, 7, 10, 14]  # Football key numbers
+            if sport_lower in ["nba", "ncaab"]:
+                key_numbers = [1, 2, 3, 4, 5, 6, 7]  # Basketball key numbers
+
+            if any(abs(abs_line - kn) < 0.5 for kn in key_numbers):
+                pillar_score += 1.0
+                pillars_triggered.append({"pillar": "HOOK_DISCIPLINE", "value": line_value, "points": 1.0})
+
+        # Pillar 4: Volume Discipline (confidence-based sizing)
+        # Higher AI score = higher volume discipline
+        if ai_score >= 7.0:
+            pillar_score += 1.0
+            pillars_triggered.append({"pillar": "VOLUME_DISCIPLINE", "value": "HIGH_CONFIDENCE", "points": 1.0})
+        elif ai_score >= 5.5:
+            pillar_score += 0.5
+            pillars_triggered.append({"pillar": "VOLUME_DISCIPLINE", "value": "MODERATE_CONFIDENCE", "points": 0.5})
+
+        # Pillar 5: Situational Spot (rest advantage, travel, etc.)
+        # Would need more data, using day of week as proxy
+        dow = datetime.now().weekday()
+        if dow in [4, 5, 6]:  # Fri-Sun = prime time
+            pillar_score += 0.5
+            pillars_triggered.append({"pillar": "SITUATIONAL_SPOT", "value": "PRIME_TIME", "points": 0.5})
+
+        # Pillar 6: Expert Consensus (sharp signal strength)
         if sharp_signal.get("signal_strength") == "STRONG":
-            ai_score += 2.0
+            pillar_score += 1.0
+            pillars_triggered.append({"pillar": "EXPERT_CONSENSUS", "value": "STRONG", "points": 1.0})
         elif sharp_signal.get("signal_strength") == "MODERATE":
-            ai_score += 1.0
+            pillar_score += 0.5
+            pillars_triggered.append({"pillar": "EXPERT_CONSENSUS", "value": "MODERATE", "points": 0.5})
 
-        pillar_score = 3.0 if sharp_signal.get("line_variance", 0) > 1.0 else 2.0
+        # Pillar 7: Prop Correlation (for props only)
+        if market_type == "prop" and prop_line:
+            # Props that correlate with team performance
+            if prop_line >= 25:  # High-usage player
+                pillar_score += 0.5
+                pillars_triggered.append({"pillar": "PROP_CORRELATION", "value": prop_line, "points": 0.5})
 
-        # JARVIS triggers - now checks actual numeric values
+        # Pillar 8: Hospital Fade (injury-based opportunities)
+        # Would need injury data, placeholder for now
+
+        pillar_score = min(8.0, pillar_score)
+        pillars_detail["triggered"] = pillars_triggered
+        pillars_detail["total"] = round(pillar_score, 2)
+
+        # ========================================
+        # SECTION 3: JARVIS TRIGGERS (0-4 points)
+        # ========================================
         jarvis_score, jarvis_triggers_hit = check_jarvis_triggers(
             line_value=line_value,
             total_value=total_value,
@@ -1208,34 +1419,49 @@ async def get_best_bets(sport: str):
             odds_value=odds_value
         )
 
-        # Esoteric boost - now considers pick-specific factors
+        # ========================================
+        # SECTION 4: ESOTERIC EDGE (0-2 points)
+        # ========================================
         esoteric_boost, esoteric_factors = calculate_esoteric_boost(
             line_value=line_value,
             prop_line=prop_line
         )
 
+        # ========================================
+        # FINAL SCORE CALCULATION
+        # ========================================
+        # Max possible: 8 + 8 + 4 + 2 = 22 points
         total_score = ai_score + pillar_score + jarvis_score + esoteric_boost
 
-        if total_score >= 16:
+        # Confidence tiers based on total score
+        if total_score >= 18:
             confidence = "SMASH"
-        elif total_score >= 12:
+            confidence_pct = min(95, 80 + (total_score - 18) * 3)
+        elif total_score >= 14:
             confidence = "HIGH"
-        elif total_score >= 8:
+            confidence_pct = min(85, 70 + (total_score - 14) * 3)
+        elif total_score >= 10:
             confidence = "MEDIUM"
+            confidence_pct = min(72, 55 + (total_score - 10) * 4)
         else:
             confidence = "LOW"
+            confidence_pct = max(35, 40 + total_score * 1.5)
 
         return {
             "total_score": round(total_score, 2),
             "confidence": confidence,
+            "confidence_pct": round(confidence_pct),
             "scoring_breakdown": {
                 "ai_models": round(ai_score, 2),
                 "pillars": round(pillar_score, 2),
                 "jarvis": round(jarvis_score, 2),
                 "esoteric": round(esoteric_boost, 2)
             },
+            "ai_models_detail": ai_models_detail,
+            "pillars_detail": pillars_detail,
             "jarvis_triggers": jarvis_triggers_hit,
-            "esoteric_factors": esoteric_factors
+            "esoteric_factors": esoteric_factors,
+            "max_possible": 22.0
         }
 
     # ============================================
@@ -1250,6 +1476,8 @@ async def get_best_bets(sport: str):
             game_key = f"{away_team}@{home_team}"
             sharp_signal = sharp_lookup.get(game_key, {})
 
+            splits_signal = splits_lookup.get(game_key, {})
+
             for prop in game.get("props", []):
                 player = prop.get("player", "Unknown")
                 market = prop.get("market", "")
@@ -1260,12 +1488,16 @@ async def get_best_bets(sport: str):
                 if side not in ["Over", "Under"]:
                     continue
 
-                # Calculate score with JARVIS checking the prop line
-                score_data = calculate_pick_score(
+                # COMPREHENSIVE SCORING: AI + Pillars + JARVIS + Esoteric
+                score_data = calculate_comprehensive_score(
                     sharp_signal=sharp_signal,
-                    base_ai=5.0,
+                    splits_signal=splits_signal,
                     prop_line=line,
-                    odds_value=odds
+                    odds_value=odds,
+                    player_name=player,
+                    home_team=home_team,
+                    away_team=away_team,
+                    market_type="prop"
                 )
 
                 props_picks.append({
@@ -1278,8 +1510,7 @@ async def get_best_bets(sport: str):
                     "home_team": home_team,
                     "away_team": away_team,
                     "recommendation": f"{side.upper()} {line}",
-                    **score_data,
-                    "sharp_signal": sharp_signal.get("signal_strength", "NONE")
+                    **score_data
                 })
     except HTTPException:
         logger.warning("Props fetch failed for %s", sport)
@@ -1314,6 +1545,7 @@ async def get_best_bets(sport: str):
                 away_team = game.get("away_team", "")
                 game_key = f"{away_team}@{home_team}"
                 sharp_signal = sharp_lookup.get(game_key, {})
+                splits_signal = splits_lookup.get(game_key, {})
 
                 for bm in game.get("bookmakers", [])[:1]:  # Just use first book for now
                     for market in bm.get("markets", []):
@@ -1328,22 +1560,28 @@ async def get_best_bets(sport: str):
                             if market_key == "spreads":
                                 pick_type = "SPREAD"
                                 display = f"{pick_name} {point:+.1f}" if point else pick_name
+                                mkt_type = "spread"
                             elif market_key == "h2h":
                                 pick_type = "MONEYLINE"
                                 display = f"{pick_name} ML"
+                                mkt_type = "ml"
                             elif market_key == "totals":
                                 pick_type = "TOTAL"
                                 display = f"{pick_name} {point}" if point else pick_name
+                                mkt_type = "total"
                             else:
                                 continue
 
-                            # Calculate score - JARVIS checks line/total values
-                            score_data = calculate_pick_score(
+                            # COMPREHENSIVE SCORING: AI + Pillars + JARVIS + Esoteric
+                            score_data = calculate_comprehensive_score(
                                 sharp_signal=sharp_signal,
-                                base_ai=4.5,
+                                splits_signal=splits_signal,
                                 line_value=point if market_key == "spreads" else None,
                                 total_value=point if market_key == "totals" else None,
-                                odds_value=odds
+                                odds_value=odds,
+                                home_team=home_team,
+                                away_team=away_team,
+                                market_type=mkt_type
                             )
 
                             game_picks.append({
@@ -1357,8 +1595,7 @@ async def get_best_bets(sport: str):
                                 "away_team": away_team,
                                 "market": market_key,
                                 "recommendation": display,
-                                **score_data,
-                                "sharp_signal": sharp_signal.get("signal_strength", "NONE")
+                                **score_data
                             })
     except Exception as e:
         logger.warning("Game odds fetch failed: %s", e)
@@ -1368,12 +1605,18 @@ async def get_best_bets(sport: str):
         for signal in sharp_data.get("data", []):
             home_team = signal.get("home_team", "")
             away_team = signal.get("away_team", "")
+            game_key = f"{away_team}@{home_team}"
             line_variance = signal.get("line_variance", 0)
+            splits_signal = splits_lookup.get(game_key, {})
 
-            score_data = calculate_pick_score(
+            # COMPREHENSIVE SCORING for sharp money signals
+            score_data = calculate_comprehensive_score(
                 sharp_signal=signal,
-                base_ai=5.0,
-                line_value=line_variance
+                splits_signal=splits_signal,
+                line_value=line_variance,
+                home_team=home_team,
+                away_team=away_team,
+                market_type="spread"
             )
 
             game_picks.append({
@@ -1387,8 +1630,7 @@ async def get_best_bets(sport: str):
                 "away_team": away_team,
                 "market": "sharp_money",
                 "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
-                **score_data,
-                "sharp_signal": signal.get("signal_strength", "MODERATE")
+                **score_data
             })
 
     # Sort game picks by score and take top 10
