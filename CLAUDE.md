@@ -258,6 +258,10 @@ When providing file updates for PRs (especially for frontend repos), **always pr
 
 **Do NOT** give partial instructions like "change X to Y" or "add this after line 5" - this creates guesswork. Always provide the full file ready to copy-paste.
 
+**Always provide direct GitHub links** - don't give step-by-step navigation like "click src, then services, then api.js". Just provide the full URL:
+- Edit file: `https://github.com/{owner}/{repo}/edit/{branch}/{path}`
+- View file: `https://github.com/{owner}/{repo}/blob/{branch}/{path}`
+
 ---
 
 ## Key Decisions
