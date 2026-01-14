@@ -19,10 +19,8 @@ import numpy as np
 try:
     from advanced_ml_backend import MasterPredictionSystem
     MASTER_PREDICTION_AVAILABLE = True
-    logger.info("MasterPredictionSystem loaded successfully")
-except ImportError as e:
+except ImportError:
     MASTER_PREDICTION_AVAILABLE = False
-    logger.warning("MasterPredictionSystem not available: %s", e)
 
 # Redis import with fallback
 try:
