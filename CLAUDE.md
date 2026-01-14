@@ -204,11 +204,17 @@ GET /live/gann-physics-status   # GANN physics
 GET /esoteric/today-energy      # Daily energy
 ```
 
-### Click-to-Bet Endpoints (NEW)
+### Click-to-Bet Endpoints v2.0
 ```
-GET /live/sportsbooks           # List supported sportsbooks
-GET /live/line-shop/{sport}     # Line shopping across all books
-GET /live/betslip/generate      # Generate betslip for placing bet
+GET  /live/sportsbooks                    # List 8 supported sportsbooks
+GET  /live/line-shop/{sport}              # Line shopping across all books
+GET  /live/betslip/generate               # Generate betslip for placing bet
+GET  /live/quick-betslip/{sport}/{game}   # Quick betslip with user prefs
+GET  /live/user/preferences/{user_id}     # Get user preferences
+POST /live/user/preferences/{user_id}     # Save user preferences
+POST /live/bets/track                     # Track a placed bet
+POST /live/bets/grade/{bet_id}            # Grade bet (WIN/LOSS/PUSH)
+GET  /live/bets/history                   # Bet history with stats
 ```
 See `FRONTEND_HANDOFF_CLICK_TO_BET.md` for frontend integration guide.
 
