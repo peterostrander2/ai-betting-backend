@@ -671,6 +671,954 @@ def get_daily_energy() -> Dict[str, Any]:
 
 
 # ============================================================================
+# JARVIS SAVANT ENGINE v7.3 - THE CONFLUENCE CORE
+# Philosophy: Esoteric resonance (gematria dominant) + Exoteric inefficiencies
+# YTD Record: +94.40u (as of January 8, 2026)
+# ============================================================================
+
+# Fibonacci sequence for line alignment checks
+FIBONACCI_NUMBERS = [1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233]
+
+# Vortex math pattern (Tesla's 1-2-4-8-7-5 cycle)
+VORTEX_PATTERN = [1, 2, 4, 8, 7, 5]
+
+
+def validate_2178() -> Dict[str, Any]:
+    """
+    Prove the mathematical uniqueness of 2178 - THE IMMORTAL NUMBER.
+
+    Property 1: 2178 × 4 = 8712 (its reversal)
+    Property 2: 2178 × 8712 = 18974736 = 66^4
+
+    This is the ONLY 4-digit number with both properties.
+    It never collapses to zero in digit sum sequences.
+    """
+    n = 2178
+    reversal = 8712
+
+    # Property 1: n × 4 = reversal
+    prop1 = (n * 4 == reversal)
+
+    # Property 2: n × reversal = 66^4
+    sixty_six_fourth = 66 * 66 * 66 * 66  # 18974736
+    prop2 = (n * reversal == sixty_six_fourth)
+
+    # Digit sum never collapses to 0
+    digit_sum_val = sum(int(d) for d in str(n))  # 2+1+7+8 = 18 → 1+8 = 9
+
+    return {
+        "number": n,
+        "reversal": reversal,
+        "property_1": {
+            "description": "n × 4 = reversal",
+            "calculation": f"{n} × 4 = {n * 4}",
+            "expected": reversal,
+            "verified": prop1
+        },
+        "property_2": {
+            "description": "n × reversal = 66^4",
+            "calculation": f"{n} × {reversal} = {n * reversal}",
+            "expected": sixty_six_fourth,
+            "verified": prop2
+        },
+        "digit_sum": digit_sum_val,
+        "digit_sum_reduced": 9,  # Always reduces to 9, never 0
+        "validated": prop1 and prop2,
+        "status": "IMMORTAL CONFIRMED" if (prop1 and prop2) else "VALIDATION FAILED",
+        "significance": "The only 4-digit number where multiplication by 4 equals its reversal AND the product with its reversal equals 66^4"
+    }
+
+
+def digit_sum(n: int) -> int:
+    """Calculate digit sum of a number."""
+    return sum(int(d) for d in str(abs(n)))
+
+
+def reduce_to_single(n: int) -> int:
+    """Reduce number to single digit (gematria reduction), preserving master numbers."""
+    n = abs(n)
+    while n > 9 and n not in [11, 22, 33]:
+        n = digit_sum(n)
+    return n
+
+
+def simple_gematria(text: str) -> int:
+    """Calculate simple English gematria (A=1, B=2, ..., Z=26)."""
+    total = 0
+    for char in text.upper():
+        if 'A' <= char <= 'Z':
+            total += ord(char) - ord('A') + 1
+    return total
+
+
+def check_jarvis_trigger(value: int) -> Dict[str, Any]:
+    """
+    Check if a value triggers any Jarvis edge numbers.
+
+    Checks for:
+    1. Direct match with trigger numbers
+    2. Reduction to trigger numbers
+    3. Divisibility by 33 (master number)
+    4. Tesla 3-6-9 alignment
+    5. Contains 2178 sequence
+    6. Fibonacci alignment
+    7. Vortex math pattern
+    """
+    result = {
+        "value": value,
+        "triggered": False,
+        "triggers": [],
+        "total_boost": 0.0,
+        "highest_tier": None,
+        "details": []
+    }
+
+    str_value = str(abs(value))
+
+    # Check for 2178 sequence in value
+    if "2178" in str_value:
+        trigger = JARVIS_TRIGGERS[2178]
+        result["triggered"] = True
+        result["triggers"].append(2178)
+        result["total_boost"] += trigger["boost"]
+        result["highest_tier"] = "LEGENDARY"
+        result["details"].append({
+            "type": "SEQUENCE",
+            "trigger": 2178,
+            "name": "THE IMMORTAL",
+            "reason": "Contains 2178 sequence",
+            "boost": trigger["boost"]
+        })
+
+    # Direct match check
+    if value in JARVIS_TRIGGERS:
+        trigger = JARVIS_TRIGGERS[value]
+        if value not in result["triggers"]:
+            result["triggered"] = True
+            result["triggers"].append(value)
+            result["total_boost"] += trigger["boost"]
+            if result["highest_tier"] != "LEGENDARY":
+                result["highest_tier"] = trigger["tier"]
+            result["details"].append({
+                "type": "DIRECT",
+                "trigger": value,
+                "name": trigger["name"],
+                "reason": "Direct match",
+                "boost": trigger["boost"]
+            })
+
+    # Reduction check - does value reduce to same as a trigger?
+    reduced = reduce_to_single(value)
+    for trigger_num, trigger in JARVIS_TRIGGERS.items():
+        if trigger_num not in result["triggers"]:
+            trigger_reduced = reduce_to_single(trigger_num)
+            if reduced == trigger_reduced and reduced != 0:
+                half_boost = trigger["boost"] * 0.5
+                result["triggered"] = True
+                result["triggers"].append(trigger_num)
+                result["total_boost"] += half_boost
+                result["details"].append({
+                    "type": "REDUCTION",
+                    "trigger": trigger_num,
+                    "name": trigger["name"],
+                    "reason": f"Reduces to {reduced} (same as {trigger_num})",
+                    "boost": half_boost
+                })
+
+    # 33 divisibility (Master Number alignment)
+    if value % 33 == 0 and 33 not in result["triggers"]:
+        result["triggered"] = True
+        result["triggers"].append(33)
+        result["total_boost"] += 5.0
+        result["details"].append({
+            "type": "DIVISIBILITY",
+            "trigger": 33,
+            "name": "THE MASTER",
+            "reason": f"{value} is divisible by 33",
+            "boost": 5.0
+        })
+
+    # Tesla 3-6-9 check
+    if reduced in TESLA_NUMBERS:
+        result["total_boost"] += 2.0
+        result["details"].append({
+            "type": "TESLA",
+            "trigger": reduced,
+            "name": "TESLA ALIGNMENT",
+            "reason": f"Reduces to Tesla number {reduced}",
+            "boost": 2.0
+        })
+
+    # Fibonacci alignment check
+    if value in FIBONACCI_NUMBERS or abs(value) in FIBONACCI_NUMBERS:
+        result["total_boost"] += 1.5
+        result["details"].append({
+            "type": "FIBONACCI",
+            "trigger": value,
+            "name": "FIBONACCI ALIGNMENT",
+            "reason": f"{value} is in Fibonacci sequence",
+            "boost": 1.5
+        })
+
+    # Vortex math check (digital root follows 1-2-4-8-7-5 pattern)
+    if reduced in VORTEX_PATTERN:
+        result["total_boost"] += 1.0
+        result["details"].append({
+            "type": "VORTEX",
+            "trigger": reduced,
+            "name": "VORTEX MATH",
+            "reason": f"Digital root {reduced} in vortex pattern",
+            "boost": 1.0
+        })
+
+    return result
+
+
+def calculate_gematria_signal(player_name: str, team_name: str, opponent_name: str = "",
+                               jersey_number: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Calculate gematria values and check for Jarvis triggers.
+    Uses simple English gematria (A=1, B=2, etc.)
+    Weight: 52% of RS (Boss approved)
+    """
+    player_value = simple_gematria(player_name)
+    team_value = simple_gematria(team_name)
+    opponent_value = simple_gematria(opponent_name) if opponent_name else 0
+
+    combined = player_value + team_value
+    if jersey_number:
+        combined += jersey_number
+
+    matchup_value = team_value + opponent_value
+
+    # Check for Jarvis triggers on all values
+    player_trigger = check_jarvis_trigger(player_value)
+    team_trigger = check_jarvis_trigger(team_value)
+    combined_trigger = check_jarvis_trigger(combined)
+    matchup_trigger = check_jarvis_trigger(matchup_value) if opponent_value else {"total_boost": 0, "triggers": []}
+
+    # Count total gematria hits
+    total_boost = (
+        player_trigger["total_boost"] +
+        team_trigger["total_boost"] +
+        combined_trigger["total_boost"] +
+        matchup_trigger.get("total_boost", 0)
+    )
+
+    all_triggers = set(
+        player_trigger.get("triggers", []) +
+        team_trigger.get("triggers", []) +
+        combined_trigger.get("triggers", []) +
+        matchup_trigger.get("triggers", [])
+    )
+
+    # Determine influence level (0-1 scale)
+    if total_boost >= 20:
+        influence = 0.95
+        tier = "LEGENDARY"
+    elif total_boost >= 15:
+        influence = 0.85
+        tier = "HIGH"
+    elif total_boost >= 10:
+        influence = 0.75
+        tier = "HIGH"
+    elif total_boost >= 5:
+        influence = 0.55
+        tier = "MEDIUM"
+    else:
+        influence = 0.35
+        tier = "LOW"
+
+    # Check for IMMORTAL specifically
+    immortal_detected = 2178 in all_triggers
+
+    return {
+        "player_value": player_value,
+        "player_reduced": reduce_to_single(player_value),
+        "team_value": team_value,
+        "team_reduced": reduce_to_single(team_value),
+        "combined_value": combined,
+        "combined_reduced": reduce_to_single(combined),
+        "matchup_value": matchup_value,
+        "influence": influence,
+        "tier": tier,
+        "gematria_hits": len(all_triggers),
+        "triggers_found": list(all_triggers),
+        "total_boost": total_boost,
+        "immortal_detected": immortal_detected,
+        "breakdown": {
+            "player": player_trigger,
+            "team": team_trigger,
+            "combined": combined_trigger,
+            "matchup": matchup_trigger if opponent_value else None
+        }
+    }
+
+
+def calculate_public_fade_signal(public_percentage: float, is_favorite: bool) -> Dict[str, Any]:
+    """
+    JARVIS PUBLIC FADE 65% CRUSH ZONE
+
+    When public is ≥65% on the chalk (favorite), this is prime fade territory.
+    The masses move lines inefficiently - fade their conviction.
+    This is the -13% penalty that's been crushing the public.
+
+    +94.40u YTD came largely from this edge.
+    """
+    signal = {
+        "public_pct": public_percentage,
+        "is_favorite": is_favorite,
+        "in_crush_zone": False,
+        "fade_signal": False,
+        "influence": 0.0,
+        "fade_modifier": 0.0,
+        "recommendation": ""
+    }
+
+    # CRUSH ZONE: Public ≥65% on favorite
+    if public_percentage >= 65 and is_favorite:
+        signal["in_crush_zone"] = True
+        signal["fade_signal"] = True
+
+        # Scale influence based on how deep in crush zone
+        if public_percentage >= 80:
+            signal["influence"] = 0.95
+            signal["fade_modifier"] = -0.15  # -15% to favorite's value
+            signal["recommendation"] = "MAXIMUM FADE - Public delusion at peak"
+        elif public_percentage >= 75:
+            signal["influence"] = 0.85
+            signal["fade_modifier"] = -0.13  # -13% (the key number)
+            signal["recommendation"] = "STRONG FADE - Heavy public chalk"
+        elif public_percentage >= 70:
+            signal["influence"] = 0.75
+            signal["fade_modifier"] = -0.10
+            signal["recommendation"] = "FADE - Solid crush zone entry"
+        else:
+            signal["influence"] = 0.65
+            signal["fade_modifier"] = -0.08
+            signal["recommendation"] = "FADE - Entering crush zone"
+
+    elif public_percentage >= 65 and not is_favorite:
+        # Public heavy on dog - contrarian opportunity but less reliable
+        signal["influence"] = 0.45
+        signal["recommendation"] = "MONITOR - Public dog heavy (unusual)"
+
+    elif public_percentage <= 35:
+        # Contrarian opportunity - public avoiding
+        signal["influence"] = 0.55
+        signal["fade_modifier"] = 0.05  # Slight boost
+        signal["recommendation"] = "CONTRARIAN VALUE - Public avoiding"
+
+    else:
+        signal["influence"] = 0.30
+        signal["recommendation"] = "NO CLEAR PUBLIC EDGE"
+
+    return signal
+
+
+def calculate_mid_spread_signal(spread: float) -> Dict[str, Any]:
+    """
+    JARVIS MID-SPREAD AMPLIFIER
+
+    The Goldilocks Zone: +4 to +9
+    Not too small (meaningless), not too big (trap territory).
+    This is where dogs cover most reliably.
+    +20% boost in this zone.
+    """
+    abs_spread = abs(spread)
+    is_dog = spread > 0  # Positive spread = underdog
+
+    signal = {
+        "spread": spread,
+        "abs_spread": abs_spread,
+        "is_underdog": is_dog,
+        "in_goldilocks": False,
+        "influence": 0.0,
+        "zone": "",
+        "boost_modifier": 1.0
+    }
+
+    if 4 <= abs_spread <= 9:
+        # GOLDILOCKS ZONE
+        signal["in_goldilocks"] = True
+        signal["zone"] = "GOLDILOCKS"
+        signal["boost_modifier"] = 1.20  # +20% boost
+
+        # Peak is around 6-7
+        if 6 <= abs_spread <= 7:
+            signal["influence"] = 0.85
+        else:
+            signal["influence"] = 0.75
+
+    elif abs_spread < 4:
+        signal["zone"] = "TOO_TIGHT"
+        signal["influence"] = 0.50
+        signal["boost_modifier"] = 1.0
+
+    elif abs_spread > 15:
+        # TRAP GATE - Large spreads are traps (handled separately)
+        signal["zone"] = "TRAP_GATE"
+        signal["influence"] = 0.25
+        signal["boost_modifier"] = 0.80  # -20% penalty
+
+    else:
+        # 10-15 range - moderate
+        signal["zone"] = "MODERATE"
+        signal["influence"] = 0.55
+        signal["boost_modifier"] = 1.0
+
+    return signal
+
+
+def calculate_large_spread_trap(spread: float) -> Dict[str, Any]:
+    """
+    JARVIS LARGE SPREAD TRAP GATE
+
+    Spreads >14 points are trap territory.
+    Books know public loves big favorites.
+    Apply -20% penalty to any signals in this zone.
+
+    Lessons learned: Kings 41-pt, Rice 31-pt disasters
+    """
+    abs_spread = abs(spread)
+
+    signal = {
+        "spread": spread,
+        "abs_spread": abs_spread,
+        "is_trap": False,
+        "penalty": 1.0,
+        "trap_level": "NONE",
+        "warning": ""
+    }
+
+    if abs_spread >= 20:
+        signal["is_trap"] = True
+        signal["penalty"] = 0.70  # -30% penalty
+        signal["trap_level"] = "EXTREME"
+        signal["warning"] = "EXTREME TRAP - Heavily penalize any plays here. Blowout variance is massive."
+
+    elif abs_spread >= 14:
+        signal["is_trap"] = True
+        signal["penalty"] = 0.80  # -20% penalty
+        signal["trap_level"] = "HIGH"
+        signal["warning"] = "TRAP GATE ACTIVE - Large spread penalty applied"
+
+    elif abs_spread >= 10:
+        signal["trap_level"] = "MODERATE"
+        signal["penalty"] = 0.95  # -5% penalty
+        signal["warning"] = "Elevated spread - proceed with caution"
+
+    return signal
+
+
+def calculate_nhl_dog_protocol(sport: str, spread: float, research_score: float,
+                                public_pct: float) -> Dict[str, Any]:
+    """
+    JARVIS NHL DOG PROTOCOL v5.9
+
+    Specific edge for NHL:
+    - Puck line dogs (+1.5)
+    - Research score ≥9.3
+    - Public ≥65% on favorite
+
+    This trifecta has been highly profitable.
+    Recent streak: Penguins, Canadiens, Kings, Blackhawks, Stars outrights.
+    """
+    signal = {
+        "sport": sport,
+        "protocol_active": False,
+        "conditions_met": [],
+        "conditions_failed": [],
+        "influence": 0.0,
+        "ml_dog_play": False,
+        "recommendation": ""
+    }
+
+    if sport.upper() != "NHL":
+        signal["recommendation"] = "Protocol only applies to NHL"
+        return signal
+
+    # Check conditions
+    is_dog = spread > 0  # Positive spread = underdog
+    is_puck_line = abs(spread) == 1.5
+    high_research = research_score >= 9.3
+    public_heavy = public_pct >= 65
+
+    if is_dog and is_puck_line:
+        signal["conditions_met"].append(f"Puck line dog (+{spread})")
+    elif is_dog:
+        signal["conditions_met"].append(f"Underdog (+{spread})")
+    else:
+        signal["conditions_failed"].append("Not underdog")
+
+    if high_research:
+        signal["conditions_met"].append(f"Research score {research_score:.1f} >= 9.3")
+    else:
+        signal["conditions_failed"].append(f"Research score {research_score:.1f} < 9.3")
+
+    if public_heavy:
+        signal["conditions_met"].append(f"Public {public_pct:.0f}% >= 65% (fade opportunity)")
+    else:
+        signal["conditions_failed"].append(f"Public {public_pct:.0f}% < 65%")
+
+    # Calculate influence
+    conditions_count = len(signal["conditions_met"])
+
+    if conditions_count >= 3:
+        signal["protocol_active"] = True
+        signal["influence"] = 0.92
+        signal["ml_dog_play"] = True
+        signal["recommendation"] = "FULL PROTOCOL - All conditions met. 0.5u ML Dog of the Day."
+    elif conditions_count == 2:
+        signal["influence"] = 0.70
+        signal["recommendation"] = "PARTIAL PROTOCOL - 2/3 conditions. Consider with caution."
+    elif conditions_count == 1:
+        signal["influence"] = 0.45
+        signal["recommendation"] = "WEAK SIGNAL - Only 1/3 conditions met."
+    else:
+        signal["influence"] = 0.20
+        signal["recommendation"] = "NO PROTOCOL - Conditions not met."
+
+    return signal
+
+
+def get_dynamic_esoteric_weights(jarvis_triggered: bool = False,
+                                  immortal_detected: bool = False) -> Dict[str, float]:
+    """
+    Dynamic esoteric weights based on Jarvis trigger detection.
+
+    When Jarvis triggers are found, boost gematria weight.
+    When THE IMMORTAL (2178) is detected, maximize gematria weight.
+    """
+    if immortal_detected:
+        return {
+            "gematria": 0.55,      # IMMORTAL boost (max)
+            "numerology": 0.15,
+            "astro": 0.10,
+            "vedic": 0.05,
+            "sacred": 0.05,
+            "fib_phi": 0.05,
+            "vortex": 0.05
+        }
+    elif jarvis_triggered:
+        return {
+            "gematria": 0.45,      # JARVIS boost
+            "numerology": 0.18,
+            "astro": 0.12,
+            "vedic": 0.08,
+            "sacred": 0.05,
+            "fib_phi": 0.06,
+            "vortex": 0.06
+        }
+    else:
+        return {
+            "gematria": 0.30,      # Standard
+            "numerology": 0.20,
+            "astro": 0.15,
+            "vedic": 0.10,
+            "sacred": 0.10,
+            "fib_phi": 0.08,
+            "vortex": 0.07
+        }
+
+
+def calculate_confluence(research_score: float, esoteric_score: float,
+                         jarvis_triggered: bool = False, immortal_detected: bool = False,
+                         in_crush_zone: bool = False, in_goldilocks: bool = False) -> Dict[str, Any]:
+    """
+    THE HEART OF THE SYSTEM - Calculate cosmic confluence between research and esoteric.
+
+    IMMORTAL confluence is the highest tier - only when 2178 is detected
+    and research model also aligns.
+
+    Confluence Levels:
+    - IMMORTAL:       2178 detected + both ≥7.5 + aligned ≥80% → +10 boost
+    - JARVIS_PERFECT: Trigger + both ≥7.5 + aligned ≥80%      → +7 boost
+    - PERFECT:        Both ≥7.5 + aligned ≥80%                → +5 boost
+    - STRONG:         Both ≥7.5 OR aligned ≥70%               → +3 boost
+    - MODERATE:       Aligned ≥60%                            → +1 boost
+    - DIVERGENT:      Models disagree                         → +0 boost
+    """
+    confluence = {
+        "research_score": round(research_score, 2),
+        "esoteric_score": round(esoteric_score, 2),
+        "alignment_pct": 0.0,
+        "level": "DIVERGENT",
+        "boost": 0.0,
+        "description": "",
+        "factors": []
+    }
+
+    # Normalize both scores to 0-10 scale for comparison
+    r_norm = min(10, max(0, research_score))
+    e_norm = min(10, max(0, esoteric_score))
+
+    # Calculate alignment (how close are they on 0-10 scale)
+    diff = abs(r_norm - e_norm)
+    alignment = (1 - (diff / 10)) * 100  # 0-100%
+    confluence["alignment_pct"] = round(alignment, 1)
+
+    # Check conditions
+    both_high = r_norm >= 7.5 and e_norm >= 7.5
+    aligned_80 = alignment >= 80
+    aligned_70 = alignment >= 70
+    aligned_60 = alignment >= 60
+
+    # Determine confluence level (check in order of priority)
+    if immortal_detected and both_high and aligned_80:
+        confluence["level"] = "IMMORTAL"
+        confluence["boost"] = 10.0
+        confluence["description"] = "THE IMMORTAL CONFLUENCE - 2178 detected with full model alignment. Maximum edge."
+        confluence["factors"].append("IMMORTAL_DETECTED")
+
+    elif jarvis_triggered and both_high and aligned_80:
+        confluence["level"] = "JARVIS_PERFECT"
+        confluence["boost"] = 7.0
+        confluence["description"] = "JARVIS PERFECT CONFLUENCE - Trigger detected with strong alignment."
+        confluence["factors"].append("JARVIS_TRIGGERED")
+
+    elif both_high and aligned_80:
+        confluence["level"] = "PERFECT"
+        confluence["boost"] = 5.0
+        confluence["description"] = "Perfect cosmic alignment between research and esoteric models."
+
+    elif both_high or (aligned_70 and (r_norm >= 7.0 or e_norm >= 7.0)):
+        confluence["level"] = "STRONG"
+        confluence["boost"] = 3.0
+        confluence["description"] = "Strong confluence - models showing agreement."
+
+    elif aligned_60:
+        confluence["level"] = "MODERATE"
+        confluence["boost"] = 1.0
+        confluence["description"] = "Moderate alignment between models."
+
+    else:
+        confluence["level"] = "DIVERGENT"
+        confluence["boost"] = 0.0
+        confluence["description"] = "Models diverging - use primary research score with caution."
+
+    # Apply crush zone and goldilocks bonuses on top
+    if in_crush_zone:
+        confluence["boost"] += 2.0
+        confluence["factors"].append("CRUSH_ZONE_ACTIVE")
+        confluence["description"] += " [PUBLIC FADE CRUSH ZONE]"
+
+    if in_goldilocks:
+        confluence["boost"] += 1.0
+        confluence["factors"].append("GOLDILOCKS_SPREAD")
+        confluence["description"] += " [GOLDILOCKS SPREAD]"
+
+    return confluence
+
+
+def calculate_blended_probability(research_score: float, esoteric_score: float,
+                                   confluence_boost: float = 0) -> Dict[str, Any]:
+    """
+    Calculate blended probability using the 67/33 RS/Quant formula.
+
+    Formula: 0.67 * (research/10) + 0.33 * (esoteric/10)
+    Then apply confluence boost.
+
+    Returns percentage (0-100 scale).
+    """
+    # Normalize scores to 0-1
+    r_norm = min(1.0, max(0, research_score / 10))
+    e_norm = min(1.0, max(0, esoteric_score / 10))
+
+    # Apply 67/33 blend
+    base_blend = (0.67 * r_norm) + (0.33 * e_norm)
+
+    # Convert to percentage
+    base_pct = base_blend * 100
+
+    # Apply confluence boost (scaled to percentage)
+    boost_pct = confluence_boost * 3  # Each boost point = 3% increase
+    final_pct = min(95, base_pct + boost_pct)  # Cap at 95%
+
+    return {
+        "base_blend": round(base_blend, 4),
+        "base_percentage": round(base_pct, 1),
+        "confluence_boost_pct": round(boost_pct, 1),
+        "final_percentage": round(final_pct, 1),
+        "formula": "0.67 × (research/10) + 0.33 × (esoteric/10) + confluence_boost"
+    }
+
+
+def determine_bet_tier(blended_pct: float, nhl_protocol_active: bool = False) -> Dict[str, Any]:
+    """
+    Determine betting tier based on blended probability.
+
+    Tiers:
+    - GOLD_STAR:   ≥72% → 2u
+    - EDGE_LEAN:   ≥68% → 1u
+    - NHL_DOG:     Protocol active → 0.5u ML
+    - MONITOR:     ≥60% → 0u (watch only)
+    - PASS:        <60% → skip
+    """
+    tier = {
+        "blended_pct": blended_pct,
+        "tier": "PASS",
+        "units": 0.0,
+        "reasoning": []
+    }
+
+    if blended_pct >= 72:
+        tier["tier"] = "GOLD_STAR"
+        tier["units"] = 2.0
+        tier["reasoning"].append(f"Blended {blended_pct:.1f}% >= 72% threshold")
+
+    elif blended_pct >= 68:
+        tier["tier"] = "EDGE_LEAN"
+        tier["units"] = 1.0
+        tier["reasoning"].append(f"Blended {blended_pct:.1f}% >= 68% threshold")
+
+    elif blended_pct >= 60:
+        tier["tier"] = "MONITOR"
+        tier["units"] = 0.0
+        tier["reasoning"].append(f"Blended {blended_pct:.1f}% >= 60% - monitor only")
+
+    else:
+        tier["tier"] = "PASS"
+        tier["units"] = 0.0
+        tier["reasoning"].append(f"Blended {blended_pct:.1f}% < 60% - insufficient edge")
+
+    # NHL Dog Protocol override
+    if nhl_protocol_active:
+        tier["nhl_ml_dog"] = True
+        tier["nhl_units"] = 0.5
+        tier["reasoning"].append("NHL DOG PROTOCOL ACTIVE - 0.5u ML Dog")
+
+    return tier
+
+
+class JarvisSavantEngine:
+    """
+    JARVIS SAVANT ENGINE v7.3
+
+    The complete scoring and confluence system.
+    Combines:
+    - 8 AI Models (from MasterPredictionSystem)
+    - 8 Pillars (from PillarsAnalyzer)
+    - JARVIS Triggers (gematria, numerology)
+    - Esoteric Edge (moon, Tesla, sacred geometry)
+    - Public Fade (exoteric edge)
+    - Spread Analysis (Goldilocks, Trap Gate)
+    - Confluence Calculator (alignment measurement)
+    - Blended Probability (67/33 formula)
+    - Bet Tiers (Gold Star, Edge Lean)
+
+    Philosophy: Competition + variance.
+    Edges from esoteric resonance (gematria dominant) + exoteric inefficiencies.
+    Straight betting only.
+    """
+
+    def __init__(self):
+        self.version = "v7.3"
+        self.ytd_units = 94.40  # Update after results
+        self.straight_betting_only = True
+
+        # Thresholds
+        self.gold_star_threshold = 72
+        self.edge_lean_threshold = 68
+        self.ml_dog_lotto_units = 0.5
+
+        # NHL Protocol thresholds
+        self.nhl_rs_threshold = 9.3
+        self.nhl_public_threshold = 65
+
+    def analyze_pick(self, pick_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Complete analysis of a single pick using all systems.
+
+        Required pick_data fields:
+        - player_name (optional for game picks)
+        - team_name
+        - opponent_name
+        - sport
+        - spread (optional)
+        - public_pct (optional, default 50)
+        - is_favorite (optional, default False)
+        - ai_score (from MPS, default 5.0)
+        - pillar_score (from Pillars, default 3.0)
+        """
+        # Extract data with defaults
+        player_name = pick_data.get("player_name", "")
+        team_name = pick_data.get("team_name", "")
+        opponent_name = pick_data.get("opponent_name", "")
+        sport = pick_data.get("sport", "").upper()
+        spread = pick_data.get("spread", 0)
+        public_pct = pick_data.get("public_pct", 50)
+        is_favorite = pick_data.get("is_favorite", spread < 0)
+        ai_score = pick_data.get("ai_score", 5.0)
+        pillar_score = pick_data.get("pillar_score", 3.0)
+        jersey_number = pick_data.get("jersey_number")
+
+        # Calculate all signals
+        gematria = calculate_gematria_signal(player_name, team_name, opponent_name, jersey_number)
+        public_fade = calculate_public_fade_signal(public_pct, is_favorite)
+        mid_spread = calculate_mid_spread_signal(spread)
+        trap_gate = calculate_large_spread_trap(spread)
+
+        # Get daily energy
+        daily_energy = get_daily_energy()
+        moon = get_moon_phase()
+        numerology = calculate_date_numerology()
+
+        # Check JARVIS triggers on combined values
+        jarvis_triggered = gematria["total_boost"] > 0
+        immortal_detected = gematria["immortal_detected"]
+
+        # Get dynamic weights
+        weights = get_dynamic_esoteric_weights(jarvis_triggered, immortal_detected)
+
+        # Calculate RESEARCH SCORE (AI + Pillars, scaled to 0-10)
+        # AI Models max 8, Pillars max 8 → combined max 16, scale to 10
+        research_raw = ai_score + pillar_score
+        research_score = min(10, (research_raw / 16) * 10)
+
+        # Calculate ESOTERIC SCORE (JARVIS + Esoteric factors)
+        esoteric_components = []
+
+        # Gematria (52% when IMMORTAL, 45% when triggered, 30% otherwise)
+        esoteric_components.append(gematria["influence"] * weights["gematria"] * 10)
+
+        # Numerology (moon phase influence)
+        moon_influence = 0.7 if moon.get("phase") == "Full Moon" else 0.5
+        esoteric_components.append(moon_influence * weights["astro"] * 10)
+
+        # Daily energy
+        energy_influence = daily_energy.get("overall_score", 50) / 100
+        esoteric_components.append(energy_influence * weights["numerology"] * 10)
+
+        # Tesla alignment
+        if numerology.get("tesla_energy"):
+            esoteric_components.append(0.8 * weights["sacred"] * 10)
+
+        # Master number boost
+        if numerology.get("is_master_number_day"):
+            esoteric_components.append(1.0 * weights["sacred"] * 10)
+
+        esoteric_raw = sum(esoteric_components)
+
+        # Apply trap gate penalty if active
+        if trap_gate["is_trap"]:
+            esoteric_raw *= trap_gate["penalty"]
+
+        # Apply goldilocks boost
+        if mid_spread["in_goldilocks"]:
+            esoteric_raw *= mid_spread["boost_modifier"]
+
+        esoteric_score = min(10, esoteric_raw)
+
+        # Calculate CONFLUENCE
+        confluence = calculate_confluence(
+            research_score,
+            esoteric_score,
+            jarvis_triggered,
+            immortal_detected,
+            public_fade["in_crush_zone"],
+            mid_spread["in_goldilocks"]
+        )
+
+        # Calculate BLENDED PROBABILITY
+        blended = calculate_blended_probability(
+            research_score,
+            esoteric_score,
+            confluence["boost"]
+        )
+
+        # Check NHL DOG PROTOCOL
+        nhl_protocol = calculate_nhl_dog_protocol(
+            sport, spread, research_score, public_pct
+        )
+
+        # Determine BET TIER
+        bet_tier = determine_bet_tier(
+            blended["final_percentage"],
+            nhl_protocol["protocol_active"]
+        )
+
+        # Calculate JARVIS score component (0-4 max)
+        jarvis_score = min(4.0, gematria["total_boost"] / 5)
+
+        # Build comprehensive result
+        return {
+            "version": self.version,
+
+            # Dual Scores
+            "research_score": round(research_score, 2),
+            "esoteric_score": round(esoteric_score, 2),
+
+            # Confluence
+            "confluence": confluence,
+
+            # Blended Result
+            "blended_probability": blended,
+
+            # Bet Recommendation
+            "bet_recommendation": bet_tier,
+
+            # Scoring Breakdown (legacy format for compatibility)
+            "scoring_breakdown": {
+                "ai_models": round(ai_score, 2),
+                "pillars": round(pillar_score, 2),
+                "jarvis": round(jarvis_score, 2),
+                "esoteric": round(esoteric_score - jarvis_score, 2)  # Non-JARVIS esoteric
+            },
+
+            # Total Score (legacy, max 22)
+            "total_score": round(ai_score + pillar_score + jarvis_score + (esoteric_score * 0.2), 2),
+
+            # Confidence (legacy format)
+            "confidence": confluence["level"] if confluence["level"] in ["IMMORTAL", "JARVIS_PERFECT", "PERFECT"] else (
+                "SMASH" if blended["final_percentage"] >= 78 else
+                "HIGH" if blended["final_percentage"] >= 70 else
+                "MEDIUM" if blended["final_percentage"] >= 60 else
+                "LOW"
+            ),
+            "confidence_pct": round(blended["final_percentage"], 1),
+
+            # Signal Details
+            "signals": {
+                "gematria": gematria,
+                "public_fade": public_fade,
+                "mid_spread": mid_spread,
+                "trap_gate": trap_gate,
+                "nhl_protocol": nhl_protocol
+            },
+
+            # JARVIS Status
+            "jarvis_status": {
+                "triggered": jarvis_triggered,
+                "immortal_active": immortal_detected,
+                "gematria_hits": gematria["gematria_hits"],
+                "triggers_found": gematria["triggers_found"],
+                "total_boost": gematria["total_boost"],
+                "tier": gematria["tier"],
+                "crush_zone_active": public_fade["in_crush_zone"],
+                "goldilocks_active": mid_spread["in_goldilocks"],
+                "trap_gate_active": trap_gate["is_trap"]
+            },
+
+            # Daily Energy
+            "daily_energy": daily_energy
+        }
+
+
+# Global engine instance
+_jarvis_engine: Optional[JarvisSavantEngine] = None
+
+
+def get_jarvis_engine() -> JarvisSavantEngine:
+    """Get or create the JarvisSavantEngine singleton."""
+    global _jarvis_engine
+    if _jarvis_engine is None:
+        _jarvis_engine = JarvisSavantEngine()
+        logger.info("JarvisSavantEngine v7.3 initialized")
+    return _jarvis_engine
+
+
+# ============================================================================
 # LIVE DATA ENDPOINTS
 # ============================================================================
 
@@ -1022,20 +1970,16 @@ async def get_props(sport: str):
 @router.get("/best-bets/{sport}")
 async def get_best_bets(sport: str):
     """
-    Get best bets using full 8 AI Models + 8 Pillars + JARVIS + Esoteric scoring.
+    Get best bets using JARVIS SAVANT ENGINE v7.3.
+
+    Full confluence scoring system:
+    - 8 AI Models + 8 Pillars → Research Score (0-10)
+    - JARVIS + Esoteric factors → Esoteric Score (0-10)
+    - Confluence alignment measurement
+    - Blended probability (67/33 formula)
+    - Bet tiers (Gold Star 2u, Edge Lean 1u)
+
     Returns TWO categories: props (player props) and game_picks (spreads, totals, ML).
-
-    Scoring Formula:
-    TOTAL = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
-
-    Response Schema:
-    {
-        "sport": "NBA",
-        "props": [...],       // Player props
-        "game_picks": [...],  // Spreads, totals, moneylines
-        "daily_energy": {...},
-        "timestamp": "ISO timestamp"
-    }
     """
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
@@ -1047,70 +1991,27 @@ async def get_best_bets(sport: str):
     if cached:
         return cached
 
-    # Get MasterPredictionSystem
-    mps = get_master_prediction_system()
+    # Get JARVIS Engine and daily energy
+    engine = get_jarvis_engine()
     daily_energy = get_daily_energy()
 
-    # Fetch sharp money for both categories
+    # Fetch sharp money and splits for public fade analysis
     sharp_data = await get_sharp_money(sport)
     sharp_lookup = {}
     for signal in sharp_data.get("data", []):
         game_key = f"{signal.get('away_team')}@{signal.get('home_team')}"
         sharp_lookup[game_key] = signal
 
-    # Helper function to calculate scores
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0):
-        ai_score = base_ai
-        if sharp_signal.get("signal_strength") == "STRONG":
-            ai_score += 2.0
-        elif sharp_signal.get("signal_strength") == "MODERATE":
-            ai_score += 1.0
-
-        pillar_score = 3.0 if sharp_signal.get("line_variance", 0) > 1.0 else 2.0
-
-        # JARVIS triggers
-        jarvis_score = 0.0
-        jarvis_triggers_hit = []
-        for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
-            if str(trigger_num) in game_str:
-                jarvis_boost = trigger_data["boost"] / 5
-                jarvis_score += jarvis_boost
-                jarvis_triggers_hit.append({
-                    "number": trigger_num,
-                    "name": trigger_data["name"],
-                    "boost": round(jarvis_boost, 2)
-                })
-        jarvis_score = min(4.0, jarvis_score)
-
-        # Esoteric boost
-        esoteric_boost = 0.0
-        if daily_energy.get("overall_score", 50) >= 85:
-            esoteric_boost = 2.0
-        elif daily_energy.get("overall_score", 50) >= 70:
-            esoteric_boost = 1.0
-
-        total_score = ai_score + pillar_score + jarvis_score + esoteric_boost
-
-        if total_score >= 16:
-            confidence = "SMASH"
-        elif total_score >= 12:
-            confidence = "HIGH"
-        elif total_score >= 8:
-            confidence = "MEDIUM"
-        else:
-            confidence = "LOW"
-
-        return {
-            "total_score": round(total_score, 2),
-            "confidence": confidence,
-            "scoring_breakdown": {
-                "ai_models": round(ai_score, 2),
-                "pillars": round(pillar_score, 2),
-                "jarvis": round(jarvis_score, 2),
-                "esoteric": round(esoteric_boost, 2)
-            },
-            "jarvis_triggers": jarvis_triggers_hit
-        }
+    # Try to get splits for public percentages
+    splits_lookup = {}
+    try:
+        splits_data = await get_splits(sport)
+        for split in splits_data.get("data", []):
+            game_key = f"{split.get('away_team')}@{split.get('home_team')}"
+            home_bets = split.get("spread_splits", {}).get("home", {}).get("bets_pct", 50)
+            splits_lookup[game_key] = home_bets
+    except Exception:
+        pass  # Continue without splits
 
     # ============================================
     # CATEGORY 1: PLAYER PROPS
@@ -1122,8 +2023,8 @@ async def get_best_bets(sport: str):
             home_team = game.get("home_team", "")
             away_team = game.get("away_team", "")
             game_key = f"{away_team}@{home_team}"
-            game_str = f"{home_team}{away_team}"
             sharp_signal = sharp_lookup.get(game_key, {})
+            public_pct = splits_lookup.get(game_key, 50)
 
             for prop in game.get("props", []):
                 player = prop.get("player", "Unknown")
@@ -1135,8 +2036,28 @@ async def get_best_bets(sport: str):
                 if side not in ["Over", "Under"]:
                     continue
 
-                # Calculate score
-                score_data = calculate_pick_score(game_str + player, sharp_signal, base_ai=5.0)
+                # Calculate AI score based on sharp signal
+                ai_score = 5.0
+                if sharp_signal.get("signal_strength") == "STRONG":
+                    ai_score = 7.0
+                elif sharp_signal.get("signal_strength") == "MODERATE":
+                    ai_score = 6.0
+
+                # Calculate pillar score
+                pillar_score = 4.0 if sharp_signal.get("line_variance", 0) > 1.5 else 3.0
+
+                # Use JARVIS Engine for full analysis
+                analysis = engine.analyze_pick({
+                    "player_name": player,
+                    "team_name": home_team,
+                    "opponent_name": away_team,
+                    "sport": sport,
+                    "spread": 0,  # Props don't have spread
+                    "public_pct": public_pct,
+                    "is_favorite": False,
+                    "ai_score": ai_score,
+                    "pillar_score": pillar_score
+                })
 
                 props_picks.append({
                     "player": player,
@@ -1148,14 +2069,33 @@ async def get_best_bets(sport: str):
                     "home_team": home_team,
                     "away_team": away_team,
                     "recommendation": f"{side.upper()} {line}",
-                    **score_data,
+                    # Dual Scores
+                    "research_score": analysis["research_score"],
+                    "esoteric_score": analysis["esoteric_score"],
+                    # Confluence
+                    "confluence": analysis["confluence"]["level"],
+                    "alignment_pct": analysis["confluence"]["alignment_pct"],
+                    # Blended Result
+                    "blended_pct": analysis["blended_probability"]["final_percentage"],
+                    # Bet Recommendation
+                    "bet_tier": analysis["bet_recommendation"]["tier"],
+                    "units": analysis["bet_recommendation"]["units"],
+                    # Legacy fields for compatibility
+                    "total_score": analysis["total_score"],
+                    "confidence": analysis["confidence"],
+                    "confidence_pct": analysis["confidence_pct"],
+                    "scoring_breakdown": analysis["scoring_breakdown"],
+                    # JARVIS Status
+                    "jarvis_triggered": analysis["jarvis_status"]["triggered"],
+                    "immortal_active": analysis["jarvis_status"]["immortal_active"],
+                    "gematria_tier": analysis["jarvis_status"]["tier"],
                     "sharp_signal": sharp_signal.get("signal_strength", "NONE")
                 })
     except HTTPException:
         logger.warning("Props fetch failed for %s", sport)
 
-    # Sort props by score and take top 10
-    props_picks.sort(key=lambda x: x["total_score"], reverse=True)
+    # Sort by blended percentage and take top 10
+    props_picks.sort(key=lambda x: x["blended_pct"], reverse=True)
     top_props = props_picks[:10]
 
     # ============================================
@@ -1165,7 +2105,6 @@ async def get_best_bets(sport: str):
     sport_config = SPORT_MAPPINGS[sport_lower]
 
     try:
-        # Fetch game odds (spreads, totals, moneylines)
         odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
         resp = await fetch_with_retries(
             "GET", odds_url,
@@ -1183,33 +2122,60 @@ async def get_best_bets(sport: str):
                 home_team = game.get("home_team", "")
                 away_team = game.get("away_team", "")
                 game_key = f"{away_team}@{home_team}"
-                game_str = f"{home_team}{away_team}"
                 sharp_signal = sharp_lookup.get(game_key, {})
+                public_pct = splits_lookup.get(game_key, 50)
 
-                for bm in game.get("bookmakers", [])[:1]:  # Just use first book for now
+                for bm in game.get("bookmakers", [])[:1]:
                     for market in bm.get("markets", []):
                         market_key = market.get("key", "")
 
                         for outcome in market.get("outcomes", []):
                             pick_name = outcome.get("name", "")
                             odds = outcome.get("price", -110)
-                            point = outcome.get("point")
+                            point = outcome.get("point", 0)
 
                             # Build display info
                             if market_key == "spreads":
                                 pick_type = "SPREAD"
                                 display = f"{pick_name} {point:+.1f}" if point else pick_name
+                                spread = point if pick_name == home_team else -point if point else 0
                             elif market_key == "h2h":
                                 pick_type = "MONEYLINE"
                                 display = f"{pick_name} ML"
+                                spread = 0
                             elif market_key == "totals":
                                 pick_type = "TOTAL"
                                 display = f"{pick_name} {point}" if point else pick_name
+                                spread = 0
                             else:
                                 continue
 
-                            # Calculate score
-                            score_data = calculate_pick_score(game_str, sharp_signal, base_ai=4.5)
+                            # Calculate AI score based on sharp signal
+                            ai_score = 4.5
+                            if sharp_signal.get("signal_strength") == "STRONG":
+                                ai_score = 6.5
+                            elif sharp_signal.get("signal_strength") == "MODERATE":
+                                ai_score = 5.5
+
+                            # Calculate pillar score
+                            pillar_score = 4.0 if sharp_signal.get("line_variance", 0) > 1.5 else 3.0
+
+                            # Determine if this is a favorite pick
+                            is_favorite = (pick_name == home_team and public_pct > 50) or \
+                                         (pick_name == away_team and public_pct < 50)
+
+                            # Use JARVIS Engine for full analysis
+                            analysis = engine.analyze_pick({
+                                "player_name": "",
+                                "team_name": pick_name,
+                                "opponent_name": away_team if pick_name == home_team else home_team,
+                                "sport": sport,
+                                "spread": spread,
+                                "public_pct": public_pct if is_favorite else 100 - public_pct,
+                                "is_favorite": is_favorite,
+                                "ai_score": ai_score,
+                                "pillar_score": pillar_score
+                            })
 
                             game_picks.append({
                                 "pick_type": pick_type,
@@ -1222,8 +2188,32 @@ async def get_best_bets(sport: str):
                                 "away_team": away_team,
                                 "market": market_key,
                                 "recommendation": display,
-                                **score_data,
-                                "sharp_signal": sharp_signal.get("signal_strength", "NONE")
+                                # Dual Scores
+                                "research_score": analysis["research_score"],
+                                "esoteric_score": analysis["esoteric_score"],
+                                # Confluence
+                                "confluence": analysis["confluence"]["level"],
+                                "alignment_pct": analysis["confluence"]["alignment_pct"],
+                                # Blended Result
+                                "blended_pct": analysis["blended_probability"]["final_percentage"],
+                                # Bet Recommendation
+                                "bet_tier": analysis["bet_recommendation"]["tier"],
+                                "units": analysis["bet_recommendation"]["units"],
+                                # Legacy fields for compatibility
+                                "total_score": analysis["total_score"],
+                                "confidence": analysis["confidence"],
+                                "confidence_pct": analysis["confidence_pct"],
+                                "scoring_breakdown": analysis["scoring_breakdown"],
+                                # JARVIS Status
+                                "jarvis_triggered": analysis["jarvis_status"]["triggered"],
+                                "immortal_active": analysis["jarvis_status"]["immortal_active"],
+                                "crush_zone": analysis["jarvis_status"]["crush_zone_active"],
+                                "goldilocks": analysis["jarvis_status"]["goldilocks_active"],
+                                "trap_gate": analysis["jarvis_status"]["trap_gate_active"],
+                                "gematria_tier": analysis["jarvis_status"]["tier"],
+                                "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
+                                # NHL Protocol
+                                "nhl_protocol": analysis["signals"]["nhl_protocol"]["protocol_active"] if sport_lower == "nhl" else False
                             })
     except Exception as e:
         logger.warning("Game odds fetch failed: %s", e)
@@ -1233,9 +2223,18 @@ async def get_best_bets(sport: str):
         for signal in sharp_data.get("data", []):
             home_team = signal.get("home_team", "")
             away_team = signal.get("away_team", "")
-            game_str = f"{home_team}{away_team}"
 
-            score_data = calculate_pick_score(game_str, signal, base_ai=5.0)
+            analysis = engine.analyze_pick({
+                "player_name": "",
+                "team_name": home_team,
+                "opponent_name": away_team,
+                "sport": sport,
+                "spread": signal.get("line_variance", 0),
+                "public_pct": 60,
+                "is_favorite": True,
+                "ai_score": 5.0,
+                "pillar_score": 4.0
+            })
 
             game_picks.append({
                 "pick_type": "SHARP",
@@ -1248,12 +2247,21 @@ async def get_best_bets(sport: str):
                 "away_team": away_team,
                 "market": "sharp_money",
                 "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
-                **score_data,
+                "research_score": analysis["research_score"],
+                "esoteric_score": analysis["esoteric_score"],
+                "confluence": analysis["confluence"]["level"],
+                "blended_pct": analysis["blended_probability"]["final_percentage"],
+                "bet_tier": analysis["bet_recommendation"]["tier"],
+                "units": analysis["bet_recommendation"]["units"],
+                "total_score": analysis["total_score"],
+                "confidence": analysis["confidence"],
+                "confidence_pct": analysis["confidence_pct"],
+                "scoring_breakdown": analysis["scoring_breakdown"],
                 "sharp_signal": signal.get("signal_strength", "MODERATE")
             })
 
-    # Sort game picks by score and take top 10
-    game_picks.sort(key=lambda x: x["total_score"], reverse=True)
+    # Sort by blended percentage and take top 10
+    game_picks.sort(key=lambda x: x["blended_pct"], reverse=True)
     top_game_picks = game_picks[:10]
 
     # ============================================
@@ -1261,7 +2269,26 @@ async def get_best_bets(sport: str):
     # ============================================
     result = {
         "sport": sport.upper(),
-        "source": "master_prediction_system",
+        "source": "jarvis_savant_engine_v7.3",
+        "scoring_system": {
+            "version": "v7.3",
+            "components": [
+                "8 AI Models → Research Score",
+                "8 Pillars → Research Score",
+                "JARVIS Triggers → Esoteric Score",
+                "Gematria (52% weight) → Esoteric Score",
+                "Public Fade (-13%) → Esoteric Score",
+                "Mid-Spread (+20%) → Esoteric Score",
+                "Confluence Calculator → Alignment Boost",
+                "Blended Probability (67/33) → Final Score"
+            ],
+            "bet_tiers": {
+                "GOLD_STAR": "≥72% → 2u",
+                "EDGE_LEAN": "≥68% → 1u",
+                "MONITOR": "≥60% → watch",
+                "PASS": "<60% → skip"
+            }
+        },
         "props": {
             "count": len(top_props),
             "total_analyzed": len(props_picks),
@@ -1412,6 +2439,163 @@ async def get_esoteric_edge():
         "edge_factors": edge_factors,
         "total_edge_boost": total_boost,
         "recommendation": "AGGRESSIVE" if total_boost >= 30 else "STANDARD" if total_boost >= 15 else "CONSERVATIVE"
+    }
+
+
+# ============================================================================
+# JARVIS SAVANT ENGINE ENDPOINTS
+# ============================================================================
+
+@router.get("/validate-immortal")
+async def validate_immortal():
+    """
+    Validate the mathematical properties of THE IMMORTAL number (2178).
+
+    Proves:
+    - 2178 × 4 = 8712 (its reversal)
+    - 2178 × 8712 = 18974736 = 66^4
+
+    This is the ONLY 4-digit number with both properties.
+    Used as the highest-tier JARVIS trigger.
+    """
+    return validate_2178()
+
+
+@router.get("/jarvis-triggers")
+async def get_jarvis_triggers():
+    """
+    Get all JARVIS trigger numbers and their properties.
+
+    These are the sacred numbers that signal edge opportunities:
+    - 2178: THE IMMORTAL (Legendary tier)
+    - 201: THE ORDER (High tier)
+    - 33: THE MASTER (High tier)
+    - 93: THE WILL (High tier)
+    - 322: THE SOCIETY (High tier)
+
+    Also includes Tesla numbers (3, 6, 9) and Fibonacci sequence.
+    """
+    return {
+        "version": "v7.3",
+        "triggers": JARVIS_TRIGGERS,
+        "tesla_numbers": TESLA_NUMBERS,
+        "power_numbers": POWER_NUMBERS,
+        "fibonacci_sequence": FIBONACCI_NUMBERS,
+        "vortex_pattern": VORTEX_PATTERN,
+        "immortal_validation": validate_2178(),
+        "usage": {
+            "direct_match": "Full boost when value equals trigger number",
+            "reduction_match": "Half boost when digit reduction matches trigger",
+            "divisibility": "Partial boost when divisible by 33",
+            "sequence": "Full boost when value contains 2178 sequence"
+        }
+    }
+
+
+@router.get("/check-trigger/{value}")
+async def check_trigger_value(value: int):
+    """
+    Check if a specific value triggers any JARVIS edge numbers.
+
+    Checks for:
+    1. Direct match with trigger numbers
+    2. Reduction to trigger numbers (digit sum)
+    3. Divisibility by 33 (master number)
+    4. Tesla 3-6-9 alignment
+    5. Contains 2178 sequence
+    6. Fibonacci alignment
+    7. Vortex math pattern
+
+    Example: /live/check-trigger/231
+    """
+    result = check_jarvis_trigger(value)
+    result["interpretation"] = ""
+
+    if result["triggered"]:
+        if result["highest_tier"] == "LEGENDARY":
+            result["interpretation"] = "IMMORTAL DETECTED - Maximum edge signal. This is rare."
+        elif result["total_boost"] >= 15:
+            result["interpretation"] = "HIGH EDGE - Multiple triggers activated. Strong signal."
+        elif result["total_boost"] >= 10:
+            result["interpretation"] = "MODERATE EDGE - Significant trigger activity."
+        elif result["total_boost"] >= 5:
+            result["interpretation"] = "LIGHT EDGE - Some trigger activity present."
+        else:
+            result["interpretation"] = "MINIMAL EDGE - Minor trigger activity."
+    else:
+        result["interpretation"] = "NO TRIGGERS - This value does not activate any JARVIS signals."
+
+    return result
+
+
+@router.get("/confluence/{sport}")
+async def get_confluence_analysis(sport: str):
+    """
+    Get detailed confluence analysis for a sport.
+
+    Shows how Research Score and Esoteric Score align for current games.
+    The confluence level determines the confidence multiplier.
+
+    Confluence Levels:
+    - IMMORTAL: 2178 detected + both scores ≥7.5 + aligned ≥80% → +10 boost
+    - JARVIS_PERFECT: Trigger + both ≥7.5 + aligned ≥80% → +7 boost
+    - PERFECT: Both ≥7.5 + aligned ≥80% → +5 boost
+    - STRONG: Both high OR aligned ≥70% → +3 boost
+    - MODERATE: Aligned ≥60% → +1 boost
+    - DIVERGENT: Models disagree → +0 boost
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    engine = get_jarvis_engine()
+    daily_energy = get_daily_energy()
+
+    # Get sample analysis using daily energy as proxy for current conditions
+    sample_analysis = engine.analyze_pick({
+        "player_name": "",
+        "team_name": "Sample Team",
+        "opponent_name": "Sample Opponent",
+        "sport": sport,
+        "spread": 5.5,  # Goldilocks zone
+        "public_pct": 65,  # Crush zone edge
+        "is_favorite": True,
+        "ai_score": 6.0,
+        "pillar_score": 4.0
+    })
+
+    return {
+        "sport": sport.upper(),
+        "engine_version": engine.version,
+        "confluence_system": {
+            "levels": {
+                "IMMORTAL": {"boost": 10, "requirements": "2178 detected + both ≥7.5 + aligned ≥80%"},
+                "JARVIS_PERFECT": {"boost": 7, "requirements": "Trigger + both ≥7.5 + aligned ≥80%"},
+                "PERFECT": {"boost": 5, "requirements": "Both ≥7.5 + aligned ≥80%"},
+                "STRONG": {"boost": 3, "requirements": "Both high OR aligned ≥70%"},
+                "MODERATE": {"boost": 1, "requirements": "Aligned ≥60%"},
+                "DIVERGENT": {"boost": 0, "requirements": "Models disagree"}
+            },
+            "formula": "BLENDED = 0.67 × (research/10) + 0.33 × (esoteric/10) + confluence_boost × 3%"
+        },
+        "current_conditions": {
+            "daily_energy": daily_energy,
+            "esoteric_weights": get_dynamic_esoteric_weights(False, False),
+            "sample_analysis": {
+                "research_score": sample_analysis["research_score"],
+                "esoteric_score": sample_analysis["esoteric_score"],
+                "confluence": sample_analysis["confluence"],
+                "blended_probability": sample_analysis["blended_probability"],
+                "bet_recommendation": sample_analysis["bet_recommendation"]
+            }
+        },
+        "bet_tiers": {
+            "GOLD_STAR": {"threshold": 72, "units": 2.0},
+            "EDGE_LEAN": {"threshold": 68, "units": 1.0},
+            "MONITOR": {"threshold": 60, "units": 0.0},
+            "PASS": {"threshold": 0, "units": 0.0}
+        },
+        "timestamp": datetime.now().isoformat()
     }
 
 
