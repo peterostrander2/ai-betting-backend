@@ -679,8 +679,9 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "version": "14.1",
-        "codename": "PRODUCTION_HARDENED",
+        "version": "14.3",
+        "codename": "JARVIS_SAVANT",
+        "features": ["Phase 1: Confluence Core", "Phase 2: Vedic/Astro", "Phase 3: Learning Loop"],
         "timestamp": datetime.now().isoformat()
     }
 
@@ -1058,8 +1059,16 @@ async def get_best_bets(sport: str):
         game_key = f"{signal.get('away_team')}@{signal.get('home_team')}"
         sharp_lookup[game_key] = signal
 
-    # Helper function to calculate scores
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0):
+    # Get esoteric engines for enhanced scoring
+    jarvis = get_jarvis_savant()
+    vedic = get_vedic_astro()
+    learning = get_esoteric_loop()
+
+    # Get learned weights for esoteric scoring
+    esoteric_weights = learning.get_weights()["weights"] if learning else {}
+
+    # Helper function to calculate scores with full esoteric integration
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50):
         ai_score = base_ai
         if sharp_signal.get("signal_strength") == "STRONG":
             ai_score += 2.0
@@ -1068,34 +1077,86 @@ async def get_best_bets(sport: str):
 
         pillar_score = 3.0 if sharp_signal.get("line_variance", 0) > 1.0 else 2.0
 
-        # JARVIS triggers
+        # JARVIS triggers (using full engine if available)
         jarvis_score = 0.0
         jarvis_triggers_hit = []
-        for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
-            if str(trigger_num) in game_str:
-                jarvis_boost = trigger_data["boost"] / 5
+        confluence_level = "WEAK"
+        astro_boost = 0.0
+
+        if jarvis:
+            # Full JARVIS trigger check
+            trigger_result = jarvis.check_jarvis_trigger(game_str)
+            for trig in trigger_result.get("triggers_hit", []):
+                jarvis_boost = trig["boost"] / 5
                 jarvis_score += jarvis_boost
                 jarvis_triggers_hit.append({
-                    "number": trigger_num,
-                    "name": trigger_data["name"],
+                    "number": trig["number"],
+                    "name": trig["name"],
+                    "match_type": trig.get("match_type", "DIRECT"),
                     "boost": round(jarvis_boost, 2)
                 })
-        jarvis_score = min(4.0, jarvis_score)
+            jarvis_score = min(4.0, jarvis_score)
 
-        # Esoteric boost
+            # Full gematria signal
+            if player_name and home_team:
+                gematria = jarvis.calculate_gematria_signal(player_name, home_team, away_team)
+                public_fade = jarvis.calculate_public_fade_signal(public_pct)
+                mid_spread = jarvis.calculate_mid_spread_signal(spread)
+                trap = jarvis.calculate_large_spread_trap(spread, total)
+
+                # Get astro score
+                astro = vedic.calculate_astro_score() if vedic else {"overall_score": 50}
+
+                # Calculate confluence
+                confluence = jarvis.calculate_confluence(
+                    gematria_signal=gematria,
+                    public_fade=public_fade,
+                    mid_spread=mid_spread,
+                    trap_signal=trap,
+                    astro_score=astro,
+                    sharp_signal=sharp_signal
+                )
+                confluence_level = confluence.get("level", "WEAK")
+
+                # Add astro boost
+                astro_boost = (astro["overall_score"] - 50) / 50 * esoteric_weights.get("astro", 0.13) * 2
+        else:
+            # Fallback to simple trigger check
+            for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
+                if str(trigger_num) in game_str:
+                    jarvis_boost = trigger_data["boost"] / 5
+                    jarvis_score += jarvis_boost
+                    jarvis_triggers_hit.append({
+                        "number": trigger_num,
+                        "name": trigger_data["name"],
+                        "boost": round(jarvis_boost, 2)
+                    })
+            jarvis_score = min(4.0, jarvis_score)
+
+        # Esoteric boost (enhanced with learned weights)
         esoteric_boost = 0.0
         if daily_energy.get("overall_score", 50) >= 85:
             esoteric_boost = 2.0
         elif daily_energy.get("overall_score", 50) >= 70:
             esoteric_boost = 1.0
 
-        total_score = ai_score + pillar_score + jarvis_score + esoteric_boost
+        # Add astro boost
+        esoteric_boost += max(0, astro_boost)
 
-        if total_score >= 16:
+        # Confluence multiplier
+        confluence_multipliers = {
+            "GODMODE": 1.5, "LEGENDARY": 1.3, "STRONG": 1.2,
+            "MODERATE": 1.1, "WEAK": 1.0, "AVOID": 0.8
+        }
+        confluence_mult = confluence_multipliers.get(confluence_level, 1.0)
+
+        total_score = (ai_score + pillar_score + jarvis_score + esoteric_boost) * confluence_mult
+
+        if total_score >= 18:
             confidence = "SMASH"
-        elif total_score >= 12:
+        elif total_score >= 14:
             confidence = "HIGH"
-        elif total_score >= 8:
+        elif total_score >= 10:
             confidence = "MEDIUM"
         else:
             confidence = "LOW"
@@ -1103,11 +1164,13 @@ async def get_best_bets(sport: str):
         return {
             "total_score": round(total_score, 2),
             "confidence": confidence,
+            "confluence_level": confluence_level,
             "scoring_breakdown": {
                 "ai_models": round(ai_score, 2),
                 "pillars": round(pillar_score, 2),
                 "jarvis": round(jarvis_score, 2),
-                "esoteric": round(esoteric_boost, 2)
+                "esoteric": round(esoteric_boost, 2),
+                "confluence_multiplier": confluence_mult
             },
             "jarvis_triggers": jarvis_triggers_hit
         }
@@ -1135,8 +1198,18 @@ async def get_best_bets(sport: str):
                 if side not in ["Over", "Under"]:
                     continue
 
-                # Calculate score
-                score_data = calculate_pick_score(game_str + player, sharp_signal, base_ai=5.0)
+                # Calculate score with full esoteric integration
+                score_data = calculate_pick_score(
+                    game_str + player,
+                    sharp_signal,
+                    base_ai=5.0,
+                    player_name=player,
+                    home_team=home_team,
+                    away_team=away_team,
+                    spread=0,
+                    total=220,
+                    public_pct=50
+                )
 
                 props_picks.append({
                     "player": player,
@@ -1208,8 +1281,18 @@ async def get_best_bets(sport: str):
                             else:
                                 continue
 
-                            # Calculate score
-                            score_data = calculate_pick_score(game_str, sharp_signal, base_ai=4.5)
+                            # Calculate score with full esoteric integration
+                            score_data = calculate_pick_score(
+                                game_str,
+                                sharp_signal,
+                                base_ai=4.5,
+                                player_name="",
+                                home_team=home_team,
+                                away_team=away_team,
+                                spread=point if market_key == "spreads" and point else 0,
+                                total=point if market_key == "totals" and point else 220,
+                                public_pct=50
+                            )
 
                             game_picks.append({
                                 "pick_type": pick_type,
@@ -1235,7 +1318,17 @@ async def get_best_bets(sport: str):
             away_team = signal.get("away_team", "")
             game_str = f"{home_team}{away_team}"
 
-            score_data = calculate_pick_score(game_str, signal, base_ai=5.0)
+            score_data = calculate_pick_score(
+                game_str,
+                signal,
+                base_ai=5.0,
+                player_name="",
+                home_team=home_team,
+                away_team=away_team,
+                spread=signal.get("line_variance", 0),
+                total=220,
+                public_pct=50
+            )
 
             game_picks.append({
                 "pick_type": "SHARP",
@@ -1259,9 +1352,22 @@ async def get_best_bets(sport: str):
     # ============================================
     # BUILD FINAL RESPONSE
     # ============================================
+    # Get astro status if available
+    astro_status = None
+    if vedic:
+        try:
+            astro_status = {
+                "planetary_hour": vedic.calculate_planetary_hour(),
+                "nakshatra": vedic.calculate_nakshatra(),
+                "overall_score": vedic.calculate_astro_score().get("overall_score", 50)
+            }
+        except Exception as e:
+            logger.warning("Failed to get astro status: %s", e)
+
     result = {
         "sport": sport.upper(),
-        "source": "master_prediction_system",
+        "source": "jarvis_savant_v7.3",
+        "scoring_system": "Phase 1-3 Integrated",
         "props": {
             "count": len(top_props),
             "total_analyzed": len(props_picks),
@@ -1272,7 +1378,12 @@ async def get_best_bets(sport: str):
             "total_analyzed": len(game_picks),
             "picks": top_game_picks
         },
-        "daily_energy": daily_energy,
+        "esoteric": {
+            "daily_energy": daily_energy,
+            "astro_status": astro_status,
+            "learned_weights": esoteric_weights,
+            "learning_active": learning is not None
+        },
         "timestamp": datetime.now().isoformat()
     }
     api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
@@ -2234,6 +2345,426 @@ async def list_correlations():
         "void_players": list(VOID_IMPACT_MULTIPLIERS.keys()),
         "timestamp": datetime.now().isoformat()
     }
+
+
+# ============================================================================
+# PHASE 3: LEARNING LOOP ENDPOINTS
+# ============================================================================
+
+# Import engines (lazy load to avoid circular imports)
+_jarvis_savant_engine = None
+_vedic_astro_engine = None
+_esoteric_learning_loop = None
+
+
+def get_jarvis_savant():
+    """Lazy load JarvisSavantEngine."""
+    global _jarvis_savant_engine
+    if _jarvis_savant_engine is None:
+        try:
+            from jarvis_savant_engine import get_jarvis_engine
+            _jarvis_savant_engine = get_jarvis_engine()
+            logger.info("JarvisSavantEngine initialized")
+        except ImportError as e:
+            logger.warning("JarvisSavantEngine not available: %s", e)
+    return _jarvis_savant_engine
+
+
+def get_vedic_astro():
+    """Lazy load VedicAstroEngine."""
+    global _vedic_astro_engine
+    if _vedic_astro_engine is None:
+        try:
+            from jarvis_savant_engine import get_vedic_engine
+            _vedic_astro_engine = get_vedic_engine()
+            logger.info("VedicAstroEngine initialized")
+        except ImportError as e:
+            logger.warning("VedicAstroEngine not available: %s", e)
+    return _vedic_astro_engine
+
+
+def get_esoteric_loop():
+    """Lazy load EsotericLearningLoop."""
+    global _esoteric_learning_loop
+    if _esoteric_learning_loop is None:
+        try:
+            from jarvis_savant_engine import get_learning_loop
+            _esoteric_learning_loop = get_learning_loop()
+            logger.info("EsotericLearningLoop initialized")
+        except ImportError as e:
+            logger.warning("EsotericLearningLoop not available: %s", e)
+    return _esoteric_learning_loop
+
+
+# ============================================================================
+# PHASE 1: CONFLUENCE CORE ENDPOINTS
+# ============================================================================
+
+@router.get("/validate-immortal")
+async def validate_immortal():
+    """
+    Validate 2178 as THE IMMORTAL number.
+
+    Mathematical proof that 2178 is the only 4-digit number where:
+    - n^4 contains n
+    - reverse(n)^4 contains reverse(n)
+    - Digital root = 9 (Tesla completion)
+    """
+    jarvis = get_jarvis_savant()
+    if not jarvis:
+        raise HTTPException(status_code=503, detail="JarvisSavantEngine not available")
+
+    return jarvis.validate_2178()
+
+
+@router.get("/jarvis-triggers")
+async def list_jarvis_triggers():
+    """List all JARVIS trigger numbers with their properties."""
+    jarvis = get_jarvis_savant()
+    if not jarvis:
+        raise HTTPException(status_code=503, detail="JarvisSavantEngine not available")
+
+    return {
+        "triggers": jarvis.triggers,
+        "power_numbers": jarvis.power_numbers,
+        "tesla_numbers": jarvis.tesla_numbers,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/check-trigger/{value}")
+async def check_trigger(value: str):
+    """
+    Check if a value triggers any JARVIS numbers.
+
+    Supports:
+    - Direct number matches (e.g., 2178)
+    - Gematria reduction of strings (e.g., "Lakers")
+    """
+    jarvis = get_jarvis_savant()
+    if not jarvis:
+        raise HTTPException(status_code=503, detail="JarvisSavantEngine not available")
+
+    # Try to parse as number first
+    try:
+        numeric_value = int(value)
+        return jarvis.check_jarvis_trigger(numeric_value)
+    except ValueError:
+        return jarvis.check_jarvis_trigger(value)
+
+
+@router.get("/confluence/{sport}")
+async def get_confluence_analysis(
+    sport: str,
+    player: str = "Player",
+    team: str = "Team",
+    opponent: str = "Opponent",
+    spread: float = 0,
+    total: float = 220,
+    public_pct: float = 50
+):
+    """
+    Calculate confluence analysis for a pick.
+
+    THE HEART - 6 levels of signal agreement:
+    - GODMODE (6/6): All signals agree
+    - LEGENDARY (5/6): Strong multi-factor alignment
+    - STRONG (4/6): Solid confluence
+    - MODERATE (3/6): Actionable
+    - WEAK (2/6): Monitor only
+    - AVOID (0-1/6): Signals conflict
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    jarvis = get_jarvis_savant()
+    vedic = get_vedic_astro()
+
+    if not jarvis or not vedic:
+        raise HTTPException(status_code=503, detail="Esoteric engines not available")
+
+    # Calculate all signals
+    gematria = jarvis.calculate_gematria_signal(player, team, opponent)
+    public_fade = jarvis.calculate_public_fade_signal(public_pct)
+    mid_spread = jarvis.calculate_mid_spread_signal(spread)
+    trap = jarvis.calculate_large_spread_trap(spread, total)
+    astro = vedic.calculate_astro_score()
+
+    # Calculate confluence
+    confluence = jarvis.calculate_confluence(
+        gematria_signal=gematria,
+        public_fade=public_fade,
+        mid_spread=mid_spread,
+        trap_signal=trap,
+        astro_score=astro,
+        sharp_signal=None
+    )
+
+    return {
+        "sport": sport.upper(),
+        "input": {
+            "player": player,
+            "team": team,
+            "opponent": opponent,
+            "spread": spread,
+            "total": total,
+            "public_pct": public_pct
+        },
+        "signals": {
+            "gematria": gematria,
+            "public_fade": public_fade,
+            "mid_spread": mid_spread,
+            "trap": trap,
+            "astro": astro
+        },
+        "confluence": confluence,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# ============================================================================
+# PHASE 2: VEDIC/ASTRO ENDPOINTS
+# ============================================================================
+
+@router.get("/astro-status")
+async def get_astro_status():
+    """Get full astrological analysis for current moment."""
+    vedic = get_vedic_astro()
+    if not vedic:
+        raise HTTPException(status_code=503, detail="VedicAstroEngine not available")
+
+    return vedic.calculate_astro_score()
+
+
+@router.get("/planetary-hour")
+async def get_planetary_hour():
+    """Get current planetary hour ruler (Chaldean order)."""
+    vedic = get_vedic_astro()
+    if not vedic:
+        raise HTTPException(status_code=503, detail="VedicAstroEngine not available")
+
+    return vedic.calculate_planetary_hour()
+
+
+@router.get("/nakshatra")
+async def get_nakshatra():
+    """Get current Nakshatra (lunar mansion)."""
+    vedic = get_vedic_astro()
+    if not vedic:
+        raise HTTPException(status_code=503, detail="VedicAstroEngine not available")
+
+    return vedic.calculate_nakshatra()
+
+
+@router.get("/retrograde-status")
+async def get_retrograde_status():
+    """Check retrograde status for Mercury, Venus, and Mars."""
+    vedic = get_vedic_astro()
+    if not vedic:
+        raise HTTPException(status_code=503, detail="VedicAstroEngine not available")
+
+    return {
+        "mercury": vedic.is_planet_retrograde("Mercury"),
+        "venus": vedic.is_planet_retrograde("Venus"),
+        "mars": vedic.is_planet_retrograde("Mars"),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# ============================================================================
+# PHASE 3: LEARNING LOOP ENDPOINTS
+# ============================================================================
+
+@router.post("/learning/log-pick")
+async def log_esoteric_pick(pick_data: Dict[str, Any]):
+    """
+    Log a pick for learning loop tracking.
+
+    Request Body:
+    {
+        "sport": "NBA",
+        "game_id": "game_123",
+        "pick_type": "spread",
+        "selection": "Lakers",
+        "line": -3.5,
+        "odds": -110,
+        "esoteric_analysis": {...}  // From confluence analysis
+    }
+
+    Returns pick_id for later grading.
+    """
+    loop = get_esoteric_loop()
+    if not loop:
+        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
+
+    required_fields = ["sport", "game_id", "pick_type", "selection", "line", "odds"]
+    for field in required_fields:
+        if field not in pick_data:
+            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+
+    # If esoteric_analysis not provided, generate it
+    esoteric_analysis = pick_data.get("esoteric_analysis", {})
+    if not esoteric_analysis:
+        jarvis = get_jarvis_savant()
+        vedic = get_vedic_astro()
+        if jarvis and vedic:
+            gematria = jarvis.calculate_gematria_signal(
+                pick_data.get("player", "Player"),
+                pick_data.get("team", "Team"),
+                pick_data.get("opponent", "Opponent")
+            )
+            astro = vedic.calculate_astro_score()
+            esoteric_analysis = {
+                "gematria": gematria,
+                "astro": astro,
+                "total_score": 5.0
+            }
+
+    pick_id = loop.log_pick(
+        sport=pick_data["sport"],
+        game_id=pick_data["game_id"],
+        pick_type=pick_data["pick_type"],
+        selection=pick_data["selection"],
+        line=pick_data["line"],
+        odds=pick_data["odds"],
+        esoteric_analysis=esoteric_analysis
+    )
+
+    return {
+        "status": "logged",
+        "pick_id": pick_id,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/learning/grade-pick")
+async def grade_esoteric_pick(grade_data: Dict[str, Any]):
+    """
+    Grade a pick with actual result.
+
+    Request Body:
+    {
+        "pick_id": "ESO_NBA_game123_20241215123456",
+        "result": "WIN"  // WIN, LOSS, or PUSH
+    }
+    """
+    loop = get_esoteric_loop()
+    if not loop:
+        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
+
+    pick_id = grade_data.get("pick_id")
+    result = grade_data.get("result")
+
+    if not pick_id or not result:
+        raise HTTPException(status_code=400, detail="Missing pick_id or result")
+
+    grade_result = loop.grade_pick(pick_id, result)
+
+    if "error" in grade_result:
+        raise HTTPException(status_code=404, detail=grade_result["error"])
+
+    return grade_result
+
+
+@router.get("/learning/performance")
+async def get_learning_performance(days_back: int = 30):
+    """
+    Get esoteric learning loop performance summary.
+
+    Shows:
+    - Overall hit rate
+    - Performance by signal type
+    - Performance by confluence level
+    - Performance by bet tier
+    """
+    loop = get_esoteric_loop()
+    if not loop:
+        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
+
+    return loop.get_performance(days_back)
+
+
+@router.get("/learning/weights")
+async def get_learning_weights():
+    """Get current learned weights for esoteric signals."""
+    loop = get_esoteric_loop()
+    if not loop:
+        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
+
+    return loop.get_weights()
+
+
+@router.post("/learning/adjust-weights")
+async def adjust_learning_weights(learning_rate: float = 0.05):
+    """
+    Trigger weight adjustment based on historical performance.
+
+    Uses gradient-based adjustment:
+    - Increases weights for signals with hit rate > 55%
+    - Decreases weights for signals with hit rate < 48%
+    """
+    loop = get_esoteric_loop()
+    if not loop:
+        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
+
+    return loop.adjust_weights(learning_rate)
+
+
+@router.get("/learning/recent-picks")
+async def get_recent_picks(limit: int = 20):
+    """Get recent esoteric picks for review."""
+    loop = get_esoteric_loop()
+    if not loop:
+        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
+
+    return {
+        "picks": loop.get_recent_picks(limit),
+        "count": min(limit, len(loop.picks)),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/esoteric-analysis")
+async def get_esoteric_analysis(
+    player: str = "Player",
+    team: str = "Team",
+    opponent: str = "Opponent",
+    spread: float = 0,
+    total: float = 220,
+    public_pct: float = 50,
+    model_probability: float = 50
+):
+    """
+    Get complete esoteric analysis using all Phase 1-3 components.
+
+    Returns:
+    - Gematria signal
+    - Public fade analysis
+    - Mid-spread/Goldilocks
+    - Trap detection
+    - Astro/Vedic score
+    - Confluence level
+    - Blended probability (67/33 formula)
+    - Bet tier recommendation
+    """
+    try:
+        from jarvis_savant_engine import calculate_full_esoteric_analysis
+
+        analysis = calculate_full_esoteric_analysis(
+            player=player,
+            team=team,
+            opponent=opponent,
+            spread=spread,
+            total=total,
+            public_pct=public_pct,
+            model_probability=model_probability
+        )
+
+        return analysis
+
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Esoteric analysis module not available")
 
 
 # ============================================================================
