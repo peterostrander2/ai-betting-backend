@@ -805,6 +805,301 @@ def get_jarvis_bet_recommendation(blended_prob: float, sport: str, is_dog: bool,
     return recommendation
 
 # ============================================================================
+# CONFLUENCE SYSTEM v10.1 - Alignment between Research & Esoteric
+# ============================================================================
+
+CONFLUENCE_LEVELS = {
+    "IMMORTAL": {"boost": 10, "color": "#FFD700", "desc": "2178 THE IMMORTAL detected"},
+    "JARVIS_PERFECT": {"boost": 7, "color": "#9333EA", "desc": "JARVIS + Perfect alignment"},
+    "PERFECT": {"boost": 5, "color": "#10B981", "desc": "Both research & esoteric ≥80%"},
+    "STRONG": {"boost": 3, "color": "#3B82F6", "desc": "Both scores ≥70%"},
+    "MODERATE": {"boost": 1, "color": "#F59E0B", "desc": "Both scores ≥50%"},
+    "DIVERGENT": {"boost": 0, "color": "#6B7280", "desc": "Scores diverge - proceed with caution"}
+}
+
+def check_tesla_alignment(value: float) -> Dict[str, Any]:
+    """
+    Check for Tesla 3-6-9 alignment in a numeric value.
+    Tesla believed 3, 6, 9 held the keys to the universe.
+    """
+    if value is None:
+        return {"aligned": False, "pattern": None, "strength": 0}
+
+    val_str = str(abs(float(value))).replace(".", "")
+    digits = [int(d) for d in val_str if d.isdigit()]
+
+    # Check digit sum
+    digit_sum = sum(digits)
+    reduced = digit_sum
+    while reduced > 9:
+        reduced = sum(int(d) for d in str(reduced))
+
+    # Tesla alignment: reduced to 3, 6, or 9
+    if reduced in [3, 6, 9]:
+        strength = 3 if reduced == 9 else 2 if reduced == 6 else 1
+        return {
+            "aligned": True,
+            "pattern": f"Reduces to {reduced}",
+            "digit_sum": digit_sum,
+            "reduced": reduced,
+            "strength": strength
+        }
+
+    # Also check if value itself contains 369 pattern
+    if "369" in val_str or "396" in val_str or "693" in val_str:
+        return {
+            "aligned": True,
+            "pattern": "Contains 369 sequence",
+            "digit_sum": digit_sum,
+            "reduced": reduced,
+            "strength": 2
+        }
+
+    return {"aligned": False, "pattern": None, "digit_sum": digit_sum, "reduced": reduced, "strength": 0}
+
+
+def check_33_divisibility(value: float) -> Dict[str, Any]:
+    """
+    Check if a value is divisible by 33 or contains 33.
+    33 = THE MASTER NUMBER in esoteric numerology.
+    """
+    if value is None:
+        return {"triggered": False, "pattern": None}
+
+    val = abs(float(value))
+    val_int = int(val)
+    val_str = str(val).replace(".", "")
+
+    # Check divisibility
+    if val_int > 0 and val_int % 33 == 0:
+        return {
+            "triggered": True,
+            "pattern": f"{val_int} divisible by 33",
+            "type": "divisibility"
+        }
+
+    # Check if contains 33
+    if "33" in val_str:
+        return {
+            "triggered": True,
+            "pattern": f"{val} contains 33",
+            "type": "contains"
+        }
+
+    return {"triggered": False, "pattern": None}
+
+
+def reduce_to_trigger(value: float) -> Dict[str, Any]:
+    """
+    Check if a value reduces to a sacred trigger number.
+    Reduction: sum digits repeatedly until single/double digit.
+    """
+    if value is None:
+        return {"triggered": False, "reduces_to": None}
+
+    val = abs(float(value))
+    val_str = str(val).replace(".", "")
+    digit_sum = sum(int(d) for d in val_str if d.isdigit())
+
+    # Reduce to single or recognized double digit
+    reduced = digit_sum
+    reduction_path = [digit_sum]
+
+    while reduced > 99:
+        reduced = sum(int(d) for d in str(reduced))
+        reduction_path.append(reduced)
+
+    # Check against sacred numbers
+    sacred_reductions = {
+        33: "THE MASTER",
+        93: "THE WILL",
+        11: "ILLUMINATION",
+        22: "MASTER BUILDER",
+        7: "DIVINE",
+        9: "COMPLETION"
+    }
+
+    for sacred, name in sacred_reductions.items():
+        if reduced == sacred or digit_sum == sacred:
+            return {
+                "triggered": True,
+                "reduces_to": sacred,
+                "name": name,
+                "original": val,
+                "path": reduction_path
+            }
+
+    # Final single-digit reduction
+    final = reduced
+    while final > 9:
+        final = sum(int(d) for d in str(final))
+
+    if final in [3, 6, 9]:  # Tesla numbers
+        return {
+            "triggered": True,
+            "reduces_to": final,
+            "name": f"TESLA_{final}",
+            "original": val,
+            "path": reduction_path + [final]
+        }
+
+    return {"triggered": False, "reduces_to": final, "path": reduction_path}
+
+
+def check_immortal_2178(home_team: str, away_team: str, line: float = None, total: float = None) -> Dict[str, Any]:
+    """
+    Check for 2178 THE IMMORTAL trigger - the most powerful sacred number.
+    2178 appears in team gematria, lines, totals, or combinations.
+    """
+    result = {"detected": False, "sources": [], "strength": 0}
+
+    # Calculate gematria
+    home_gem = calculate_gematria(home_team or "")
+    away_gem = calculate_gematria(away_team or "")
+    combined = home_gem["ordinal"] + away_gem["ordinal"]
+
+    # Check for 2178
+    checks = [
+        ("combined_gematria", combined),
+        ("home_gematria", home_gem["ordinal"]),
+        ("away_gematria", away_gem["ordinal"]),
+    ]
+
+    if line is not None:
+        # Check line * some factor
+        checks.append(("line_factor", abs(line) * 66))
+        checks.append(("line_raw", abs(line)))
+
+    if total is not None:
+        checks.append(("total", total))
+        checks.append(("total_factor", total * 10))
+
+    for source, val in checks:
+        # Direct 2178 or very close
+        if abs(val - 2178) < 5:
+            result["detected"] = True
+            result["sources"].append({"source": source, "value": val, "match": "DIRECT"})
+            result["strength"] += 10
+        # Contains 2178
+        elif "2178" in str(int(val)):
+            result["detected"] = True
+            result["sources"].append({"source": source, "value": val, "match": "CONTAINS"})
+            result["strength"] += 5
+        # Digits sum to 18 (2+1+7+8)
+        elif sum(int(d) for d in str(int(val))) == 18:
+            result["sources"].append({"source": source, "value": val, "match": "SUM_18"})
+            result["strength"] += 2
+
+    return result
+
+
+def calculate_confluence(
+    research_score: float,
+    esoteric_score: float,
+    research_max: float = 16.0,
+    esoteric_max: float = 6.0,
+    jarvis_triggered: bool = False,
+    immortal_detected: bool = False,
+    gematria_hits: int = 0,
+    tesla_aligned: bool = False
+) -> Dict[str, Any]:
+    """
+    Calculate confluence between Research Model and Esoteric Edge.
+
+    This measures how aligned the quantitative signals are with esoteric patterns.
+    High confluence = SMASH territory. Low confluence = proceed with caution.
+
+    Returns:
+        level: IMMORTAL, JARVIS_PERFECT, PERFECT, STRONG, MODERATE, DIVERGENT
+        boost: Points to add (0-10)
+        alignment_pct: How aligned the two scores are
+        research_pct: Research score as percentage
+        esoteric_pct: Esoteric score as percentage
+    """
+    # Calculate percentages
+    research_pct = (research_score / research_max) * 100 if research_max > 0 else 0
+    esoteric_pct = (esoteric_score / esoteric_max) * 100 if esoteric_max > 0 else 0
+
+    # Alignment = how close the two percentages are (inverse of difference)
+    diff = abs(research_pct - esoteric_pct)
+    alignment_pct = max(0, 100 - diff)
+
+    # Average of both scores (as percentage)
+    avg_pct = (research_pct + esoteric_pct) / 2
+
+    # Determine confluence level
+    level = "DIVERGENT"
+    boost = 0
+    reasoning = []
+
+    # IMMORTAL: The highest tier - 2178 detected with strong signals
+    if immortal_detected and research_pct >= 75 and esoteric_pct >= 75:
+        level = "IMMORTAL"
+        boost = CONFLUENCE_LEVELS["IMMORTAL"]["boost"]
+        reasoning.append("2178 THE IMMORTAL detected with strong alignment")
+
+    # JARVIS_PERFECT: JARVIS triggered + both scores high
+    elif jarvis_triggered and research_pct >= 70 and esoteric_pct >= 70:
+        level = "JARVIS_PERFECT"
+        boost = CONFLUENCE_LEVELS["JARVIS_PERFECT"]["boost"]
+        reasoning.append(f"JARVIS triggered with {alignment_pct:.0f}% alignment")
+
+    # PERFECT: Both scores ≥80% with good alignment
+    elif research_pct >= 80 and esoteric_pct >= 80 and alignment_pct >= 70:
+        level = "PERFECT"
+        boost = CONFLUENCE_LEVELS["PERFECT"]["boost"]
+        reasoning.append(f"Perfect confluence: Research {research_pct:.0f}%, Esoteric {esoteric_pct:.0f}%")
+
+    # STRONG: Both scores ≥70%
+    elif research_pct >= 70 and esoteric_pct >= 70:
+        level = "STRONG"
+        boost = CONFLUENCE_LEVELS["STRONG"]["boost"]
+        reasoning.append(f"Strong confluence: Research {research_pct:.0f}%, Esoteric {esoteric_pct:.0f}%")
+
+    # MODERATE: Both scores ≥50%
+    elif research_pct >= 50 and esoteric_pct >= 50:
+        level = "MODERATE"
+        boost = CONFLUENCE_LEVELS["MODERATE"]["boost"]
+        reasoning.append(f"Moderate confluence: Research {research_pct:.0f}%, Esoteric {esoteric_pct:.0f}%")
+
+    # DIVERGENT: Scores don't align
+    else:
+        level = "DIVERGENT"
+        boost = 0
+        if research_pct > esoteric_pct + 20:
+            reasoning.append(f"Research strong ({research_pct:.0f}%) but esoteric weak ({esoteric_pct:.0f}%)")
+        elif esoteric_pct > research_pct + 20:
+            reasoning.append(f"Esoteric strong ({esoteric_pct:.0f}%) but research weak ({research_pct:.0f}%)")
+        else:
+            reasoning.append(f"Both signals below threshold")
+
+    # Bonus for Tesla alignment
+    if tesla_aligned and level != "DIVERGENT":
+        boost += 0.5
+        reasoning.append("Tesla 3-6-9 aligned (+0.5)")
+
+    # Bonus for multiple gematria hits
+    if gematria_hits >= 3 and level != "DIVERGENT":
+        boost += 0.5
+        reasoning.append(f"{gematria_hits} gematria hits (+0.5)")
+
+    return {
+        "level": level,
+        "boost": round(boost, 2),
+        "color": CONFLUENCE_LEVELS[level]["color"],
+        "description": CONFLUENCE_LEVELS[level]["desc"],
+        "alignment_pct": round(alignment_pct, 1),
+        "research_pct": round(research_pct, 1),
+        "esoteric_pct": round(esoteric_pct, 1),
+        "avg_strength": round(avg_pct, 1),
+        "reasoning": reasoning,
+        "jarvis_triggered": jarvis_triggered,
+        "immortal_detected": immortal_detected,
+        "tesla_aligned": tesla_aligned
+    }
+
+
+# ============================================================================
 # ESOTERIC HELPER FUNCTIONS (exported for main.py)
 # ============================================================================
 
@@ -1719,10 +2014,57 @@ async def get_best_bets(sport: str):
         )
 
         # ========================================
+        # SECTION 5: CONFLUENCE SYSTEM v10.1
+        # Measures alignment between Research & Esoteric
+        # ========================================
+
+        # Check for Tesla 3-6-9 alignment
+        check_val = line_value or prop_line or total_value
+        tesla_data = check_tesla_alignment(check_val)
+
+        # Check for 33 divisibility
+        master_33_data = check_33_divisibility(check_val)
+        if master_33_data["triggered"]:
+            esoteric_factors.append(f"MASTER_33: {master_33_data['pattern']}")
+
+        # Check for 2178 THE IMMORTAL
+        immortal_data = check_immortal_2178(
+            home_team=home_team or "",
+            away_team=away_team or "",
+            line=line_value or prop_line,
+            total=total_value
+        )
+
+        # Determine if JARVIS was triggered (any triggers hit)
+        jarvis_was_triggered = len(jarvis_triggers_hit) > 0 or gematria_data.get("hit_count", 0) >= 2
+
+        # Calculate Research Score (AI + Pillars)
+        research_score = ai_score + pillar_score  # Max 16
+
+        # Calculate Esoteric Score (JARVIS + Esoteric boost)
+        esoteric_total = jarvis_score + esoteric_boost  # Max 6
+
+        # Calculate confluence
+        confluence_data = calculate_confluence(
+            research_score=research_score,
+            esoteric_score=esoteric_total,
+            research_max=16.0,
+            esoteric_max=6.0,
+            jarvis_triggered=jarvis_was_triggered,
+            immortal_detected=immortal_data["detected"],
+            gematria_hits=gematria_data.get("hit_count", 0),
+            tesla_aligned=tesla_data["aligned"]
+        )
+
+        # ========================================
         # FINAL SCORE CALCULATION
         # ========================================
-        # Max possible: 8 + 8 + 4 + 2 = 22 points
-        total_score = ai_score + pillar_score + jarvis_score + esoteric_boost
+        # Base: 8 + 8 + 4 + 2 = 22 points
+        # Plus confluence boost (0-10)
+        # Max possible with IMMORTAL: 32 points
+        base_score = ai_score + pillar_score + jarvis_score + esoteric_boost
+        confluence_boost = confluence_data["boost"]
+        total_score = base_score + confluence_boost
 
         # ========================================
         # BLENDED PROBABILITY (JARVIS Formula)
@@ -1731,6 +2073,17 @@ async def get_best_bets(sport: str):
         quant_prob = min(100, (ai_score / 8) * 50 + (pillar_score / 8) * 30 + 20)
         blended_prob = (JARVIS_CONFIG["rs_weight"] * (jarvis_rs_data["rs"] * 10)) + \
                        (JARVIS_CONFIG["quant_weight"] * quant_prob)
+
+        # Boost blended probability based on confluence level
+        if confluence_data["level"] == "IMMORTAL":
+            blended_prob += 15
+        elif confluence_data["level"] == "JARVIS_PERFECT":
+            blended_prob += 10
+        elif confluence_data["level"] == "PERFECT":
+            blended_prob += 7
+        elif confluence_data["level"] == "STRONG":
+            blended_prob += 4
+
         blended_prob = min(100, max(0, blended_prob))
 
         # ========================================
@@ -1745,22 +2098,33 @@ async def get_best_bets(sport: str):
             public_chalk=public_pct
         )
 
-        # Confidence tiers based on total score
-        if total_score >= 18:
+        # Add confluence tier to recommendation
+        bet_rec["confluence_tier"] = confluence_data["level"]
+        if confluence_data["level"] == "IMMORTAL":
+            bet_rec["tier"] = "IMMORTAL_LOCK"
+            bet_rec["units"] = max(bet_rec.get("units", 0), 3.0)
+            bet_rec["reasoning"].append("IMMORTAL confluence - maximum confidence")
+
+        # Confidence tiers based on total score (with confluence)
+        if confluence_data["level"] == "IMMORTAL" or total_score >= 25:
+            confidence = "IMMORTAL"
+            confidence_pct = min(98, 90 + (total_score - 25) * 2)
+        elif total_score >= 20:
             confidence = "SMASH"
-            confidence_pct = min(95, 80 + (total_score - 18) * 3)
-        elif total_score >= 14:
+            confidence_pct = min(95, 82 + (total_score - 20) * 2.5)
+        elif total_score >= 16:
             confidence = "HIGH"
-            confidence_pct = min(85, 70 + (total_score - 14) * 3)
-        elif total_score >= 10:
+            confidence_pct = min(85, 72 + (total_score - 16) * 3)
+        elif total_score >= 12:
             confidence = "MEDIUM"
-            confidence_pct = min(72, 55 + (total_score - 10) * 4)
+            confidence_pct = min(72, 58 + (total_score - 12) * 3.5)
         else:
             confidence = "LOW"
             confidence_pct = max(35, 40 + total_score * 1.5)
 
         return {
             "total_score": round(total_score, 2),
+            "base_score": round(base_score, 2),
             "confidence": confidence,
             "confidence_pct": round(confidence_pct),
             "blended_probability": round(blended_prob, 1),
@@ -1768,15 +2132,25 @@ async def get_best_bets(sport: str):
                 "ai_models": round(ai_score, 2),
                 "pillars": round(pillar_score, 2),
                 "jarvis": round(jarvis_score, 2),
-                "esoteric": round(esoteric_boost, 2)
+                "esoteric": round(esoteric_boost, 2),
+                "confluence_boost": round(confluence_boost, 2)
             },
+            "dual_scores": {
+                "research": round(research_score, 2),
+                "research_max": 16.0,
+                "esoteric": round(esoteric_total, 2),
+                "esoteric_max": 6.0
+            },
+            "confluence": confluence_data,
             "ai_models_detail": ai_models_detail,
             "pillars_detail": pillars_detail,
             "jarvis_detail": jarvis_detail,
             "jarvis_triggers": jarvis_triggers_hit,
             "esoteric_factors": esoteric_factors,
+            "tesla_alignment": tesla_data,
+            "immortal_2178": immortal_data,
             "bet_recommendation": bet_rec,
-            "max_possible": 22.0
+            "max_possible": 32.0  # With IMMORTAL confluence
         }
 
     # ============================================

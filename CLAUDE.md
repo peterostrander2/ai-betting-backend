@@ -16,7 +16,12 @@
 - [x] API Authentication enabled (`X-API-Key` header on all `/live/*` endpoints)
 - [x] MasterPredictionSystem integrated (8 AI Models + 8 Pillars scoring)
 - [x] `/live/best-bets/{sport}` returns TWO categories: `props` + `game_picks`
-- [x] JARVIS triggers doubled to max 4 points
+- [x] JARVIS Savant Engine v7.3 (gematria 52%, public fade, mid-spread amplifier)
+- [x] Confluence System v10.1 (IMMORTAL, JARVIS_PERFECT, PERFECT, STRONG, MODERATE tiers)
+- [x] Tesla 3-6-9 alignment check
+- [x] 33 divisibility / master number detection
+- [x] 2178 THE IMMORTAL detection
+- [x] Dual-score display (Research + Esoteric separate)
 - [x] Fallback when Odds API props returns 422
 - [x] Redis caching (optional), PostgreSQL database (optional)
 - [x] Auto-grader scheduler for pick tracking
@@ -41,7 +46,33 @@
   "props": {
     "count": 5,
     "total_analyzed": 20,
-    "picks": [{ "player_name": "...", "market": "player_points", "confidence": 85, ... }]
+    "picks": [{
+      "player_name": "...",
+      "market": "player_points",
+      "confidence": 85,
+      "total_score": 22.5,
+      "scoring_breakdown": {
+        "ai_models": 6.5,
+        "pillars": 5.0,
+        "jarvis": 3.5,
+        "esoteric": 1.5,
+        "confluence_boost": 5.0
+      },
+      "dual_scores": {
+        "research": 11.5,
+        "esoteric": 5.0
+      },
+      "confluence": {
+        "level": "PERFECT",
+        "boost": 5,
+        "alignment_pct": 85.0
+      },
+      "bet_recommendation": {
+        "tier": "GOLD_STAR",
+        "units": 2.0,
+        "confluence_tier": "PERFECT"
+      }
+    }]
   },
   "game_picks": {
     "count": 3,
@@ -101,11 +132,18 @@
 
 ---
 
-## Signal Architecture (Dual Engine)
+## Signal Architecture (Dual Engine + Confluence v10.1)
 
 ### Scoring Formula
 ```
-SMASH PICK = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
+TOTAL_SCORE = Research (0-16) + Esoteric (0-6) + Confluence_Boost (0-10)
+
+Where:
+- Research = AI_Models (0-8) + Pillars (0-8)
+- Esoteric = JARVIS (0-4) + Esoteric_Boost (0-2)
+- Confluence = Alignment between Research & Esoteric (0-10)
+
+Max Possible: 32 points (with IMMORTAL confluence)
 ```
 
 ### Components
@@ -116,12 +154,33 @@ SMASH PICK = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
 2. **8 Pillars** (max 8 pts) - `advanced_ml_backend.py`
    - Sharp Split, Reverse Line, Hospital Fade, Situational Spot, Expert Consensus, Prop Correlation, Hook Discipline, Volume Discipline
 
-3. **JARVIS Triggers** (max 4 pts) - `live_data_router.py:233-239`
-   - Gematria signals: 2178, 201, 33, 93, 322
-   - Weight: `boost / 5` (doubled from original /10)
+3. **JARVIS Savant Engine v7.3** (max 4 pts) - `live_data_router.py`
+   - Gematria (52% weight): Team name analysis, sacred number detection
+   - Sacred triggers: 2178 (IMMORTAL), 201, 33, 93, 322
+   - Public Fade: -13% when public ≥65% on chalk
+   - Mid-Spread Amplifier: +20% for lines +4 to +9
+   - Large Spread Trap: -20% for lines ≥14
+   - Blended Probability: 67% Ritual Score + 33% Quantitative
 
-4. **Esoteric Edge** (18 modules) - `live_data_router.py`
-   - NOOSPHERE VELOCITY, GANN PHYSICS, SCALAR-SAVANT, OMNI-GLITCH
+4. **Esoteric Edge** (max 2 pts) - `live_data_router.py`
+   - Daily energy score, moon phase, Tesla 3-6-9 alignment
+   - Power numbers (11, 22, 33), date numerology
+
+5. **Confluence System v10.1** (max 10 pts boost) - `live_data_router.py`
+   - Measures alignment between Research Model and Esoteric Edge
+   - Levels: IMMORTAL (+10), JARVIS_PERFECT (+7), PERFECT (+5), STRONG (+3), MODERATE (+1), DIVERGENT (+0)
+   - Tesla 3-6-9 alignment check
+   - 33 divisibility/master number check
+   - 2178 THE IMMORTAL detection
+
+### Confidence Tiers
+| Tier | Score Range | Confidence % | Units |
+|------|-------------|--------------|-------|
+| IMMORTAL | 25+ or 2178 | 90-98% | 3u |
+| SMASH | 20-24 | 82-95% | 2u (Gold Star) |
+| HIGH | 16-19 | 72-85% | 1u (Edge Lean) |
+| MEDIUM | 12-15 | 58-72% | 0.5u |
+| LOW | <12 | <58% | No bet |
 
 ---
 
