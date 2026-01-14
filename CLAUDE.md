@@ -28,6 +28,14 @@
 
 ---
 
+## Authentication
+
+**API Authentication is ENABLED.** Key stored in Railway environment variables (`API_AUTH_KEY`).
+- All `/live/*` endpoints require `X-API-Key` header
+- `/health` endpoint is public (for Railway health checks)
+
+---
+
 ## Architecture
 
 ### Core Files (Active)
@@ -239,6 +247,20 @@ curl https://web-production-7b2a.up.railway.app/live/best-bets/nba
 - Feature branches: `claude/feature-name-xxxxx`
 - Always commit with descriptive messages
 - Push with `git push -u origin branch-name`
+
+### PR Handoffs for External Repos
+
+When providing file updates for PRs (especially for frontend repos), **always provide the complete file content** so the user can:
+1. Go to GitHub web editor
+2. Select all (Ctrl+A) and delete
+3. Paste the complete new file
+4. Commit/PR
+
+**Do NOT** give partial instructions like "change X to Y" or "add this after line 5" - this creates guesswork. Always provide the full file ready to copy-paste.
+
+**Always provide direct GitHub links** - don't give step-by-step navigation like "click src, then services, then api.js". Just provide the full URL:
+- Edit file: `https://github.com/{owner}/{repo}/edit/{branch}/{path}`
+- View file: `https://github.com/{owner}/{repo}/blob/{branch}/{path}`
 
 ---
 
