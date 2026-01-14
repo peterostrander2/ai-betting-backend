@@ -533,10 +533,13 @@ The `bookie-member-app` frontend has these components ready:
 
 ## Session Continuity Notes (Updated)
 
+### User Preferences:
+- **ALWAYS send the direct PR link** when pushing changes - user prefers to merge via GitHub PR link
+
 ### If Starting a New Session:
 1. **Current Branch:** `main` (all features merged)
-2. **Status:** PRODUCTION READY - All v10.1 features + Click-to-Bet deployed
-3. **Router Version:** v14.5
+2. **Status:** PRODUCTION READY - All v10.1 features + Click-to-Bet + True Deep Links deployed
+3. **Router Version:** v14.6
 
 ### Key Files:
 | File | Version | Description |
