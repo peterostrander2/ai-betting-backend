@@ -21,12 +21,12 @@
 - [x] Redis caching (optional), PostgreSQL database (optional)
 - [x] Auto-grader scheduler for pick tracking
 
-### Pending (Frontend - bookie-member-app)
-- [ ] Create `GameSmashList.jsx` - Game picks component (spreads, totals, ML)
-- [ ] Create `PropsSmashList.jsx` - Player props component
-- [ ] Create `SmashSpotsPage.jsx` - Unified page with tabs
-- [ ] Update `App.jsx` routing to use SmashSpotsPage
-- [ ] Add `VITE_API_KEY` to Vercel/deployment env vars
+### Completed (Frontend - bookie-member-app)
+- [x] Create `GameSmashList.jsx` - Game picks component (spreads, totals, ML)
+- [x] Create `PropsSmashList.jsx` - Player props component
+- [x] Create `SmashSpotsPage.jsx` - Unified page with tabs
+- [x] Update `App.jsx` routing to use SmashSpotsPage
+- [ ] Add `VITE_API_KEY` to Vercel/deployment env vars (if not done)
 
 ### Future Enhancements
 - [ ] Click-to-bet deep links for sportsbooks
