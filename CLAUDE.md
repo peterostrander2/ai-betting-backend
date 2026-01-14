@@ -10,6 +10,51 @@
 
 ---
 
+## Current Status & Running TODO
+
+### Completed (Backend)
+- [x] API Authentication enabled (`X-API-Key` header on all `/live/*` endpoints)
+- [x] MasterPredictionSystem integrated (8 AI Models + 8 Pillars scoring)
+- [x] `/live/best-bets/{sport}` returns TWO categories: `props` + `game_picks`
+- [x] JARVIS triggers doubled to max 4 points
+- [x] Fallback when Odds API props returns 422
+- [x] Redis caching (optional), PostgreSQL database (optional)
+- [x] Auto-grader scheduler for pick tracking
+
+### Pending (Frontend - bookie-member-app)
+- [ ] Create `GameSmashList.jsx` - Game picks component (spreads, totals, ML)
+- [ ] Create `PropsSmashList.jsx` - Player props component
+- [ ] Create `SmashSpotsPage.jsx` - Unified page with tabs
+- [ ] Update `App.jsx` routing to use SmashSpotsPage
+- [ ] Add `VITE_API_KEY` to Vercel/deployment env vars
+
+### Future Enhancements
+- [ ] Click-to-bet deep links for sportsbooks
+- [ ] Historical performance tracking dashboard
+- [ ] Push notifications for SMASH-tier picks
+- [ ] Parlay builder with correlation warnings
+
+### API Response Structure (best-bets)
+```json
+{
+  "sport": "NBA",
+  "props": {
+    "count": 5,
+    "total_analyzed": 20,
+    "picks": [{ "player_name": "...", "market": "player_points", "confidence": 85, ... }]
+  },
+  "game_picks": {
+    "count": 3,
+    "total_analyzed": 10,
+    "picks": [{ "team": "Lakers", "market": "spreads", "confidence": 78, ... }]
+  },
+  "daily_energy": { "flow": "YANG", "theme": "..." },
+  "timestamp": "2024-01-14T..."
+}
+```
+
+---
+
 ## IMPORTANT: Paid APIs - Always Use These
 
 **We pay for Odds API and Playbook API. Always use these for any data needs:**
