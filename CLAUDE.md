@@ -248,6 +248,16 @@ curl https://web-production-7b2a.up.railway.app/live/best-bets/nba
 - Always commit with descriptive messages
 - Push with `git push -u origin branch-name`
 
+### PR Handoffs for External Repos
+
+When providing file updates for PRs (especially for frontend repos), **always provide the complete file content** so the user can:
+1. Go to GitHub web editor
+2. Select all (Ctrl+A) and delete
+3. Paste the complete new file
+4. Commit/PR
+
+**Do NOT** give partial instructions like "change X to Y" or "add this after line 5" - this creates guesswork. Always provide the full file ready to copy-paste.
+
 ---
 
 ## Key Decisions
