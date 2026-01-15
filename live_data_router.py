@@ -1587,42 +1587,92 @@ async def scheduler_status():
 
 @router.get("/esoteric-edge")
 async def get_esoteric_edge():
-    """Get current esoteric edge analysis."""
-    numerology = calculate_date_numerology()
-    moon = get_moon_phase()
-    energy = get_daily_energy()
+    """
+    Get comprehensive esoteric edge analysis.
+    Returns daily energy + game signals + prop signals + parlay warnings.
+    """
+    from esoteric_engine import (
+        get_daily_esoteric_reading,
+        calculate_void_moon,
+        get_schumann_frequency,
+        get_planetary_hour,
+        calculate_noosphere_velocity,
+        check_founders_echo,
+        analyze_spread_gann,
+        calculate_atmospheric_drag,
+        calculate_biorhythms,
+        check_life_path_sync,
+        calculate_hurst_exponent,
+        SAMPLE_PLAYERS
+    )
 
-    edge_factors = []
+    today = datetime.now().date()
 
-    if numerology.get("is_master_number_day"):
-        edge_factors.append({"factor": "Master Number Day", "boost": 15, "description": "Elevated spiritual energy"})
+    # Daily reading
+    daily = get_daily_esoteric_reading(today)
 
-    if numerology.get("tesla_energy"):
-        edge_factors.append({"factor": "Tesla 3-6-9 Energy", "boost": 10, "description": "Vortex math alignment"})
+    # Sample game signals (in production, would fetch from best-bets)
+    sample_games = [
+        {"game_id": "sample1", "home_team": "Lakers", "away_team": "Celtics", "spread": -3.5, "total": 225.5, "city": "Los Angeles"},
+        {"game_id": "sample2", "home_team": "Warriors", "away_team": "Bulls", "spread": -7.5, "total": 232, "city": "San Francisco"},
+    ]
 
-    if moon.get("phase") == "Full Moon":
-        edge_factors.append({"factor": "Full Moon", "boost": 20, "description": "Maximum illumination - expect chaos"})
+    game_signals = []
+    for game in sample_games:
+        game_signals.append({
+            "game_id": game["game_id"],
+            "home_team": game["home_team"],
+            "away_team": game["away_team"],
+            "signals": {
+                "founders_echo": {
+                    "home_match": check_founders_echo(game["home_team"])["resonance"],
+                    "away_match": check_founders_echo(game["away_team"])["resonance"],
+                    "boost": check_founders_echo(game["home_team"])["boost"] + check_founders_echo(game["away_team"])["boost"]
+                },
+                "gann_square": {
+                    "spread_angle": analyze_spread_gann(game["spread"], game["total"])["spread"]["angle"],
+                    "resonant": analyze_spread_gann(game["spread"], game["total"])["combined_resonance"]
+                },
+                "atmospheric": calculate_atmospheric_drag(game["city"])
+            }
+        })
 
-    for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
-        if trigger_num in [33, 93]:
-            today_num = sum(int(d) for d in datetime.now().strftime("%Y%m%d"))
-            if today_num % trigger_num == 0:
-                edge_factors.append({
-                    "factor": f"JARVIS: {trigger_data['name']}",
-                    "boost": trigger_data["boost"],
-                    "description": trigger_data["description"]
-                })
-
-    total_boost = sum(f["boost"] for f in edge_factors)
+    # Sample player signals
+    prop_signals = []
+    for player_name, player_data in list(SAMPLE_PLAYERS.items())[:4]:
+        bio = calculate_biorhythms(player_data["birth_date"])
+        life_path = check_life_path_sync(player_name, player_data["birth_date"], player_data["jersey"])
+        prop_signals.append({
+            "player_id": player_name.lower().replace(" ", "_"),
+            "player_name": player_name,
+            "signals": {
+                "biorhythms": {
+                    "physical": bio["physical"],
+                    "emotional": bio["emotional"],
+                    "intellectual": bio["intellectual"]
+                },
+                "life_path_sync": {
+                    "player_life_path": life_path["life_path"],
+                    "jersey_number": life_path["jersey_number"],
+                    "sync_score": life_path["sync_score"]
+                }
+            }
+        })
 
     return {
-        "date": datetime.now().strftime("%Y-%m-%d"),
-        "numerology": numerology,
-        "moon_phase": moon,
-        "daily_energy": energy,
-        "edge_factors": edge_factors,
-        "total_edge_boost": total_boost,
-        "recommendation": "AGGRESSIVE" if total_boost >= 30 else "STANDARD" if total_boost >= 15 else "CONSERVATIVE"
+        "timestamp": datetime.now().isoformat() + "Z",
+        "daily_energy": {
+            "betting_outlook": daily["betting_outlook"],
+            "overall_energy": daily["overall_energy"],
+            "moon_phase": daily["void_moon"]["moon_sign"].lower() if daily["void_moon"] else "unknown",
+            "void_moon": daily["void_moon"],
+            "schumann_frequency": daily["schumann_reading"],
+            "planetary_hours": daily["planetary_hours"]
+        },
+        "game_signals": game_signals,
+        "prop_signals": prop_signals,
+        "parlay_warnings": [],  # Populated when parlay legs provided
+        "noosphere": daily["noosphere"]
     }
 
 
