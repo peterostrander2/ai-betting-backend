@@ -15,6 +15,19 @@ from typing import Dict, Any, List, Optional
 import random
 import hashlib
 
+# Import comprehensive player birth data
+from player_birth_data import get_all_players, get_player_data, get_players_by_sport, PLAYER_COUNTS
+
+# Import astronomical calculations for accurate moon data
+from astronomical_api import (
+    get_live_moon_data,
+    get_moon_sign_now,
+    is_void_moon_now,
+    get_moon_betting_signal,
+    calculate_void_of_course,
+    calculate_moon_phase
+)
+
 # =============================================================================
 # TEAM FOUNDING YEARS DATABASE
 # =============================================================================
@@ -58,17 +71,9 @@ TEAM_FOUNDING_YEARS = {
     "Golden Knights": 2017, "Kraken": 2021, "Ducks": 1993, "Sabres": 1970,
 }
 
-# Sample player data (in production, fetch from Playbook API)
-SAMPLE_PLAYERS = {
-    "LeBron James": {"birth_date": "1984-12-30", "jersey": 23, "team": "Lakers"},
-    "Stephen Curry": {"birth_date": "1988-03-14", "jersey": 30, "team": "Warriors"},
-    "Kevin Durant": {"birth_date": "1988-09-29", "jersey": 35, "team": "Suns"},
-    "Giannis Antetokounmpo": {"birth_date": "1994-12-06", "jersey": 34, "team": "Bucks"},
-    "Luka Doncic": {"birth_date": "1999-02-28", "jersey": 77, "team": "Mavericks"},
-    "Joel Embiid": {"birth_date": "1994-03-16", "jersey": 21, "team": "76ers"},
-    "Jayson Tatum": {"birth_date": "1998-03-03", "jersey": 0, "team": "Celtics"},
-    "Anthony Davis": {"birth_date": "1993-03-11", "jersey": 3, "team": "Lakers"},
-}
+# Player data loaded from player_birth_data.py
+# Contains 200+ real player birth dates across NBA, NFL, MLB, NHL, NCAAB
+SAMPLE_PLAYERS = get_all_players()  # Backwards compatible alias
 
 # Venue elevations (feet above sea level)
 VENUE_ELEVATIONS = {
@@ -139,55 +144,43 @@ def calculate_biorhythms(birth_date_str: str, target_date: date = None) -> Dict[
 
 def calculate_void_moon(target_date: date = None) -> Dict[str, Any]:
     """
-    Calculate void-of-course moon periods.
+    Calculate void-of-course moon periods using astronomical ephemeris.
     Moon is void when it makes no major aspects before leaving its sign.
 
-    Simplified calculation based on lunar cycle patterns.
-    In production, use an astronomical API for accuracy.
+    Now uses high-accuracy calculations from astronomical_api module.
     """
     if target_date is None:
         target_date = date.today()
 
-    # Lunar month is ~29.5 days, void periods occur roughly 2-3 times per week
-    day_of_year = target_date.timetuple().tm_yday
-
-    # Deterministic "random" based on date
-    seed = int(target_date.strftime("%Y%m%d"))
-    random.seed(seed)
-
-    # Simulate void periods (typically 2-48 hours)
-    is_void = random.random() < 0.15  # ~15% of time is void
-
-    if is_void:
-        # Generate void window
-        void_start_hour = random.randint(0, 20)
-        void_duration = random.randint(2, 12)
-        void_start = f"{void_start_hour:02d}:00Z"
-        void_end = f"{(void_start_hour + void_duration) % 24:02d}:00Z"
-    else:
-        void_start = None
-        void_end = None
-
-    # Reset random seed
-    random.seed()
+    # Use astronomical calculations
+    dt = datetime.combine(target_date, datetime.now().time())
+    voc_data = calculate_void_of_course(dt)
+    phase_data = calculate_moon_phase(dt)
 
     return {
-        "is_void": is_void,
-        "void_start": void_start,
-        "void_end": void_end,
-        "warning": "Avoid initiating bets during void moon" if is_void else None,
-        "moon_sign": get_current_moon_sign(target_date)
+        "is_void": voc_data["is_void"],
+        "void_start": voc_data["void_start"],
+        "void_end": voc_data["void_end"],
+        "confidence": voc_data["confidence"],
+        "warning": voc_data["warning"],
+        "moon_sign": voc_data["moon_sign"],
+        "degree_in_sign": voc_data["degree_in_sign"],
+        "hours_until_sign_change": voc_data["hours_until_sign_change"],
+        "next_sign": voc_data["next_sign"],
+        "phase": phase_data["phase_name"],
+        "illumination": phase_data["illumination"],
+        "source": "astronomical_ephemeris"
     }
 
 
-def get_current_moon_sign(target_date: date) -> str:
-    """Get approximate moon sign for date."""
-    signs = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
-             "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
-    # Moon changes sign every ~2.5 days
-    day_of_year = target_date.timetuple().tm_yday
-    sign_index = (day_of_year * 12 // 30) % 12
-    return signs[sign_index]
+def get_current_moon_sign(target_date: date = None) -> str:
+    """Get current moon sign using astronomical calculations."""
+    if target_date is None:
+        return get_moon_sign_now()
+
+    dt = datetime.combine(target_date, datetime.now().time())
+    voc = calculate_void_of_course(dt)
+    return voc["moon_sign"]
 
 
 # =============================================================================
@@ -770,12 +763,16 @@ def get_game_esoteric_signals(game_data: Dict[str, Any]) -> Dict[str, Any]:
 def get_player_esoteric_signals(player_name: str) -> Dict[str, Any]:
     """
     Get esoteric signals for a specific player.
+    Uses get_player_data for fuzzy matching (last name, case-insensitive).
     """
-    player_data = SAMPLE_PLAYERS.get(player_name, {
-        "birth_date": "1990-01-01",
-        "jersey": 0,
-        "team": "Unknown"
-    })
+    player_data = get_player_data(player_name)
+    if not player_data:
+        # Fallback for unknown players
+        player_data = {
+            "birth_date": "1990-01-01",
+            "jersey": 0,
+            "team": "Unknown"
+        }
 
     return {
         "biorhythms": calculate_biorhythms(player_data["birth_date"]),
@@ -797,7 +794,7 @@ def analyze_parlay_correlations(legs: List[Dict[str, Any]]) -> Dict[str, Any]:
     player_bios = []
     for leg in legs:
         if leg.get("player_name"):
-            player_data = SAMPLE_PLAYERS.get(leg["player_name"])
+            player_data = get_player_data(leg["player_name"])
             if player_data:
                 bio = calculate_biorhythms(player_data["birth_date"])
                 player_bios.append(bio["overall"])
