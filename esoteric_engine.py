@@ -58,17 +58,191 @@ TEAM_FOUNDING_YEARS = {
     "Golden Knights": 2017, "Kraken": 2021, "Ducks": 1993, "Sabres": 1970,
 }
 
-# Sample player data (in production, fetch from Playbook API)
-SAMPLE_PLAYERS = {
-    "LeBron James": {"birth_date": "1984-12-30", "jersey": 23, "team": "Lakers"},
-    "Stephen Curry": {"birth_date": "1988-03-14", "jersey": 30, "team": "Warriors"},
-    "Kevin Durant": {"birth_date": "1988-09-29", "jersey": 35, "team": "Suns"},
-    "Giannis Antetokounmpo": {"birth_date": "1994-12-06", "jersey": 34, "team": "Bucks"},
-    "Luka Doncic": {"birth_date": "1999-02-28", "jersey": 77, "team": "Mavericks"},
-    "Joel Embiid": {"birth_date": "1994-03-16", "jersey": 21, "team": "76ers"},
-    "Jayson Tatum": {"birth_date": "1998-03-03", "jersey": 0, "team": "Celtics"},
-    "Anthony Davis": {"birth_date": "1993-03-11", "jersey": 3, "team": "Lakers"},
+# Comprehensive player database with real birth dates and jersey numbers
+# Organized by sport for easy lookup
+
+PLAYER_DATABASE = {
+    # ==========================================================================
+    # NBA PLAYERS
+    # ==========================================================================
+    # Lakers
+    "LeBron James": {"birth_date": "1984-12-30", "jersey": 23, "team": "Lakers", "sport": "NBA"},
+    "Anthony Davis": {"birth_date": "1993-03-11", "jersey": 3, "team": "Lakers", "sport": "NBA"},
+    "D'Angelo Russell": {"birth_date": "1996-02-23", "jersey": 1, "team": "Lakers", "sport": "NBA"},
+    "Austin Reaves": {"birth_date": "1998-05-29", "jersey": 15, "team": "Lakers", "sport": "NBA"},
+    # Warriors
+    "Stephen Curry": {"birth_date": "1988-03-14", "jersey": 30, "team": "Warriors", "sport": "NBA"},
+    "Klay Thompson": {"birth_date": "1990-02-08", "jersey": 11, "team": "Warriors", "sport": "NBA"},
+    "Draymond Green": {"birth_date": "1990-03-04", "jersey": 23, "team": "Warriors", "sport": "NBA"},
+    "Andrew Wiggins": {"birth_date": "1995-02-23", "jersey": 22, "team": "Warriors", "sport": "NBA"},
+    # Celtics
+    "Jayson Tatum": {"birth_date": "1998-03-03", "jersey": 0, "team": "Celtics", "sport": "NBA"},
+    "Jaylen Brown": {"birth_date": "1996-10-24", "jersey": 7, "team": "Celtics", "sport": "NBA"},
+    "Derrick White": {"birth_date": "1994-07-02", "jersey": 9, "team": "Celtics", "sport": "NBA"},
+    "Kristaps Porzingis": {"birth_date": "1995-08-02", "jersey": 8, "team": "Celtics", "sport": "NBA"},
+    # Bucks
+    "Giannis Antetokounmpo": {"birth_date": "1994-12-06", "jersey": 34, "team": "Bucks", "sport": "NBA"},
+    "Damian Lillard": {"birth_date": "1990-07-15", "jersey": 0, "team": "Bucks", "sport": "NBA"},
+    "Khris Middleton": {"birth_date": "1991-08-12", "jersey": 22, "team": "Bucks", "sport": "NBA"},
+    # 76ers
+    "Joel Embiid": {"birth_date": "1994-03-16", "jersey": 21, "team": "76ers", "sport": "NBA"},
+    "Tyrese Maxey": {"birth_date": "2000-11-04", "jersey": 0, "team": "76ers", "sport": "NBA"},
+    # Suns
+    "Kevin Durant": {"birth_date": "1988-09-29", "jersey": 35, "team": "Suns", "sport": "NBA"},
+    "Devin Booker": {"birth_date": "1996-10-30", "jersey": 1, "team": "Suns", "sport": "NBA"},
+    "Bradley Beal": {"birth_date": "1993-06-28", "jersey": 3, "team": "Suns", "sport": "NBA"},
+    # Mavericks
+    "Luka Doncic": {"birth_date": "1999-02-28", "jersey": 77, "team": "Mavericks", "sport": "NBA"},
+    "Kyrie Irving": {"birth_date": "1992-03-23", "jersey": 11, "team": "Mavericks", "sport": "NBA"},
+    # Nuggets
+    "Nikola Jokic": {"birth_date": "1995-02-19", "jersey": 15, "team": "Nuggets", "sport": "NBA"},
+    "Jamal Murray": {"birth_date": "1997-02-23", "jersey": 27, "team": "Nuggets", "sport": "NBA"},
+    # Heat
+    "Jimmy Butler": {"birth_date": "1989-09-14", "jersey": 22, "team": "Heat", "sport": "NBA"},
+    "Bam Adebayo": {"birth_date": "1997-07-18", "jersey": 13, "team": "Heat", "sport": "NBA"},
+    # Knicks
+    "Jalen Brunson": {"birth_date": "1996-08-31", "jersey": 11, "team": "Knicks", "sport": "NBA"},
+    "Julius Randle": {"birth_date": "1994-11-29", "jersey": 30, "team": "Knicks", "sport": "NBA"},
+    # Clippers
+    "Kawhi Leonard": {"birth_date": "1991-06-29", "jersey": 2, "team": "Clippers", "sport": "NBA"},
+    "Paul George": {"birth_date": "1990-05-02", "jersey": 13, "team": "Clippers", "sport": "NBA"},
+    # Thunder
+    "Shai Gilgeous-Alexander": {"birth_date": "1998-07-12", "jersey": 2, "team": "Thunder", "sport": "NBA"},
+    "Chet Holmgren": {"birth_date": "2002-05-01", "jersey": 7, "team": "Thunder", "sport": "NBA"},
+    # Timberwolves
+    "Anthony Edwards": {"birth_date": "2001-08-05", "jersey": 5, "team": "Timberwolves", "sport": "NBA"},
+    "Karl-Anthony Towns": {"birth_date": "1995-11-15", "jersey": 32, "team": "Timberwolves", "sport": "NBA"},
+    # Kings
+    "De'Aaron Fox": {"birth_date": "1997-12-20", "jersey": 5, "team": "Kings", "sport": "NBA"},
+    "Domantas Sabonis": {"birth_date": "1996-05-03", "jersey": 10, "team": "Kings", "sport": "NBA"},
+
+    # ==========================================================================
+    # NFL PLAYERS
+    # ==========================================================================
+    # Chiefs
+    "Patrick Mahomes": {"birth_date": "1995-09-17", "jersey": 15, "team": "Chiefs", "sport": "NFL"},
+    "Travis Kelce": {"birth_date": "1989-10-05", "jersey": 87, "team": "Chiefs", "sport": "NFL"},
+    "Chris Jones": {"birth_date": "1994-07-03", "jersey": 95, "team": "Chiefs", "sport": "NFL"},
+    "Isiah Pacheco": {"birth_date": "1999-03-02", "jersey": 10, "team": "Chiefs", "sport": "NFL"},
+    # 49ers
+    "Brock Purdy": {"birth_date": "1999-12-28", "jersey": 13, "team": "49ers", "sport": "NFL"},
+    "Christian McCaffrey": {"birth_date": "1996-06-07", "jersey": 23, "team": "49ers", "sport": "NFL"},
+    "Deebo Samuel": {"birth_date": "1996-01-15", "jersey": 19, "team": "49ers", "sport": "NFL"},
+    "George Kittle": {"birth_date": "1993-10-09", "jersey": 85, "team": "49ers", "sport": "NFL"},
+    "Nick Bosa": {"birth_date": "1997-10-23", "jersey": 97, "team": "49ers", "sport": "NFL"},
+    # Eagles
+    "Jalen Hurts": {"birth_date": "1998-08-07", "jersey": 1, "team": "Eagles", "sport": "NFL"},
+    "A.J. Brown": {"birth_date": "1997-06-30", "jersey": 11, "team": "Eagles", "sport": "NFL"},
+    "DeVonta Smith": {"birth_date": "1998-11-14", "jersey": 6, "team": "Eagles", "sport": "NFL"},
+    # Bills
+    "Josh Allen": {"birth_date": "1996-05-21", "jersey": 17, "team": "Bills", "sport": "NFL"},
+    "Stefon Diggs": {"birth_date": "1993-11-29", "jersey": 14, "team": "Bills", "sport": "NFL"},
+    # Cowboys
+    "Dak Prescott": {"birth_date": "1993-07-29", "jersey": 4, "team": "Cowboys", "sport": "NFL"},
+    "CeeDee Lamb": {"birth_date": "1999-04-08", "jersey": 88, "team": "Cowboys", "sport": "NFL"},
+    "Micah Parsons": {"birth_date": "1999-05-26", "jersey": 11, "team": "Cowboys", "sport": "NFL"},
+    # Dolphins
+    "Tua Tagovailoa": {"birth_date": "1998-03-02", "jersey": 1, "team": "Dolphins", "sport": "NFL"},
+    "Tyreek Hill": {"birth_date": "1994-03-01", "jersey": 10, "team": "Dolphins", "sport": "NFL"},
+    # Bengals
+    "Joe Burrow": {"birth_date": "1996-12-10", "jersey": 9, "team": "Bengals", "sport": "NFL"},
+    "Ja'Marr Chase": {"birth_date": "2000-03-01", "jersey": 1, "team": "Bengals", "sport": "NFL"},
+    # Ravens
+    "Lamar Jackson": {"birth_date": "1997-01-07", "jersey": 8, "team": "Ravens", "sport": "NFL"},
+    "Mark Andrews": {"birth_date": "1995-09-06", "jersey": 89, "team": "Ravens", "sport": "NFL"},
+    # Lions
+    "Jared Goff": {"birth_date": "1994-10-14", "jersey": 16, "team": "Lions", "sport": "NFL"},
+    "Amon-Ra St. Brown": {"birth_date": "2000-04-24", "jersey": 14, "team": "Lions", "sport": "NFL"},
+    # Packers
+    "Jordan Love": {"birth_date": "1998-11-02", "jersey": 10, "team": "Packers", "sport": "NFL"},
+    # Texans
+    "C.J. Stroud": {"birth_date": "2001-10-03", "jersey": 7, "team": "Texans", "sport": "NFL"},
+
+    # ==========================================================================
+    # MLB PLAYERS
+    # ==========================================================================
+    # Dodgers
+    "Shohei Ohtani": {"birth_date": "1994-07-05", "jersey": 17, "team": "Dodgers", "sport": "MLB"},
+    "Mookie Betts": {"birth_date": "1992-10-07", "jersey": 50, "team": "Dodgers", "sport": "MLB"},
+    "Freddie Freeman": {"birth_date": "1989-09-12", "jersey": 5, "team": "Dodgers", "sport": "MLB"},
+    # Yankees
+    "Aaron Judge": {"birth_date": "1992-04-26", "jersey": 99, "team": "Yankees", "sport": "MLB"},
+    "Gerrit Cole": {"birth_date": "1990-09-08", "jersey": 45, "team": "Yankees", "sport": "MLB"},
+    "Juan Soto": {"birth_date": "1998-10-25", "jersey": 22, "team": "Yankees", "sport": "MLB"},
+    # Braves
+    "Ronald Acuna Jr.": {"birth_date": "1997-12-18", "jersey": 13, "team": "Braves", "sport": "MLB"},
+    "Matt Olson": {"birth_date": "1994-03-29", "jersey": 28, "team": "Braves", "sport": "MLB"},
+    "Austin Riley": {"birth_date": "1997-04-02", "jersey": 27, "team": "Braves", "sport": "MLB"},
+    # Phillies
+    "Bryce Harper": {"birth_date": "1992-10-16", "jersey": 3, "team": "Phillies", "sport": "MLB"},
+    "Trea Turner": {"birth_date": "1993-06-30", "jersey": 7, "team": "Phillies", "sport": "MLB"},
+    "Kyle Schwarber": {"birth_date": "1993-03-05", "jersey": 12, "team": "Phillies", "sport": "MLB"},
+    # Rangers
+    "Corey Seager": {"birth_date": "1994-04-27", "jersey": 5, "team": "Rangers", "sport": "MLB"},
+    "Marcus Semien": {"birth_date": "1990-09-17", "jersey": 2, "team": "Rangers", "sport": "MLB"},
+    # Astros
+    "Yordan Alvarez": {"birth_date": "1997-06-27", "jersey": 44, "team": "Astros", "sport": "MLB"},
+    "Jose Altuve": {"birth_date": "1990-05-06", "jersey": 27, "team": "Astros", "sport": "MLB"},
+    "Kyle Tucker": {"birth_date": "1997-01-17", "jersey": 30, "team": "Astros", "sport": "MLB"},
+    # Orioles
+    "Gunnar Henderson": {"birth_date": "2001-06-29", "jersey": 2, "team": "Orioles", "sport": "MLB"},
+    "Adley Rutschman": {"birth_date": "1998-02-06", "jersey": 35, "team": "Orioles", "sport": "MLB"},
+    # Angels
+    "Mike Trout": {"birth_date": "1991-08-07", "jersey": 27, "team": "Angels", "sport": "MLB"},
+    # Padres
+    "Fernando Tatis Jr.": {"birth_date": "1999-01-02", "jersey": 23, "team": "Padres", "sport": "MLB"},
+    "Manny Machado": {"birth_date": "1992-07-06", "jersey": 13, "team": "Padres", "sport": "MLB"},
+    # Mets
+    "Pete Alonso": {"birth_date": "1994-12-07", "jersey": 20, "team": "Mets", "sport": "MLB"},
+    "Francisco Lindor": {"birth_date": "1993-11-14", "jersey": 12, "team": "Mets", "sport": "MLB"},
+
+    # ==========================================================================
+    # NHL PLAYERS
+    # ==========================================================================
+    # Oilers
+    "Connor McDavid": {"birth_date": "1997-01-13", "jersey": 97, "team": "Oilers", "sport": "NHL"},
+    "Leon Draisaitl": {"birth_date": "1995-10-27", "jersey": 29, "team": "Oilers", "sport": "NHL"},
+    # Avalanche
+    "Nathan MacKinnon": {"birth_date": "1995-09-01", "jersey": 29, "team": "Avalanche", "sport": "NHL"},
+    "Cale Makar": {"birth_date": "1998-10-30", "jersey": 8, "team": "Avalanche", "sport": "NHL"},
+    # Bruins
+    "David Pastrnak": {"birth_date": "1996-05-25", "jersey": 88, "team": "Bruins", "sport": "NHL"},
+    "Brad Marchand": {"birth_date": "1988-05-11", "jersey": 63, "team": "Bruins", "sport": "NHL"},
+    # Maple Leafs
+    "Auston Matthews": {"birth_date": "1997-09-17", "jersey": 34, "team": "Maple Leafs", "sport": "NHL"},
+    "Mitch Marner": {"birth_date": "1997-05-05", "jersey": 16, "team": "Maple Leafs", "sport": "NHL"},
+    "William Nylander": {"birth_date": "1996-05-01", "jersey": 88, "team": "Maple Leafs", "sport": "NHL"},
+    # Rangers
+    "Artemi Panarin": {"birth_date": "1991-10-30", "jersey": 10, "team": "Rangers", "sport": "NHL"},
+    "Adam Fox": {"birth_date": "1998-02-17", "jersey": 23, "team": "Rangers", "sport": "NHL"},
+    "Igor Shesterkin": {"birth_date": "1995-12-30", "jersey": 31, "team": "Rangers", "sport": "NHL"},
+    # Lightning
+    "Nikita Kucherov": {"birth_date": "1993-06-17", "jersey": 86, "team": "Lightning", "sport": "NHL"},
+    "Brayden Point": {"birth_date": "1996-03-13", "jersey": 21, "team": "Lightning", "sport": "NHL"},
+    # Panthers
+    "Aleksander Barkov": {"birth_date": "1995-09-02", "jersey": 16, "team": "Panthers", "sport": "NHL"},
+    "Matthew Tkachuk": {"birth_date": "1997-12-11", "jersey": 19, "team": "Panthers", "sport": "NHL"},
+    # Stars
+    "Jason Robertson": {"birth_date": "1999-07-22", "jersey": 21, "team": "Stars", "sport": "NHL"},
+    "Roope Hintz": {"birth_date": "1996-11-17", "jersey": 24, "team": "Stars", "sport": "NHL"},
+    # Golden Knights
+    "Jack Eichel": {"birth_date": "1996-10-28", "jersey": 9, "team": "Golden Knights", "sport": "NHL"},
+    "Mark Stone": {"birth_date": "1992-05-13", "jersey": 61, "team": "Golden Knights", "sport": "NHL"},
+    # Penguins
+    "Sidney Crosby": {"birth_date": "1987-08-07", "jersey": 87, "team": "Penguins", "sport": "NHL"},
+    "Evgeni Malkin": {"birth_date": "1986-07-31", "jersey": 71, "team": "Penguins", "sport": "NHL"},
+    # Capitals
+    "Alex Ovechkin": {"birth_date": "1985-09-17", "jersey": 8, "team": "Capitals", "sport": "NHL"},
+    # Canadiens
+    "Cole Caufield": {"birth_date": "2001-01-02", "jersey": 22, "team": "Canadiens", "sport": "NHL"},
+    "Nick Suzuki": {"birth_date": "1999-08-10", "jersey": 14, "team": "Canadiens", "sport": "NHL"},
+    # Devils
+    "Jack Hughes": {"birth_date": "2001-05-14", "jersey": 86, "team": "Devils", "sport": "NHL"},
+    "Nico Hischier": {"birth_date": "1999-01-04", "jersey": 13, "team": "Devils", "sport": "NHL"},
 }
+
+# Alias for backwards compatibility
+SAMPLE_PLAYERS = PLAYER_DATABASE
 
 # Venue elevations (feet above sea level)
 VENUE_ELEVATIONS = {
