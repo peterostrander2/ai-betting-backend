@@ -110,27 +110,33 @@ async def metrics_status():
 # Esoteric today energy (frontend expects this at /esoteric/today-energy)
 @app.get("/esoteric/today-energy")
 async def esoteric_today_energy():
-    from live_data_router import calculate_date_numerology, get_moon_phase, get_daily_energy
-    daily = get_daily_energy()
-    moon = get_moon_phase()
-    numerology = calculate_date_numerology()
+    from datetime import date
+    from esoteric_engine import get_daily_esoteric_reading
 
-    # Map overall_score (0-100) to overall_energy (0-10 scale)
-    overall_energy = round(daily.get("overall_score", 50) / 10, 1)
+    today = date.today()
+    reading = get_daily_esoteric_reading(today)
 
-    # Map rating to betting_outlook
-    rating = daily.get("rating", "MEDIUM")
-    outlook_map = {"HIGH": "FAVORABLE", "MEDIUM": "NEUTRAL", "LOW": "UNFAVORABLE"}
-    betting_outlook = outlook_map.get(rating, "NEUTRAL")
+    # Build void moon periods array
+    void_moon_periods = []
+    if reading["void_moon"]["is_void"]:
+        void_moon_periods.append({
+            "start": reading["void_moon"]["void_start"],
+            "end": reading["void_moon"]["void_end"]
+        })
 
     return {
-        # Top-level fields frontend expects
-        "betting_outlook": betting_outlook,
-        "overall_energy": overall_energy,
-        # Detailed data
-        "date_numerology": numerology,
-        "moon_phase": moon,
-        "daily_energy": daily
+        "date": today.isoformat(),
+        "betting_outlook": reading["betting_outlook"],
+        "overall_energy": reading["overall_energy"],
+        "moon_phase": reading["void_moon"]["moon_sign"].lower(),
+        "void_moon_periods": void_moon_periods,
+        "schumann_reading": {
+            "frequency_hz": reading["schumann_reading"]["current_hz"],
+            "status": reading["schumann_reading"]["status"]
+        },
+        "planetary_hours": reading["planetary_hours"],
+        "noosphere": reading["noosphere"],
+        "recommendation": reading["recommendation"]
     }
 
 if __name__ == "__main__":
