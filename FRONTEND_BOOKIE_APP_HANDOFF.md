@@ -1,9 +1,13 @@
 # Bookie-Member-App Complete Handoff
 
-**Date:** 2026-01-14
-**Backend Version:** v14.7
+**Date:** 2026-01-15
+**Backend Version:** v14.8
 **API Base:** https://web-production-7b2a.up.railway.app
 **Repo:** bookie-member-app
+
+**Related Handoffs:**
+- [Esoteric Signals Handoff](./FRONTEND_ESOTERIC_HANDOFF.md) - Detailed esoteric UI guide
+- [Click-to-Bet Handoff](./FRONTEND_HANDOFF_CLICK_TO_BET.md) - Betslip integration
 
 ---
 
@@ -59,12 +63,19 @@ const API_BASE = 'https://web-production-7b2a.up.railway.app';
 
 ### Esoteric & Analysis Endpoints
 
+> **See [FRONTEND_ESOTERIC_HANDOFF.md](./FRONTEND_ESOTERIC_HANDOFF.md) for detailed esoteric UI components**
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/live/esoteric-edge` | GET | Full esoteric analysis |
 | `/esoteric/today-energy` | GET | Daily energy score |
 | `/live/noosphere/status` | GET | Noosphere velocity |
 | `/live/gann-physics-status` | GET | GANN physics signals |
+| `/live/astro-status` | GET | Astrological analysis |
+| `/live/planetary-hour` | GET | Current planetary hour |
+| `/live/nakshatra` | GET | Lunar mansion |
+| `/live/retrograde-status` | GET | Retrograde planets |
+| `/live/esoteric-analysis` | GET | Complete pick analysis |
 
 ### Management Endpoints
 
@@ -852,6 +863,6 @@ curl -X POST https://web-production-7b2a.up.railway.app/live/parlay/calculate \
 
 ---
 
-*Handoff Version: 2.0*
-*Backend: v14.7*
-*Date: 2026-01-14*
+*Handoff Version: 2.1*
+*Backend: v14.8*
+*Date: 2026-01-15*
