@@ -56,20 +56,37 @@
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /live/api-usage` | Combined usage for ALL paid APIs |
+| `GET /live/api-health` | Quick status check (for dashboards) |
+| `GET /live/api-usage` | Combined usage with threshold warnings |
 | `GET /live/playbook/usage` | Playbook plan + quota info |
 | `GET /live/odds-api/usage` | Odds API requests remaining |
 
-**Odds API Usage Headers:**
-- `x-requests-remaining`: Requests left this month
-- `x-requests-used`: Requests used this month
-- Resets monthly. Free tier = 500 requests/month.
+**Threshold Warning Levels:**
+| Level | % Used | Emoji | Action |
+|-------|--------|-------|--------|
+| `HEALTHY` | < 25% | ✅ | None needed |
+| `CAUTION_25` | 25-49% | 🟢 | Monitor |
+| `CAUTION_50` | 50-74% | 🟡 | Watch closely |
+| `CAUTION_75` | 75-89% | 🟠 | Consider upgrading |
+| `CRITICAL` | 90%+ | 🚨 | UPGRADE NOW |
 
-**When to upgrade:**
-- If `requests_remaining` < 100, consider upgrading Odds API plan
-- If Playbook returns 429 (rate limited), check plan limits
+**Response includes:**
+- `overall_status`: Worst status across all APIs
+- `action_needed`: true if CRITICAL or CAUTION_75
+- `alerts`: List of warning messages
+- `summary`: Human-readable status message
+
+**Odds API Info:**
+- Resets monthly
+- Free tier = 500 requests/month
+- Headers: `x-requests-remaining`, `x-requests-used`
 
 **Quick check command:**
+```bash
+curl "https://web-production-7b2a.up.railway.app/live/api-health" -H "X-API-Key: YOUR_KEY"
+```
+
+**Full details:**
 ```bash
 curl "https://web-production-7b2a.up.railway.app/live/api-usage" -H "X-API-Key: YOUR_KEY"
 ```
@@ -284,7 +301,8 @@ POST   /live/parlay/calculate                   # Preview odds calculation
 ```
 GET /live/cache/stats           # Cache statistics
 GET /live/cache/clear           # Clear cache
-GET /live/api-usage             # Combined API usage (Playbook + Odds)
+GET /live/api-health            # Quick API status (for dashboards)
+GET /live/api-usage             # Full API usage with warnings
 GET /live/playbook/usage        # Playbook plan + quota
 GET /live/playbook/health       # Playbook API health check
 GET /live/odds-api/usage        # Odds API requests remaining
