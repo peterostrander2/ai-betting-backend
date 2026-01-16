@@ -771,3 +771,14 @@ npx add-skill vercel-labs/agent-skills
 ```
 
 ---
+
+## Agent Rules (Strict)
+
+If working on React/Next:
+- Apply Vercel React Best Practices skill rules.
+- Prefer Server Components by default.
+- Never fetch in useEffect unless required.
+- Keep client bundle minimal.
+- Ask: "Can this be server-only?" before writing client code.
+
+---
