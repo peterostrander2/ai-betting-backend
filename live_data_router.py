@@ -960,52 +960,82 @@ async def get_props(sport: str):
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
 
-    # Try Odds API first for props
+    # Try Odds API first for props - must fetch per event using /events/{eventId}/odds
     try:
-        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
-        resp = await fetch_with_retries(
-            "GET", odds_url,
-            params={
-                "apiKey": ODDS_API_KEY,
-                "regions": "us",
-                "markets": "player_points,player_rebounds,player_assists,player_threes,player_pass_tds,player_rush_yds,player_reception_yds",
-                "oddsFormat": "american"
-            }
+        # Step 1: Get list of events for this sport
+        events_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/events"
+        events_resp = await fetch_with_retries(
+            "GET", events_url,
+            params={"apiKey": ODDS_API_KEY}
         )
 
-        if resp and resp.status_code == 200:
-            try:
-                games = resp.json()
-                for game in games:
-                    game_props = {
-                        "game_id": game.get("id"),
-                        "home_team": game.get("home_team"),
-                        "away_team": game.get("away_team"),
-                        "commence_time": game.get("commence_time"),
-                        "props": []
+        if events_resp and events_resp.status_code == 200:
+            events = events_resp.json()
+            logger.info("Found %d events for %s props", len(events), sport)
+
+            # Step 2: Fetch props for each event (limit to first 5 to avoid rate limits)
+            prop_markets = "player_points,player_rebounds,player_assists,player_threes"
+            if sport_lower == "nfl":
+                prop_markets = "player_pass_tds,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions"
+            elif sport_lower == "mlb":
+                prop_markets = "batter_total_bases,batter_hits,batter_rbis,pitcher_strikeouts"
+            elif sport_lower == "nhl":
+                prop_markets = "player_points,player_shots_on_goal,player_assists"
+
+            for event in events[:5]:
+                event_id = event.get("id")
+                if not event_id:
+                    continue
+
+                # Fetch props for this specific event
+                event_odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/events/{event_id}/odds"
+                event_resp = await fetch_with_retries(
+                    "GET", event_odds_url,
+                    params={
+                        "apiKey": ODDS_API_KEY,
+                        "regions": "us",
+                        "markets": prop_markets,
+                        "oddsFormat": "american"
                     }
+                )
 
-                    for bm in game.get("bookmakers", []):
-                        for market in bm.get("markets", []):
-                            if "player" in market.get("key", ""):
-                                for outcome in market.get("outcomes", []):
-                                    game_props["props"].append({
-                                        "player": outcome.get("description", ""),
-                                        "market": market.get("key"),
-                                        "line": outcome.get("point", 0),
-                                        "odds": outcome.get("price", -110),
-                                        "side": outcome.get("name"),
-                                        "book": bm.get("key")
-                                    })
+                if event_resp and event_resp.status_code == 200:
+                    try:
+                        event_data = event_resp.json()
+                        game_props = {
+                            "game_id": event_data.get("id"),
+                            "home_team": event_data.get("home_team"),
+                            "away_team": event_data.get("away_team"),
+                            "commence_time": event_data.get("commence_time"),
+                            "props": []
+                        }
 
-                    if game_props["props"]:
-                        data.append(game_props)
+                        for bm in event_data.get("bookmakers", []):
+                            for market in bm.get("markets", []):
+                                market_key = market.get("key", "")
+                                if "player" in market_key or "batter" in market_key or "pitcher" in market_key:
+                                    for outcome in market.get("outcomes", []):
+                                        game_props["props"].append({
+                                            "player": outcome.get("description", ""),
+                                            "market": market_key,
+                                            "line": outcome.get("point", 0),
+                                            "odds": outcome.get("price", -110),
+                                            "side": outcome.get("name"),
+                                            "book": bm.get("key")
+                                        })
 
-                logger.info("Props data retrieved from Odds API for %s: %d games with props", sport, len(data))
-            except ValueError as e:
-                logger.error("Failed to parse Odds API props response: %s", e)
+                        if game_props["props"]:
+                            data.append(game_props)
+                            logger.info("Got %d props for %s vs %s", len(game_props["props"]), game_props["away_team"], game_props["home_team"])
+
+                    except ValueError as e:
+                        logger.warning("Failed to parse event %s props: %s", event_id, e)
+                else:
+                    logger.debug("No props for event %s (status %s)", event_id, event_resp.status_code if event_resp else "no response")
+
+            logger.info("Props data retrieved from Odds API for %s: %d games with props", sport, len(data))
         else:
-            logger.warning("Odds API props returned %s for %s, trying Playbook API", resp.status_code if resp else "no response", sport)
+            logger.warning("Odds API events returned %s for %s, trying Playbook API", events_resp.status_code if events_resp else "no response", sport)
 
     except Exception as e:
         logger.warning("Odds API props failed for %s: %s, trying Playbook API", sport, e)
