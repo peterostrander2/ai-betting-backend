@@ -5,6 +5,19 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import Optional, List, Dict, Any
 import httpx
+
+# Import Pydantic models for request/response validation
+try:
+    from models.api_models import (
+        TrackBetRequest, TrackBetResponse, GradeBetRequest,
+        ParlayLegRequest, PlaceParlayRequest, GradeParlayRequest, ParlayCalculateRequest,
+        UserPreferencesRequest, RunAuditRequest, AdjustWeightsRequest,
+        LogPickRequest, GradePickRequest, CommunityVoteRequest, AffiliateConfigRequest,
+        BetResult
+    )
+    PYDANTIC_MODELS_AVAILABLE = True
+except ImportError:
+    PYDANTIC_MODELS_AVAILABLE = False
 import os
 import logging
 import hashlib
@@ -4307,37 +4320,42 @@ async def get_user_preferences(user_id: str):
 
 
 @router.post("/user/preferences/{user_id}")
-async def save_user_preferences(user_id: str, prefs: Dict[str, Any]):
+async def save_user_preferences(user_id: str, prefs: UserPreferencesRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
     """
     Save user's sportsbook preferences.
 
-    Request Body:
-    {
-        "favorite_books": ["fanduel", "draftkings", "caesars"],
-        "default_bet_amount": 50,
-        "auto_best_odds": true,
-        "notifications": {
-            "smash_alerts": true,
-            "odds_movement": false,
-            "bet_results": true
-        }
-    }
+    Request Body (validated with Pydantic):
+    - favorite_books: array of strings (validated against supported books)
+    - default_bet_amount: float (default: 25, must be >= 0)
+    - auto_best_odds: bool (default: true)
+    - notifications: object with smash_alerts, odds_movement, bet_results booleans
     """
+    # Handle both Pydantic model and dict input
+    if PYDANTIC_MODELS_AVAILABLE and hasattr(prefs, 'dict'):
+        data = prefs.dict()
+    else:
+        data = prefs if isinstance(prefs, dict) else dict(prefs)
+
     # Validate favorite_books
     valid_books = list(SPORTSBOOK_CONFIGS.keys())
-    favorite_books = prefs.get("favorite_books", [])
+    favorite_books = data.get("favorite_books", [])
     validated_books = [b for b in favorite_books if b in valid_books]
+
+    # Get notifications, handling nested object
+    notifications_data = data.get("notifications", {})
+    if hasattr(notifications_data, 'dict'):
+        notifications_data = notifications_data.dict()
 
     _user_preferences[user_id] = {
         "user_id": user_id,
         "favorite_books": validated_books if validated_books else ["draftkings", "fanduel", "betmgm"],
-        "default_bet_amount": prefs.get("default_bet_amount", 25),
-        "auto_best_odds": prefs.get("auto_best_odds", True),
-        "notifications": prefs.get("notifications", {
+        "default_bet_amount": data.get("default_bet_amount", 25),
+        "auto_best_odds": data.get("auto_best_odds", True),
+        "notifications": notifications_data if notifications_data else {
             "smash_alerts": True,
             "odds_movement": True,
             "bet_results": True
-        }),
+        },
         "updated_at": datetime.now().isoformat()
     }
 
@@ -4345,50 +4363,58 @@ async def save_user_preferences(user_id: str, prefs: Dict[str, Any]):
 
 
 @router.post("/bets/track")
-async def track_bet(bet_data: Dict[str, Any]):
+async def track_bet(bet_data: TrackBetRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
     """
     Track a bet that was placed through the click-to-bet flow.
 
-    Request Body:
-    {
-        "user_id": "user_123",
-        "sport": "NBA",
-        "game_id": "game_xyz",
-        "game": "Lakers vs Celtics",
-        "bet_type": "spread",
-        "selection": "Lakers",
-        "line": -3.5,
-        "odds": -110,
-        "sportsbook": "draftkings",
-        "stake": 25,
-        "ai_score": 8.5,
-        "confluence_level": "STRONG"
-    }
+    Request Body (validated with Pydantic):
+    - user_id: str (default: "anonymous")
+    - sport: str (required, validated: NBA/NFL/MLB/NHL)
+    - game_id: str (required)
+    - game: str (default: "Unknown Game")
+    - bet_type: str (required)
+    - selection: str (required)
+    - line: float (optional)
+    - odds: int (required, validated: American odds format)
+    - sportsbook: str (required)
+    - stake: float (default: 0, must be >= 0)
+    - ai_score: float (optional, 0-20)
+    - confluence_level: str (optional)
 
     Returns bet_id for later grading.
     """
-    required_fields = ["sport", "game_id", "bet_type", "selection", "odds", "sportsbook"]
-    for field in required_fields:
-        if field not in bet_data:
-            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+    # Handle both Pydantic model and dict input for backwards compatibility
+    if PYDANTIC_MODELS_AVAILABLE and hasattr(bet_data, 'dict'):
+        data = bet_data.dict()
+    else:
+        # Fallback validation for dict input
+        data = bet_data if isinstance(bet_data, dict) else dict(bet_data)
+        required_fields = ["sport", "game_id", "bet_type", "selection", "odds", "sportsbook"]
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+        # Validate odds format
+        if data.get("odds") and (data["odds"] == 0 or (-100 < data["odds"] < 100)):
+            raise HTTPException(status_code=400, detail="Invalid odds. American odds must be <= -100 or >= 100")
+        data["sport"] = data.get("sport", "").upper()
 
-    bet_id = f"BET_{bet_data['sport']}_{bet_data['game_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    bet_id = f"BET_{data['sport']}_{data['game_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
     tracked_bet = {
         "bet_id": bet_id,
-        "user_id": bet_data.get("user_id", "anonymous"),
-        "sport": bet_data["sport"].upper(),
-        "game_id": bet_data["game_id"],
-        "game": bet_data.get("game", "Unknown Game"),
-        "bet_type": bet_data["bet_type"],
-        "selection": bet_data["selection"],
-        "line": bet_data.get("line"),
-        "odds": bet_data["odds"],
-        "sportsbook": bet_data["sportsbook"],
-        "stake": bet_data.get("stake", 0),
-        "potential_payout": calculate_payout(bet_data.get("stake", 0), bet_data["odds"]),
-        "ai_score": bet_data.get("ai_score"),
-        "confluence_level": bet_data.get("confluence_level"),
+        "user_id": data.get("user_id", "anonymous"),
+        "sport": data["sport"],
+        "game_id": data["game_id"],
+        "game": data.get("game", "Unknown Game"),
+        "bet_type": data["bet_type"],
+        "selection": data["selection"],
+        "line": data.get("line"),
+        "odds": data["odds"],
+        "sportsbook": data["sportsbook"],
+        "stake": data.get("stake", 0),
+        "potential_payout": calculate_payout(data.get("stake", 0), data["odds"]),
+        "ai_score": data.get("ai_score"),
+        "confluence_level": data.get("confluence_level"),
         "status": "PENDING",
         "result": None,
         "placed_at": datetime.now().isoformat()
@@ -4405,25 +4431,29 @@ async def track_bet(bet_data: Dict[str, Any]):
 
 
 @router.post("/bets/grade/{bet_id}")
-async def grade_bet(bet_id: str, result_data: Dict[str, Any]):
+async def grade_bet(bet_id: str, result_data: GradeBetRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
     """
     Grade a tracked bet with actual result.
 
-    Request Body:
-    {
-        "result": "WIN",  // WIN, LOSS, PUSH
-        "actual_score": "Lakers 110, Celtics 105"  // Optional
-    }
+    Request Body (validated with Pydantic):
+    - result: str (required, must be WIN, LOSS, or PUSH)
+    - actual_score: str (optional)
     """
-    result = result_data.get("result", "").upper()
-    if result not in ["WIN", "LOSS", "PUSH"]:
-        raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
+    # Handle both Pydantic model and dict input
+    if PYDANTIC_MODELS_AVAILABLE and hasattr(result_data, 'result'):
+        result = result_data.result.value if hasattr(result_data.result, 'value') else str(result_data.result)
+        actual_score = result_data.actual_score
+    else:
+        result = result_data.get("result", "").upper()
+        actual_score = result_data.get("actual_score")
+        if result not in ["WIN", "LOSS", "PUSH"]:
+            raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
 
     for bet in _tracked_bets:
         if bet["bet_id"] == bet_id:
             bet["status"] = "GRADED"
             bet["result"] = result
-            bet["actual_score"] = result_data.get("actual_score")
+            bet["actual_score"] = actual_score
             bet["graded_at"] = datetime.now().isoformat()
 
             # Calculate actual profit/loss
@@ -4637,31 +4667,38 @@ async def get_parlay_slip(user_id: str):
 
 
 @router.post("/parlay/add")
-async def add_parlay_leg(leg_data: Dict[str, Any]):
+async def add_parlay_leg(leg_data: ParlayLegRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
     """
     Add a leg to a user's parlay slip.
 
-    Request Body:
-    {
-        "user_id": "user_123",
-        "sport": "NBA",
-        "game_id": "game_xyz",
-        "game": "Lakers vs Celtics",
-        "bet_type": "spread",
-        "selection": "Lakers",
-        "line": -3.5,
-        "odds": -110,
-        "ai_score": 8.5
-    }
+    Request Body (validated with Pydantic):
+    - user_id: str (required)
+    - sport: str (required, auto-uppercased)
+    - game_id: str (required)
+    - game: str (default: "Unknown Game")
+    - bet_type: str (required)
+    - selection: str (required)
+    - line: float (optional)
+    - odds: int (required, validated American format)
+    - ai_score: float (optional)
 
     Returns updated parlay slip with combined odds.
     """
-    required_fields = ["user_id", "sport", "game_id", "bet_type", "selection", "odds"]
-    for field in required_fields:
-        if field not in leg_data:
-            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+    # Handle both Pydantic model and dict input
+    if PYDANTIC_MODELS_AVAILABLE and hasattr(leg_data, 'dict'):
+        data = leg_data.dict()
+    else:
+        data = leg_data if isinstance(leg_data, dict) else dict(leg_data)
+        required_fields = ["user_id", "sport", "game_id", "bet_type", "selection", "odds"]
+        for field in required_fields:
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+        # Validate odds
+        if data.get("odds") and (data["odds"] == 0 or (-100 < data["odds"] < 100)):
+            raise HTTPException(status_code=400, detail="Invalid odds format")
+        data["sport"] = data.get("sport", "").upper()
 
-    user_id = leg_data["user_id"]
+    user_id = data["user_id"]
 
     # Initialize slip if needed
     if user_id not in _parlay_slips:
@@ -4673,24 +4710,24 @@ async def add_parlay_leg(leg_data: Dict[str, Any]):
 
     # Check for duplicate game/bet_type
     for existing in _parlay_slips[user_id]:
-        if existing["game_id"] == leg_data["game_id"] and existing["bet_type"] == leg_data["bet_type"]:
+        if existing["game_id"] == data["game_id"] and existing["bet_type"] == data["bet_type"]:
             raise HTTPException(
                 status_code=400,
-                detail=f"Already have a {leg_data['bet_type']} bet for this game"
+                detail=f"Already have a {data['bet_type']} bet for this game"
             )
 
     leg_id = f"LEG_{user_id}_{len(_parlay_slips[user_id])}_{datetime.now().strftime('%H%M%S')}"
 
     new_leg = {
         "leg_id": leg_id,
-        "sport": leg_data["sport"].upper(),
-        "game_id": leg_data["game_id"],
-        "game": leg_data.get("game", "Unknown Game"),
-        "bet_type": leg_data["bet_type"],
-        "selection": leg_data["selection"],
-        "line": leg_data.get("line"),
-        "odds": leg_data["odds"],
-        "ai_score": leg_data.get("ai_score"),
+        "sport": data["sport"],
+        "game_id": data["game_id"],
+        "game": data.get("game", "Unknown Game"),
+        "bet_type": data["bet_type"],
+        "selection": data["selection"],
+        "line": data.get("line"),
+        "odds": data["odds"],
+        "ai_score": data.get("ai_score"),
         "added_at": datetime.now().isoformat()
     }
 
@@ -4758,33 +4795,38 @@ async def clear_parlay_slip(user_id: str):
 
 
 @router.post("/parlay/place")
-async def place_parlay(parlay_data: Dict[str, Any]):
+async def place_parlay(parlay_data: PlaceParlayRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
     """
     Track a parlay bet that was placed.
 
-    Request Body:
-    {
-        "user_id": "user_123",
-        "sportsbook": "draftkings",
-        "stake": 25,
-        "use_current_slip": true  // OR provide "legs" array
-    }
+    Request Body (validated with Pydantic):
+    - user_id: str (default: "anonymous")
+    - sportsbook: str (required)
+    - stake: float (default: 0, must be >= 0)
+    - use_current_slip: bool (default: true)
+    - legs: array (optional, used if use_current_slip is false)
 
     If use_current_slip is true, uses the user's current parlay slip.
     Otherwise, provide a "legs" array directly.
     """
-    user_id = parlay_data.get("user_id", "anonymous")
-    sportsbook = parlay_data.get("sportsbook")
-    stake = parlay_data.get("stake", 0)
+    # Handle both Pydantic model and dict input
+    if PYDANTIC_MODELS_AVAILABLE and hasattr(parlay_data, 'dict'):
+        data = parlay_data.dict()
+    else:
+        data = parlay_data if isinstance(parlay_data, dict) else dict(parlay_data)
+
+    user_id = data.get("user_id", "anonymous")
+    sportsbook = data.get("sportsbook")
+    stake = data.get("stake", 0)
 
     if not sportsbook:
         raise HTTPException(status_code=400, detail="sportsbook is required")
 
     # Get legs from current slip or from request
-    if parlay_data.get("use_current_slip", True):
+    if data.get("use_current_slip", True):
         legs = _parlay_slips.get(user_id, [])
     else:
-        legs = parlay_data.get("legs", [])
+        legs = data.get("legs", [])
 
     if len(legs) < 2:
         raise HTTPException(status_code=400, detail="Parlay requires at least 2 legs")
@@ -4816,7 +4858,7 @@ async def place_parlay(parlay_data: Dict[str, Any]):
     _placed_parlays.append(tracked_parlay)
 
     # Clear the slip after placing
-    if parlay_data.get("use_current_slip", True):
+    if data.get("use_current_slip", True):
         _parlay_slips[user_id] = []
 
     return {
@@ -4828,18 +4870,20 @@ async def place_parlay(parlay_data: Dict[str, Any]):
 
 
 @router.post("/parlay/grade/{parlay_id}")
-async def grade_parlay(parlay_id: str, grade_data: Dict[str, Any]):
+async def grade_parlay(parlay_id: str, grade_data: GradeParlayRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
     """
     Grade a placed parlay with WIN, LOSS, or PUSH.
 
-    Request Body:
-    {
-        "result": "WIN"  // or "LOSS" or "PUSH"
-    }
+    Request Body (validated with Pydantic):
+    - result: str (required, must be WIN, LOSS, or PUSH)
     """
-    result = grade_data.get("result", "").upper()
-    if result not in ["WIN", "LOSS", "PUSH"]:
-        raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
+    # Handle both Pydantic model and dict input
+    if PYDANTIC_MODELS_AVAILABLE and hasattr(grade_data, 'result'):
+        result = grade_data.result.value if hasattr(grade_data.result, 'value') else str(grade_data.result)
+    else:
+        result = grade_data.get("result", "").upper()
+        if result not in ["WIN", "LOSS", "PUSH"]:
+            raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
 
     for parlay in _placed_parlays:
         if parlay["parlay_id"] == parlay_id:
