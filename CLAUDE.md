@@ -688,3 +688,246 @@ curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H 
 - Prioritize "fewer lines" over readability
 
 ---
+
+## Vercel Agent Skills (Installed January 16, 2026)
+
+The following skills from `vercel-labs/agent-skills` are available for use in this project.
+
+---
+
+## Skill 1: Vercel Deploy
+
+**Name:** vercel-deploy
+**Purpose:** Deploy applications and websites to Vercel instantly. No authentication required.
+
+### When to Use
+Use when the user requests deployment actions such as:
+- "Deploy my app"
+- "Deploy this to production"
+- "Create a preview deployment"
+- "Deploy and give me the link"
+- "Push this live"
+
+### How It Works
+
+1. Packages your project into a tarball (excludes `node_modules` and `.git`)
+2. Auto-detects framework from `package.json`
+3. Uploads to deployment service
+4. Returns **Preview URL** (live site) and **Claim URL** (transfer to your Vercel account)
+
+### Usage
+
+```bash
+bash /mnt/skills/user/vercel-deploy/scripts/deploy.sh [path]
+```
+
+**Arguments:**
+- `path` - Directory to deploy, or a `.tgz` file (defaults to current directory)
+
+### Output
+
+```
+Preview URL: https://skill-deploy-abc123.vercel.app
+Claim URL:   https://vercel.com/claim-deployment?code=...
+```
+
+### Supported Frameworks
+
+- **React**: Next.js, Gatsby, Create React App, Remix, React Router
+- **Vue**: Nuxt, Vitepress, Vuepress, Gridsome
+- **Svelte**: SvelteKit, Svelte, Sapper
+- **Other Frontend**: Astro, Solid Start, Angular, Ember, Preact, Docusaurus
+- **Backend**: Express, Hono, Fastify, NestJS, Elysia, h3, Nitro
+- **Build Tools**: Vite, Parcel
+
+---
+
+## Skill 2: Web Design Guidelines
+
+**Name:** web-design-guidelines
+**Purpose:** Review UI code for Web Interface Guidelines compliance.
+
+### When to Use
+Use when asked to:
+- "Review my UI"
+- "Check accessibility"
+- "Audit design"
+- "Review UX"
+- "Check my site against best practices"
+
+### How It Works
+
+1. Fetch the latest guidelines from: `https://raw.githubusercontent.com/vercel-labs/web-interface-guidelines/main/command.md`
+2. Read the specified files (or prompt user for files/pattern)
+3. Check against all rules in the fetched guidelines
+4. Output findings in the terse `file:line` format
+
+---
+
+## Skill 3: React Best Practices (Vercel Engineering)
+
+**Name:** vercel-react-best-practices
+**Version:** 1.0.0
+**Purpose:** React and Next.js performance optimization guidelines from Vercel Engineering.
+
+### When to Apply
+
+Reference these guidelines when:
+- Writing new React components or Next.js pages
+- Implementing data fetching (client or server-side)
+- Reviewing code for performance issues
+- Refactoring existing React/Next.js code
+- Optimizing bundle size or load times
+
+### Rule Categories by Priority
+
+| Priority | Category | Impact | Prefix |
+|----------|----------|--------|--------|
+| 1 | Eliminating Waterfalls | CRITICAL | `async-` |
+| 2 | Bundle Size Optimization | CRITICAL | `bundle-` |
+| 3 | Server-Side Performance | HIGH | `server-` |
+| 4 | Client-Side Data Fetching | MEDIUM-HIGH | `client-` |
+| 5 | Re-render Optimization | MEDIUM | `rerender-` |
+| 6 | Rendering Performance | MEDIUM | `rendering-` |
+| 7 | JavaScript Performance | LOW-MEDIUM | `js-` |
+| 8 | Advanced Patterns | LOW | `advanced-` |
+
+### Quick Reference
+
+#### 1. Eliminating Waterfalls (CRITICAL)
+- `async-defer-await` - Move await into branches where actually used
+- `async-parallel` - Use Promise.all() for independent operations
+- `async-dependencies` - Use better-all for partial dependencies
+- `async-api-routes` - Start promises early, await late in API routes
+- `async-suspense-boundaries` - Use Suspense to stream content
+
+#### 2. Bundle Size Optimization (CRITICAL)
+- `bundle-barrel-imports` - Import directly, avoid barrel files
+- `bundle-dynamic-imports` - Use next/dynamic for heavy components
+- `bundle-defer-third-party` - Load analytics/logging after hydration
+- `bundle-conditional` - Load modules only when feature is activated
+- `bundle-preload` - Preload on hover/focus for perceived speed
+
+#### 3. Server-Side Performance (HIGH)
+- `server-cache-react` - Use React.cache() for per-request deduplication
+- `server-cache-lru` - Use LRU cache for cross-request caching
+- `server-serialization` - Minimize data passed to client components
+- `server-parallel-fetching` - Restructure components to parallelize fetches
+- `server-after-nonblocking` - Use after() for non-blocking operations
+
+#### 4. Client-Side Data Fetching (MEDIUM-HIGH)
+- `client-swr-dedup` - Use SWR for automatic request deduplication
+- `client-event-listeners` - Deduplicate global event listeners
+
+#### 5. Re-render Optimization (MEDIUM)
+- `rerender-defer-reads` - Don't subscribe to state only used in callbacks
+- `rerender-memo` - Extract expensive work into memoized components
+- `rerender-dependencies` - Use primitive dependencies in effects
+- `rerender-derived-state` - Subscribe to derived booleans, not raw values
+- `rerender-functional-setstate` - Use functional setState for stable callbacks
+- `rerender-lazy-state-init` - Pass function to useState for expensive values
+- `rerender-transitions` - Use startTransition for non-urgent updates
+
+#### 6. Rendering Performance (MEDIUM)
+- `rendering-animate-svg-wrapper` - Animate div wrapper, not SVG element
+- `rendering-content-visibility` - Use content-visibility for long lists
+- `rendering-hoist-jsx` - Extract static JSX outside components
+- `rendering-svg-precision` - Reduce SVG coordinate precision
+- `rendering-hydration-no-flicker` - Use inline script for client-only data
+- `rendering-activity` - Use Activity component for show/hide
+- `rendering-conditional-render` - Use ternary, not && for conditionals
+
+#### 7. JavaScript Performance (LOW-MEDIUM)
+- `js-batch-dom-css` - Group CSS changes via classes or cssText
+- `js-index-maps` - Build Map for repeated lookups
+- `js-cache-property-access` - Cache object properties in loops
+- `js-cache-function-results` - Cache function results in module-level Map
+- `js-cache-storage` - Cache localStorage/sessionStorage reads
+- `js-combine-iterations` - Combine multiple filter/map into one loop
+- `js-length-check-first` - Check array length before expensive comparison
+- `js-early-exit` - Return early from functions
+- `js-hoist-regexp` - Hoist RegExp creation outside loops
+- `js-min-max-loop` - Use loop for min/max instead of sort
+- `js-set-map-lookups` - Use Set/Map for O(1) lookups
+- `js-tosorted-immutable` - Use toSorted() for immutability
+
+#### 8. Advanced Patterns (LOW)
+- `advanced-event-handler-refs` - Store event handlers in refs
+- `advanced-use-latest` - useLatest for stable callback refs
+
+### Key React Performance Patterns
+
+#### Parallel Data Fetching
+```typescript
+// Incorrect: sequential
+const user = await fetchUser()
+const posts = await fetchPosts()
+
+// Correct: parallel
+const [user, posts] = await Promise.all([
+  fetchUser(),
+  fetchPosts()
+])
+```
+
+#### Avoid Barrel File Imports
+```tsx
+// Incorrect: imports entire library
+import { Check, X, Menu } from 'lucide-react'
+
+// Correct: imports only what you need
+import Check from 'lucide-react/dist/esm/icons/check'
+import X from 'lucide-react/dist/esm/icons/x'
+```
+
+#### Dynamic Imports for Heavy Components
+```tsx
+import dynamic from 'next/dynamic'
+
+const MonacoEditor = dynamic(
+  () => import('./monaco-editor').then(m => m.MonacoEditor),
+  { ssr: false }
+)
+```
+
+#### Use SWR for Automatic Deduplication
+```tsx
+import useSWR from 'swr'
+
+function UserList() {
+  const { data: users } = useSWR('/api/users', fetcher)
+}
+```
+
+#### Functional setState Updates
+```tsx
+// Incorrect: requires state as dependency
+const addItems = useCallback((newItems: Item[]) => {
+  setItems([...items, ...newItems])
+}, [items])
+
+// Correct: stable callbacks, no stale closures
+const addItems = useCallback((newItems: Item[]) => {
+  setItems(curr => [...curr, ...newItems])
+}, [])
+```
+
+#### Use toSorted() for Immutability
+```typescript
+// Incorrect: mutates original array
+const sorted = users.sort((a, b) => a.name.localeCompare(b.name))
+
+// Correct: creates new array
+const sorted = users.toSorted((a, b) => a.name.localeCompare(b.name))
+```
+
+### References
+
+1. https://react.dev
+2. https://nextjs.org
+3. https://swr.vercel.app
+4. https://github.com/shuding/better-all
+5. https://vercel.com/blog/how-we-optimized-package-imports-in-next-js
+6. https://vercel.com/blog/how-we-made-the-vercel-dashboard-twice-as-fast
+
+---
