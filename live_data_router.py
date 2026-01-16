@@ -2632,8 +2632,8 @@ async def scheduler_status():
 @router.get("/esoteric-edge")
 async def get_esoteric_edge():
     """
-    Get comprehensive esoteric edge analysis.
-    Returns daily energy + game signals + prop signals + parlay warnings.
+    Get comprehensive esoteric edge analysis with historical accuracy stats.
+    Returns daily energy + game signals + prop signals + accuracy data.
     """
     from esoteric_engine import (
         get_daily_esoteric_reading,
@@ -2647,13 +2647,31 @@ async def get_esoteric_edge():
         calculate_biorhythms,
         check_life_path_sync,
         calculate_hurst_exponent,
+        calculate_life_path,
         SAMPLE_PLAYERS
     )
+    from esoteric_grader import get_esoteric_grader
 
     today = datetime.now().date()
+    grader = get_esoteric_grader()
 
     # Daily reading
     daily = get_daily_esoteric_reading(today)
+
+    # Get accuracy for current signals
+    current_signals = {
+        "void_moon_active": daily["void_moon"]["is_void"],
+        "planetary_ruler": daily["planetary_hours"]["current_ruler"],
+        "noosphere_direction": daily["noosphere"]["trending_direction"],
+        "betting_outlook": daily["betting_outlook"],
+    }
+    combined_edge = grader.get_combined_edge(current_signals)
+
+    # Get accuracy stats for each signal type
+    outlook_accuracy = grader.get_signal_accuracy("betting_outlook", daily["betting_outlook"])
+    void_moon_accuracy = grader.get_signal_accuracy("void_moon", daily["void_moon"]["is_void"])
+    planetary_accuracy = grader.get_signal_accuracy("planetary_ruler", daily["planetary_hours"]["current_ruler"])
+    noosphere_accuracy = grader.get_signal_accuracy("noosphere", daily["noosphere"]["trending_direction"])
 
     # Sample game signals (in production, would fetch from best-bets)
     sample_games = [
@@ -2663,29 +2681,42 @@ async def get_esoteric_edge():
 
     game_signals = []
     for game in sample_games:
+        founders_home = check_founders_echo(game["home_team"])
+        founders_away = check_founders_echo(game["away_team"])
+        gann = analyze_spread_gann(game["spread"], game["total"])
+        gann_accuracy = grader.get_signal_accuracy("gann_resonance", gann["combined_resonance"])
+        founders_accuracy = grader.get_signal_accuracy("founders_echo", founders_home["resonance"] or founders_away["resonance"])
+
         game_signals.append({
             "game_id": game["game_id"],
             "home_team": game["home_team"],
             "away_team": game["away_team"],
             "signals": {
                 "founders_echo": {
-                    "home_match": check_founders_echo(game["home_team"])["resonance"],
-                    "away_match": check_founders_echo(game["away_team"])["resonance"],
-                    "boost": check_founders_echo(game["home_team"])["boost"] + check_founders_echo(game["away_team"])["boost"]
+                    "home_match": founders_home["resonance"],
+                    "away_match": founders_away["resonance"],
+                    "boost": founders_home["boost"] + founders_away["boost"],
+                    "accuracy": founders_accuracy
                 },
                 "gann_square": {
-                    "spread_angle": analyze_spread_gann(game["spread"], game["total"])["spread"]["angle"],
-                    "resonant": analyze_spread_gann(game["spread"], game["total"])["combined_resonance"]
+                    "spread_angle": gann["spread"]["angle"],
+                    "resonant": gann["combined_resonance"],
+                    "accuracy": gann_accuracy
                 },
                 "atmospheric": calculate_atmospheric_drag(game["city"])
             }
         })
 
-    # Sample player signals
+    # Sample player signals with accuracy
     prop_signals = []
     for player_name, player_data in list(SAMPLE_PLAYERS.items())[:4]:
         bio = calculate_biorhythms(player_data["birth_date"])
         life_path = check_life_path_sync(player_name, player_data["birth_date"], player_data["jersey"])
+
+        # Get accuracy for this player's signals
+        bio_accuracy = grader.get_signal_accuracy("biorhythm", bio["status"])
+        life_path_accuracy = grader.get_signal_accuracy("life_path", life_path["life_path"])
+
         prop_signals.append({
             "player_id": player_name.lower().replace(" ", "_"),
             "player_name": player_name,
@@ -2693,12 +2724,15 @@ async def get_esoteric_edge():
                 "biorhythms": {
                     "physical": bio["physical"],
                     "emotional": bio["emotional"],
-                    "intellectual": bio["intellectual"]
+                    "intellectual": bio["intellectual"],
+                    "status": bio["status"],
+                    "accuracy": bio_accuracy
                 },
                 "life_path_sync": {
                     "player_life_path": life_path["life_path"],
                     "jersey_number": life_path["jersey_number"],
-                    "sync_score": life_path["sync_score"]
+                    "sync_score": life_path["sync_score"],
+                    "accuracy": life_path_accuracy
                 }
             }
         })
@@ -2711,13 +2745,94 @@ async def get_esoteric_edge():
             "moon_phase": daily["void_moon"]["moon_sign"].lower() if daily["void_moon"] else "unknown",
             "void_moon": daily["void_moon"],
             "schumann_frequency": daily["schumann_reading"],
-            "planetary_hours": daily["planetary_hours"]
+            "planetary_hours": daily["planetary_hours"],
+            "accuracy": {
+                "outlook": outlook_accuracy,
+                "void_moon": void_moon_accuracy,
+                "planetary": planetary_accuracy,
+                "noosphere": noosphere_accuracy
+            }
         },
+        "combined_edge": combined_edge,
         "game_signals": game_signals,
         "prop_signals": prop_signals,
-        "parlay_warnings": [],  # Populated when parlay legs provided
+        "parlay_warnings": [],
         "noosphere": daily["noosphere"]
     }
+
+
+@router.get("/esoteric-accuracy")
+async def get_esoteric_accuracy():
+    """
+    Get historical accuracy stats for all esoteric signals.
+    Shows edge percentages based on historical performance.
+    """
+    from esoteric_grader import get_esoteric_grader
+
+    grader = get_esoteric_grader()
+    all_stats = grader.get_all_accuracy_stats()
+    performance = grader.get_performance_summary(days_back=30)
+
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "accuracy_by_signal": all_stats,
+        "recent_performance": performance,
+        "methodology": {
+            "edge_calculation": "Hit rate vs 50% baseline",
+            "sample_sources": "Historical betting data + tracked predictions",
+            "update_frequency": "Real-time as predictions are graded"
+        }
+    }
+
+
+@router.get("/esoteric-accuracy/{signal_type}")
+async def get_signal_accuracy(signal_type: str, value: str = None):
+    """
+    Get accuracy stats for a specific signal type.
+
+    signal_type options: life_path, biorhythm, void_moon, planetary_ruler,
+                        noosphere, gann_resonance, founders_echo, betting_outlook
+    """
+    from esoteric_grader import get_esoteric_grader
+
+    grader = get_esoteric_grader()
+
+    valid_types = [
+        "life_path", "biorhythm", "void_moon", "planetary_ruler",
+        "noosphere", "gann_resonance", "founders_echo", "betting_outlook"
+    ]
+
+    if signal_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid signal_type. Must be one of: {valid_types}"
+        )
+
+    if value:
+        # Convert value to appropriate type
+        if signal_type == "life_path":
+            try:
+                value = int(value)
+            except:
+                pass
+        elif signal_type in ["void_moon", "gann_resonance", "founders_echo"]:
+            value = value.lower() in ["true", "1", "yes"]
+
+        accuracy = grader.get_signal_accuracy(signal_type, value)
+        return {
+            "signal_type": signal_type,
+            "value": value,
+            "accuracy": accuracy,
+            "timestamp": datetime.now().isoformat()
+        }
+    else:
+        # Return all values for this signal type
+        all_stats = grader.get_all_accuracy_stats()
+        return {
+            "signal_type": signal_type,
+            "all_values": all_stats.get(signal_type, {}),
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @router.get("/noosphere/status")

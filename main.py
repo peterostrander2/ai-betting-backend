@@ -115,9 +115,11 @@ async def metrics_status():
 async def esoteric_today_energy():
     from datetime import date
     from esoteric_engine import get_daily_esoteric_reading
+    from esoteric_grader import get_esoteric_grader
 
     today = date.today()
     reading = get_daily_esoteric_reading(today)
+    grader = get_esoteric_grader()
 
     # Build void moon periods array
     void_moon_periods = []
@@ -126,6 +128,21 @@ async def esoteric_today_energy():
             "start": reading["void_moon"]["void_start"],
             "end": reading["void_moon"]["void_end"]
         })
+
+    # Get accuracy stats for current signals
+    outlook_accuracy = grader.get_signal_accuracy("betting_outlook", reading["betting_outlook"])
+    void_moon_accuracy = grader.get_signal_accuracy("void_moon", reading["void_moon"]["is_void"])
+    planetary_accuracy = grader.get_signal_accuracy("planetary_ruler", reading["planetary_hours"]["current_ruler"])
+    noosphere_accuracy = grader.get_signal_accuracy("noosphere", reading["noosphere"]["trending_direction"])
+
+    # Calculate combined edge for today
+    current_signals = {
+        "void_moon_active": reading["void_moon"]["is_void"],
+        "planetary_ruler": reading["planetary_hours"]["current_ruler"],
+        "noosphere_direction": reading["noosphere"]["trending_direction"],
+        "betting_outlook": reading["betting_outlook"],
+    }
+    combined_edge = grader.get_combined_edge(current_signals)
 
     return {
         "date": today.isoformat(),
@@ -139,7 +156,14 @@ async def esoteric_today_energy():
         },
         "planetary_hours": reading["planetary_hours"],
         "noosphere": reading["noosphere"],
-        "recommendation": reading["recommendation"]
+        "recommendation": reading["recommendation"],
+        "accuracy": {
+            "outlook": outlook_accuracy,
+            "void_moon": void_moon_accuracy,
+            "planetary": planetary_accuracy,
+            "noosphere": noosphere_accuracy
+        },
+        "combined_edge": combined_edge
     }
 
 if __name__ == "__main__":
