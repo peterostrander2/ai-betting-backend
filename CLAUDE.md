@@ -205,6 +205,54 @@ curl "https://web-production-7b2a.up.railway.app/live/grader/performance/nba?day
   -H "X-API-Key: YOUR_KEY"
 ```
 
+### Daily Community Report
+
+Every morning at 6 AM ET, the system grades picks and generates a report for your community.
+
+**Get the daily report:**
+```bash
+curl "https://web-production-7b2a.up.railway.app/live/grader/daily-report" \
+  -H "X-API-Key: YOUR_KEY"
+```
+
+**Report includes:**
+- Overall performance (wins/losses/hit rate)
+- Performance by sport
+- What the system learned
+- Improvements made to weights
+- Ready-to-post community message
+
+**Sample output:**
+```
+🔥 SMASH SPOT DAILY REPORT 🔥
+
+📅 January 15, 2026 Results:
+• Total Picks: 24
+• Record: 14-10
+• Hit Rate: 58.3%
+
+SMASHING IT!
+
+📚 What We Learned:
+• NBA: Model performing well, minor tuning applied.
+
+🔧 Improvements Made:
+• Weights optimized for tomorrow.
+
+Your community is in great hands. Keep riding the hot streak!
+
+🎯 We grade EVERY pick at 6 AM and adjust our AI daily.
+Whether we win or lose, we're always improving! 💪
+```
+
+**Status Levels:**
+| Hit Rate | Status | Emoji |
+|----------|--------|-------|
+| 55%+ | SMASHING IT! | 🔥 |
+| 52-54% | PROFITABLE DAY! | 💰 |
+| 48-51% | BREAK-EVEN ZONE | 📊 |
+| Below 48% | LEARNING DAY | 📈 |
+
 ---
 
 ## Coding Standards
