@@ -691,7 +691,7 @@ curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H 
 
 ## Vercel Agent Skills
 
-Four agent skills are installed in `~/.claude/skills/` for enhanced capabilities.
+Five agent skills are installed in `~/.claude/skills/` for enhanced capabilities.
 
 ### react-best-practices
 
@@ -777,6 +777,22 @@ Four agent skills are installed in `~/.claude/skills/` for enhanced capabilities
 - Vue: Nuxt, Vitepress, Vuepress
 - Svelte: SvelteKit, Svelte
 - Other: Astro, Solid Start, Angular, Vite, and 40+ more
+
+### json-ui-composer
+
+**Purpose:** Generate valid JSON UI configurations from component catalogs.
+
+**Output Rules:**
+- Return ONLY valid, parseable JSON
+- Use only components/props from provided catalog
+- No markdown, JSX, HTML, or explanations
+- Keep UI minimal and readable
+
+**Trigger Phrases:**
+- "Generate UI JSON"
+- "Compose a UI"
+- "Create JSON layout"
+- Working with @json-render or similar
 
 ### Installation
 
