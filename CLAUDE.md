@@ -1,5 +1,11 @@
 # CLAUDE.md - Project Instructions for AI Assistants
 
+## User Environment
+- **OS:** Mac
+- **Terminal:** Use Mac Terminal commands (no Windows-specific instructions)
+
+---
+
 ## Project Overview
 
 **Bookie-o-em** - AI Sports Prop Betting Backend
