@@ -782,6 +782,11 @@ Five agent skills are installed in `~/.claude/skills/` for enhanced capabilities
 
 **Purpose:** Generate valid JSON UI configurations from component catalogs.
 
+**The Single Most Important Rule:**
+- ✅ Backend system prompt forces JSON only
+- ✅ Catalog prompt injected
+- ✅ Frontend prompt provides goal + data + constraints
+
 **Output Rules:**
 - Return ONLY valid, parseable JSON
 - Use only components/props from provided catalog
