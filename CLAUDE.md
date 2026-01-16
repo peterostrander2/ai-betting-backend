@@ -688,3 +688,117 @@ curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H 
 - Prioritize "fewer lines" over readability
 
 ---
+
+## Vercel Agent Skills
+
+Four agent skills are installed in `~/.claude/skills/` for enhanced capabilities.
+
+### react-best-practices
+
+**Purpose:** React and Next.js performance optimization guidelines from Vercel Engineering.
+
+**When to Use:**
+- Writing new React components or Next.js pages
+- Implementing data fetching (client or server-side)
+- Reviewing code for performance issues
+- Optimizing bundle size or load times
+
+**Categories (45 rules, 8 categories):**
+| Priority | Category | Impact |
+|----------|----------|--------|
+| 1 | Eliminating Waterfalls | CRITICAL |
+| 2 | Bundle Size Optimization | CRITICAL |
+| 3 | Server-Side Performance | HIGH |
+| 4 | Client-Side Data Fetching | MEDIUM-HIGH |
+| 5 | Re-render Optimization | MEDIUM |
+| 6 | Rendering Performance | MEDIUM |
+| 7 | JavaScript Performance | LOW-MEDIUM |
+| 8 | Advanced Patterns | LOW |
+
+### react-strict-rules
+
+**Purpose:** Strict enforcement rules for React/Next.js development. Auto-activates when working on React code.
+
+**Key Rules:**
+- Default to Server Components (no `"use client"` unless required)
+- Never fetch in `useEffect` unless unavoidable
+- Keep client bundle minimal
+- Always ask: "Can this be server-only?"
+
+**Pre-Commit Checklist:**
+- Can this be a Server Component?
+- Any unnecessary `"use client"`?
+- Any `useEffect` data fetching that could be server-side?
+- Any heavy dependencies in client bundle?
+
+### web-design-guidelines
+
+**Purpose:** Review UI code for Web Interface Guidelines compliance.
+
+**Trigger Phrases:**
+- "Review my UI"
+- "Check accessibility"
+- "Audit design"
+- "Review UX"
+- "Check my site against best practices"
+
+**Categories Covered:**
+- Accessibility (aria-labels, semantic HTML, keyboard handlers)
+- Focus States (visible focus, focus-visible patterns)
+- Forms (autocomplete, validation, error handling)
+- Animation (prefers-reduced-motion, compositor-friendly transforms)
+- Typography (curly quotes, ellipsis, tabular-nums)
+- Images (dimensions, lazy loading, alt text)
+- Performance (virtualization, layout thrashing, preconnect)
+- Navigation & State (URL reflects state, deep-linking)
+- Dark Mode & Theming (color-scheme, theme-color meta)
+- Touch & Interaction (touch-action, tap-highlight)
+- Locale & i18n (Intl.DateTimeFormat, Intl.NumberFormat)
+
+### vercel-deploy-claimable
+
+**Purpose:** Deploy applications and websites to Vercel instantly. No authentication required.
+
+**Trigger Phrases:**
+- "Deploy my app"
+- "Deploy this to production"
+- "Create a preview deployment"
+- "Deploy and give me the link"
+- "Push this live"
+
+**How It Works:**
+1. Packages project into a tarball (excludes `node_modules` and `.git`)
+2. Auto-detects framework from `package.json`
+3. Uploads to deployment service
+4. Returns **Preview URL** (live site) and **Claim URL** (transfer to your Vercel account)
+
+**Supported Frameworks:**
+- React: Next.js, Gatsby, Create React App, Remix
+- Vue: Nuxt, Vitepress, Vuepress
+- Svelte: SvelteKit, Svelte
+- Other: Astro, Solid Start, Angular, Vite, and 40+ more
+
+### Installation
+
+Skills were installed via:
+```bash
+npx add-skill vercel-labs/agent-skills
+# Or manually: cp -r skills/{skill-name} ~/.claude/skills/
+```
+
+---
+
+## Agent Rules (Strict)
+
+**Do not stop at recommendations — implement the fixes in code.**
+
+If working on React/Next:
+- Apply Vercel React Best Practices skill rules.
+- Prefer Server Components by default.
+- Never fetch in useEffect unless required.
+- Keep client bundle minimal.
+- Ask: "Can this be server-only?" before writing client code.
+
+**Global Skill:** These rules are also available globally via `~/.claude/skills/react-strict-rules/`
+
+---
