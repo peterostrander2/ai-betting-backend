@@ -780,6 +780,111 @@ async def get_playbook_health():
         return {"status": "error", "error": str(e)}
 
 
+@router.get("/odds-api/usage")
+async def get_odds_api_usage():
+    """
+    Get Odds API usage info from response headers.
+
+    The Odds API returns quota info in headers:
+    - x-requests-remaining: Requests left this month
+    - x-requests-used: Requests used this month
+
+    Monitor this to avoid hitting limits!
+    """
+    if not ODDS_API_KEY:
+        return {"error": "ODDS_API_KEY not configured", "status": "unavailable"}
+
+    try:
+        # Make a lightweight request to get usage headers
+        odds_url = f"{ODDS_API_BASE}/sports"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={"apiKey": ODDS_API_KEY}
+        )
+
+        if resp:
+            # Extract usage from headers
+            requests_remaining = resp.headers.get("x-requests-remaining")
+            requests_used = resp.headers.get("x-requests-used")
+
+            return {
+                "status": "ok",
+                "source": "odds_api",
+                "usage": {
+                    "requests_remaining": int(requests_remaining) if requests_remaining else None,
+                    "requests_used": int(requests_used) if requests_used else None,
+                    "note": "Resets monthly. Check https://the-odds-api.com for plan limits."
+                },
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "status": "error",
+                "error": "No response from Odds API",
+                "timestamp": datetime.now().isoformat()
+            }
+
+    except Exception as e:
+        logger.exception("Failed to fetch Odds API usage: %s", e)
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/api-usage")
+async def get_all_api_usage():
+    """
+    Get combined usage for all paid APIs (Playbook + Odds API).
+    Use this to monitor quota and decide if you need to upgrade plans.
+    """
+    result = {
+        "timestamp": datetime.now().isoformat(),
+        "apis": {}
+    }
+
+    # Get Playbook usage
+    if PLAYBOOK_API_KEY:
+        try:
+            playbook_url = f"{PLAYBOOK_API_BASE}/me"
+            resp = await fetch_with_retries(
+                "GET", playbook_url,
+                params={"api_key": PLAYBOOK_API_KEY}
+            )
+            if resp and resp.status_code == 200:
+                result["apis"]["playbook"] = {"status": "ok", "data": resp.json()}
+            else:
+                result["apis"]["playbook"] = {"status": "error", "code": resp.status_code if resp else None}
+        except Exception as e:
+            result["apis"]["playbook"] = {"status": "error", "error": str(e)}
+    else:
+        result["apis"]["playbook"] = {"status": "not_configured"}
+
+    # Get Odds API usage
+    if ODDS_API_KEY:
+        try:
+            odds_url = f"{ODDS_API_BASE}/sports"
+            resp = await fetch_with_retries(
+                "GET", odds_url,
+                params={"apiKey": ODDS_API_KEY}
+            )
+            if resp:
+                result["apis"]["odds_api"] = {
+                    "status": "ok",
+                    "requests_remaining": resp.headers.get("x-requests-remaining"),
+                    "requests_used": resp.headers.get("x-requests-used")
+                }
+            else:
+                result["apis"]["odds_api"] = {"status": "error", "error": "No response"}
+        except Exception as e:
+            result["apis"]["odds_api"] = {"status": "error", "error": str(e)}
+    else:
+        result["apis"]["odds_api"] = {"status": "not_configured"}
+
+    return result
+
+
 @router.get("/sharp/{sport}")
 async def get_sharp_money(sport: str):
     """

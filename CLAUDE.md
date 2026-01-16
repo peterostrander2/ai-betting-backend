@@ -50,6 +50,30 @@
 | `/lines` | Current spread/total/ML | `league`, `api_key` |
 | `/games` | Game objects from splits | `league`, `date`, `api_key` |
 
+### API Usage Monitoring
+
+**IMPORTANT:** Monitor API usage to avoid hitting limits, especially if community usage grows.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /live/api-usage` | Combined usage for ALL paid APIs |
+| `GET /live/playbook/usage` | Playbook plan + quota info |
+| `GET /live/odds-api/usage` | Odds API requests remaining |
+
+**Odds API Usage Headers:**
+- `x-requests-remaining`: Requests left this month
+- `x-requests-used`: Requests used this month
+- Resets monthly. Free tier = 500 requests/month.
+
+**When to upgrade:**
+- If `requests_remaining` < 100, consider upgrading Odds API plan
+- If Playbook returns 429 (rate limited), check plan limits
+
+**Quick check command:**
+```bash
+curl "https://web-production-7b2a.up.railway.app/live/api-usage" -H "X-API-Key: YOUR_KEY"
+```
+
 ---
 
 ## Authentication
@@ -260,6 +284,10 @@ POST   /live/parlay/calculate                   # Preview odds calculation
 ```
 GET /live/cache/stats           # Cache statistics
 GET /live/cache/clear           # Clear cache
+GET /live/api-usage             # Combined API usage (Playbook + Odds)
+GET /live/playbook/usage        # Playbook plan + quota
+GET /live/playbook/health       # Playbook API health check
+GET /live/odds-api/usage        # Odds API requests remaining
 GET /live/lstm/status           # LSTM status
 GET /live/grader/status         # Auto-grader status
 GET /live/grader/weights/{sport}# Prediction weights
