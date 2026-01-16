@@ -691,7 +691,7 @@ curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H 
 
 ## Vercel Agent Skills
 
-Three Vercel agent skills are installed in `~/.claude/skills/` for enhanced capabilities.
+Four agent skills are installed in `~/.claude/skills/` for enhanced capabilities.
 
 ### react-best-practices
 
@@ -714,6 +714,22 @@ Three Vercel agent skills are installed in `~/.claude/skills/` for enhanced capa
 | 6 | Rendering Performance | MEDIUM |
 | 7 | JavaScript Performance | LOW-MEDIUM |
 | 8 | Advanced Patterns | LOW |
+
+### react-strict-rules
+
+**Purpose:** Strict enforcement rules for React/Next.js development. Auto-activates when working on React code.
+
+**Key Rules:**
+- Default to Server Components (no `"use client"` unless required)
+- Never fetch in `useEffect` unless unavoidable
+- Keep client bundle minimal
+- Always ask: "Can this be server-only?"
+
+**Pre-Commit Checklist:**
+- Can this be a Server Component?
+- Any unnecessary `"use client"`?
+- Any `useEffect` data fetching that could be server-side?
+- Any heavy dependencies in client bundle?
 
 ### web-design-guidelines
 
@@ -780,5 +796,7 @@ If working on React/Next:
 - Never fetch in useEffect unless required.
 - Keep client bundle minimal.
 - Ask: "Can this be server-only?" before writing client code.
+
+**Global Skill:** These rules are also available globally via `~/.claude/skills/react-strict-rules/`
 
 ---
