@@ -2042,9 +2042,18 @@ async def get_best_bets(sport: str):
     except HTTPException:
         logger.warning("Props fetch failed for %s", sport)
 
-    # Sort props by score and take top 10
-    props_picks.sort(key=lambda x: x["total_score"], reverse=True)
-    top_props = props_picks[:10]
+    # DEDUPLICATE: Only keep the best side (Over or Under) per player/market
+    # This prevents contradictory picks like "Maxey Over 26.5" AND "Maxey Under 26.5"
+    best_by_player_market = {}
+    for pick in props_picks:
+        key = f"{pick['player']}:{pick['market']}"
+        if key not in best_by_player_market or pick["total_score"] > best_by_player_market[key]["total_score"]:
+            best_by_player_market[key] = pick
+
+    # Sort deduplicated props by score and take top 10
+    deduplicated_props = list(best_by_player_market.values())
+    deduplicated_props.sort(key=lambda x: x["total_score"], reverse=True)
+    top_props = deduplicated_props[:10]
 
     # ============================================
     # CATEGORY 2: GAME PICKS (Spreads, Totals, ML)
