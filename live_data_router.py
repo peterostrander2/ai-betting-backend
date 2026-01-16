@@ -22,6 +22,22 @@ try:
 except ImportError:
     MASTER_PREDICTION_AVAILABLE = False
 
+# Import Playbook API utility
+try:
+    from playbook_api import (
+        playbook_fetch, build_playbook_url, VALID_LEAGUES,
+        get_splits as pb_get_splits,
+        get_injuries as pb_get_injuries,
+        get_lines as pb_get_lines,
+        get_teams as pb_get_teams,
+        get_games as pb_get_games,
+        get_api_usage as pb_get_api_usage
+    )
+    PLAYBOOK_UTIL_AVAILABLE = True
+except ImportError:
+    PLAYBOOK_UTIL_AVAILABLE = False
+    logger.warning("playbook_api module not available - using inline fetch")
+
 # Redis import with fallback
 try:
     import redis
@@ -706,6 +722,62 @@ async def cache_clear():
     """Clear the API cache."""
     api_cache.clear()
     return {"status": "cache_cleared", "timestamp": datetime.now().isoformat()}
+
+
+@router.get("/playbook/usage")
+async def get_playbook_usage():
+    """
+    Get Playbook API plan and usage info.
+    Useful for monitoring API quota.
+    """
+    if not PLAYBOOK_API_KEY:
+        return {"error": "PLAYBOOK_API_KEY not configured", "status": "unavailable"}
+
+    try:
+        playbook_url = f"{PLAYBOOK_API_BASE}/me"
+        resp = await fetch_with_retries(
+            "GET", playbook_url,
+            params={"api_key": PLAYBOOK_API_KEY}
+        )
+
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            return {
+                "status": "ok",
+                "source": "playbook",
+                "data": data,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "status": "error",
+                "error": f"Playbook returned {resp.status_code if resp else 'no response'}",
+                "timestamp": datetime.now().isoformat()
+            }
+
+    except Exception as e:
+        logger.exception("Failed to fetch Playbook usage: %s", e)
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/playbook/health")
+async def get_playbook_health():
+    """Check Playbook API health status."""
+    try:
+        playbook_url = f"{PLAYBOOK_API_BASE}/health"
+        resp = await fetch_with_retries("GET", playbook_url)
+
+        if resp and resp.status_code == 200:
+            return {"status": "healthy", "playbook_status": resp.json() if resp.text else "ok"}
+        else:
+            return {"status": "unhealthy", "code": resp.status_code if resp else None}
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 @router.get("/sharp/{sport}")
