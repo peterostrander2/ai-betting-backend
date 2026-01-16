@@ -491,3 +491,162 @@ When providing file updates for PRs (especially for frontend repos), **always pr
 1. Check Railway logs
 2. Verify PORT is read via Python `os.environ.get()`
 3. Ensure `railway.toml` uses `python main.py`
+
+---
+
+## Session Log: January 16, 2026 - Pre-Launch Audit
+
+### What Was Done
+
+**1. Critical Auto-Grader Bug Fixes**
+Fixed 3 bugs that would have broken the self-improvement system in production:
+
+| Bug | File | Fix |
+|-----|------|-----|
+| Singleton not used | `live_data_router.py` | Changed all grader endpoints to use `get_grader()` instead of `AutoGrader()` |
+| Missing method | `auto_grader.py` | Added `get_audit_summary()` method |
+| Scheduler disconnected | `main.py` | Connected scheduler to auto_grader on startup |
+
+**2. Comprehensive System Audit**
+Verified all components are integrated:
+
+- **8 AI Models** in `advanced_ml_backend.py` - All present
+- **5 Context Features** in `context_layer.py` - All present
+- **10+ Esoteric Signals** in `esoteric_engine.py` - All present
+- **LSTM Brain** in `lstm_brain.py` - Working with TF fallback
+- **67 API Endpoints** in `live_data_router.py` - All verified
+
+**3. Commit Pushed**
+```
+fix: Critical auto-grader bugs for production launch
+```
+
+---
+
+## Launch Day Testing Checklist
+
+Run these tests before going live:
+
+### 1. Health Checks
+```bash
+# Backend health
+curl "https://web-production-7b2a.up.railway.app/health"
+
+# Live router health
+curl "https://web-production-7b2a.up.railway.app/live/health" -H "X-API-Key: YOUR_KEY"
+
+# API usage (check quotas)
+curl "https://web-production-7b2a.up.railway.app/live/api-health" -H "X-API-Key: YOUR_KEY"
+```
+
+### 2. Core Data Endpoints
+```bash
+# Best bets (SMASH Spots)
+curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba" -H "X-API-Key: YOUR_KEY"
+
+# Player props
+curl "https://web-production-7b2a.up.railway.app/live/props/nba" -H "X-API-Key: YOUR_KEY"
+
+# Splits
+curl "https://web-production-7b2a.up.railway.app/live/splits/nba" -H "X-API-Key: YOUR_KEY"
+
+# Lines
+curl "https://web-production-7b2a.up.railway.app/live/lines/nba" -H "X-API-Key: YOUR_KEY"
+```
+
+### 3. Self-Improvement System
+```bash
+# Grader status (should show available: true)
+curl "https://web-production-7b2a.up.railway.app/live/grader/status" -H "X-API-Key: YOUR_KEY"
+
+# Scheduler status (should show available: true)
+curl "https://web-production-7b2a.up.railway.app/live/scheduler/status" -H "X-API-Key: YOUR_KEY"
+
+# Current weights
+curl "https://web-production-7b2a.up.railway.app/live/grader/weights/nba" -H "X-API-Key: YOUR_KEY"
+
+# Performance metrics
+curl "https://web-production-7b2a.up.railway.app/live/grader/performance/nba" -H "X-API-Key: YOUR_KEY"
+
+# Daily report
+curl "https://web-production-7b2a.up.railway.app/live/grader/daily-report" -H "X-API-Key: YOUR_KEY"
+```
+
+### 4. Esoteric Features
+```bash
+# Today's energy
+curl "https://web-production-7b2a.up.railway.app/esoteric/today-energy"
+
+# Esoteric edge
+curl "https://web-production-7b2a.up.railway.app/live/esoteric-edge" -H "X-API-Key: YOUR_KEY"
+
+# Noosphere
+curl "https://web-production-7b2a.up.railway.app/live/noosphere/status" -H "X-API-Key: YOUR_KEY"
+```
+
+### 5. Betting Features
+```bash
+# Line shopping
+curl "https://web-production-7b2a.up.railway.app/live/line-shop/nba" -H "X-API-Key: YOUR_KEY"
+
+# Sportsbooks list
+curl "https://web-production-7b2a.up.railway.app/live/sportsbooks" -H "X-API-Key: YOUR_KEY"
+
+# Affiliate links
+curl "https://web-production-7b2a.up.railway.app/live/affiliate/links" -H "X-API-Key: YOUR_KEY"
+```
+
+### 6. Community Features
+```bash
+# Leaderboard
+curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H "X-API-Key: YOUR_KEY"
+```
+
+### Expected Results
+
+| Test | Expected |
+|------|----------|
+| `/health` | `{"status": "healthy"}` |
+| `/live/grader/status` | `{"available": true, "predictions_logged": N}` |
+| `/live/scheduler/status` | `{"available": true, "apscheduler_available": true}` |
+| `/live/best-bets/nba` | Returns `props` and `game_picks` arrays |
+| `/esoteric/today-energy` | Returns `betting_outlook` and `overall_energy` |
+
+### If Tests Fail
+
+1. Check Railway logs: `railway logs`
+2. Verify environment variables are set
+3. Check API quotas aren't exhausted
+4. Restart Railway deployment if needed
+
+---
+
+## System Architecture Summary
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    BOOKIE-O-EM v14.2                        │
+├─────────────────────────────────────────────────────────────┤
+│  main.py (FastAPI)                                          │
+│    ├── live_data_router.py (67 endpoints)                   │
+│    ├── scheduler_router (daily_scheduler.py)                │
+│    └── esoteric endpoint (/esoteric/today-energy)           │
+├─────────────────────────────────────────────────────────────┤
+│  PREDICTION ENGINE                                          │
+│    ├── advanced_ml_backend.py (8 AI Models)                 │
+│    ├── lstm_brain.py (Neural Network)                       │
+│    ├── context_layer.py (5 Context Features)                │
+│    └── esoteric_engine.py (10+ Esoteric Signals)            │
+├─────────────────────────────────────────────────────────────┤
+│  SELF-IMPROVEMENT                                           │
+│    ├── auto_grader.py (Feedback Loop)                       │
+│    │     └── get_grader() singleton                         │
+│    └── daily_scheduler.py (6 AM Audit)                      │
+├─────────────────────────────────────────────────────────────┤
+│  EXTERNAL APIs                                              │
+│    ├── Odds API (odds, lines, props)                        │
+│    └── Playbook API (splits, injuries, stats)               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
