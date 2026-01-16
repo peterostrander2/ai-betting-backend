@@ -650,3 +650,41 @@ curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H 
 ```
 
 ---
+
+## Code Simplifier Agent
+
+**Name:** code-simplifier
+**Model:** opus
+**Purpose:** Simplifies and refines code for clarity, consistency, and maintainability while preserving all functionality.
+
+### When to Use
+- After writing or modifying code
+- To refine recently touched code sections
+- To apply project standards consistently
+
+### Principles
+
+1. **Preserve Functionality**: Never change what code does - only how it does it
+2. **Apply Project Standards**: Follow CLAUDE.md coding standards
+3. **Enhance Clarity**: Reduce complexity, eliminate redundancy, improve naming
+4. **Maintain Balance**: Avoid over-simplification that reduces maintainability
+5. **Focus Scope**: Only refine recently modified code unless instructed otherwise
+
+### Code Standards
+
+- Use ES modules with proper import sorting
+- Prefer `function` keyword over arrow functions for top-level
+- Use explicit return type annotations
+- Avoid nested ternary operators - prefer switch/if-else
+- Choose clarity over brevity
+- Remove unnecessary comments that describe obvious code
+
+### What NOT to Do
+
+- Change functionality or outputs
+- Create overly clever solutions
+- Combine too many concerns into single functions
+- Remove helpful abstractions
+- Prioritize "fewer lines" over readability
+
+---
