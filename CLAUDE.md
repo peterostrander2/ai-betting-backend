@@ -689,6 +689,88 @@ curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H 
 
 ---
 
+## Session Log: January 16, 2026 - Vercel Skills + Backend Audit
+
+### What Was Done
+
+**1. Installed Vercel Agent Skills**
+Ran `npx add-skill vercel-labs/agent-skills` and installed to `~/.claude/skills/`:
+
+| Skill | Purpose |
+|-------|---------|
+| `react-best-practices` | 45 performance rules from Vercel Engineering |
+| `react-strict-rules` | Server Components default, no useEffect fetch |
+| `web-design-guidelines` | UI/accessibility compliance (100+ rules) |
+| `vercel-deploy-claimable` | One-click Vercel deployments |
+| `json-ui-composer` | JSON-only UI generation from catalogs |
+
+**2. Backend API Audit (76 Endpoints)**
+Audited all FastAPI route handlers:
+
+| File | Routes | Issues Found |
+|------|--------|--------------|
+| `main.py` | 7 | None |
+| `live_data_router.py` | 69 | Missing input validation |
+
+**3. Pydantic Validation Models Added**
+Created `models/api_models.py` with request validation:
+
+| Model | Validates |
+|-------|-----------|
+| `TrackBetRequest` | Sport codes, American odds format, required fields |
+| `GradeBetRequest` | WIN/LOSS/PUSH enum |
+| `ParlayLegRequest` | Odds format, sport, game_id |
+| `PlaceParlayRequest` | Sportsbook required, stake >= 0 |
+| `UserPreferencesRequest` | Nested notifications object |
+
+**4. Endpoints Updated with Validation**
+- `POST /bets/track` - Now validates odds (-110 valid, -50 invalid)
+- `POST /bets/grade/{bet_id}` - Enum validation
+- `POST /parlay/add` - Odds + sport validation
+- `POST /parlay/place` - Required fields
+- `POST /parlay/grade/{parlay_id}` - Enum validation
+- `POST /user/preferences/{user_id}` - Nested object handling
+
+**5. Node.js Dependencies Added**
+Installed for AI SDK integration:
+```
+@json-render/core, @json-render/react, react, zod, ai
+```
+
+**6. Documentation Updated**
+- Added all skills to CLAUDE.md
+- Added strict agent rules
+- Added React/Next.js handoff doc
+- Created `.claude/handoffs/react-nextjs-best-practices.md`
+
+### Branch Status
+
+**Branch:** `claude/add-vercel-agent-skills-PH207`
+**Status:** All changes committed and pushed
+**PR Needed:** Yes - create at https://github.com/peterostrander2/ai-betting-backend/compare/main...claude/add-vercel-agent-skills-PH207
+
+### Resume Checklist
+
+When you return:
+1. [ ] Create PR to merge to main (link above)
+2. [ ] Test validation on production after merge
+3. [ ] Frontend audit in separate session (bookie-member-app)
+
+### Files Changed This Session
+
+```
+models/api_models.py          (NEW - Pydantic models)
+models/__init__.py            (NEW - Package init)
+live_data_router.py           (MODIFIED - Validation added)
+CLAUDE.md                     (MODIFIED - Skills + session log)
+.gitignore                    (MODIFIED - Added node_modules/)
+package.json                  (NEW - Node deps)
+package-lock.json             (NEW - Lock file)
+.claude/handoffs/react-nextjs-best-practices.md (NEW)
+```
+
+---
+
 ## Vercel Agent Skills
 
 Five agent skills are installed in `~/.claude/skills/` for enhanced capabilities.
