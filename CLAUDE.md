@@ -1,5 +1,11 @@
 # CLAUDE.md - Project Instructions for AI Assistants
 
+## User Environment
+- **OS:** Mac
+- **Terminal:** Use Mac Terminal commands (no Windows-specific instructions)
+
+---
+
 ## Project Overview
 
 **Bookie-o-em** - AI Sports Prop Betting Backend
@@ -25,6 +31,24 @@
 1. You explain WHY it's better than our paid APIs (data not available, better quality, etc.)
 2. You get approval before implementing
 3. There's a clear benefit over what we're already paying for
+
+### Playbook API v1 Endpoints
+
+**Base URL:** `https://api.playbook-api.com/v1`
+**Auth:** `api_key` query parameter (NOT Bearer header)
+**Leagues:** NBA | NFL | CFB | MLB | NHL (uppercase)
+
+| Endpoint | Purpose | Required Params |
+|----------|---------|-----------------|
+| `/health` | Health check | none |
+| `/me` | Plan + usage info | `api_key` |
+| `/teams` | Team metadata + injuries | `league`, `api_key` |
+| `/injuries` | Injury report by team | `league`, `api_key` |
+| `/splits` | Public betting splits | `league`, `api_key` |
+| `/splits-history` | Historical splits | `league`, `date`, `api_key` |
+| `/odds-games` | Schedule + gameId list | `league`, `api_key` |
+| `/lines` | Current spread/total/ML | `league`, `api_key` |
+| `/games` | Game objects from splits | `league`, `date`, `api_key` |
 
 ---
 
@@ -194,8 +218,10 @@ port = int(os.environ.get("PORT", 8000))
 GET /                           # API info
 GET /health                     # Health check
 GET /live/health                # Router health
-GET /live/sharp/{sport}         # Sharp money (cached 5m)
+GET /live/sharp/{sport}         # Sharp money (derived from splits)
 GET /live/splits/{sport}        # Betting splits (cached 5m)
+GET /live/injuries/{sport}      # Injury report (Playbook + ESPN)
+GET /live/lines/{sport}         # Current lines spread/total/ML
 GET /live/props/{sport}         # Player props (cached 5m)
 GET /live/best-bets/{sport}     # AI best bets (cached 2m)
 GET /live/esoteric-edge         # Esoteric analysis

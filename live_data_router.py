@@ -85,12 +85,12 @@ else:
 
 ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
-# Sport mappings
+# Sport mappings - Playbook uses uppercase league names (NBA, NFL, MLB, NHL)
 SPORT_MAPPINGS = {
-    "nba": {"odds": "basketball_nba", "espn": "basketball/nba", "playbook": "nba"},
-    "nfl": {"odds": "americanfootball_nfl", "espn": "football/nfl", "playbook": "nfl"},
-    "mlb": {"odds": "baseball_mlb", "espn": "baseball/mlb", "playbook": "mlb"},
-    "nhl": {"odds": "icehockey_nhl", "espn": "hockey/nhl", "playbook": "nhl"},
+    "nba": {"odds": "basketball_nba", "espn": "basketball/nba", "playbook": "NBA"},
+    "nfl": {"odds": "americanfootball_nfl", "espn": "football/nfl", "playbook": "NFL"},
+    "mlb": {"odds": "baseball_mlb", "espn": "baseball/mlb", "playbook": "MLB"},
+    "nhl": {"odds": "icehockey_nhl", "espn": "hockey/nhl", "playbook": "NHL"},
 }
 
 # ============================================================================
@@ -734,32 +734,53 @@ async def get_sharp_money(sport: str):
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
 
-    # Try Playbook API first
-    try:
-        playbook_url = f"{PLAYBOOK_API_BASE}/sharp/{sport_config['playbook']}"
-        resp = await fetch_with_retries(
-            "GET", playbook_url,
-            headers={"Authorization": f"Bearer {PLAYBOOK_API_KEY}"}
-        )
+    # Derive sharp signals from Playbook splits data (sharp = money% differs significantly from ticket%)
+    if PLAYBOOK_API_KEY:
+        try:
+            playbook_url = f"{PLAYBOOK_API_BASE}/splits"
+            resp = await fetch_with_retries(
+                "GET", playbook_url,
+                params={"league": sport_config['playbook'], "api_key": PLAYBOOK_API_KEY}
+            )
 
-        if resp and resp.status_code == 200:
-            try:
-                json_body = resp.json()
-                games = json_body.get("games", [])
-                logger.info("Playbook sharp data retrieved for %s: %d games", sport, len(games))
-                result = {"sport": sport.upper(), "source": "playbook", "count": len(games), "data": games}
-                api_cache.set(cache_key, result)
-                return result
-            except ValueError as e:
-                logger.error("Failed to parse Playbook response: %s", e)
+            if resp and resp.status_code == 200:
+                try:
+                    json_body = resp.json()
+                    splits = json_body if isinstance(json_body, list) else json_body.get("data", json_body.get("games", []))
 
-        if resp and resp.status_code == 429:
-            raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
+                    # Derive sharp signals: when money% differs from ticket% by 10%+
+                    for game in splits:
+                        money_pct = game.get("money_pct", game.get("moneyPct", 50))
+                        ticket_pct = game.get("ticket_pct", game.get("ticketPct", 50))
+                        diff = abs(money_pct - ticket_pct)
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Playbook fetch failed for %s: %s", sport, e)
+                        if diff >= 10:  # 10%+ difference indicates sharp action
+                            sharp_side = "home" if money_pct > ticket_pct else "away"
+                            data.append({
+                                "game_id": game.get("id", game.get("gameId")),
+                                "home_team": game.get("home_team", game.get("homeTeam")),
+                                "away_team": game.get("away_team", game.get("awayTeam")),
+                                "sharp_side": sharp_side,
+                                "money_pct": money_pct,
+                                "ticket_pct": ticket_pct,
+                                "signal_strength": "STRONG" if diff >= 20 else "MODERATE"
+                            })
+
+                    if data:
+                        logger.info("Playbook sharp signals derived for %s: %d signals", sport, len(data))
+                        result = {"sport": sport.upper(), "source": "playbook", "count": len(data), "data": data}
+                        api_cache.set(cache_key, result)
+                        return result
+                except ValueError as e:
+                    logger.error("Failed to parse Playbook response: %s", e)
+
+            if resp and resp.status_code == 429:
+                raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("Playbook fetch failed for %s: %s", sport, e)
 
     # Fallback to Odds API variance analysis
     try:
@@ -853,32 +874,37 @@ async def get_splits(sport: str):
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
 
-    # Try Playbook API first
-    try:
-        playbook_url = f"{PLAYBOOK_API_BASE}/splits/{sport_config['playbook']}"
-        resp = await fetch_with_retries(
-            "GET", playbook_url,
-            headers={"Authorization": f"Bearer {PLAYBOOK_API_KEY}"}
-        )
+    # Try Playbook API first - uses /splits?league=NBA&api_key=... format
+    if PLAYBOOK_API_KEY:
+        try:
+            playbook_url = f"{PLAYBOOK_API_BASE}/splits"
+            resp = await fetch_with_retries(
+                "GET", playbook_url,
+                params={"league": sport_config['playbook'], "api_key": PLAYBOOK_API_KEY}
+            )
 
-        if resp and resp.status_code == 200:
-            try:
-                json_body = resp.json()
-                games = json_body.get("games", [])
-                logger.info("Playbook splits data retrieved for %s: %d games", sport, len(games))
-                result = {"sport": sport.upper(), "source": "playbook", "count": len(games), "data": games}
-                api_cache.set(cache_key, result)
-                return result
-            except ValueError as e:
-                logger.error("Failed to parse Playbook splits response: %s", e)
+            if resp and resp.status_code == 200:
+                try:
+                    json_body = resp.json()
+                    # Playbook returns array of games directly or in "data" key
+                    games = json_body if isinstance(json_body, list) else json_body.get("data", json_body.get("games", []))
+                    logger.info("Playbook splits data retrieved for %s: %d games", sport, len(games))
+                    result = {"sport": sport.upper(), "source": "playbook", "count": len(games), "data": games}
+                    api_cache.set(cache_key, result)
+                    return result
+                except ValueError as e:
+                    logger.error("Failed to parse Playbook splits response: %s", e)
 
-        if resp and resp.status_code == 429:
-            raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
+            if resp and resp.status_code == 429:
+                raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Playbook splits fetch failed for %s: %s", sport, e)
+            if resp:
+                logger.warning("Playbook splits returned %s for %s", resp.status_code, sport)
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("Playbook splits fetch failed for %s: %s", sport, e)
 
     # Fallback to Odds API with deterministic estimation
     try:
@@ -930,6 +956,208 @@ async def get_splits(sport: str):
         raise HTTPException(status_code=500, detail="Internal error processing splits data")
 
     result = {"sport": sport.upper(), "source": "estimated", "count": len(data), "data": data}
+    api_cache.set(cache_key, result)
+    return result
+
+
+@router.get("/injuries/{sport}")
+async def get_injuries(sport: str):
+    """
+    Get injury report for a sport using Playbook API.
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "source": "playbook" | "espn",
+        "count": N,
+        "data": [...]
+    }
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Check cache first
+    cache_key = f"injuries:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+    data = []
+
+    # Try Playbook API first - /injuries?league=NBA&api_key=...
+    if PLAYBOOK_API_KEY:
+        try:
+            playbook_url = f"{PLAYBOOK_API_BASE}/injuries"
+            resp = await fetch_with_retries(
+                "GET", playbook_url,
+                params={"league": sport_config['playbook'], "api_key": PLAYBOOK_API_KEY}
+            )
+
+            if resp and resp.status_code == 200:
+                try:
+                    json_body = resp.json()
+                    injuries = json_body if isinstance(json_body, list) else json_body.get("data", json_body.get("injuries", []))
+                    logger.info("Playbook injuries retrieved for %s: %d records", sport, len(injuries))
+                    result = {"sport": sport.upper(), "source": "playbook", "count": len(injuries), "data": injuries}
+                    api_cache.set(cache_key, result)
+                    return result
+                except ValueError as e:
+                    logger.error("Failed to parse Playbook injuries response: %s", e)
+
+            if resp and resp.status_code == 429:
+                raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("Playbook injuries fetch failed for %s: %s", sport, e)
+
+    # Fallback to ESPN injuries
+    try:
+        espn_url = f"{ESPN_API_BASE}/{sport_config['espn']}/injuries"
+        resp = await fetch_with_retries("GET", espn_url)
+
+        if resp and resp.status_code == 200:
+            try:
+                json_body = resp.json()
+                for team in json_body.get("teams", []):
+                    team_name = team.get("team", {}).get("displayName", "Unknown")
+                    for injury in team.get("injuries", []):
+                        data.append({
+                            "team": team_name,
+                            "player": injury.get("athlete", {}).get("displayName", "Unknown"),
+                            "position": injury.get("athlete", {}).get("position", {}).get("abbreviation", ""),
+                            "status": injury.get("status", "Unknown"),
+                            "description": injury.get("details", {}).get("detail", ""),
+                            "date": injury.get("date", "")
+                        })
+                logger.info("ESPN injuries retrieved for %s: %d records", sport, len(data))
+            except (ValueError, KeyError) as e:
+                logger.error("Failed to parse ESPN injuries: %s", e)
+        else:
+            logger.warning("ESPN injuries returned %s for %s", resp.status_code if resp else "no response", sport)
+
+    except Exception as e:
+        logger.exception("ESPN injuries fetch failed for %s: %s", sport, e)
+
+    result = {"sport": sport.upper(), "source": "espn" if data else "none", "count": len(data), "data": data}
+    api_cache.set(cache_key, result)
+    return result
+
+
+@router.get("/lines/{sport}")
+async def get_lines(sport: str):
+    """
+    Get current betting lines (spread/total/ML) using Playbook API.
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "source": "playbook" | "odds_api",
+        "count": N,
+        "data": [...]
+    }
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Check cache first
+    cache_key = f"lines:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+    data = []
+
+    # Try Playbook API first - /lines?league=NBA&api_key=...
+    if PLAYBOOK_API_KEY:
+        try:
+            playbook_url = f"{PLAYBOOK_API_BASE}/lines"
+            resp = await fetch_with_retries(
+                "GET", playbook_url,
+                params={"league": sport_config['playbook'], "api_key": PLAYBOOK_API_KEY}
+            )
+
+            if resp and resp.status_code == 200:
+                try:
+                    json_body = resp.json()
+                    lines = json_body if isinstance(json_body, list) else json_body.get("data", json_body.get("lines", []))
+                    logger.info("Playbook lines retrieved for %s: %d games", sport, len(lines))
+                    result = {"sport": sport.upper(), "source": "playbook", "count": len(lines), "data": lines}
+                    api_cache.set(cache_key, result)
+                    return result
+                except ValueError as e:
+                    logger.error("Failed to parse Playbook lines response: %s", e)
+
+            if resp and resp.status_code == 429:
+                raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("Playbook lines fetch failed for %s: %s", sport, e)
+
+    # Fallback to Odds API
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "spreads,totals,h2h",
+                "oddsFormat": "american"
+            }
+        )
+
+        if resp and resp.status_code == 200:
+            games = resp.json()
+            for game in games:
+                game_lines = {
+                    "game_id": game.get("id"),
+                    "home_team": game.get("home_team"),
+                    "away_team": game.get("away_team"),
+                    "commence_time": game.get("commence_time"),
+                    "spreads": [],
+                    "totals": [],
+                    "moneylines": []
+                }
+
+                for bm in game.get("bookmakers", []):
+                    book = bm.get("key")
+                    for market in bm.get("markets", []):
+                        market_key = market.get("key")
+                        for outcome in market.get("outcomes", []):
+                            entry = {
+                                "book": book,
+                                "team": outcome.get("name"),
+                                "price": outcome.get("price"),
+                                "point": outcome.get("point")
+                            }
+                            if market_key == "spreads":
+                                game_lines["spreads"].append(entry)
+                            elif market_key == "totals":
+                                game_lines["totals"].append(entry)
+                            elif market_key == "h2h":
+                                game_lines["moneylines"].append(entry)
+
+                data.append(game_lines)
+
+            logger.info("Odds API lines retrieved for %s: %d games", sport, len(data))
+
+        elif resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Odds API lines fetch failed for %s: %s", sport, e)
+
+    result = {"sport": sport.upper(), "source": "odds_api" if data else "none", "count": len(data), "data": data}
     api_cache.set(cache_key, result)
     return result
 
