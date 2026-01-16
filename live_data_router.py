@@ -780,16 +780,85 @@ async def get_playbook_health():
         return {"status": "error", "error": str(e)}
 
 
+def calculate_usage_warning(remaining: int, used: int) -> Dict[str, Any]:
+    """
+    Calculate usage warning level based on remaining vs used.
+
+    Returns warning levels:
+    - HEALTHY: < 25% used
+    - CAUTION_25: 25-49% used
+    - CAUTION_50: 50-74% used
+    - CAUTION_75: 75-89% used
+    - CRITICAL: >= 90% used (10% or less remaining)
+    """
+    if remaining is None or used is None:
+        return {"level": "UNKNOWN", "message": "Could not determine usage", "percent_used": None}
+
+    total = remaining + used
+    if total == 0:
+        return {"level": "UNKNOWN", "message": "No quota data", "percent_used": None}
+
+    percent_used = round((used / total) * 100, 1)
+    percent_remaining = round((remaining / total) * 100, 1)
+
+    if percent_remaining <= 10:
+        return {
+            "level": "CRITICAL",
+            "emoji": "🚨",
+            "message": f"CRITICAL: Only {percent_remaining}% remaining! Consider upgrading NOW.",
+            "percent_used": percent_used,
+            "percent_remaining": percent_remaining,
+            "action_needed": True
+        }
+    elif percent_used >= 75:
+        return {
+            "level": "CAUTION_75",
+            "emoji": "🟠",
+            "message": f"Warning: {percent_used}% used. Running low on API calls.",
+            "percent_used": percent_used,
+            "percent_remaining": percent_remaining,
+            "action_needed": True
+        }
+    elif percent_used >= 50:
+        return {
+            "level": "CAUTION_50",
+            "emoji": "🟡",
+            "message": f"Notice: {percent_used}% used. Half of monthly quota consumed.",
+            "percent_used": percent_used,
+            "percent_remaining": percent_remaining,
+            "action_needed": False
+        }
+    elif percent_used >= 25:
+        return {
+            "level": "CAUTION_25",
+            "emoji": "🟢",
+            "message": f"Info: {percent_used}% used. Healthy usage so far.",
+            "percent_used": percent_used,
+            "percent_remaining": percent_remaining,
+            "action_needed": False
+        }
+    else:
+        return {
+            "level": "HEALTHY",
+            "emoji": "✅",
+            "message": f"Healthy: Only {percent_used}% used. Plenty of quota remaining.",
+            "percent_used": percent_used,
+            "percent_remaining": percent_remaining,
+            "action_needed": False
+        }
+
+
 @router.get("/odds-api/usage")
 async def get_odds_api_usage():
     """
-    Get Odds API usage info from response headers.
+    Get Odds API usage info from response headers with threshold warnings.
 
-    The Odds API returns quota info in headers:
-    - x-requests-remaining: Requests left this month
-    - x-requests-used: Requests used this month
-
-    Monitor this to avoid hitting limits!
+    Warning Levels:
+    - HEALTHY: < 25% used
+    - CAUTION_25: 25-49% used
+    - CAUTION_50: 50-74% used
+    - CAUTION_75: 75-89% used
+    - CRITICAL: >= 90% used (10% or less remaining)
     """
     if not ODDS_API_KEY:
         return {"error": "ODDS_API_KEY not configured", "status": "unavailable"}
@@ -807,14 +876,22 @@ async def get_odds_api_usage():
             requests_remaining = resp.headers.get("x-requests-remaining")
             requests_used = resp.headers.get("x-requests-used")
 
+            remaining = int(requests_remaining) if requests_remaining else None
+            used = int(requests_used) if requests_used else None
+
+            # Calculate warning level
+            warning = calculate_usage_warning(remaining, used)
+
             return {
                 "status": "ok",
                 "source": "odds_api",
                 "usage": {
-                    "requests_remaining": int(requests_remaining) if requests_remaining else None,
-                    "requests_used": int(requests_used) if requests_used else None,
+                    "requests_remaining": remaining,
+                    "requests_used": used,
+                    "total_quota": (remaining + used) if remaining and used else None,
                     "note": "Resets monthly. Check https://the-odds-api.com for plan limits."
                 },
+                "warning": warning,
                 "timestamp": datetime.now().isoformat()
             }
         else:
@@ -836,13 +913,27 @@ async def get_odds_api_usage():
 @router.get("/api-usage")
 async def get_all_api_usage():
     """
-    Get combined usage for all paid APIs (Playbook + Odds API).
-    Use this to monitor quota and decide if you need to upgrade plans.
+    Get combined usage for all paid APIs (Playbook + Odds API) with threshold warnings.
+
+    Warning Levels for each API:
+    - HEALTHY: < 25% used
+    - CAUTION_25: 25-49% used
+    - CAUTION_50: 50-74% used
+    - CAUTION_75: 75-89% used
+    - CRITICAL: >= 90% used (10% or less remaining)
+
+    Overall status shows the WORST status across all APIs.
     """
     result = {
         "timestamp": datetime.now().isoformat(),
-        "apis": {}
+        "apis": {},
+        "overall_status": "HEALTHY",
+        "action_needed": False,
+        "alerts": []
     }
+
+    warning_priority = {"CRITICAL": 5, "CAUTION_75": 4, "CAUTION_50": 3, "CAUTION_25": 2, "HEALTHY": 1, "UNKNOWN": 0}
+    worst_level = "HEALTHY"
 
     # Get Playbook usage
     if PLAYBOOK_API_KEY:
@@ -853,7 +944,23 @@ async def get_all_api_usage():
                 params={"api_key": PLAYBOOK_API_KEY}
             )
             if resp and resp.status_code == 200:
-                result["apis"]["playbook"] = {"status": "ok", "data": resp.json()}
+                data = resp.json()
+                result["apis"]["playbook"] = {"status": "ok", "data": data}
+                # Check if Playbook returns usage info
+                if "usage" in data or "requests" in data:
+                    pb_used = data.get("usage", {}).get("used", data.get("requests", {}).get("used", 0))
+                    pb_limit = data.get("usage", {}).get("limit", data.get("requests", {}).get("limit", 1000))
+                    pb_remaining = pb_limit - pb_used
+                    pb_warning = calculate_usage_warning(pb_remaining, pb_used)
+                    result["apis"]["playbook"]["warning"] = pb_warning
+                    if warning_priority.get(pb_warning["level"], 0) > warning_priority.get(worst_level, 0):
+                        worst_level = pb_warning["level"]
+                    if pb_warning.get("action_needed"):
+                        result["alerts"].append(f"Playbook: {pb_warning['message']}")
+            elif resp and resp.status_code == 429:
+                result["apis"]["playbook"] = {"status": "rate_limited", "warning": {"level": "CRITICAL", "message": "Rate limited!"}}
+                worst_level = "CRITICAL"
+                result["alerts"].append("🚨 Playbook API is RATE LIMITED!")
             else:
                 result["apis"]["playbook"] = {"status": "error", "code": resp.status_code if resp else None}
         except Exception as e:
@@ -870,11 +977,22 @@ async def get_all_api_usage():
                 params={"apiKey": ODDS_API_KEY}
             )
             if resp:
+                remaining = int(resp.headers.get("x-requests-remaining", 0))
+                used = int(resp.headers.get("x-requests-used", 0))
+                warning = calculate_usage_warning(remaining, used)
+
                 result["apis"]["odds_api"] = {
                     "status": "ok",
-                    "requests_remaining": resp.headers.get("x-requests-remaining"),
-                    "requests_used": resp.headers.get("x-requests-used")
+                    "requests_remaining": remaining,
+                    "requests_used": used,
+                    "total_quota": remaining + used,
+                    "warning": warning
                 }
+
+                if warning_priority.get(warning["level"], 0) > warning_priority.get(worst_level, 0):
+                    worst_level = warning["level"]
+                if warning.get("action_needed"):
+                    result["alerts"].append(f"Odds API: {warning['message']}")
             else:
                 result["apis"]["odds_api"] = {"status": "error", "error": "No response"}
         except Exception as e:
@@ -882,7 +1000,48 @@ async def get_all_api_usage():
     else:
         result["apis"]["odds_api"] = {"status": "not_configured"}
 
+    # Set overall status
+    result["overall_status"] = worst_level
+    result["action_needed"] = worst_level in ["CRITICAL", "CAUTION_75"]
+
+    # Add summary message
+    if worst_level == "CRITICAL":
+        result["summary"] = "🚨 CRITICAL: One or more APIs running very low! Upgrade needed."
+    elif worst_level == "CAUTION_75":
+        result["summary"] = "🟠 WARNING: High API usage. Consider upgrading soon."
+    elif worst_level == "CAUTION_50":
+        result["summary"] = "🟡 NOTICE: 50%+ of API quota used this month."
+    elif worst_level == "CAUTION_25":
+        result["summary"] = "🟢 HEALTHY: Normal API usage levels."
+    else:
+        result["summary"] = "✅ HEALTHY: API usage looks good!"
+
     return result
+
+
+@router.get("/api-health")
+async def get_api_health_quick():
+    """
+    Quick health check for all APIs - lightweight status for dashboards.
+
+    Returns simple status:
+    - overall: HEALTHY | CAUTION | CRITICAL
+    - action_needed: true/false
+    - alerts: list of any warnings
+
+    Use /api-usage for full details.
+    """
+    # Get full usage data
+    full_usage = await get_all_api_usage()
+
+    return {
+        "overall_status": full_usage["overall_status"],
+        "action_needed": full_usage["action_needed"],
+        "summary": full_usage.get("summary", ""),
+        "alerts": full_usage["alerts"],
+        "timestamp": full_usage["timestamp"],
+        "detail_endpoint": "/live/api-usage"
+    }
 
 
 @router.get("/sharp/{sport}")
