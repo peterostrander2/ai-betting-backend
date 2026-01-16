@@ -145,6 +145,68 @@ SMASH PICK = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
 
 ---
 
+## Self-Improvement System (Auto-Grader)
+
+The system learns and improves daily through the **Auto-Grader** feedback loop.
+
+### How It Works
+
+1. **Log Predictions** - Each pick is stored with adjustment factors used
+2. **Grade Results** - After games, actual stats are compared to predictions
+3. **Calculate Bias** - System identifies if it's over/under predicting
+4. **Adjust Weights** - Weights are corrected to reduce future errors
+5. **Persist Learning** - New weights saved for tomorrow's picks
+
+### Key Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/live/grader/status` | GET | Check grader status |
+| `/live/grader/weights/{sport}` | GET | Current learned weights |
+| `/live/grader/bias/{sport}` | GET | See prediction bias |
+| `/live/grader/performance/{sport}` | GET | Hit rate & MAE metrics |
+| `/live/grader/run-audit` | POST | Trigger daily audit |
+| `/live/grader/adjust-weights/{sport}` | POST | Manual weight adjustment |
+
+### Bias Interpretation
+
+| Bias Range | Status | Action |
+|------------|--------|--------|
+| -1.0 to +1.0 | ✅ Healthy | None needed |
+| -2.0 to -1.0 or +1.0 to +2.0 | 🟡 Monitor | Watch next audit |
+| Beyond ±2.0 | 🚨 Critical | Immediate adjustment |
+
+- **Positive bias** = Predicting too HIGH
+- **Negative bias** = Predicting too LOW
+
+### Target Metrics
+
+| Sport | Target MAE | Profitable Hit Rate |
+|-------|------------|---------------------|
+| NBA/NCAAB | < 3.0 pts | > 52% |
+| NFL passing | < 15.0 yds | > 52% |
+| All props | - | > 55% (🔥 SMASH) |
+
+### Daily Audit
+
+Run this daily after games complete to improve picks:
+```bash
+curl -X POST "https://web-production-7b2a.up.railway.app/live/grader/run-audit" \
+  -H "X-API-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"days_back": 1, "apply_changes": true}'
+```
+
+### Check Performance
+
+See how picks are doing over the last 7 days:
+```bash
+curl "https://web-production-7b2a.up.railway.app/live/grader/performance/nba?days_back=7" \
+  -H "X-API-Key: YOUR_KEY"
+```
+
+---
+
 ## Coding Standards
 
 ### Python/FastAPI

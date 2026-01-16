@@ -2267,6 +2267,195 @@ async def grader_weights(sport: str):
         raise HTTPException(status_code=503, detail="Auto-grader module not available")
 
 
+@router.post("/grader/run-audit")
+async def run_grader_audit(audit_config: Dict[str, Any] = None):
+    """
+    Run the daily audit to analyze bias and adjust weights.
+
+    This is the self-improvement mechanism:
+    1. Analyzes yesterday's predictions vs actual outcomes
+    2. Calculates bias per prediction factor
+    3. Adjusts weights to correct systematic errors
+    4. Persists learned weights for future picks
+
+    Request body (optional):
+    {
+        "days_back": 1,        # How many days to analyze (default: 1)
+        "apply_changes": true  # Whether to apply weight changes (default: true)
+    }
+    """
+    try:
+        from auto_grader import AutoGrader
+        grader = AutoGrader()
+
+        config = audit_config or {}
+        days_back = config.get("days_back", 1)
+        apply_changes = config.get("apply_changes", True)
+
+        # Run full audit
+        results = grader.run_daily_audit(days_back=days_back)
+
+        return {
+            "status": "audit_complete",
+            "days_analyzed": days_back,
+            "changes_applied": apply_changes,
+            "results": results,
+            "timestamp": datetime.now().isoformat(),
+            "note": "Weights have been adjusted based on prediction performance"
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+    except Exception as e:
+        logger.exception("Audit failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/grader/bias/{sport}")
+async def get_prediction_bias(sport: str, stat_type: str = "all", days_back: int = 1):
+    """
+    Get prediction bias analysis for a sport.
+
+    Shows how accurate our predictions have been and where we're over/under predicting.
+
+    Bias interpretation:
+    - Positive bias = we're predicting too HIGH
+    - Negative bias = we're predicting too LOW
+    - Healthy range is -1.0 to +1.0
+    """
+    try:
+        from auto_grader import AutoGrader
+        grader = AutoGrader()
+
+        bias = grader.calculate_bias(sport, stat_type, days_back)
+
+        return {
+            "sport": sport.upper(),
+            "stat_type": stat_type,
+            "days_analyzed": days_back,
+            "bias": bias,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+
+@router.post("/grader/adjust-weights/{sport}")
+async def adjust_sport_weights(sport: str, adjust_config: Dict[str, Any] = None):
+    """
+    Manually trigger weight adjustment for a sport.
+
+    Request body (optional):
+    {
+        "stat_type": "points",    # Stat type to adjust (default: points)
+        "days_back": 1,           # Days of data to analyze (default: 1)
+        "apply_changes": true     # Whether to apply (default: true)
+    }
+    """
+    try:
+        from auto_grader import AutoGrader
+        grader = AutoGrader()
+
+        config = adjust_config or {}
+        stat_type = config.get("stat_type", "points")
+        days_back = config.get("days_back", 1)
+        apply_changes = config.get("apply_changes", True)
+
+        result = grader.adjust_weights(
+            sport=sport,
+            stat_type=stat_type,
+            days_back=days_back,
+            apply_changes=apply_changes
+        )
+
+        return {
+            "status": "adjustment_complete" if apply_changes else "preview",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+
+@router.get("/grader/performance/{sport}")
+async def get_grader_performance(sport: str, days_back: int = 7):
+    """
+    Get prediction performance metrics for a sport.
+
+    Shows hit rate, MAE, and trends over time.
+    Use this to monitor how well our picks are performing.
+    """
+    try:
+        from auto_grader import AutoGrader
+        grader = AutoGrader()
+
+        sport_upper = sport.upper()
+        predictions = grader.predictions.get(sport_upper, [])
+
+        # Filter to graded predictions within timeframe
+        cutoff = datetime.now() - timedelta(days=days_back)
+        graded = [
+            p for p in predictions
+            if p.actual_value is not None and
+            datetime.fromisoformat(p.timestamp) >= cutoff
+        ]
+
+        if not graded:
+            return {
+                "sport": sport_upper,
+                "days_analyzed": days_back,
+                "graded_count": 0,
+                "message": "No graded predictions in this timeframe",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Calculate metrics
+        hits = sum(1 for p in graded if p.hit)
+        total = len(graded)
+        hit_rate = hits / total if total > 0 else 0
+
+        errors = [abs(p.error) for p in graded if p.error is not None]
+        mae = sum(errors) / len(errors) if errors else 0
+
+        # Group by stat type
+        by_stat = {}
+        for p in graded:
+            if p.stat_type not in by_stat:
+                by_stat[p.stat_type] = {"hits": 0, "total": 0, "errors": []}
+            by_stat[p.stat_type]["total"] += 1
+            if p.hit:
+                by_stat[p.stat_type]["hits"] += 1
+            if p.error is not None:
+                by_stat[p.stat_type]["errors"].append(abs(p.error))
+
+        stat_breakdown = {}
+        for stat, data in by_stat.items():
+            stat_breakdown[stat] = {
+                "hit_rate": round(data["hits"] / data["total"] * 100, 1) if data["total"] > 0 else 0,
+                "total_picks": data["total"],
+                "mae": round(sum(data["errors"]) / len(data["errors"]), 2) if data["errors"] else 0
+            }
+
+        return {
+            "sport": sport_upper,
+            "days_analyzed": days_back,
+            "graded_count": total,
+            "overall": {
+                "hit_rate": round(hit_rate * 100, 1),
+                "mae": round(mae, 2),
+                "profitable": hit_rate > 0.52,  # Need 52%+ to profit at -110 odds
+                "status": "🔥 PROFITABLE" if hit_rate > 0.55 else ("✅ BREAK-EVEN" if hit_rate > 0.48 else "⚠️ NEEDS IMPROVEMENT")
+            },
+            "by_stat_type": stat_breakdown,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+
 @router.get("/scheduler/status")
 async def scheduler_status():
     """Check daily scheduler status."""
