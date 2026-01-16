@@ -38,6 +38,14 @@ except ImportError:
     PLAYBOOK_UTIL_AVAILABLE = False
     logger.warning("playbook_api module not available - using inline fetch")
 
+# Import Auto-Grader singleton (CRITICAL: use get_grader() not AutoGrader())
+try:
+    from auto_grader import get_grader, AutoGrader
+    AUTO_GRADER_AVAILABLE = True
+except ImportError:
+    AUTO_GRADER_AVAILABLE = False
+    logger.warning("auto_grader module not available")
+
 # Redis import with fallback
 try:
     import redis
@@ -2222,49 +2230,47 @@ async def lstm_status():
 @router.get("/grader/status")
 async def grader_status():
     """Check auto-grader status and current weights."""
-    try:
-        from auto_grader import AutoGrader
-        grader = AutoGrader()
-        return {
-            "available": True,
-            "supported_sports": grader.SUPPORTED_SPORTS,
-            "predictions_logged": sum(len(p) for p in grader.predictions.values()),
-            "weights_loaded": bool(grader.weights),
-            "note": "Use /grader/weights/{sport} to see current weights",
-            "timestamp": datetime.now().isoformat()
-        }
-    except ImportError as e:
+    if not AUTO_GRADER_AVAILABLE:
         return {
             "available": False,
-            "error": str(e),
             "note": "Auto-grader module not available",
             "timestamp": datetime.now().isoformat()
         }
+
+    grader = get_grader()  # Use singleton - CRITICAL for data persistence!
+    return {
+        "available": True,
+        "supported_sports": grader.SUPPORTED_SPORTS,
+        "predictions_logged": sum(len(p) for p in grader.predictions.values()),
+        "weights_loaded": bool(grader.weights),
+        "storage_path": grader.storage_path,
+        "note": "Use /grader/weights/{sport} to see current weights",
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 @router.get("/grader/weights/{sport}")
 async def grader_weights(sport: str):
     """Get current prediction weights for a sport."""
-    try:
-        from auto_grader import AutoGrader
-        from dataclasses import asdict
-        grader = AutoGrader()
-        sport_upper = sport.upper()
-
-        if sport_upper not in grader.weights:
-            raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
-
-        weights = {}
-        for stat_type, config in grader.weights[sport_upper].items():
-            weights[stat_type] = asdict(config)
-
-        return {
-            "sport": sport_upper,
-            "weights": weights,
-            "timestamp": datetime.now().isoformat()
-        }
-    except ImportError:
+    if not AUTO_GRADER_AVAILABLE:
         raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+    from dataclasses import asdict
+    grader = get_grader()  # Use singleton
+    sport_upper = sport.upper()
+
+    if sport_upper not in grader.weights:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    weights = {}
+    for stat_type, config in grader.weights[sport_upper].items():
+        weights[stat_type] = asdict(config)
+
+    return {
+        "sport": sport_upper,
+        "weights": weights,
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 @router.post("/grader/run-audit")
@@ -2284,9 +2290,11 @@ async def run_grader_audit(audit_config: Dict[str, Any] = None):
         "apply_changes": true  # Whether to apply weight changes (default: true)
     }
     """
+    if not AUTO_GRADER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
     try:
-        from auto_grader import AutoGrader
-        grader = AutoGrader()
+        grader = get_grader()  # Use singleton
 
         config = audit_config or {}
         days_back = config.get("days_back", 1)
@@ -2304,8 +2312,6 @@ async def run_grader_audit(audit_config: Dict[str, Any] = None):
             "note": "Weights have been adjusted based on prediction performance"
         }
 
-    except ImportError:
-        raise HTTPException(status_code=503, detail="Auto-grader module not available")
     except Exception as e:
         logger.exception("Audit failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -2323,22 +2329,19 @@ async def get_prediction_bias(sport: str, stat_type: str = "all", days_back: int
     - Negative bias = we're predicting too LOW
     - Healthy range is -1.0 to +1.0
     """
-    try:
-        from auto_grader import AutoGrader
-        grader = AutoGrader()
-
-        bias = grader.calculate_bias(sport, stat_type, days_back)
-
-        return {
-            "sport": sport.upper(),
-            "stat_type": stat_type,
-            "days_analyzed": days_back,
-            "bias": bias,
-            "timestamp": datetime.now().isoformat()
-        }
-
-    except ImportError:
+    if not AUTO_GRADER_AVAILABLE:
         raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+    grader = get_grader()  # Use singleton
+    bias = grader.calculate_bias(sport, stat_type, days_back)
+
+    return {
+        "sport": sport.upper(),
+        "stat_type": stat_type,
+        "days_analyzed": days_back,
+        "bias": bias,
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 @router.post("/grader/adjust-weights/{sport}")
@@ -2353,30 +2356,28 @@ async def adjust_sport_weights(sport: str, adjust_config: Dict[str, Any] = None)
         "apply_changes": true     # Whether to apply (default: true)
     }
     """
-    try:
-        from auto_grader import AutoGrader
-        grader = AutoGrader()
-
-        config = adjust_config or {}
-        stat_type = config.get("stat_type", "points")
-        days_back = config.get("days_back", 1)
-        apply_changes = config.get("apply_changes", True)
-
-        result = grader.adjust_weights(
-            sport=sport,
-            stat_type=stat_type,
-            days_back=days_back,
-            apply_changes=apply_changes
-        )
-
-        return {
-            "status": "adjustment_complete" if apply_changes else "preview",
-            "result": result,
-            "timestamp": datetime.now().isoformat()
-        }
-
-    except ImportError:
+    if not AUTO_GRADER_AVAILABLE:
         raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+    grader = get_grader()  # Use singleton
+
+    config = adjust_config or {}
+    stat_type = config.get("stat_type", "points")
+    days_back = config.get("days_back", 1)
+    apply_changes = config.get("apply_changes", True)
+
+    result = grader.adjust_weights(
+        sport=sport,
+        stat_type=stat_type,
+        days_back=days_back,
+        apply_changes=apply_changes
+    )
+
+    return {
+        "status": "adjustment_complete" if apply_changes else "preview",
+        "result": result,
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 @router.get("/grader/performance/{sport}")
@@ -2387,73 +2388,71 @@ async def get_grader_performance(sport: str, days_back: int = 7):
     Shows hit rate, MAE, and trends over time.
     Use this to monitor how well our picks are performing.
     """
-    try:
-        from auto_grader import AutoGrader
-        grader = AutoGrader()
+    if not AUTO_GRADER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
 
-        sport_upper = sport.upper()
-        predictions = grader.predictions.get(sport_upper, [])
+    grader = get_grader()  # Use singleton
 
-        # Filter to graded predictions within timeframe
-        cutoff = datetime.now() - timedelta(days=days_back)
-        graded = [
-            p for p in predictions
-            if p.actual_value is not None and
-            datetime.fromisoformat(p.timestamp) >= cutoff
-        ]
+    sport_upper = sport.upper()
+    predictions = grader.predictions.get(sport_upper, [])
 
-        if not graded:
-            return {
-                "sport": sport_upper,
-                "days_analyzed": days_back,
-                "graded_count": 0,
-                "message": "No graded predictions in this timeframe",
-                "timestamp": datetime.now().isoformat()
-            }
+    # Filter to graded predictions within timeframe
+    cutoff = datetime.now() - timedelta(days=days_back)
+    graded = [
+        p for p in predictions
+        if p.actual_value is not None and
+        datetime.fromisoformat(p.timestamp) >= cutoff
+    ]
 
-        # Calculate metrics
-        hits = sum(1 for p in graded if p.hit)
-        total = len(graded)
-        hit_rate = hits / total if total > 0 else 0
-
-        errors = [abs(p.error) for p in graded if p.error is not None]
-        mae = sum(errors) / len(errors) if errors else 0
-
-        # Group by stat type
-        by_stat = {}
-        for p in graded:
-            if p.stat_type not in by_stat:
-                by_stat[p.stat_type] = {"hits": 0, "total": 0, "errors": []}
-            by_stat[p.stat_type]["total"] += 1
-            if p.hit:
-                by_stat[p.stat_type]["hits"] += 1
-            if p.error is not None:
-                by_stat[p.stat_type]["errors"].append(abs(p.error))
-
-        stat_breakdown = {}
-        for stat, data in by_stat.items():
-            stat_breakdown[stat] = {
-                "hit_rate": round(data["hits"] / data["total"] * 100, 1) if data["total"] > 0 else 0,
-                "total_picks": data["total"],
-                "mae": round(sum(data["errors"]) / len(data["errors"]), 2) if data["errors"] else 0
-            }
-
+    if not graded:
         return {
             "sport": sport_upper,
             "days_analyzed": days_back,
-            "graded_count": total,
-            "overall": {
-                "hit_rate": round(hit_rate * 100, 1),
-                "mae": round(mae, 2),
-                "profitable": hit_rate > 0.52,  # Need 52%+ to profit at -110 odds
-                "status": "🔥 PROFITABLE" if hit_rate > 0.55 else ("✅ BREAK-EVEN" if hit_rate > 0.48 else "⚠️ NEEDS IMPROVEMENT")
-            },
-            "by_stat_type": stat_breakdown,
+            "graded_count": 0,
+            "message": "No graded predictions in this timeframe",
             "timestamp": datetime.now().isoformat()
         }
 
-    except ImportError:
-        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+    # Calculate metrics
+    hits = sum(1 for p in graded if p.hit)
+    total = len(graded)
+    hit_rate = hits / total if total > 0 else 0
+
+    errors = [abs(p.error) for p in graded if p.error is not None]
+    mae = sum(errors) / len(errors) if errors else 0
+
+    # Group by stat type
+    by_stat = {}
+    for p in graded:
+        if p.stat_type not in by_stat:
+            by_stat[p.stat_type] = {"hits": 0, "total": 0, "errors": []}
+        by_stat[p.stat_type]["total"] += 1
+        if p.hit:
+            by_stat[p.stat_type]["hits"] += 1
+        if p.error is not None:
+            by_stat[p.stat_type]["errors"].append(abs(p.error))
+
+    stat_breakdown = {}
+    for stat, data in by_stat.items():
+        stat_breakdown[stat] = {
+            "hit_rate": round(data["hits"] / data["total"] * 100, 1) if data["total"] > 0 else 0,
+            "total_picks": data["total"],
+            "mae": round(sum(data["errors"]) / len(data["errors"]), 2) if data["errors"] else 0
+        }
+
+    return {
+        "sport": sport_upper,
+        "days_analyzed": days_back,
+        "graded_count": total,
+        "overall": {
+            "hit_rate": round(hit_rate * 100, 1),
+            "mae": round(mae, 2),
+            "profitable": hit_rate > 0.52,  # Need 52%+ to profit at -110 odds
+            "status": "🔥 PROFITABLE" if hit_rate > 0.55 else ("✅ BREAK-EVEN" if hit_rate > 0.48 else "⚠️ NEEDS IMPROVEMENT")
+        },
+        "by_stat_type": stat_breakdown,
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 @router.get("/grader/daily-report")
@@ -2469,9 +2468,11 @@ async def get_daily_community_report(days_back: int = 1):
 
     Share this every morning to build trust and transparency!
     """
+    if not AUTO_GRADER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
     try:
-        from auto_grader import AutoGrader
-        grader = AutoGrader()
+        grader = get_grader()  # Use singleton
 
         report_date = (datetime.now() - timedelta(days=days_back)).strftime("%B %d, %Y")
         today = datetime.now().strftime("%B %d, %Y")
@@ -2598,8 +2599,6 @@ Whether we win or lose, we're always improving! 💪
 
         return report
 
-    except ImportError:
-        raise HTTPException(status_code=503, detail="Auto-grader module not available")
     except Exception as e:
         logger.exception("Failed to generate daily report: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

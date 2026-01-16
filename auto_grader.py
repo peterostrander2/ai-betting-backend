@@ -605,6 +605,50 @@ class AutoGrader:
                 }
         return result
 
+    def get_audit_summary(self, sport: str, days_back: int = 1) -> Dict:
+        """
+        Get audit summary for a sport.
+
+        Returns summary stats about predictions and performance.
+        Called by DailyScheduler after grading.
+        """
+        sport = sport.upper()
+        cutoff = datetime.now() - timedelta(days=days_back)
+
+        predictions = self.predictions.get(sport, [])
+
+        # Filter to recent predictions
+        recent = [
+            p for p in predictions
+            if datetime.fromisoformat(p.timestamp) >= cutoff
+        ]
+
+        # Count graded predictions
+        graded = [p for p in recent if p.actual_value is not None]
+        ungraded = [p for p in recent if p.actual_value is None]
+
+        # Calculate hit rate
+        hits = sum(1 for p in graded if p.hit)
+        hit_rate = (hits / len(graded)) if graded else 0
+
+        # Calculate MAE
+        errors = [abs(p.error) for p in graded if p.error is not None]
+        mae = sum(errors) / len(errors) if errors else 0
+
+        return {
+            "sport": sport,
+            "days_analyzed": days_back,
+            "total_predictions": len(recent),
+            "total_graded": len(graded),
+            "total_ungraded": len(ungraded),
+            "hits": hits,
+            "misses": len(graded) - hits,
+            "hit_rate": round(hit_rate * 100, 1),
+            "mae": round(mae, 2),
+            "profitable": hit_rate > 0.52,
+            "timestamp": datetime.now().isoformat()
+        }
+
 
 # ============================================
 # CONTEXT FEATURE CALCULATOR (Nano Banana Upgrade)
