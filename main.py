@@ -22,6 +22,7 @@ from fastapi.responses import Response
 from live_data_router import router as live_router, close_shared_client
 import database
 from daily_scheduler import scheduler_router, init_scheduler, get_scheduler
+from auto_grader import get_grader
 from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILABLE
 
 app = FastAPI(
@@ -47,8 +48,10 @@ app.include_router(scheduler_router)
 @app.on_event("startup")
 async def startup_event():
     database.init_database()
-    # Initialize and start daily scheduler
-    scheduler = init_scheduler()
+    # Initialize and start daily scheduler with auto_grader connection
+    # CRITICAL: Pass grader so scheduler can adjust weights on audit
+    grader = get_grader()
+    scheduler = init_scheduler(auto_grader=grader)
     scheduler.start()
 
 # Shutdown event - clean up shared httpx client and scheduler
