@@ -790,6 +790,8 @@ npx add-skill vercel-labs/agent-skills
 
 ## Agent Rules (Strict)
 
+**Do not stop at recommendations — implement the fixes in code.**
+
 If working on React/Next:
 - Apply Vercel React Best Practices skill rules.
 - Prefer Server Components by default.
