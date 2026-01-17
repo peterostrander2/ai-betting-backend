@@ -1,73 +1,98 @@
-# Backend Complete Handoff Document
+# Bookie-o-em Backend Complete Handoff Document
+**Version:** v14.1 - PRODUCTION_HARDENED  
+**Repository:** peterostrander2/ai-betting-backend  
+**Generated:** January 2026  
 
-## Project Overview
-This document serves as a comprehensive guide to the AI Betting Backend, outlining all significant components, systems, and implementation details to ensure a smooth handoff and ongoing development.
+## 🎯 Project Overview  
+- Project description: Bookie-o-em is a production-grade AI-powered sports betting intelligence platform  
+- Tech Stack: FastAPI, httpx, TensorFlow/Keras, PostgreSQL, Railway deployment  
+- Python 3.12.3  
+- Key features: Live odds, sharp money detection, LSTM predictions, 18 esoteric modules, JARVIS Savant Engine  
 
-## Architecture
-The architecture of the AI Betting Backend is centered around microservices, incorporating API gateways and multiple service layers to enhance reliability and scalability.  
-Key components include:
-- Web Server
-- Load Balancer
-- Data Storage Layer
-- Caching Layer
+## 📂 Core Architecture  
+### Entry Point: main.py (v14.1)  
+### Active Production Files table with all 38+ files  
+### Legacy Files section  
 
-![Architecture Diagram](#)
+## 🚀 Live API Endpoints  
+Complete list of all endpoints:  
+- GET / - API info  
+- GET /health - Health check  
+- GET /live/sharp/{sport} - Sharp money  
+- GET /live/splits/{sport} - Betting splits  
+- GET /live/props/{sport} - Player props  
+- GET /live/best-bets/{sport} - AI scored best bets  
+- GET /live/esoteric-edge - Esoteric analysis  
+- GET /esoteric/today-energy - Energy reading  
+Supported sports: nba, nfl, mlb, nhl  
 
-## API Endpoints
-All key API endpoints for interaction with the backend services:
-- **GET /api/v1/* **: Retrieves data from various services.
-- **POST /api/v1/* **: Submits new data or actions to the backend services.
-- **PUT /api/v1/* **: Updates existing data.
-- **DELETE /api/v1/* **: Deletes specified resources.
-- **Authentication:** Token-based authentication for secure access.
+## 🤖 JARVIS SAVANT ENGINE v7.4 - THE CORE INTELLIGENCE  
+Complete detailed section including:  
+### THE IMMORTAL: 2178 mathematical proof  
+### 8 JARVIS Triggers with table (2178, 201, 33, 93, 322, 666, 888, 369)  
+### Gematria System (Simple, Reverse, Jewish)  
+### Phase 1: Confluence Core  
+- Public Fade Signal  
+- Mid-Spread Signal (Goldilocks Zone 4-9)  
+- Large Spread Trap  
+### Confluence Calculation formula  
+### 67/33 Blended Probability  
+### Bet Tier System (GOLD_STAR 2u, EDGE_LEAN 1u, ML_DOG_LOTTO 0.5u, MONITOR, PASS)  
+### NHL Dog Protocol  
 
-## JARVIS Savant Engine
-The JARVIS Savant Engine is responsible for intelligent decision-making within the system, leveraging advanced algorithms and real-time data processing.
-- **Immortal Number:** 2178 - A unique identifier critical to the engine's functionality.
-- **Gematria:** Implementation details for calculations based on Jewish numerology.
-- **Confluence Scoring:** Metrics and algorithms that determine the scoring system's depending on bet outcomes.
+## 🔮 18 Esoteric Edge Modules  
+Complete breakdown:  
+### NOOSPHERE VELOCITY (v14.0) - 3 modules  
+### GANN PHYSICS (v13.0) - 3 modules   
+### OMNI-GLITCH (v11.0) - 6 modules  
+### SCALAR-SAVANT (v10.4) - 6 modules  
 
-## 18 Esoteric Modules
-A breakdown of the 18 distinct modules that contribute to the system's overall functionality:
-1. Module 1: Description...
-2. Module 2: Description...
-...
-18. Module 18: Description...
+## 🧠 Machine Learning Architecture  
+### LSTM Neural Network (lstm_brain.py)  
+### Context Layer (context_layer.py) with 90+ features  
+### Legacy Ensemble Models (8 models)  
+### Training Pipeline  
 
-## LSTM Machine Learning
-The backend utilizes Long Short-Term Memory (LSTM) networks to enhance prediction capabilities in betting outcomes. Key implementation details include:
-- Description of training datasets.
-- Accuracy metrics and evaluation.
+## 🎯 Click-to-Bet Implementation  
+Complete section with:  
+### User Flow diagram  
+### 2-Click Handoff (not 1-click)  
+### Deep Link Technology  
+### What We CAN'T Do (no sportsbook APIs)  
+### Sportsbook Modal  
+### Mobile vs Desktop behavior  
 
-## Click-to-Bet Implementation
-The user interface allows users to easily place bets through a seamless click-to-bet experience, including:
-- User flow diagrams.
-- Integration with payment gateways.
+## 🗄️ Database Schema  
+All PostgreSQL tables: games, predictions, esoteric_signals, grading_results, model_weights, player_birth_charts  
 
-## Database Schema
-The following schema outlines the database structure that supports the functionalities of the backend:
-- User Table:  
-  | Field           | Type    | Description                  |
-  |----------------|---------|------------------------------|
-  | user_id        | INT     | Unique identifier for user.  |
-  | email          | VARCHAR | User email address.          |
-- Bets Table:  
-  | Field           | Type    | Description                  |
-  | bet_id         | INT     | Unique identifier for bet.   |
-  | user_id        | INT     | ID of the user who placed it.|
+## 🌐 External API Integrations  
+- The Odds API  
+- Playbook Sports API  
+- NOAA Space Weather API  
 
-## Deployment on Railway
-Instructions on deploying the application on Railway, including:
-- Environment variable settings.
-- Deployment commands.
-- Troubleshooting tips.
+## 🐳 Deployment (Railway)  
+Complete deployment guide with Procfile, runtime.txt, railway.toml, environment variables  
 
-## Documentation References
-- [API Documentation](#)
-- [Architecture Decisions](#)
-- [Module Specifications](#)
-- [Machine Learning Model Data](#)
+## 📦 Dependencies  
+requirements.txt and requirements-minimal.txt  
 
----
+## 🧪 Testing  
+test_api.py coverage  
 
-This document is structured to provide a holistic view of the backend systems, highlighting essential components that ensure successful implementations and future scalability.
+## 📈 Metrics & Monitoring  
+Performance tracking, logging, analytics  
+
+## 🔐 Security & Best Practices  
+
+## 🚦 Version History table (v14.1 to v10.1)  
+
+## 🛠️ Common Operations  
+Start local development, train LSTM, run grading  
+
+## 🐛 Known Issues & Limitations  
+
+## 💡 Pro Tips  
+
+## 🔮 Future Vision (5 phases)  
+
+Include all code examples, formulas, tables, and comprehensive explanations.
