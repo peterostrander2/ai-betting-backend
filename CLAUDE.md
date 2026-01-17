@@ -877,5 +877,60 @@ This is a **Python/FastAPI backend deployed on Railway**, not a React/Next.js ap
 | Logging | Structured logging, no print statements |
 | Connection pooling | Shared httpx.AsyncClient |
 | Retry with backoff | 2 retries, exponential backoff |
+| Auth on mutations | All POST endpoints require X-API-Key |
+| Limit validation | History endpoints capped at 500 |
+| Parallel fetching | Consolidated endpoints use asyncio.gather() |
+
+---
+
+## Session Log: January 17, 2026 - Backend API Audit
+
+### What Was Done
+
+**1. Complete Endpoint Inventory (83 routes)**
+
+| File | Endpoints | Status |
+|------|-----------|--------|
+| `main.py` | 6 | Clean |
+| `live_data_router.py` | 72 active, 6 deprecated | Fixed |
+
+**2. Security Fixes (P0 Critical)**
+
+Added `verify_api_key` auth to all mutating endpoints:
+- `POST /bets/track`
+- `POST /bets/grade/{bet_id}`
+- `POST /parlay/add`
+- `POST /parlay/place`
+- `POST /parlay/grade/{parlay_id}`
+- `POST /community/vote`
+- `POST /affiliate/configure`
+
+**3. DoS Prevention (P0 Critical)**
+
+Added max limit validation to history endpoints:
+- `GET /bets/history` - Max 500 results
+- `GET /parlay/history` - Max 500 results
+
+**4. Verified Waterfall Elimination**
+
+Consolidated endpoints correctly use `asyncio.gather()`:
+- `/sport-dashboard/{sport}` - 5 parallel fetches
+- `/game-details/{sport}/{game_id}` - 5 parallel fetches
+- `/parlay-builder-init/{sport}` - 2 parallel fetches
+
+### Issues Identified (Future Work)
+
+| Priority | Issue | Status |
+|----------|-------|--------|
+| P2 | In-memory storage leak risk | Monitor |
+| P2 | No pagination on lists | TODO |
+| P3 | Response schema inconsistency | Minor |
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - Auth + validation)
+CLAUDE.md             (MODIFIED - Session log)
+```
 
 ---

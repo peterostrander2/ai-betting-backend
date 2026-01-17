@@ -4407,7 +4407,10 @@ async def save_user_preferences(user_id: str, prefs: UserPreferencesRequest if P
 
 
 @router.post("/bets/track")
-async def track_bet(bet_data: TrackBetRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
+async def track_bet(
+    bet_data: TrackBetRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any],
+    auth: bool = Depends(verify_api_key)
+):
     """
     Track a bet that was placed through the click-to-bet flow.
 
@@ -4475,7 +4478,11 @@ async def track_bet(bet_data: TrackBetRequest if PYDANTIC_MODELS_AVAILABLE else 
 
 
 @router.post("/bets/grade/{bet_id}")
-async def grade_bet(bet_id: str, result_data: GradeBetRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
+async def grade_bet(
+    bet_id: str,
+    result_data: GradeBetRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any],
+    auth: bool = Depends(verify_api_key)
+):
     """
     Grade a tracked bet with actual result.
 
@@ -4518,7 +4525,8 @@ async def get_bet_history(
     user_id: Optional[str] = None,
     sport: Optional[str] = None,
     status: Optional[str] = None,
-    limit: int = 50
+    limit: int = 50,
+    auth: bool = Depends(verify_api_key)
 ):
     """
     Get bet history with optional filters.
@@ -4527,7 +4535,10 @@ async def get_bet_history(
     - user_id: Filter by user
     - sport: Filter by sport (NBA, NFL, etc.)
     - status: Filter by status (PENDING, GRADED)
+    - limit: Max 500 results (default 50)
     """
+    # Validate and cap limit to prevent DoS
+    limit = min(max(1, limit), 500)
     filtered_bets = _tracked_bets.copy()
 
     if user_id:
@@ -4711,7 +4722,10 @@ async def get_parlay_slip(user_id: str):
 
 
 @router.post("/parlay/add")
-async def add_parlay_leg(leg_data: ParlayLegRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
+async def add_parlay_leg(
+    leg_data: ParlayLegRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any],
+    auth: bool = Depends(verify_api_key)
+):
     """
     Add a leg to a user's parlay slip.
 
@@ -4839,7 +4853,10 @@ async def clear_parlay_slip(user_id: str):
 
 
 @router.post("/parlay/place")
-async def place_parlay(parlay_data: PlaceParlayRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
+async def place_parlay(
+    parlay_data: PlaceParlayRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any],
+    auth: bool = Depends(verify_api_key)
+):
     """
     Track a parlay bet that was placed.
 
@@ -4914,7 +4931,11 @@ async def place_parlay(parlay_data: PlaceParlayRequest if PYDANTIC_MODELS_AVAILA
 
 
 @router.post("/parlay/grade/{parlay_id}")
-async def grade_parlay(parlay_id: str, grade_data: GradeParlayRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
+async def grade_parlay(
+    parlay_id: str,
+    grade_data: GradeParlayRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any],
+    auth: bool = Depends(verify_api_key)
+):
     """
     Grade a placed parlay with WIN, LOSS, or PUSH.
 
@@ -4956,7 +4977,8 @@ async def grade_parlay(parlay_id: str, grade_data: GradeParlayRequest if PYDANTI
 async def get_parlay_history(
     user_id: Optional[str] = None,
     status: Optional[str] = None,
-    limit: int = 50
+    limit: int = 50,
+    auth: bool = Depends(verify_api_key)
 ):
     """
     Get parlay history with stats.
@@ -4964,7 +4986,10 @@ async def get_parlay_history(
     Supports filtering by:
     - user_id: Filter by user
     - status: Filter by status (PENDING, GRADED)
+    - limit: Max 500 results (default 50)
     """
+    # Validate and cap limit to prevent DoS
+    limit = min(max(1, limit), 500)
     filtered = _placed_parlays.copy()
 
     if user_id:
@@ -5169,7 +5194,10 @@ async def get_community_votes(game_id: str):
 
 
 @router.post("/community/vote")
-async def submit_community_vote(vote_data: Dict[str, Any]):
+async def submit_community_vote(
+    vote_data: Dict[str, Any],
+    auth: bool = Depends(verify_api_key)
+):
     """
     Submit a community vote for Man vs Machine.
 
@@ -5289,7 +5317,10 @@ async def get_affiliate_links(sport: str = "nba"):
 
 
 @router.post("/affiliate/configure")
-async def configure_affiliate_link(config_data: Dict[str, Any]):
+async def configure_affiliate_link(
+    config_data: Dict[str, Any],
+    auth: bool = Depends(verify_api_key)
+):
     """
     Configure an affiliate link for a sportsbook.
 
