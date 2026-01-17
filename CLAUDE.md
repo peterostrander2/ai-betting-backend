@@ -381,6 +381,35 @@ GET /live/gann-physics-status   # GANN physics
 GET /esoteric/today-energy      # Daily energy
 ```
 
+### Consolidated Endpoints (Server-Side Fetching)
+
+**Use these endpoints to reduce client-side waterfalls. Each consolidates multiple API calls into one.**
+
+```
+GET /live/sport-dashboard/{sport}              # Dashboard: best-bets + splits + lines + injuries + sharp (6→1)
+GET /live/game-details/{sport}/{game_id}       # Game view: lines + props + sharp + injuries + AI pick (5→1)
+GET /live/parlay-builder-init/{sport}?user_id= # Parlay: recommended props + all props + correlations (3→1)
+```
+
+| Endpoint | Replaces | Cache TTL | Use Case |
+|----------|----------|-----------|----------|
+| `/sport-dashboard/{sport}` | 6 endpoints | 2m | Dashboard page load |
+| `/game-details/{sport}/{game_id}` | 5 endpoints | 2m | Game detail modal |
+| `/parlay-builder-init/{sport}` | 3 endpoints | 3m | Parlay builder init |
+
+**Response Schema - sport-dashboard:**
+```json
+{
+  "sport": "NBA",
+  "best_bets": { "props": [], "game_picks": [] },
+  "market_overview": { "lines": [], "splits": [], "sharp_signals": [] },
+  "context": { "injuries": [] },
+  "daily_energy": {...},
+  "timestamp": "ISO",
+  "cache_info": { "hit": false, "sources": {...} }
+}
+```
+
 ### Click-to-Bet Endpoints v2.0
 ```
 GET  /live/sportsbooks                    # List 8 supported sportsbooks
@@ -903,5 +932,82 @@ If working on React/Next:
 - Ask: "Can this be server-only?" before writing client code.
 
 **Global Skill:** These rules are also available globally via `~/.claude/skills/react-strict-rules/`
+
+---
+
+## Session Log: January 17, 2026 - Server-Side Data Fetching
+
+### What Was Done
+
+**1. Created Consolidated Endpoints**
+
+Added 3 new endpoints to reduce client-side API waterfalls:
+
+| Endpoint | Replaces | Improvement |
+|----------|----------|-------------|
+| `GET /live/sport-dashboard/{sport}` | 6 calls (best-bets, splits, lines, injuries, sharp, props) | 83% reduction |
+| `GET /live/game-details/{sport}/{game_id}` | 5 calls (lines, props, sharp, injuries, best-bets) | 80% reduction |
+| `GET /live/parlay-builder-init/{sport}` | 3 calls (best-bets, props, correlations) | 67% reduction |
+
+**Implementation Details:**
+- Uses `asyncio.gather()` to fetch all data in parallel server-side
+- Graceful error handling - returns partial data if individual fetches fail
+- Caches consolidated response (2-3 minute TTL)
+- User-specific data (parlay slip) fetched separately to maintain cache efficiency
+
+**2. Marked `/learning/*` Endpoints as Deprecated**
+
+All 6 endpoints marked with `deprecated=True`:
+- `/learning/log-pick` → Use `/grader/*`
+- `/learning/grade-pick` → Use `/grader/*`
+- `/learning/performance` → Use `/grader/performance/{sport}`
+- `/learning/weights` → Use `/grader/weights/{sport}`
+- `/learning/adjust-weights` → Use `/grader/adjust-weights/{sport}`
+- `/learning/recent-picks` → Use `/grader/*`
+
+Will be removed in v15.0.
+
+**3. Added Helper Functions**
+- `get_parlay_correlations()` - Static correlation matrix for SGP
+- `calculate_parlay_odds_internal()` - Parlay odds calculation helper
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - Added 3 consolidated endpoints, deprecated /learning/*)
+CLAUDE.md             (MODIFIED - Documented new endpoints + session log)
+```
+
+### Testing
+
+```bash
+# Test consolidated dashboard endpoint
+curl "https://web-production-7b2a.up.railway.app/live/sport-dashboard/nba" -H "X-API-Key: YOUR_KEY"
+
+# Test game details endpoint
+curl "https://web-production-7b2a.up.railway.app/live/game-details/nba/GAME_ID" -H "X-API-Key: YOUR_KEY"
+
+# Test parlay builder init
+curl "https://web-production-7b2a.up.railway.app/live/parlay-builder-init/nba?user_id=test123" -H "X-API-Key: YOUR_KEY"
+```
+
+### Frontend Integration
+
+Update frontend to use consolidated endpoints:
+
+**Before (6 calls):**
+```javascript
+const bestBets = await fetch('/live/best-bets/nba');
+const splits = await fetch('/live/splits/nba');
+const lines = await fetch('/live/lines/nba');
+const injuries = await fetch('/live/injuries/nba');
+const sharp = await fetch('/live/sharp/nba');
+```
+
+**After (1 call):**
+```javascript
+const dashboard = await fetch('/live/sport-dashboard/nba');
+// All data in: dashboard.best_bets, dashboard.market_overview, dashboard.context
+```
 
 ---

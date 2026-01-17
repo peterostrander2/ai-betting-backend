@@ -4087,12 +4087,16 @@ async def get_retrograde_status():
 
 
 # ============================================================================
-# PHASE 3: LEARNING LOOP ENDPOINTS
+# PHASE 3: LEARNING LOOP ENDPOINTS (DEPRECATED)
+# ============================================================================
+# DEPRECATED: Use /grader/* endpoints instead. These will be removed in v15.0.
 # ============================================================================
 
-@router.post("/learning/log-pick")
+@router.post("/learning/log-pick", deprecated=True)
 async def log_esoteric_pick(pick_data: Dict[str, Any]):
     """
+    DEPRECATED: Use /grader/* endpoints for prediction tracking.
+
     Log a pick for learning loop tracking.
 
     Request Body:
@@ -4152,9 +4156,11 @@ async def log_esoteric_pick(pick_data: Dict[str, Any]):
     }
 
 
-@router.post("/learning/grade-pick")
+@router.post("/learning/grade-pick", deprecated=True)
 async def grade_esoteric_pick(grade_data: Dict[str, Any]):
     """
+    DEPRECATED: Use /grader/* endpoints for prediction grading.
+
     Grade a pick with actual result.
 
     Request Body:
@@ -4181,9 +4187,11 @@ async def grade_esoteric_pick(grade_data: Dict[str, Any]):
     return grade_result
 
 
-@router.get("/learning/performance")
+@router.get("/learning/performance", deprecated=True)
 async def get_learning_performance(days_back: int = 30):
     """
+    DEPRECATED: Use /grader/performance/{sport} instead.
+
     Get esoteric learning loop performance summary.
 
     Shows:
@@ -4199,9 +4207,9 @@ async def get_learning_performance(days_back: int = 30):
     return loop.get_performance(days_back)
 
 
-@router.get("/learning/weights")
+@router.get("/learning/weights", deprecated=True)
 async def get_learning_weights():
-    """Get current learned weights for esoteric signals."""
+    """DEPRECATED: Use /grader/weights/{sport} instead. Get current learned weights for esoteric signals."""
     loop = get_esoteric_loop()
     if not loop:
         raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
@@ -4209,9 +4217,11 @@ async def get_learning_weights():
     return loop.get_weights()
 
 
-@router.post("/learning/adjust-weights")
+@router.post("/learning/adjust-weights", deprecated=True)
 async def adjust_learning_weights(learning_rate: float = 0.05):
     """
+    DEPRECATED: Use /grader/adjust-weights/{sport} instead.
+
     Trigger weight adjustment based on historical performance.
 
     Uses gradient-based adjustment:
@@ -4225,9 +4235,9 @@ async def adjust_learning_weights(learning_rate: float = 0.05):
     return loop.adjust_weights(learning_rate)
 
 
-@router.get("/learning/recent-picks")
+@router.get("/learning/recent-picks", deprecated=True)
 async def get_recent_picks(limit: int = 20):
-    """Get recent esoteric picks for review."""
+    """DEPRECATED: Use /grader/* endpoints instead. Get recent esoteric picks for review."""
     loop = get_esoteric_loop()
     if not loop:
         raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
@@ -5359,6 +5369,406 @@ def generate_enhanced_deep_link(book_key: str, sport: str, game_id: str, game_da
         "app_scheme": config.get("app_scheme", ""),
         "sport_path": sport_path,
         "note": f"Opens {config['name']} {sport.upper()} page"
+    }
+
+
+# ============================================================================
+# CONSOLIDATED ENDPOINTS (Server-Side Data Fetching)
+# Reduces client-side waterfalls by combining multiple API calls into one
+# ============================================================================
+
+@router.get("/sport-dashboard/{sport}")
+async def get_sport_dashboard(sport: str, auth: bool = Depends(verify_api_key)):
+    """
+    Consolidated endpoint for sport dashboard page.
+    Replaces 6 separate API calls with a single request.
+
+    Combines: best-bets, splits, lines, props, injuries, sharp
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "best_bets": { props: [], game_picks: [] },
+        "market_overview": {
+            "lines": [...],
+            "splits": [...],
+            "sharp_signals": [...]
+        },
+        "context": {
+            "injuries": [...],
+            "props": [...]
+        },
+        "daily_energy": {...},
+        "timestamp": "ISO timestamp",
+        "cache_info": { sources: {...} }
+    }
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Check cache first
+    cache_key = f"sport-dashboard:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        cached["cache_info"] = {"hit": True}
+        return cached
+
+    # Fetch all data in parallel
+    try:
+        results = await asyncio.gather(
+            get_best_bets(sport),
+            get_splits(sport),
+            get_lines(sport),
+            get_injuries(sport),
+            get_sharp_money(sport),
+            return_exceptions=True
+        )
+
+        best_bets, splits, lines, injuries, sharp = results
+
+        # Handle any exceptions gracefully
+        cache_sources = {}
+
+        if isinstance(best_bets, Exception):
+            logger.warning("sport-dashboard: best_bets failed: %s", best_bets)
+            best_bets = {"props": [], "game_picks": []}
+            cache_sources["best_bets"] = "error"
+        else:
+            cache_sources["best_bets"] = best_bets.get("source", "unknown")
+
+        if isinstance(splits, Exception):
+            logger.warning("sport-dashboard: splits failed: %s", splits)
+            splits = {"data": []}
+            cache_sources["splits"] = "error"
+        else:
+            cache_sources["splits"] = splits.get("source", "unknown")
+
+        if isinstance(lines, Exception):
+            logger.warning("sport-dashboard: lines failed: %s", lines)
+            lines = {"data": []}
+            cache_sources["lines"] = "error"
+        else:
+            cache_sources["lines"] = lines.get("source", "unknown")
+
+        if isinstance(injuries, Exception):
+            logger.warning("sport-dashboard: injuries failed: %s", injuries)
+            injuries = {"data": []}
+            cache_sources["injuries"] = "error"
+        else:
+            cache_sources["injuries"] = injuries.get("source", "unknown")
+
+        if isinstance(sharp, Exception):
+            logger.warning("sport-dashboard: sharp failed: %s", sharp)
+            sharp = {"data": []}
+            cache_sources["sharp"] = "error"
+        else:
+            cache_sources["sharp"] = sharp.get("source", "unknown")
+
+        result = {
+            "sport": sport.upper(),
+            "best_bets": {
+                "props": best_bets.get("props", []),
+                "game_picks": best_bets.get("game_picks", [])
+            },
+            "market_overview": {
+                "lines": lines.get("data", []),
+                "splits": splits.get("data", []),
+                "sharp_signals": sharp.get("data", [])
+            },
+            "context": {
+                "injuries": injuries.get("data", [])
+            },
+            "daily_energy": best_bets.get("daily_energy", get_daily_energy()),
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "cache_info": {"hit": False, "sources": cache_sources}
+        }
+
+        # Cache for 2 minutes (limited by best-bets TTL)
+        api_cache.set(cache_key, result, ttl=120)
+        return result
+
+    except Exception as e:
+        logger.exception("sport-dashboard failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Dashboard fetch failed: {str(e)}")
+
+
+@router.get("/game-details/{sport}/{game_id}")
+async def get_game_details(sport: str, game_id: str, auth: bool = Depends(verify_api_key)):
+    """
+    Consolidated endpoint for single game detail view.
+    Replaces 4+ separate API calls with a single request.
+
+    Combines: lines, props (filtered), sharp signals, injuries for specific game
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "game_id": "abc123",
+        "game": { home_team, away_team, commence_time },
+        "lines": { spreads: [], totals: [], moneylines: [] },
+        "props": [...],
+        "sharp_signals": {...},
+        "injuries": { home: [], away: [] },
+        "ai_pick": {...},
+        "timestamp": "ISO timestamp"
+    }
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Check cache first
+    cache_key = f"game-details:{sport_lower}:{game_id}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    # Fetch all data in parallel
+    try:
+        results = await asyncio.gather(
+            get_lines(sport),
+            get_props(sport),
+            get_sharp_money(sport),
+            get_injuries(sport),
+            get_best_bets(sport),
+            return_exceptions=True
+        )
+
+        lines_data, props_data, sharp_data, injuries_data, best_bets_data = results
+
+        # Find specific game in lines
+        game_info = None
+        game_lines = {"spreads": [], "totals": [], "moneylines": []}
+
+        if not isinstance(lines_data, Exception):
+            for game in lines_data.get("data", []):
+                if game.get("game_id") == game_id or game.get("id") == game_id:
+                    game_info = {
+                        "home_team": game.get("home_team"),
+                        "away_team": game.get("away_team"),
+                        "commence_time": game.get("commence_time")
+                    }
+                    game_lines = {
+                        "spreads": game.get("spreads", []),
+                        "totals": game.get("totals", []),
+                        "moneylines": game.get("moneylines", [])
+                    }
+                    break
+
+        # Filter props for this game
+        game_props = []
+        if not isinstance(props_data, Exception):
+            for prop in props_data.get("data", []):
+                if prop.get("game_id") == game_id or prop.get("event_id") == game_id:
+                    game_props.append(prop)
+
+        # Find sharp signal for this game
+        game_sharp = {}
+        if not isinstance(sharp_data, Exception):
+            for signal in sharp_data.get("data", []):
+                if signal.get("game_id") == game_id:
+                    game_sharp = signal
+                    break
+
+        # Filter injuries for this game's teams
+        game_injuries = {"home": [], "away": []}
+        if not isinstance(injuries_data, Exception) and game_info:
+            for inj in injuries_data.get("data", []):
+                team = inj.get("team", "")
+                if team == game_info.get("home_team"):
+                    game_injuries["home"].append(inj)
+                elif team == game_info.get("away_team"):
+                    game_injuries["away"].append(inj)
+
+        # Find AI pick for this game
+        ai_pick = None
+        if not isinstance(best_bets_data, Exception):
+            for pick in best_bets_data.get("game_picks", []):
+                if pick.get("game_id") == game_id:
+                    ai_pick = pick
+                    break
+            # Also check props
+            for prop in best_bets_data.get("props", []):
+                if prop.get("game_id") == game_id or prop.get("event_id") == game_id:
+                    if ai_pick is None:
+                        ai_pick = {"props": [prop]}
+                    elif "props" in ai_pick:
+                        ai_pick["props"].append(prop)
+                    else:
+                        ai_pick["props"] = [prop]
+
+        result = {
+            "sport": sport.upper(),
+            "game_id": game_id,
+            "game": game_info or {"home_team": "Unknown", "away_team": "Unknown"},
+            "lines": game_lines,
+            "props": game_props,
+            "sharp_signals": game_sharp,
+            "injuries": game_injuries,
+            "ai_pick": ai_pick,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+
+        # Cache for 2 minutes
+        api_cache.set(cache_key, result, ttl=120)
+        return result
+
+    except Exception as e:
+        logger.exception("game-details failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Game details fetch failed: {str(e)}")
+
+
+@router.get("/parlay-builder-init/{sport}")
+async def get_parlay_builder_init(
+    sport: str,
+    user_id: Optional[str] = None,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    Consolidated endpoint for parlay builder page initialization.
+    Replaces 3-4 separate API calls with a single request.
+
+    Combines: best-bets (recommended props), props (full market), correlations, user parlay
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "recommended_props": [...],
+        "all_props": [...],
+        "correlations": {...},
+        "current_parlay": { legs: [], calculated_odds: null },
+        "user_history": { recent_parlays: [] },
+        "timestamp": "ISO timestamp"
+    }
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Check cache first (only cache non-user-specific data)
+    cache_key = f"parlay-builder:{sport_lower}"
+    cached_base = api_cache.get(cache_key)
+
+    # Fetch base data if not cached
+    if not cached_base:
+        try:
+            results = await asyncio.gather(
+                get_best_bets(sport),
+                get_props(sport),
+                return_exceptions=True
+            )
+
+            best_bets_data, props_data = results
+
+            recommended_props = []
+            if not isinstance(best_bets_data, Exception):
+                recommended_props = best_bets_data.get("props", [])
+
+            all_props = []
+            if not isinstance(props_data, Exception):
+                all_props = props_data.get("data", [])
+
+            cached_base = {
+                "recommended_props": recommended_props,
+                "all_props": all_props
+            }
+            api_cache.set(cache_key, cached_base, ttl=180)  # 3 minutes
+
+        except Exception as e:
+            logger.exception("parlay-builder-init fetch failed: %s", e)
+            cached_base = {"recommended_props": [], "all_props": []}
+
+    # Get correlation matrix (static, cached separately)
+    correlations = get_parlay_correlations()
+
+    # Get user-specific data if user_id provided
+    current_parlay = {"legs": [], "calculated_odds": None}
+    user_history = {"recent_parlays": []}
+
+    if user_id:
+        # Get current parlay slip
+        parlay_slip = parlay_slips.get(user_id, {"legs": []})
+        current_parlay = {
+            "legs": parlay_slip.get("legs", []),
+            "calculated_odds": None
+        }
+
+        # Calculate odds if legs exist
+        if current_parlay["legs"]:
+            try:
+                calc_result = calculate_parlay_odds_internal(current_parlay["legs"])
+                current_parlay["calculated_odds"] = calc_result
+            except Exception:
+                pass
+
+        # Get recent parlay history
+        user_parlays = [p for p in parlay_history if p.get("user_id") == user_id]
+        user_history["recent_parlays"] = sorted(
+            user_parlays,
+            key=lambda x: x.get("placed_at", ""),
+            reverse=True
+        )[:5]
+
+    result = {
+        "sport": sport.upper(),
+        "recommended_props": cached_base.get("recommended_props", []),
+        "all_props": cached_base.get("all_props", []),
+        "correlations": correlations,
+        "current_parlay": current_parlay,
+        "user_history": user_history,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
+
+    return result
+
+
+def get_parlay_correlations() -> Dict[str, Any]:
+    """Get static parlay correlation matrix."""
+    return {
+        "same_game": {
+            "QB_WR": 0.88,
+            "QB_TE": 0.75,
+            "RB_DST": -0.45,
+            "WR_WR": 0.35,
+            "QB_RB": 0.25
+        },
+        "cross_game": {
+            "same_position": 0.15,
+            "division_rivalry": 0.10
+        },
+        "warning_threshold": 0.70,
+        "boost_threshold": -0.30
+    }
+
+
+def calculate_parlay_odds_internal(legs: List[Dict]) -> Dict[str, Any]:
+    """Calculate parlay odds from legs (internal helper)."""
+    if not legs:
+        return {"decimal_odds": 1.0, "american_odds": "+100", "implied_probability": 1.0}
+
+    decimal_odds = 1.0
+    for leg in legs:
+        leg_odds = leg.get("odds", -110)
+        if leg_odds > 0:
+            decimal = 1 + (leg_odds / 100)
+        else:
+            decimal = 1 + (100 / abs(leg_odds))
+        decimal_odds *= decimal
+
+    # Convert to American
+    if decimal_odds >= 2.0:
+        american = f"+{int((decimal_odds - 1) * 100)}"
+    else:
+        american = f"-{int(100 / (decimal_odds - 1))}"
+
+    implied_prob = 1 / decimal_odds
+
+    return {
+        "decimal_odds": round(decimal_odds, 3),
+        "american_odds": american,
+        "implied_probability": round(implied_prob, 4),
+        "leg_count": len(legs)
     }
 
 
