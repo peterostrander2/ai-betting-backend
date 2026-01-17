@@ -865,21 +865,204 @@ This is a **Python/FastAPI backend deployed on Railway**, not a React/Next.js ap
 - Added confusion to the project instructions
 - Should live in the frontend repo (`bookie-member-app`) if needed
 
-### Backend Best Practices (What We Follow)
+---
+
+## Python/FastAPI Best Practices
+
+**ALWAYS apply these rules when working on this backend.**
+
+### 1. Async & Performance (CRITICAL)
+
+```python
+# ✅ CORRECT: Use async for all handlers
+@router.get("/endpoint")
+async def get_endpoint():
+    pass
+
+# ✅ CORRECT: Use httpx for async HTTP calls
+async with httpx.AsyncClient() as client:
+    resp = await client.get(url)
+
+# ❌ WRONG: Sync requests library blocks event loop
+import requests
+resp = requests.get(url)  # NEVER do this
+
+# ✅ CORRECT: Parallel fetching with asyncio.gather
+results = await asyncio.gather(
+    fetch_data_1(),
+    fetch_data_2(),
+    fetch_data_3(),
+    return_exceptions=True  # Don't fail all if one fails
+)
+
+# ❌ WRONG: Sequential fetching (waterfall)
+data1 = await fetch_data_1()
+data2 = await fetch_data_2()
+data3 = await fetch_data_3()
+```
+
+### 2. Input Validation (CRITICAL)
+
+```python
+# ✅ CORRECT: Pydantic models for request validation
+from pydantic import BaseModel, Field, validator
+
+class TrackBetRequest(BaseModel):
+    sport: str = Field(..., regex="^(NBA|NFL|MLB|NHL)$")
+    odds: int = Field(..., le=-100) | Field(..., ge=100)
+    stake: float = Field(default=0, ge=0)
+
+@router.post("/bets/track")
+async def track_bet(bet_data: TrackBetRequest):
+    pass  # Pydantic validates before handler runs
+
+# ✅ CORRECT: Validate and cap limits
+limit = min(max(1, limit), 500)  # Between 1-500
+
+# ❌ WRONG: Trust user input directly
+limit = request.query_params.get("limit")  # Could be 999999
+```
+
+### 3. Error Handling (HIGH)
+
+```python
+# ✅ CORRECT: Explicit status codes
+if resp.status_code == 429:
+    raise HTTPException(status_code=503, detail="Rate limited")
+
+if resp.status_code != 200:
+    raise HTTPException(status_code=502, detail=f"API error: {resp.status_code}")
+
+# ✅ CORRECT: Graceful degradation with fallback
+try:
+    data = await fetch_from_api()
+except Exception:
+    logger.exception("API failed, using fallback")
+    data = generate_fallback_data()
+
+# ❌ WRONG: Generic exception swallowing
+try:
+    data = await fetch_from_api()
+except:
+    pass  # Silent failure, returns None
+```
+
+### 4. Caching (HIGH)
+
+```python
+# ✅ CORRECT: Check cache first, set after fetch
+cache_key = f"endpoint:{sport}"
+cached = api_cache.get(cache_key)
+if cached:
+    return cached
+
+data = await fetch_data()
+api_cache.set(cache_key, data, ttl=300)  # 5 min default
+return data
+
+# Cache TTL guidelines:
+# - best-bets: 120s (2 min) - changes frequently
+# - splits/lines: 300s (5 min) - moderate
+# - injuries: 300s (5 min) - moderate
+# - consolidated endpoints: 120s (2 min) - match shortest TTL
+```
+
+### 5. Authentication (HIGH)
+
+```python
+# ✅ CORRECT: Auth on all mutating endpoints
+@router.post("/bets/track")
+async def track_bet(
+    data: TrackBetRequest,
+    auth: bool = Depends(verify_api_key)  # REQUIRED
+):
+    pass
+
+# ✅ CORRECT: Auth on sensitive GET endpoints
+@router.get("/bets/history")
+async def get_history(auth: bool = Depends(verify_api_key)):
+    pass
+
+# Health checks are public (for Railway)
+@router.get("/health")
+async def health():  # No auth - must be accessible
+    return {"status": "healthy"}
+```
+
+### 6. Response Normalization (MEDIUM)
+
+```python
+# ✅ CORRECT: Consistent response schema
+return {
+    "sport": sport.upper(),
+    "source": "playbook" | "odds_api" | "fallback",
+    "count": len(data),
+    "data": data,
+    "timestamp": datetime.now().isoformat()
+}
+
+# ✅ CORRECT: Include cache info for debugging
+return {
+    "data": data,
+    "cache_info": {"hit": True, "ttl_remaining": 120}
+}
+```
+
+### 7. Logging (MEDIUM)
+
+```python
+# ✅ CORRECT: Structured logging
+logger.info("Fetched %d games for %s", len(games), sport)
+logger.exception("Failed to fetch: %s", e)
+logger.warning("Rate limited by %s", api_name)
+
+# ❌ WRONG: Print statements
+print(f"Got {len(games)} games")  # NEVER use print
+```
+
+### 8. Type Hints (MEDIUM)
+
+```python
+# ✅ CORRECT: Full type hints
+async def fetch_data(sport: str, limit: int = 50) -> Dict[str, Any]:
+    pass
+
+async def get_games(sport: str) -> List[Dict[str, Any]]:
+    pass
+
+# ❌ WRONG: Missing types
+async def fetch_data(sport, limit=50):
+    pass
+```
+
+### Pre-Commit Checklist
+
+Before committing any backend code, verify:
+
+- [ ] All handlers use `async def`?
+- [ ] Using `httpx` not `requests`?
+- [ ] Pydantic validation on POST endpoints?
+- [ ] `verify_api_key` on mutating endpoints?
+- [ ] Cache check before expensive operations?
+- [ ] Proper error handling with HTTPException?
+- [ ] Logging instead of print statements?
+- [ ] Type hints on function signatures?
+- [ ] Limit parameters capped (max 500)?
+- [ ] Parallel fetching where possible (asyncio.gather)?
+
+### Quick Reference
 
 | Practice | Implementation |
 |----------|----------------|
 | Async endpoints | All handlers use `async def` |
-| Type hints | Function signatures typed |
-| Pydantic validation | Request models in `models/api_models.py` |
-| TTL caching | In-memory cache with configurable TTL |
-| Error handling | Explicit HTTPException with status codes |
-| Logging | Structured logging, no print statements |
-| Connection pooling | Shared httpx.AsyncClient |
-| Retry with backoff | 2 retries, exponential backoff |
-| Auth on mutations | All POST endpoints require X-API-Key |
-| Limit validation | History endpoints capped at 500 |
-| Parallel fetching | Consolidated endpoints use asyncio.gather() |
+| HTTP client | httpx.AsyncClient (not requests) |
+| Validation | Pydantic models in `models/api_models.py` |
+| Caching | HybridCache with TTL (5 min default) |
+| Error handling | HTTPException with status codes |
+| Logging | logger.info/warning/exception |
+| Auth | `Depends(verify_api_key)` on POST |
+| Limits | Cap at 500, validate with min/max |
+| Parallel fetch | asyncio.gather(return_exceptions=True) |
 
 ---
 
