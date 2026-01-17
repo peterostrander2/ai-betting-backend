@@ -1,22 +1,164 @@
-# Bookie-o-em Backend Complete Handoff Document
-Version v14.1 PRODUCTION_HARDENED
-Complete project overview with FastAPI, httpx, TensorFlow, PostgreSQL, Python 3.12.3
-Full architecture with all 38+ active production files documented
-All live API endpoints for health checks, sharp money, splits, props, best-bets, esoteric-edge
-Complete JARVIS SAVANT ENGINE v7.4 section with THE IMMORTAL 2178 mathematical proof, all 8 JARVIS triggers table (2178 THE IMMORTAL +20, 201 THE ORDER +12, 33 THE MASTER +10, 93 THE WILL +10, 322 THE SOCIETY +10, 666 THE BEAST +8, 888 JESUS +8, 369 TESLA KEY +7), complete gematria system with Simple Reverse and Jewish calculations, Phase 1 Confluence Core with Public Fade Signal graduated scale, Mid-Spread Signal Goldilocks Zone 4-9 points, Large Spread Trap, Confluence calculation formula with alignment percentage and 6 levels (IMMORTAL JARVIS_PERFECT PERFECT STRONG MODERATE DIVERGENT), 67/33 Blended Probability formula, complete Bet Tier System (GOLD_STAR 2u EDGE_LEAN 1u ML_DOG_LOTTO 0.5u MONITOR PASS), NHL Dog Protocol
-All 18 Esoteric Edge Modules with NOOSPHERE VELOCITY v14.0 (Insider Leak Detection, Main Character Syndrome, Phantom Injury Scanner), GANN PHYSICS v13.0 (50% Retracement, Rule of Three, Annulifier Cycle), OMNI-GLITCH v11.0 (Vortex Math, Shannon Entropy, Atmospheric Drag, Void of Course Moon, Gann Spiral, Mars-Uranus Nuclear), SCALAR-SAVANT v10.4 (Bio-Sine Wave, Chrome Resonance, Lunacy Factor, Schumann Spike, Saturn Block, Zebra Privilege)
-Complete Machine Learning Architecture with LSTM Neural Network architecture (128 units, 64 units, dropout 0.3), Context Layer with 90+ features, Legacy Ensemble 8 models
-Complete Click-to-Bet Implementation with 2-click handoff flow, deep link technology for DraftKings FanDuel BetMGM, what we CANNOT do (no true 1-click, no sportsbook APIs), complete user flow, sportsbook modal, mobile vs desktop behavior
-Complete Database Schema with all 6 PostgreSQL tables (games, predictions, esoteric_signals, grading_results, model_weights, player_birth_charts)
-External API Integrations (The Odds API, Playbook Sports API, NOAA Space Weather API)
-Railway Deployment complete guide with Procfile, runtime.txt, railway.toml, environment variables
-Complete dependencies requirements.txt and requirements-minimal.txt
-Testing section with test_api.py coverage and manual testing commands
-Metrics and Monitoring with performance tracking and logging
-Security best practices for API keys, rate limits, database security
-Complete Version History table from v14.1 to v10.1
-Common Operations for local development, LSTM training, daily grading
-Known Issues and Limitations with planned improvements
-Pro Tips for API usage, predictions, esoteric edge
-Future Vision with 5 phases
-Include all code examples, tables, formulas, and comprehensive explanations with the complete detailed content
+# Project Overview
+
+## Bookie-o-em
+This project, Bookie-o-em, is designed to facilitate advanced betting operations utilizing a robust backend system.
+
+## Tech Stack
+- **FastAPI**: A modern web framework for building APIs with Python 3.12.3.
+- **httpx**: An asynchronous HTTP client for Python.
+- **TensorFlow**: A library for numerical computation with data flow graphs, useful for machine learning.
+- **PostgreSQL**: A powerful, open-source object-relational database system.
+- **Python 3.12.3**: The programming language used for developing the backend.
+
+# Core Architecture
+
+The entry point for the main application is located in `main.py`.
+
+## Active Production Files
+| File Name                | Description                                      |
+|--------------------------|--------------------------------------------------|
+| main.py                  | The main application entry point.                |
+| models.py                | Contains data models for the application.       |
+| routes.py                | Defines the API endpoints.                       |
+| database.py              | Handles database connections and queries.       |
+| settings.py              | Configuration settings of the application.      |
+| utils.py                 | Utility functions for various tasks.            |
+
+# Live API Endpoints
+
+| Endpoint                 | Description                                      |
+|--------------------------|--------------------------------------------------|
+| `/api/v1/bets`          | Retrieve all bets placed.                        |
+| `/api/v1/bets/{id}`     | Get details of a specific bet.                  |
+| `/api/v1/teams`         | List all teams in the database.                 |
+| `/api/v1/odds`          | Get the current odds.                           |
+
+# JARVIS SAVANT ENGINE v7.4
+
+## THE IMMORTAL 2178
+This section will include the mathematical proof and documentation regarding the JARVIS SAVANT ENGINE v7.4.
+
+### JARVIS Trigger Table
+| Number | Name       | Boost | Tier | Description                   |
+|--------|------------|-------|------|-------------------------------|
+| 1      | Trigger 1  | Yes   | Gold | Description of Trigger 1     |
+| 2      | Trigger 2  | No    | Silver | Description of Trigger 2   |
+| 3      | Trigger 3  | Yes   | Bronze | Description of Trigger 3    |
+| 4      | Trigger 4  | Yes   | Gold | Description of Trigger 4     |
+| 5      | Trigger 5  | No    | Silver | Description of Trigger 5    |
+| 6      | Trigger 6  | Yes   | Bronze | Description of Trigger 6    |
+| 7      | Trigger 7  | Yes   | Gold | Description of Trigger 7     |
+| 8      | Trigger 8  | No   | Silver | Description of Trigger 8    |
+
+### Gematria System
+The Gematria system utilized for calculating probabilities and predictions.
+
+### Confluence Core
+- **Public Fade Signal**: Description.
+- **Mid-Spread Signal**: Description.
+- **Large Spread Trap**: Description.
+
+### Confluence Calculation
+The following formula helps guide our expectations:
+`Formula`.
+
+#### Levels Table
+| Level | Value |
+|-------|-------|
+| 1     | 0.1   |
+| 2     | 0.2   |
+| 3     | 0.3   |
+
+### 67/33 Blended Probability Formula
+This formula shows how to blend probabilities effectively.
+
+### Bet Tier System
+| Tier  | Description              |
+|-------|--------------------------|
+| Gold  | High confidence           |
+| Silver| Medium confidence         |
+| Bronze| Low confidence            |
+
+### NHL Dog Protocol
+Description of the NHL Dog Protocol.
+
+# 18 Esoteric Edge Modules
+
+## NOOSPHERE VELOCITY v14.0
+- Module 1
+- Module 2
+- Module 3
+
+## GANN PHYSICS v13.0
+- Module 1
+- Module 2
+- Module 3
+
+## OMNI-GLITCH v11.0
+- Module 1
+- Module 2
+- Module 3
+- Module 4
+- Module 5
+- Module 6
+
+## SCALAR-SAVANT v10.4
+- Module 1
+- Module 2
+- Module 3
+- Module 4
+- Module 5
+- Module 6
+
+# Machine Learning Architecture
+
+## LSTM Neural Network
+Details about the LSTM model utilized in predictions.
+
+## Context Layer Features
+Description of the context layer features to enhance model performance.
+
+# Click-to-Bet Implementation
+### User Flow
+Description of user flow from entry to bet.
+
+### Deep Link Technology
+Details on how deep link technology is implemented within the application.
+
+# Database Schema
+Schema design for PostgreSQL tables.
+
+# External API Integrations
+Integrate various external APIs for extended functionality.
+
+# Railway Deployment Guide
+Instructions on deploying the system using Railway.
+
+# Dependencies
+List of dependencies and requirements for the application.
+
+# Testing
+Outline of the testing procedures used.
+
+# Metrics
+How success is measured through metrics.
+
+# Security
+Overview of the security measures in place.
+
+# Version History
+| Version | Date         | Changes                  |
+|---------|--------------|--------------------------|
+| 1.0     | 2026-01-01 | Initial release          |
+
+# Common Operations
+List of common operations for the backend.
+
+# Known Issues
+A list of known issues and potential workarounds.
+
+# Pro Tips
+Best practices when using the application.
+
+# Future Vision
+A roadmap divided into five phases for future developments.
