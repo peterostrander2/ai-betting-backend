@@ -1125,7 +1125,7 @@ async def get_sharp_money(sport: str):
 
                     if data:
                         logger.info("Playbook sharp signals derived for %s: %d signals", sport, len(data))
-                        result = {"sport": sport.upper(), "source": "playbook", "count": len(data), "data": data}
+                        result = {"sport": sport.upper(), "source": "playbook", "count": len(data), "data": data, "movements": data}
                         api_cache.set(cache_key, result)
                         return result
                 except ValueError as e:
@@ -1151,7 +1151,7 @@ async def get_sharp_money(sport: str):
             # Use fallback data when API unavailable
             logger.warning("Odds API unavailable for sharp, using fallback data")
             data = generate_fallback_sharp(sport_lower)
-            result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data}
+            result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
             api_cache.set(cache_key, result)
             return result
 
@@ -1164,7 +1164,7 @@ async def get_sharp_money(sport: str):
             logger.error("Failed to parse Odds API response: %s", e)
             # Use fallback on parse error
             data = generate_fallback_sharp(sport_lower)
-            result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data}
+            result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
             api_cache.set(cache_key, result)
             return result
 
@@ -1196,11 +1196,11 @@ async def get_sharp_money(sport: str):
         logger.exception("Odds API processing failed for %s: %s, using fallback", sport, e)
         # Return fallback on any error
         data = generate_fallback_sharp(sport_lower)
-        result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data}
+        result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
         api_cache.set(cache_key, result)
         return result
 
-    result = {"sport": sport.upper(), "source": "odds_api", "count": len(data), "data": data}
+    result = {"sport": sport.upper(), "source": "odds_api", "count": len(data), "data": data, "movements": data}  # movements alias for frontend
     api_cache.set(cache_key, result)
     return result
 
@@ -1357,7 +1357,7 @@ async def get_injuries(sport: str):
                     json_body = resp.json()
                     injuries = json_body if isinstance(json_body, list) else json_body.get("data", json_body.get("injuries", []))
                     logger.info("Playbook injuries retrieved for %s: %d records", sport, len(injuries))
-                    result = {"sport": sport.upper(), "source": "playbook", "count": len(injuries), "data": injuries}
+                    result = {"sport": sport.upper(), "source": "playbook", "count": len(injuries), "data": injuries, "injuries": injuries}  # injuries alias for frontend
                     api_cache.set(cache_key, result)
                     return result
                 except ValueError as e:
@@ -1399,7 +1399,7 @@ async def get_injuries(sport: str):
     except Exception as e:
         logger.exception("ESPN injuries fetch failed for %s: %s", sport, e)
 
-    result = {"sport": sport.upper(), "source": "espn" if data else "none", "count": len(data), "data": data}
+    result = {"sport": sport.upper(), "source": "espn" if data else "none", "count": len(data), "data": data, "injuries": data}  # injuries alias for frontend
     api_cache.set(cache_key, result)
     return result
 
@@ -1984,9 +1984,14 @@ async def get_best_bets(sport: str):
         }
         confidence = confidence_map.get(bet_tier.get("tier", "PASS"), "LOW")
 
+        # Numeric confidence score (0-100) for frontend compatibility
+        confidence_score_map = {"SMASH": 95, "HIGH": 80, "MEDIUM": 60, "LOW": 30}
+        confidence_score = confidence_score_map.get(confidence, 30)
+
         return {
             "total_score": round(final_score, 2),
             "confidence": confidence,
+            "confidence_score": confidence_score,  # Numeric version for frontend
             "confluence_level": confluence_level,
             "bet_tier": bet_tier,
             "scoring_breakdown": {
@@ -2041,7 +2046,9 @@ async def get_best_bets(sport: str):
 
                 props_picks.append({
                     "player": player,
+                    "player_name": player,  # Alias for frontend compatibility
                     "market": market,
+                    "stat_type": market,    # Alias for frontend compatibility
                     "line": line,
                     "side": side,
                     "odds": odds,
