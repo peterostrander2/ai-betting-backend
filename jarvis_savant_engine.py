@@ -1286,17 +1286,17 @@ class EsotericLearningLoop:
 
     STORAGE_PATH = "./esoteric_learning_data"
 
-    # Default weights (v10.1 spec aligned)
+    # Default weights (v10.2 - Gematria Dominant)
+    # These weights determine the contribution to the 0-10 esoteric score
     DEFAULT_WEIGHTS = {
-        "gematria": 0.52,        # 52% - Boss approved dominant weight
-        "numerology": 0.20,      # 20% - Date-based
-        "astro": 0.13,           # 13% - Moon phase
-        "vedic": 0.10,           # 10% - Future expansion
-        "sacred": 0.05,          # 5%  - Power numbers
-        "fib_phi": 0.05,         # 5%  - Fibonacci alignment
-        "vortex": 0.05           # 5%  - 3-6-9 and 1-2-4-8-7-5 patterns
+        "gematria": 0.52,        # 52% - DOMINANT signal (Boss approved)
+        "jarvis": 0.20,          # 20% - JARVIS triggers (2178, 201, 33, 93, 322)
+        "astro": 0.13,           # 13% - Vedic astrology (moon, planetary hours)
+        "fib": 0.05,             # 5%  - Fibonacci/PHI alignment
+        "vortex": 0.05,          # 5%  - Tesla 3-6-9 patterns
+        "daily_edge": 0.05       # 5%  - Daily energy conditions
     }
-    # Note: Weights should sum to 1.10 to account for overlap - normalized on use
+    # Total: 100% = max 10 points esoteric score
 
     def __init__(self):
         self.picks: List[EsotericPickRecord] = []
