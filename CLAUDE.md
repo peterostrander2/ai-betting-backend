@@ -699,12 +699,10 @@ curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H 
 4. **Maintain Balance**: Avoid over-simplification that reduces maintainability
 5. **Focus Scope**: Only refine recently modified code unless instructed otherwise
 
-### Code Standards
+### Code Standards (Python)
 
-- Use ES modules with proper import sorting
-- Prefer `function` keyword over arrow functions for top-level
-- Use explicit return type annotations
-- Avoid nested ternary operators - prefer switch/if-else
+- Use async functions with type hints
+- Prefer explicit over implicit
 - Choose clarity over brevity
 - Remove unnecessary comments that describe obvious code
 
@@ -718,22 +716,11 @@ curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H 
 
 ---
 
-## Session Log: January 16, 2026 - Vercel Skills + Backend Audit
+## Session Log: January 16, 2026 - Backend API Audit
 
 ### What Was Done
 
-**1. Installed Vercel Agent Skills**
-Ran `npx add-skill vercel-labs/agent-skills` and installed to `~/.claude/skills/`:
-
-| Skill | Purpose |
-|-------|---------|
-| `react-best-practices` | 45 performance rules from Vercel Engineering |
-| `react-strict-rules` | Server Components default, no useEffect fetch |
-| `web-design-guidelines` | UI/accessibility compliance (100+ rules) |
-| `vercel-deploy-claimable` | One-click Vercel deployments |
-| `json-ui-composer` | JSON-only UI generation from catalogs |
-
-**2. Backend API Audit (76 Endpoints)**
+**1. Backend API Audit (76 Endpoints)**
 Audited all FastAPI route handlers:
 
 | File | Routes | Issues Found |
@@ -741,7 +728,7 @@ Audited all FastAPI route handlers:
 | `main.py` | 7 | None |
 | `live_data_router.py` | 69 | Missing input validation |
 
-**3. Pydantic Validation Models Added**
+**2. Pydantic Validation Models Added**
 Created `models/api_models.py` with request validation:
 
 | Model | Validates |
@@ -752,7 +739,7 @@ Created `models/api_models.py` with request validation:
 | `PlaceParlayRequest` | Sportsbook required, stake >= 0 |
 | `UserPreferencesRequest` | Nested notifications object |
 
-**4. Endpoints Updated with Validation**
+**3. Endpoints Updated with Validation**
 - `POST /bets/track` - Now validates odds (-110 valid, -50 invalid)
 - `POST /bets/grade/{bet_id}` - Enum validation
 - `POST /parlay/add` - Odds + sport validation
@@ -760,178 +747,13 @@ Created `models/api_models.py` with request validation:
 - `POST /parlay/grade/{parlay_id}` - Enum validation
 - `POST /user/preferences/{user_id}` - Nested object handling
 
-**5. Node.js Dependencies Added**
-Installed for AI SDK integration:
-```
-@json-render/core, @json-render/react, react, zod, ai
-```
-
-**6. Documentation Updated**
-- Added all skills to CLAUDE.md
-- Added strict agent rules
-- Added React/Next.js handoff doc
-- Created `.claude/handoffs/react-nextjs-best-practices.md`
-
-### Branch Status
-
-**Branch:** `claude/add-vercel-agent-skills-PH207`
-**Status:** All changes committed and pushed
-**PR Needed:** Yes - create at https://github.com/peterostrander2/ai-betting-backend/compare/main...claude/add-vercel-agent-skills-PH207
-
-### Resume Checklist
-
-When you return:
-1. [ ] Create PR to merge to main (link above)
-2. [ ] Test validation on production after merge
-3. [ ] Frontend audit in separate session (bookie-member-app)
-
-### Files Changed This Session
+### Files Changed
 
 ```
 models/api_models.py          (NEW - Pydantic models)
 models/__init__.py            (NEW - Package init)
 live_data_router.py           (MODIFIED - Validation added)
-CLAUDE.md                     (MODIFIED - Skills + session log)
-.gitignore                    (MODIFIED - Added node_modules/)
-package.json                  (NEW - Node deps)
-package-lock.json             (NEW - Lock file)
-.claude/handoffs/react-nextjs-best-practices.md (NEW)
 ```
-
----
-
-## Vercel Agent Skills
-
-Five agent skills are installed in `~/.claude/skills/` for enhanced capabilities.
-
-### react-best-practices
-
-**Purpose:** React and Next.js performance optimization guidelines from Vercel Engineering.
-
-**When to Use:**
-- Writing new React components or Next.js pages
-- Implementing data fetching (client or server-side)
-- Reviewing code for performance issues
-- Optimizing bundle size or load times
-
-**Categories (45 rules, 8 categories):**
-| Priority | Category | Impact |
-|----------|----------|--------|
-| 1 | Eliminating Waterfalls | CRITICAL |
-| 2 | Bundle Size Optimization | CRITICAL |
-| 3 | Server-Side Performance | HIGH |
-| 4 | Client-Side Data Fetching | MEDIUM-HIGH |
-| 5 | Re-render Optimization | MEDIUM |
-| 6 | Rendering Performance | MEDIUM |
-| 7 | JavaScript Performance | LOW-MEDIUM |
-| 8 | Advanced Patterns | LOW |
-
-### react-strict-rules
-
-**Purpose:** Strict enforcement rules for React/Next.js development. Auto-activates when working on React code.
-
-**Key Rules:**
-- Default to Server Components (no `"use client"` unless required)
-- Never fetch in `useEffect` unless unavoidable
-- Keep client bundle minimal
-- Always ask: "Can this be server-only?"
-
-**Pre-Commit Checklist:**
-- Can this be a Server Component?
-- Any unnecessary `"use client"`?
-- Any `useEffect` data fetching that could be server-side?
-- Any heavy dependencies in client bundle?
-
-### web-design-guidelines
-
-**Purpose:** Review UI code for Web Interface Guidelines compliance.
-
-**Trigger Phrases:**
-- "Review my UI"
-- "Check accessibility"
-- "Audit design"
-- "Review UX"
-- "Check my site against best practices"
-
-**Categories Covered:**
-- Accessibility (aria-labels, semantic HTML, keyboard handlers)
-- Focus States (visible focus, focus-visible patterns)
-- Forms (autocomplete, validation, error handling)
-- Animation (prefers-reduced-motion, compositor-friendly transforms)
-- Typography (curly quotes, ellipsis, tabular-nums)
-- Images (dimensions, lazy loading, alt text)
-- Performance (virtualization, layout thrashing, preconnect)
-- Navigation & State (URL reflects state, deep-linking)
-- Dark Mode & Theming (color-scheme, theme-color meta)
-- Touch & Interaction (touch-action, tap-highlight)
-- Locale & i18n (Intl.DateTimeFormat, Intl.NumberFormat)
-
-### vercel-deploy-claimable
-
-**Purpose:** Deploy applications and websites to Vercel instantly. No authentication required.
-
-**Trigger Phrases:**
-- "Deploy my app"
-- "Deploy this to production"
-- "Create a preview deployment"
-- "Deploy and give me the link"
-- "Push this live"
-
-**How It Works:**
-1. Packages project into a tarball (excludes `node_modules` and `.git`)
-2. Auto-detects framework from `package.json`
-3. Uploads to deployment service
-4. Returns **Preview URL** (live site) and **Claim URL** (transfer to your Vercel account)
-
-**Supported Frameworks:**
-- React: Next.js, Gatsby, Create React App, Remix
-- Vue: Nuxt, Vitepress, Vuepress
-- Svelte: SvelteKit, Svelte
-- Other: Astro, Solid Start, Angular, Vite, and 40+ more
-
-### json-ui-composer
-
-**Purpose:** Generate valid JSON UI configurations from component catalogs.
-
-**The Single Most Important Rule:**
-- ✅ Backend system prompt forces JSON only
-- ✅ Catalog prompt injected
-- ✅ Frontend prompt provides goal + data + constraints
-
-**Output Rules:**
-- Return ONLY valid, parseable JSON
-- Use only components/props from provided catalog
-- No markdown, JSX, HTML, or explanations
-- Keep UI minimal and readable
-
-**Trigger Phrases:**
-- "Generate UI JSON"
-- "Compose a UI"
-- "Create JSON layout"
-- Working with @json-render or similar
-
-### Installation
-
-Skills were installed via:
-```bash
-npx add-skill vercel-labs/agent-skills
-# Or manually: cp -r skills/{skill-name} ~/.claude/skills/
-```
-
----
-
-## Agent Rules (Strict)
-
-**Do not stop at recommendations — implement the fixes in code.**
-
-If working on React/Next:
-- Apply Vercel React Best Practices skill rules.
-- Prefer Server Components by default.
-- Never fetch in useEffect unless required.
-- Keep client bundle minimal.
-- Ask: "Can this be server-only?" before writing client code.
-
-**Global Skill:** These rules are also available globally via `~/.claude/skills/react-strict-rules/`
 
 ---
 
@@ -1009,5 +831,51 @@ const sharp = await fetch('/live/sharp/nba');
 const dashboard = await fetch('/live/sport-dashboard/nba');
 // All data in: dashboard.best_bets, dashboard.market_overview, dashboard.context
 ```
+
+---
+
+## Session Log: January 17, 2026 - CLAUDE.md Cleanup
+
+### What Was Done
+
+**1. Removed Vercel/React Content**
+
+Removed ~200 lines of frontend-focused content that didn't apply to this Python/FastAPI backend:
+
+| Removed Section | Reason |
+|-----------------|--------|
+| Vercel Agent Skills (5 skills) | React/Next.js only, not Python |
+| Agent Rules (Strict) | React-specific rules |
+| react-best-practices docs | Frontend skill |
+| react-strict-rules docs | Frontend skill |
+| web-design-guidelines docs | UI/accessibility for frontend |
+| vercel-deploy-claimable docs | Vercel deployment (we use Railway) |
+| json-ui-composer docs | JSON UI generation |
+
+**2. Cleaned Up Session Logs**
+
+- Removed Vercel skills installation from Jan 16 log
+- Kept Pydantic validation work (still relevant)
+- Updated Code Standards to Python-specific
+
+### Why This Change
+
+This is a **Python/FastAPI backend deployed on Railway**, not a React/Next.js app on Vercel. The Vercel skills:
+- Were installed but never applicable here
+- Added confusion to the project instructions
+- Should live in the frontend repo (`bookie-member-app`) if needed
+
+### Backend Best Practices (What We Follow)
+
+| Practice | Implementation |
+|----------|----------------|
+| Async endpoints | All handlers use `async def` |
+| Type hints | Function signatures typed |
+| Pydantic validation | Request models in `models/api_models.py` |
+| TTL caching | In-memory cache with configurable TTL |
+| Error handling | Explicit HTTPException with status codes |
+| Logging | Structured logging, no print statements |
+| Connection pooling | Shared httpx.AsyncClient |
+| Retry with backoff | 2 retries, exponential backoff |
 
 ---
