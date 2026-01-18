@@ -1749,19 +1749,17 @@ async def get_best_bets(sport: str, debug: int = 0):
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
     # Helper function to calculate scores with v10.1 dual-score confluence
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50):
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.8, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_home=False, team_rest_days=0, opp_rest_days=0, game_hour_et=20):
         # =====================================================================
-        # v10.2 DUAL-SCORE CONFLUENCE SYSTEM (Gematria-Dominant)
+        # v10.3 ADDITIVE SCORING SYSTEM (Sharp Quiet Fix)
         # =====================================================================
-        # RESEARCH SCORE (0-10): 8 AI Models (0-8) + 8 Pillars (0-8) scaled to 0-10
-        # ESOTERIC SCORE (0-10): Weighted by signal importance:
-        #   - Gematria:      52% → max 5.2 pts (DOMINANT signal)
-        #   - JARVIS:        20% → max 2.0 pts
-        #   - Astro:         13% → max 1.3 pts
-        #   - Fibonacci:      5% → max 0.5 pts
-        #   - Vortex:         5% → max 0.5 pts
-        #   - Daily Edge:     5% → max 0.5 pts
-        #   + Public Fade & Trap modifiers (can be negative)
+        # RESEARCH SCORE (0-10): base + pillar_boosts + context_mods (ADDITIVE)
+        # - Base: 5.8 (neutral pick = MONITOR tier)
+        # - Sharp-dependent pillars: +0.5 to +3.0 when signals present
+        # - Sharp-independent pillars: +0.2 to +0.4 (always available)
+        # - Context penalties: -1.0 for traps
+        #
+        # ESOTERIC SCORE (0-10): Weighted by signal importance (unchanged)
         # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
         # =====================================================================
 
@@ -1775,75 +1773,89 @@ async def get_best_bets(sport: str, debug: int = 0):
             "daily_edge": 0.05   # 5%  - Daily energy
         }
 
-        # --- RESEARCH SCORE CALCULATION (8 Pillars v3) ---
-        ai_score = base_ai
-        if sharp_signal.get("signal_strength") == "STRONG":
-            ai_score += 2.0
-        elif sharp_signal.get("signal_strength") == "MODERATE":
-            ai_score += 1.0
-        ai_score = min(8.0, ai_score)
-
-        # 8 PILLARS SYSTEM (replaces hardcoded pillar_score)
-        pillar_score = 0.0
+        # --- RESEARCH SCORE CALCULATION (v10.3 Additive) ---
+        pillar_boost = 0.0
         research_reasons = []
         is_game_pick = not player_name
 
+        # ========== SHARP-DEPENDENT PILLARS ==========
         # Pillar 1: Sharp Money (higher weight for game picks)
         sharp_diff = sharp_signal.get("diff", 0) or 0
         sharp_strength = sharp_signal.get("signal_strength", "NONE")
         if is_game_pick:
             if sharp_strength == "STRONG" or sharp_diff >= 15:
-                pillar_score += 3.0
-                research_reasons.append("RESEARCH: Sharp Split (Game) +3.0")
+                pillar_boost += 2.0
+                research_reasons.append("RESEARCH: Sharp Split (Game) +2.0")
             elif sharp_strength == "MODERATE" or sharp_diff >= 10:
-                pillar_score += 1.5
-                research_reasons.append("RESEARCH: Sharp Split (Game) +1.5")
+                pillar_boost += 1.0
+                research_reasons.append("RESEARCH: Sharp Split (Game) +1.0")
         else:
             if sharp_strength == "STRONG" or sharp_diff >= 15:
-                pillar_score += 1.0
+                pillar_boost += 1.0
                 research_reasons.append("RESEARCH: Sharp Split +1.0")
             elif sharp_strength == "MODERATE" or sharp_diff >= 10:
-                pillar_score += 0.5
+                pillar_boost += 0.5
                 research_reasons.append("RESEARCH: Sharp Split +0.5")
 
         # Pillar 2: Reverse Line Movement (RLM)
         line_variance = sharp_signal.get("line_variance", 0) or 0
         if line_variance > 1.0:
-            pillar_score += 1.0
+            pillar_boost += 1.0
             research_reasons.append("RESEARCH: Reverse Line Move +1.0")
 
         # Pillar 3: Public Fade
         if public_pct >= 70:
-            pillar_score += 0.5
+            pillar_boost += 0.5
             research_reasons.append("RESEARCH: Public Fade +0.5")
 
-        # Pillar 4: Goldilocks Spread
+        # ========== SHARP-INDEPENDENT PILLARS (v10.3) ==========
+        # Pillar 4: Home Court Advantage (game picks only)
+        if is_game_pick and is_home:
+            pillar_boost += 0.25
+            research_reasons.append("RESEARCH: Home Court +0.25")
+
+        # Pillar 5: Rest Advantage (RELATIVE, not absolute)
+        rest_diff = team_rest_days - opp_rest_days
+        if rest_diff >= 2:
+            pillar_boost += 0.4
+            research_reasons.append("RESEARCH: Rest Advantage +0.4")
+        elif rest_diff == 1:
+            pillar_boost += 0.2
+            research_reasons.append("RESEARCH: Rest Advantage +0.2")
+
+        # Pillar 6: Prime Time Boost (7pm-10pm ET)
+        if 19 <= game_hour_et <= 22:
+            pillar_boost += 0.2
+            research_reasons.append("RESEARCH: Prime Time +0.2")
+
+        # ========== CONTEXT MODIFIERS ==========
+        # Pillar 7: Goldilocks Spread
         abs_spread = abs(spread) if spread else 0
         if 4 <= abs_spread <= 9:
-            pillar_score += 0.3
+            pillar_boost += 0.3
             research_reasons.append("RESEARCH: Goldilocks Spread +0.3")
 
-        # Pillar 5: Trap Gate (penalty)
+        # Pillar 8: Trap Gate (penalty)
         if abs_spread > 15:
-            pillar_score -= 1.0
+            pillar_boost -= 1.0
             research_reasons.append("RESEARCH: Trap Gate -1.0")
 
-        # Pillar 6: High Total Indicator
+        # Pillar 9: High Total Indicator
         if total > 230:
-            pillar_score += 0.2
+            pillar_boost += 0.2
             research_reasons.append("RESEARCH: High Total +0.2")
 
-        # Pillar 7: Multi-Pillar Confluence Bonus
-        positive_pillars = len([r for r in research_reasons if "+0." in r or "+1" in r or "+2" in r or "+3" in r])
+        # Pillar 10: Multi-Pillar Confluence Bonus
+        positive_pillars = len([r for r in research_reasons if "+" in r])
         if positive_pillars >= 3:
-            pillar_score += 0.3
+            pillar_boost += 0.3
             research_reasons.append("RESEARCH: Multi-Pillar Confluence +0.3")
 
-        # Clamp pillar_score to 0-8 range
-        pillar_score = max(0.0, min(8.0, float(pillar_score)))
+        # Cap pillar_boost at 3.0 to prevent inflation
+        pillar_boost = max(-1.0, min(3.0, float(pillar_boost)))
 
-        # Research score: (ai + pillar) / 16 * 10 = normalized to 0-10
-        research_score = (ai_score + pillar_score) / 16 * 10
+        # ADDITIVE RESEARCH SCORE: base + pillars, clamped to 0-10
+        research_score = base_ai + pillar_boost
         research_score = max(0.0, min(10.0, float(research_score)))
 
         # --- ESOTERIC SCORE CALCULATION (v10.2 Gematria-Dominant) ---
@@ -2042,8 +2054,8 @@ async def get_best_bets(sport: str, debug: int = 0):
             "scoring_breakdown": {
                 "research_score": round(research_score, 2),
                 "esoteric_score": round(esoteric_score, 2),
-                "ai_models": round(ai_score, 2),
-                "pillars": round(pillar_score, 2),
+                "base_score": base_ai,  # v10.3: 5.8 base
+                "pillar_boost": round(pillar_boost, 2),  # v10.3: additive pillars
                 "confluence_boost": confluence_boost,
                 "alignment_pct": confluence.get("alignment_pct", 0)
             },
@@ -2085,17 +2097,29 @@ async def get_best_bets(sport: str, debug: int = 0):
                 if side not in ["Over", "Under"]:
                     continue
 
-                # Calculate score with full esoteric integration
+                # Extract game hour for Prime Time pillar
+                game_hour_et = 20  # Default to 8pm ET
+                commence_time = game.get("commence_time", "")
+                if commence_time:
+                    try:
+                        from datetime import datetime as dt_parse
+                        game_dt = dt_parse.fromisoformat(commence_time.replace("Z", "+00:00"))
+                        # Convert to ET (UTC-5)
+                        game_hour_et = (game_dt.hour - 5) % 24
+                    except Exception:
+                        pass
+
+                # Calculate score with full esoteric integration (v10.3)
                 score_data = calculate_pick_score(
                     game_str + player,
                     sharp_signal,
-                    base_ai=5.0,
                     player_name=player,
                     home_team=home_team,
                     away_team=away_team,
                     spread=0,
                     total=220,
-                    public_pct=50
+                    public_pct=50,
+                    game_hour_et=game_hour_et
                 )
 
                 # Calculate frontend-expected fields
@@ -2250,18 +2274,32 @@ async def get_best_bets(sport: str, debug: int = 0):
                             else:
                                 continue
 
-                            # Calculate score with full esoteric integration
-                            # base_ai=5.0 (fixed from 4.5 per Production v3 spec)
+                            # Extract game hour for Prime Time pillar
+                            game_hour_et = 20  # Default to 8pm ET
+                            game_commence = game.get("commence_time", "")
+                            if game_commence:
+                                try:
+                                    from datetime import datetime as dt_parse
+                                    game_dt = dt_parse.fromisoformat(game_commence.replace("Z", "+00:00"))
+                                    game_hour_et = (game_dt.hour - 5) % 24
+                                except Exception:
+                                    pass
+
+                            # Determine if this pick is for the home team
+                            is_home_pick = (pick_name == home_team) if market_key != "totals" else False
+
+                            # Calculate score with full esoteric integration (v10.3 additive)
                             score_data = calculate_pick_score(
                                 game_str,
                                 sharp_signal,
-                                base_ai=5.0,  # Fixed from 4.5
                                 player_name="",  # Empty = game pick flag
                                 home_team=home_team,
                                 away_team=away_team,
                                 spread=point if market_key == "spreads" and point else 0,
                                 total=point if market_key == "totals" and point else 220,
-                                public_pct=50
+                                public_pct=50,
+                                is_home=is_home_pick,
+                                game_hour_et=game_hour_et
                             )
 
                             # Calculate frontend-expected fields for game picks
@@ -2323,16 +2361,20 @@ async def get_best_bets(sport: str, debug: int = 0):
             away_team = signal.get("away_team", "")
             game_str = f"{home_team}{away_team}"
 
+            # Determine if sharp pick is on home team
+            is_home_sharp = signal.get("side") == "HOME"
+
+            # Calculate score with v10.3 additive scoring
             score_data = calculate_pick_score(
                 game_str,
                 signal,
-                base_ai=5.0,
                 player_name="",
                 home_team=home_team,
                 away_team=away_team,
                 spread=signal.get("line_variance", 0),
                 total=220,
-                public_pct=50
+                public_pct=50,
+                is_home=is_home_sharp
             )
 
             # Calculate frontend-expected fields for sharp money picks
