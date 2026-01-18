@@ -41,8 +41,11 @@ class SchedulerConfig:
     AUDIT_HOUR = 6
     AUDIT_MINUTE = 0
 
-    # Props fetch times (10 AM and 6 PM ET)
-    PROPS_FETCH_HOURS = [10, 18]  # 10 AM and 6 PM
+    # Props fetch times
+    # Weekdays: 10 AM and 6 PM
+    # Weekends: 10 AM, 12 PM, 2 PM, 6 PM (games all day)
+    PROPS_FETCH_HOURS_WEEKDAY = [10, 18]  # 10 AM and 6 PM
+    PROPS_FETCH_HOURS_WEEKEND = [10, 12, 14, 18]  # 10 AM, 12 PM, 2 PM, 6 PM
     PROPS_FETCH_MINUTE = 0
 
     # Props cache TTL - 8 hours to last between scheduled fetches
@@ -384,20 +387,36 @@ class DailyScheduler:
             name="Daily Audit"
         )
 
-        # Props fetch at 10 AM (morning fresh data for community)
+        # Props fetch at 10 AM daily (morning fresh data for community)
         self.scheduler.add_job(
             self.props_job.run,
             CronTrigger(hour=10, minute=SchedulerConfig.PROPS_FETCH_MINUTE),
             id="props_fetch_morning",
-            name="Props Fetch (10 AM)"
+            name="Props Fetch (10 AM daily)"
         )
 
-        # Props fetch at 6 PM (evening refresh for goldilocks zone)
+        # Props fetch at 6 PM daily (evening refresh for goldilocks zone)
         self.scheduler.add_job(
             self.props_job.run,
             CronTrigger(hour=18, minute=SchedulerConfig.PROPS_FETCH_MINUTE),
             id="props_fetch_evening",
-            name="Props Fetch (6 PM)"
+            name="Props Fetch (6 PM daily)"
+        )
+
+        # Weekend-only: Props fetch at 12 PM (noon games)
+        self.scheduler.add_job(
+            self.props_job.run,
+            CronTrigger(day_of_week="sat,sun", hour=12, minute=SchedulerConfig.PROPS_FETCH_MINUTE),
+            id="props_fetch_weekend_noon",
+            name="Props Fetch (12 PM weekends)"
+        )
+
+        # Weekend-only: Props fetch at 2 PM (afternoon games)
+        self.scheduler.add_job(
+            self.props_job.run,
+            CronTrigger(day_of_week="sat,sun", hour=14, minute=SchedulerConfig.PROPS_FETCH_MINUTE),
+            id="props_fetch_weekend_afternoon",
+            name="Props Fetch (2 PM weekends)"
         )
 
         # Weekly cleanup on Sunday at 3 AM
@@ -409,18 +428,21 @@ class DailyScheduler:
         )
 
         self.scheduler.start()
-        logger.info("APScheduler started: audit@6AM, props@10AM+6PM, cleanup@Sun3AM")
+        logger.info("APScheduler started: audit@6AM, props@10AM+6PM daily (+12PM+2PM weekends), cleanup@Sun3AM")
     
     def _start_simple_scheduler(self):
         """Fallback simple scheduler using threading."""
         def run_scheduler():
             last_audit_date = None
             last_props_10am = None
+            last_props_12pm = None
+            last_props_2pm = None
             last_props_6pm = None
 
             while self.running:
                 now = datetime.now()
                 today = now.date()
+                is_weekend = now.weekday() >= 5  # Saturday=5, Sunday=6
 
                 # Check if we should run audit (6 AM, once per day)
                 if (now.hour == SchedulerConfig.AUDIT_HOUR and
@@ -430,7 +452,7 @@ class DailyScheduler:
                     self.audit_job.run()
                     last_audit_date = today
 
-                # Check if we should run props fetch (10 AM)
+                # Check if we should run props fetch (10 AM daily)
                 if (now.hour == 10 and
                     now.minute < 5 and
                     last_props_10am != today):
@@ -438,7 +460,25 @@ class DailyScheduler:
                     self.props_job.run()
                     last_props_10am = today
 
-                # Check if we should run props fetch (6 PM)
+                # Check if we should run props fetch (12 PM weekends only)
+                if (is_weekend and
+                    now.hour == 12 and
+                    now.minute < 5 and
+                    last_props_12pm != today):
+
+                    self.props_job.run()
+                    last_props_12pm = today
+
+                # Check if we should run props fetch (2 PM weekends only)
+                if (is_weekend and
+                    now.hour == 14 and
+                    now.minute < 5 and
+                    last_props_2pm != today):
+
+                    self.props_job.run()
+                    last_props_2pm = today
+
+                # Check if we should run props fetch (6 PM daily)
                 if (now.hour == 18 and
                     now.minute < 5 and
                     last_props_6pm != today):
@@ -451,7 +491,7 @@ class DailyScheduler:
 
         self._thread = threading.Thread(target=run_scheduler, daemon=True)
         self._thread.start()
-        logger.info("Simple scheduler started: audit@6AM, props@10AM+6PM")
+        logger.info("Simple scheduler started: audit@6AM, props@10AM+6PM daily, +12PM+2PM weekends")
     
     def stop(self):
         """Stop the scheduler."""
@@ -481,7 +521,7 @@ class DailyScheduler:
             "last_audit": self.audit_job.last_run.isoformat() if self.audit_job.last_run else None,
             "last_props_fetch": self.props_job.last_run.isoformat() if self.props_job.last_run else None,
             "next_audit": f"{SchedulerConfig.AUDIT_HOUR:02d}:{SchedulerConfig.AUDIT_MINUTE:02d} daily",
-            "next_props_fetch": "10:00 AM and 6:00 PM daily",
+            "next_props_fetch": "10AM+6PM daily, +12PM+2PM on weekends",
             "props_cache_ttl": f"{SchedulerConfig.PROPS_CACHE_TTL // 3600} hours",
             "last_results": self.audit_job.last_results,
             "last_props_results": self.props_job.last_results

@@ -1336,9 +1336,17 @@ Each pick in `props.picks[]` contains:
 
 **1. Added Scheduled Props Fetching**
 
-Props are now fetched only twice daily to minimize API credit usage:
+Props are now fetched on a smart schedule to minimize API credit usage:
+
+**Weekdays (Mon-Fri):**
 - **10 AM ET** - Fresh morning data for community
-- **6 PM ET** - Evening refresh for goldilocks zone (news updates)
+- **6 PM ET** - Evening refresh for goldilocks zone
+
+**Weekends (Sat-Sun):**
+- **10 AM ET** - Morning data
+- **12 PM ET** - Noon games refresh
+- **2 PM ET** - Afternoon games refresh
+- **6 PM ET** - Evening games refresh
 
 **2. Updated Cache TTL**
 
@@ -1353,10 +1361,12 @@ Props are now fetched only twice daily to minimize API credit usage:
 ┌─────────────────────────────────────────────────────────┐
 │  DAILY SCHEDULER v2.0                                   │
 ├─────────────────────────────────────────────────────────┤
-│  6 AM   → Daily Audit (grade picks, adjust weights)    │
-│  10 AM  → Props Fetch (all sports, fresh for morning)  │
-│  6 PM   → Props Fetch (refresh for evening games)      │
-│  Sun 3AM → Weekly Cleanup                              │
+│  6 AM      → Daily Audit (grade picks, adjust weights) │
+│  10 AM     → Props Fetch (daily - morning)             │
+│  12 PM     → Props Fetch (weekends only - noon games)  │
+│  2 PM      → Props Fetch (weekends only - afternoon)   │
+│  6 PM      → Props Fetch (daily - evening)             │
+│  Sun 3 AM  → Weekly Cleanup                            │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -1368,9 +1378,10 @@ Props are now fetched only twice daily to minimize API credit usage:
 - Monthly burn: thousands of credits
 
 **After (scheduled fetch):**
-- 2 fetches per day × 4 sports = 8 total props fetches
-- ~10-15 calls per fetch = **~100 API calls/day**
-- Monthly: ~3,000 calls (vs potentially 100k+)
+- Weekdays: 2 fetches/day × 4 sports = 8 props fetches
+- Weekends: 4 fetches/day × 4 sports = 16 props fetches
+- ~10-15 calls per fetch = **~120-180 API calls/day**
+- Monthly: ~4,000-5,000 calls (vs potentially 100k+)
 
 ### New Endpoints
 
