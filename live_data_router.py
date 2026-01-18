@@ -5838,6 +5838,388 @@ def calculate_parlay_odds_internal(legs: List[Dict]) -> Dict[str, Any]:
 
 
 # ============================================================================
+# FRONTEND COMPATIBILITY ENDPOINTS
+# These endpoints match what the frontend api.js expects
+# ============================================================================
+
+@router.get("/games/{sport}")
+async def get_live_games(sport: str, auth: bool = Depends(verify_api_key)):
+    """
+    Get live games with odds for a sport.
+
+    This is an alias for /lines/{sport} to match frontend expectations.
+    Returns games with current lines/odds from Odds API or Playbook.
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "source": "odds_api" | "playbook" | "fallback",
+        "count": N,
+        "games": [...],
+        "api_usage": {...}
+    }
+    """
+    # Get lines data (contains games with odds)
+    lines_data = await get_lines(sport)
+
+    # Transform to match frontend expected schema
+    games = lines_data.get("data", [])
+
+    # Add game-level formatting expected by frontend
+    formatted_games = []
+    for game in games:
+        formatted_games.append({
+            "id": game.get("game_id") or game.get("id"),
+            "game_id": game.get("game_id") or game.get("id"),
+            "home_team": game.get("home_team"),
+            "away_team": game.get("away_team"),
+            "commence_time": game.get("commence_time"),
+            "sport": sport.upper(),
+            "odds": {
+                "spreads": game.get("spreads", []),
+                "totals": game.get("totals", []),
+                "moneylines": game.get("moneylines", game.get("h2h", []))
+            },
+            "bookmakers": game.get("bookmakers", [])
+        })
+
+    return {
+        "sport": sport.upper(),
+        "source": lines_data.get("source", "unknown"),
+        "count": len(formatted_games),
+        "games": formatted_games,
+        "data": formatted_games,  # Alias for compatibility
+        "api_usage": {
+            "endpoint": "/live/api-usage",
+            "note": "Check /live/api-health for quota status"
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/slate/{sport}")
+async def get_live_slate(sport: str, auth: bool = Depends(verify_api_key)):
+    """
+    Get today's game slate for a sport.
+
+    Returns scheduled games for today with basic info.
+    This is similar to /games but focused on schedule.
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "date": "2026-01-18",
+        "count": N,
+        "slate": [...]
+    }
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Check cache
+    cache_key = f"slate:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    # Get lines data which contains games
+    lines_data = await get_lines(sport)
+    games = lines_data.get("data", [])
+
+    # Format as slate
+    today = datetime.now().strftime("%Y-%m-%d")
+    slate = []
+
+    for game in games:
+        commence_time = game.get("commence_time", "")
+        # Parse time for display
+        try:
+            if commence_time:
+                dt = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+                game_time = dt.strftime("%I:%M %p ET")
+            else:
+                game_time = "TBD"
+        except Exception:
+            game_time = "TBD"
+
+        slate.append({
+            "game_id": game.get("game_id") or game.get("id"),
+            "home_team": game.get("home_team"),
+            "away_team": game.get("away_team"),
+            "game_time": game_time,
+            "commence_time": commence_time,
+            "status": "scheduled"
+        })
+
+    result = {
+        "sport": sport.upper(),
+        "date": today,
+        "source": lines_data.get("source", "unknown"),
+        "count": len(slate),
+        "slate": slate,
+        "timestamp": datetime.now().isoformat()
+    }
+
+    api_cache.set(cache_key, result, ttl=300)
+    return result
+
+
+@router.get("/roster/{sport}/{team}")
+async def get_roster(sport: str, team: str, auth: bool = Depends(verify_api_key)):
+    """
+    Get team roster with injury status.
+
+    Combines injury data with basic roster info.
+    Team can be full name or abbreviation.
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "team": "Lakers",
+        "players": [...],
+        "injuries": [...]
+    }
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Normalize team name
+    team_normalized = team.lower().replace("-", " ").replace("_", " ")
+
+    # Check cache
+    cache_key = f"roster:{sport_lower}:{team_normalized}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    # Get injuries data which has player info
+    injuries_data = await get_injuries(sport)
+    all_injuries = injuries_data.get("data", [])
+
+    # Filter injuries for this team
+    team_injuries = []
+    for inj in all_injuries:
+        inj_team = (inj.get("team", "") or "").lower()
+        if team_normalized in inj_team or inj_team in team_normalized:
+            team_injuries.append({
+                "player": inj.get("player") or inj.get("athlete", {}).get("displayName"),
+                "position": inj.get("position", ""),
+                "status": inj.get("status", "Unknown"),
+                "injury": inj.get("injury") or inj.get("type", "Unknown"),
+                "return_date": inj.get("return_date", inj.get("returnDate", ""))
+            })
+
+    # Generate basic roster (injured players + estimated healthy players)
+    roster = []
+
+    # Add injured players first
+    for inj in team_injuries:
+        roster.append({
+            "name": inj["player"],
+            "position": inj["position"],
+            "status": inj["status"],
+            "injury": inj["injury"],
+            "is_injured": True
+        })
+
+    result = {
+        "sport": sport.upper(),
+        "team": team.title(),
+        "source": injuries_data.get("source", "unknown"),
+        "player_count": len(roster),
+        "injured_count": len(team_injuries),
+        "players": roster,
+        "injuries": team_injuries,
+        "note": "Roster shows injured players. Full roster requires additional data source.",
+        "timestamp": datetime.now().isoformat()
+    }
+
+    api_cache.set(cache_key, result, ttl=300)
+    return result
+
+
+@router.get("/player/{player_name}")
+async def get_player_stats(player_name: str, sport: str = "nba", auth: bool = Depends(verify_api_key)):
+    """
+    Get player stats and props.
+
+    Searches for player across props and injury data.
+
+    Response Schema:
+    {
+        "player": "LeBron James",
+        "team": "Lakers",
+        "props": [...],
+        "injury_status": {...},
+        "recent_performance": {...}
+    }
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    player_normalized = player_name.lower().strip()
+
+    # Check cache
+    cache_key = f"player:{sport_lower}:{player_normalized}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    # Fetch props and injuries in parallel
+    results = await asyncio.gather(
+        get_props(sport),
+        get_injuries(sport),
+        return_exceptions=True
+    )
+
+    props_data, injuries_data = results
+
+    # Find player props
+    player_props = []
+    player_team = None
+
+    if not isinstance(props_data, Exception):
+        for prop in props_data.get("data", []):
+            prop_player = (prop.get("player") or prop.get("description") or "").lower()
+            if player_normalized in prop_player or prop_player in player_normalized:
+                player_props.append({
+                    "market": prop.get("market"),
+                    "line": prop.get("point") or prop.get("line"),
+                    "over_odds": prop.get("over_price") or prop.get("over_odds"),
+                    "under_odds": prop.get("under_price") or prop.get("under_odds"),
+                    "bookmaker": prop.get("bookmaker", "consensus")
+                })
+                if not player_team:
+                    player_team = prop.get("team")
+
+    # Find injury status
+    injury_status = None
+    if not isinstance(injuries_data, Exception):
+        for inj in injuries_data.get("data", []):
+            inj_player = (inj.get("player") or inj.get("athlete", {}).get("displayName", "") or "").lower()
+            if player_normalized in inj_player or inj_player in player_normalized:
+                injury_status = {
+                    "status": inj.get("status", "Unknown"),
+                    "injury": inj.get("injury") or inj.get("type", "Unknown"),
+                    "team": inj.get("team"),
+                    "return_date": inj.get("return_date", "")
+                }
+                if not player_team:
+                    player_team = inj.get("team")
+                break
+
+    result = {
+        "player": player_name.title(),
+        "sport": sport.upper(),
+        "team": player_team,
+        "props_count": len(player_props),
+        "props": player_props,
+        "injury_status": injury_status,
+        "is_injured": injury_status is not None,
+        "source": "combined",
+        "timestamp": datetime.now().isoformat()
+    }
+
+    api_cache.set(cache_key, result, ttl=180)
+    return result
+
+
+@router.post("/predict-live")
+async def predict_live(
+    prediction_request: Dict[str, Any],
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    Get AI prediction for a game or prop.
+
+    This is an alias that calls best-bets and filters for the requested prediction.
+
+    Request Body:
+    {
+        "sport": "nba",
+        "game_id": "abc123",  # Optional
+        "player": "LeBron James",  # Optional
+        "market": "points"  # Optional
+    }
+
+    Response Schema:
+    {
+        "prediction": {...},
+        "confidence": 0.75,
+        "recommendation": "OVER",
+        "analysis": {...}
+    }
+    """
+    sport = prediction_request.get("sport", "nba").lower()
+    game_id = prediction_request.get("game_id")
+    player = prediction_request.get("player", "").lower()
+    market = prediction_request.get("market", "").lower()
+
+    if sport not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Get best bets data
+    best_bets = await get_best_bets(sport)
+
+    props = best_bets.get("props", [])
+    game_picks = best_bets.get("game_picks", [])
+
+    prediction = None
+
+    # Search for matching prediction
+    if player:
+        # Look for player prop
+        for prop in props:
+            prop_player = (prop.get("player") or "").lower()
+            prop_market = (prop.get("market") or "").lower()
+            if player in prop_player:
+                if not market or market in prop_market:
+                    prediction = prop
+                    break
+    elif game_id:
+        # Look for game prediction
+        for pick in game_picks:
+            if pick.get("game_id") == game_id:
+                prediction = pick
+                break
+    else:
+        # Return top prediction
+        if props:
+            prediction = props[0]
+        elif game_picks:
+            prediction = game_picks[0]
+
+    if not prediction:
+        return {
+            "found": False,
+            "message": "No matching prediction found",
+            "sport": sport.upper(),
+            "available_props": len(props),
+            "available_game_picks": len(game_picks),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    return {
+        "found": True,
+        "sport": sport.upper(),
+        "prediction": prediction,
+        "confidence": prediction.get("confidence", prediction.get("score", 0.7)),
+        "recommendation": prediction.get("pick") or prediction.get("recommendation"),
+        "edge": prediction.get("edge", prediction.get("value")),
+        "analysis": {
+            "ai_models_score": prediction.get("ai_score", prediction.get("research_score")),
+            "pillars_hit": prediction.get("pillars_hit", []),
+            "esoteric_signals": prediction.get("esoteric_signals", [])
+        },
+        "source": best_bets.get("source", "ai_engine"),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# ============================================================================
 # EXPORTS FOR MAIN.PY
 # ============================================================================
 
