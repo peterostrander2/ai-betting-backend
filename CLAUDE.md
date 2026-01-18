@@ -1408,3 +1408,106 @@ CLAUDE.md             (MODIFIED - Session log)
 ```
 
 ---
+
+## Session Log: January 18, 2026 - Ultimate Confluence Production v3
+
+### The Problem
+
+Zero actionable picks were being generated because:
+1. **pillar_score was HARDCODED** to 2.0 (should be dynamic 0-8)
+2. **Thresholds too high**: GOLD_STAR required 9.0+ (mathematically unreachable)
+3. **Context modifiers not applied**: Vacuum, Refs, Weather calculated but not used
+4. **No explainability**: No `reasons[]` showing WHY a pick scored high/low
+
+### What Was Fixed
+
+**1. Replaced Hardcoded pillar_score with 8 Pillars System**
+
+| Pillar | Props Weight | Games Weight |
+|--------|--------------|--------------|
+| Sharp Money (STRONG) | +1.0 | +3.0 |
+| Sharp Money (MODERATE) | +0.5 | +1.5 |
+| Reverse Line Move (RLM) | +1.0 | +1.0 |
+| Public Fade (>70%) | +0.5 | +0.5 |
+| Goldilocks (spread 4-9) | +0.3 | +0.3 |
+| Trap Gate (>15) | -1.0 | -1.0 |
+| High Total (>230) | +0.2 | +0.2 |
+| Multi-Pillar Confluence | +0.3 | +0.3 |
+
+**2. Fixed Scoring Thresholds**
+
+| Tier | Old | New |
+|------|-----|-----|
+| GOLD_STAR | >= 9.0 | >= 7.5 |
+| EDGE_LEAN | >= 7.5 | >= 6.5 |
+| MONITOR | >= 6.0 | >= 5.5 |
+| PASS | < 6.0 | < 5.5 |
+
+**3. Deflated Confluence Boosts**
+
+| Level | Old Boost | New Boost |
+|-------|-----------|-----------|
+| IMMORTAL | +10 | +1.0 |
+| JARVIS_PERFECT | +7 | +0.6 |
+| PERFECT | +5 | +0.4 |
+| STRONG | +3 | +0.3 |
+| MODERATE | +1 | +0.0 |
+
+**4. Added Explainability (reasons[] array)**
+
+Every pick now includes a `reasons` array showing exactly why it scored:
+```json
+{
+  "reasons": [
+    "RESEARCH: Sharp Split (Game) +3.0",
+    "RESEARCH: Reverse Line Move +1.0",
+    "ESOTERIC: Jarvis Trigger 33 +0.4",
+    "CONFLUENCE: Perfect Alignment +0.4"
+  ]
+}
+```
+
+**5. Volume Governor**
+- Max 3 GOLD_STAR picks per category (prevents over-confidence)
+- Fallback fill: Always return at least 3 actionable picks
+- Governor actions tracked in reasons[]
+
+**6. Fixed game picks base_ai**
+- Changed from 4.5 to 5.0 (was causing games to score lower than props)
+
+**7. Added Debug Mode**
+```bash
+curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1"
+```
+
+Returns diagnostic info: `games_pulled`, `candidates_scored`, `returned_picks`, `volume_governor_applied`
+
+### Expected Results
+
+| Metric | Before | After |
+|--------|--------|-------|
+| pillar_score | 2.0 (always) | 0-8 (dynamic) |
+| research_score | 4.38 | 5.5-7.5 |
+| FINAL score | 6.22 | 6.5-9.0 |
+| Tier | MONITOR | EDGE_LEAN / GOLD_STAR |
+| Actionable picks | 0% | 30-50% |
+
+### Files Changed
+
+```
+jarvis_savant_engine.py   (MODIFIED - Thresholds, confluence boosts)
+live_data_router.py       (MODIFIED - 8 Pillars, Volume Governor, debug mode)
+CLAUDE.md                 (MODIFIED - Session log)
+```
+
+### Verification
+
+After merging, run:
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" | \
+  jq '.picks[0] | {tier, final_score, reasons}'
+```
+
+Expected: `tier` = "GOLD_STAR" or "EDGE_LEAN", `reasons[]` populated
+
+---
