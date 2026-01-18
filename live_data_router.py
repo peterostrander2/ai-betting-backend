@@ -1148,10 +1148,9 @@ async def get_sharp_money(sport: str):
         )
 
         if not resp or resp.status_code != 200:
-            # Use fallback data when API unavailable
-            logger.warning("Odds API unavailable for sharp, using fallback data")
-            data = generate_fallback_sharp(sport_lower)
-            result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
+            # Return empty data when API unavailable - no fake data
+            logger.warning("Odds API unavailable for sharp - no data available")
+            result = {"sport": sport.upper(), "source": "none", "count": 0, "data": [], "movements": [], "message": "Odds API unavailable"}
             api_cache.set(cache_key, result)
             return result
 
@@ -1162,9 +1161,8 @@ async def get_sharp_money(sport: str):
             games = resp.json()
         except ValueError as e:
             logger.error("Failed to parse Odds API response: %s", e)
-            # Use fallback on parse error
-            data = generate_fallback_sharp(sport_lower)
-            result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
+            # Return empty data on parse error - no fake data
+            result = {"sport": sport.upper(), "source": "none", "count": 0, "data": [], "movements": [], "message": "Failed to parse API response"}
             api_cache.set(cache_key, result)
             return result
 
@@ -1193,10 +1191,9 @@ async def get_sharp_money(sport: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Odds API processing failed for %s: %s, using fallback", sport, e)
-        # Return fallback on any error
-        data = generate_fallback_sharp(sport_lower)
-        result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
+        logger.exception("Odds API processing failed for %s: %s", sport, e)
+        # Return empty data on error - no fake data
+        result = {"sport": sport.upper(), "source": "none", "count": 0, "data": [], "movements": [], "message": f"API error: {str(e)}"}
         api_cache.set(cache_key, result)
         return result
 
@@ -1665,91 +1662,11 @@ async def get_props(sport: str):
         except Exception as e:
             logger.warning("Playbook API props failed for %s: %s", sport, e)
 
-    # If still no data, generate sample props from today's games
+    # Log if no data was retrieved from any API
     if not data:
-        logger.info("No props from APIs, generating from game schedule for %s", sport)
-        try:
-            # Get today's games from Odds API (main odds endpoint works)
-            odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
-            resp = await fetch_with_retries(
-                "GET", odds_url,
-                params={
-                    "apiKey": ODDS_API_KEY,
-                    "regions": "us",
-                    "markets": "h2h",
-                    "oddsFormat": "american"
-                }
-            )
+        logger.warning("No props data available for %s from any API source", sport)
 
-            if resp and resp.status_code == 200:
-                games = resp.json()
-                # Import player data for realistic props
-                from player_birth_data import get_players_by_sport
-
-                sport_upper = sport.upper()
-                if sport_upper == "NCAAB":
-                    sport_upper = "NCAAB"
-                players = get_players_by_sport(sport_upper)
-                player_list = list(players.keys())
-
-                for game in games[:5]:  # Limit to 5 games
-                    home_team = game.get("home_team", "")
-                    away_team = game.get("away_team", "")
-
-                    # Find players on these teams
-                    team_players = [p for p, d in players.items() if d.get("team", "") in [home_team, away_team] or home_team in d.get("team", "") or away_team in d.get("team", "")]
-
-                    if not team_players and player_list:
-                        # Use random players if no team match
-                        import random
-                        random.seed(hash(home_team + away_team))
-                        team_players = random.sample(player_list, min(4, len(player_list)))
-
-                    game_props = {
-                        "game_id": game.get("id"),
-                        "home_team": home_team,
-                        "away_team": away_team,
-                        "commence_time": game.get("commence_time"),
-                        "props": []
-                    }
-
-                    # Generate props for found players
-                    prop_types = {
-                        "NBA": [("player_points", 22.5), ("player_rebounds", 6.5), ("player_assists", 5.5)],
-                        "NFL": [("player_pass_yds", 250.5), ("player_rush_yds", 65.5), ("player_rec_yds", 55.5)],
-                        "MLB": [("player_hits", 1.5), ("player_runs", 0.5), ("player_rbis", 0.5)],
-                        "NHL": [("player_points", 0.5), ("player_shots", 2.5), ("player_assists", 0.5)],
-                        "NCAAB": [("player_points", 15.5), ("player_rebounds", 5.5), ("player_assists", 3.5)],
-                    }
-
-                    for player in team_players[:3]:
-                        for prop_type, base_line in prop_types.get(sport.upper(), prop_types["NBA"]):
-                            game_props["props"].append({
-                                "player": player,
-                                "market": prop_type,
-                                "line": base_line,
-                                "odds": -110,
-                                "side": "Over",
-                                "book": "consensus"
-                            })
-                            game_props["props"].append({
-                                "player": player,
-                                "market": prop_type,
-                                "line": base_line,
-                                "odds": -110,
-                                "side": "Under",
-                                "book": "consensus"
-                            })
-
-                    if game_props["props"]:
-                        data.append(game_props)
-
-                logger.info("Generated props from schedule for %s: %d games with props", sport, len(data))
-
-        except Exception as e:
-            logger.warning("Failed to generate props from schedule for %s: %s", sport, e)
-
-    result = {"sport": sport.upper(), "source": "odds_api" if data else "generated", "count": len(data), "data": data}
+    result = {"sport": sport.upper(), "source": "odds_api" if data else "none", "count": len(data), "data": data}
     api_cache.set(cache_key, result)
     return result
 
@@ -2139,131 +2056,6 @@ async def get_best_bets(sport: str):
     top_props = deduplicated_props[:10]
 
     # ============================================
-    # FALLBACK: Generate sample props if APIs returned nothing
-    # ============================================
-    if not top_props:
-        logger.info("No props from APIs, generating fallback sample picks for %s", sport)
-        from player_birth_data import get_players_by_sport
-
-        # Get players for this sport
-        players_dict = get_players_by_sport(sport.upper())
-        player_names = list(players_dict.keys())[:10]  # Top 10 players
-
-        # Sport-specific prop configurations
-        PROP_CONFIGS = {
-            "nba": [
-                ("player_points", 24.5, "Points"),
-                ("player_rebounds", 7.5, "Rebounds"),
-                ("player_assists", 5.5, "Assists"),
-            ],
-            "nfl": [
-                ("player_pass_yds", 265.5, "Pass Yards"),
-                ("player_rush_yds", 72.5, "Rush Yards"),
-                ("player_rec_yds", 58.5, "Rec Yards"),
-            ],
-            "mlb": [
-                ("batter_hits", 1.5, "Hits"),
-                ("batter_total_bases", 1.5, "Total Bases"),
-                ("pitcher_strikeouts", 5.5, "Strikeouts"),
-            ],
-            "nhl": [
-                ("player_points", 0.5, "Points"),
-                ("player_shots_on_goal", 3.5, "Shots on Goal"),
-                ("player_assists", 0.5, "Assists"),
-            ],
-            "ncaab": [
-                ("player_points", 16.5, "Points"),
-                ("player_rebounds", 5.5, "Rebounds"),
-                ("player_assists", 3.5, "Assists"),
-            ],
-        }
-
-        prop_config = PROP_CONFIGS.get(sport_lower, PROP_CONFIGS["nba"])
-
-        # Generate sample picks with deterministic scores
-        import random
-        random.seed(42)  # Deterministic for consistent results
-
-        for idx, player in enumerate(player_names[:5]):
-            player_data = players_dict.get(player, {})
-            team = player_data.get("team", "Team")
-
-            for prop_type, base_line, stat_name in prop_config:
-                # Vary the scores to create ranking
-                base_score = 8.5 - (idx * 0.3) - random.uniform(0, 0.5)
-
-                # Calculate derived values
-                predicted_value = base_line + random.uniform(1.5, 4.5)
-                confidence = min(0.95, 0.70 + (base_score / 20))
-
-                # Determine badges based on score
-                badges = []
-                if base_score >= 8.0:
-                    badges.append("SMASH_SPOT")
-                if random.random() > 0.7:
-                    badges.append("HOT_STREAK")
-                if random.random() > 0.8:
-                    badges.append("MATCHUP_EDGE")
-
-                # Generate rationale
-                rationale = f"Strong {stat_name.lower()} projection based on recent performance. "
-                rationale += f"Averaging {predicted_value - 1.5:.1f} {stat_name.lower()} over last 5 games."
-
-                top_props.append({
-                    "player": player,
-                    "player_name": player,
-                    "market": prop_type,
-                    "stat_type": stat_name,
-                    "line": base_line,
-                    "side": "Over",
-                    "over_under": "over",
-                    "odds": -110,
-                    "game": f"Opponent @ {team}",
-                    "home_team": team,
-                    "away_team": "Opponent",
-                    "team": team,
-                    "opponent": "Opponent",
-                    "game_time": datetime.now().isoformat(),
-                    "recommendation": f"OVER {base_line}",
-                    "total_score": round(base_score, 2),
-                    "smash_score": round(base_score, 2),
-                    "confidence": "SMASH" if base_score >= 7.5 else "HIGH",
-                    "confidence_score": int(confidence * 100),
-                    "predicted_value": round(predicted_value, 1),
-                    "rationale": rationale,
-                    "badges": badges,
-                    "confluence_level": "STRONG" if base_score >= 7.5 else "MODERATE",
-                    "bet_tier": {"tier": "GOLD_STAR" if base_score >= 8.0 else "EDGE_LEAN", "units": 2.0 if base_score >= 8.0 else 1.0, "action": "SMASH" if base_score >= 8.0 else "PLAY"},
-                    "scoring_breakdown": {
-                        "research_score": round(base_score * 0.67, 2),
-                        "esoteric_score": round(base_score * 0.33, 2),
-                        "ai_models": 6.0,
-                        "pillars": 5.0,
-                        "confluence_boost": 2.0,
-                        "alignment_pct": 78.5
-                    },
-                    "esoteric_breakdown": {
-                        "gematria": 3.5,
-                        "jarvis_triggers": 1.5,
-                        "astro": 0.8,
-                        "fibonacci": 0.3,
-                        "vortex": 0.2,
-                        "daily_edge": 0.3,
-                        "public_fade_mod": 0.1,
-                        "trap_mod": 0.0
-                    },
-                    "jarvis_triggers": [],
-                    "immortal_detected": False,
-                    "sharp_signal": "MODERATE",
-                    "source": "fallback"
-                })
-
-        # Re-sort and limit to top 10
-        top_props.sort(key=lambda x: x["total_score"], reverse=True)
-        top_props = top_props[:10]
-        logger.info("Generated %d fallback props picks for %s", len(top_props), sport)
-
-    # ============================================
     # CATEGORY 2: GAME PICKS (Spreads, Totals, ML)
     # ============================================
     game_picks = []
@@ -2434,160 +2226,6 @@ async def get_best_bets(sport: str):
     top_game_picks = game_picks[:10]
 
     # ============================================
-    # FALLBACK: Generate sample game picks if APIs returned nothing
-    # ============================================
-    if not top_game_picks:
-        logger.info("No game picks from APIs, generating fallback sample picks for %s", sport)
-
-        # Sport-specific team matchups for fallback
-        TEAM_MATCHUPS = {
-            "nba": [
-                ("Lakers", "Celtics"),
-                ("Warriors", "Bucks"),
-                ("76ers", "Nuggets"),
-                ("Heat", "Suns"),
-                ("Mavericks", "Cavaliers"),
-            ],
-            "nfl": [
-                ("Chiefs", "49ers"),
-                ("Bills", "Cowboys"),
-                ("Eagles", "Ravens"),
-                ("Lions", "Dolphins"),
-                ("Packers", "Bengals"),
-            ],
-            "mlb": [
-                ("Yankees", "Dodgers"),
-                ("Red Sox", "Cardinals"),
-                ("Cubs", "Giants"),
-                ("Braves", "Astros"),
-                ("Mets", "Phillies"),
-            ],
-            "nhl": [
-                ("Rangers", "Bruins"),
-                ("Maple Leafs", "Lightning"),
-                ("Avalanche", "Golden Knights"),
-                ("Oilers", "Panthers"),
-                ("Stars", "Wild"),
-            ],
-            "ncaab": [
-                ("Duke", "Kentucky"),
-                ("Kansas", "North Carolina"),
-                ("Gonzaga", "UCLA"),
-                ("Purdue", "Michigan"),
-                ("Arizona", "Houston"),
-            ],
-        }
-
-        matchups = TEAM_MATCHUPS.get(sport_lower, TEAM_MATCHUPS["nba"])
-
-        import random
-        random.seed(43)  # Different seed from props for variety
-
-        for idx, (home_team, away_team) in enumerate(matchups):
-            # Generate spread pick
-            spread = -3.5 - (idx * 0.5)
-            spread_score = 8.2 - (idx * 0.4) - random.uniform(0, 0.3)
-
-            top_game_picks.append({
-                "pick_type": "SPREAD",
-                "pick": f"{home_team} {spread:+.1f}",
-                "team": home_team,
-                "line": spread,
-                "odds": -110,
-                "game": f"{away_team} @ {home_team}",
-                "home_team": home_team,
-                "away_team": away_team,
-                "market": "spreads",
-                "recommendation": f"{home_team} {spread:+.1f}",
-                "game_time": datetime.now().isoformat(),
-                "total_score": round(spread_score, 2),
-                "smash_score": round(spread_score, 2),
-                "confidence": "SMASH" if spread_score >= 7.5 else "HIGH",
-                "confidence_score": int(min(0.95, 0.70 + (spread_score / 20)) * 100),
-                "predicted_value": None,
-                "rationale": f"Sharp money moving on {home_team}. Line has shifted from {spread + 1:.1f} to {spread:.1f}.",
-                "badges": ["SHARP_MONEY"] if spread_score >= 7.8 else [],
-                "confluence_level": "STRONG" if spread_score >= 7.5 else "MODERATE",
-                "bet_tier": {"tier": "GOLD_STAR" if spread_score >= 8.0 else "EDGE_LEAN", "units": 2.0 if spread_score >= 8.0 else 1.0, "action": "SMASH" if spread_score >= 8.0 else "PLAY"},
-                "scoring_breakdown": {
-                    "research_score": round(spread_score * 0.65, 2),
-                    "esoteric_score": round(spread_score * 0.35, 2),
-                    "ai_models": 5.5,
-                    "pillars": 4.5,
-                    "confluence_boost": 2.0,
-                    "alignment_pct": 76.0
-                },
-                "esoteric_breakdown": {
-                    "gematria": 3.2,
-                    "jarvis_triggers": 1.4,
-                    "astro": 0.7,
-                    "fibonacci": 0.2,
-                    "vortex": 0.2,
-                    "daily_edge": 0.2,
-                    "public_fade_mod": 0.1,
-                    "trap_mod": 0.0
-                },
-                "jarvis_triggers": [],
-                "immortal_detected": False,
-                "sharp_signal": "MODERATE",
-                "source": "fallback"
-            })
-
-            # Generate total pick
-            total = 218.5 + (idx * 2)
-            total_score = 7.8 - (idx * 0.35) - random.uniform(0, 0.3)
-
-            top_game_picks.append({
-                "pick_type": "TOTAL",
-                "pick": f"Over {total}",
-                "team": None,
-                "line": total,
-                "odds": -110,
-                "game": f"{away_team} @ {home_team}",
-                "home_team": home_team,
-                "away_team": away_team,
-                "market": "totals",
-                "recommendation": f"OVER {total}",
-                "game_time": datetime.now().isoformat(),
-                "total_score": round(total_score, 2),
-                "smash_score": round(total_score, 2),
-                "confidence": "HIGH" if total_score >= 7.0 else "MEDIUM",
-                "confidence_score": int(min(0.90, 0.65 + (total_score / 20)) * 100),
-                "predicted_value": total + random.uniform(3, 8),
-                "rationale": f"Both teams averaging high-scoring games. Pace and efficiency metrics suggest over.",
-                "badges": ["PACE_UP"] if total_score >= 7.5 else [],
-                "confluence_level": "MODERATE",
-                "bet_tier": {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"},
-                "scoring_breakdown": {
-                    "research_score": round(total_score * 0.60, 2),
-                    "esoteric_score": round(total_score * 0.40, 2),
-                    "ai_models": 5.0,
-                    "pillars": 4.0,
-                    "confluence_boost": 1.0,
-                    "alignment_pct": 72.0
-                },
-                "esoteric_breakdown": {
-                    "gematria": 2.8,
-                    "jarvis_triggers": 1.2,
-                    "astro": 0.6,
-                    "fibonacci": 0.2,
-                    "vortex": 0.2,
-                    "daily_edge": 0.2,
-                    "public_fade_mod": 0.0,
-                    "trap_mod": 0.0
-                },
-                "jarvis_triggers": [],
-                "immortal_detected": False,
-                "sharp_signal": "NONE",
-                "source": "fallback"
-            })
-
-        # Sort and limit
-        top_game_picks.sort(key=lambda x: x["total_score"], reverse=True)
-        top_game_picks = top_game_picks[:10]
-        logger.info("Generated %d fallback game picks for %s", len(top_game_picks), sport)
-
-    # ============================================
     # BUILD FINAL RESPONSE
     # ============================================
     # Get astro status if available
@@ -2601,6 +2239,29 @@ async def get_best_bets(sport: str):
             }
         except Exception as e:
             logger.warning("Failed to get astro status: %s", e)
+
+    # Build diagnostic info about data sources
+    api_status = {
+        "odds_api_configured": bool(ODDS_API_KEY),
+        "playbook_api_configured": bool(PLAYBOOK_API_KEY),
+        "props_source": props_data.get("source", "none") if props_data else "none",
+        "props_games_found": len(props_data.get("data", [])) if props_data else 0,
+        "sharp_source": sharp_data.get("source", "none") if sharp_data else "none",
+    }
+
+    # Determine if we have real data or not
+    has_live_data = len(top_props) > 0 or len(top_game_picks) > 0
+
+    # Build message about data availability
+    if not has_live_data:
+        if not ODDS_API_KEY:
+            data_message = "ODDS_API_KEY not configured. Set this environment variable in Railway."
+        elif api_status["props_games_found"] == 0:
+            data_message = f"No games/props available for {sport.upper()} right now. This could mean no games are scheduled today or the API returned empty data."
+        else:
+            data_message = "Props data was retrieved but no picks met the scoring threshold."
+    else:
+        data_message = f"Live data retrieved: {len(top_props)} prop picks, {len(top_game_picks)} game picks"
 
     result = {
         "sport": sport.upper(),
@@ -2622,6 +2283,8 @@ async def get_best_bets(sport: str):
             "learned_weights": esoteric_weights,
             "learning_active": learning is not None
         },
+        "api_status": api_status,
+        "data_message": data_message,
         "timestamp": datetime.now().isoformat()
     }
     api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
@@ -3617,15 +3280,15 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
         )
 
         if not resp or resp.status_code != 200:
-            # Use fallback data when API unavailable
-            logger.warning("Odds API unavailable for line-shop, using fallback data")
-            line_shop_data = generate_fallback_line_shop(sport_lower)
+            # Return empty data when API unavailable - no fake data
+            logger.warning("Odds API unavailable for line-shop - no data available")
             result = {
                 "sport": sport.upper(),
-                "source": "fallback",
-                "count": len(line_shop_data),
+                "source": "none",
+                "count": 0,
                 "sportsbooks": list(SPORTSBOOK_CONFIGS.keys()),
-                "data": line_shop_data,
+                "data": [],
+                "message": "Odds API unavailable - check API key configuration",
                 "timestamp": datetime.now().isoformat()
             }
             api_cache.set(cache_key, result, ttl=120)
@@ -3719,15 +3382,15 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Line shopping fetch failed: %s, using fallback", e)
-        # Return fallback data on any error
-        line_shop_data = generate_fallback_line_shop(sport_lower)
+        logger.exception("Line shopping fetch failed: %s", e)
+        # Return empty data on error - no fake data
         result = {
             "sport": sport.upper(),
-            "source": "fallback",
-            "count": len(line_shop_data),
+            "source": "none",
+            "count": 0,
             "sportsbooks": list(SPORTSBOOK_CONFIGS.keys()),
-            "data": line_shop_data,
+            "data": [],
+            "message": f"API error: {str(e)}",
             "timestamp": datetime.now().isoformat()
         }
         api_cache.set(cache_key, result, ttl=120)
@@ -3774,9 +3437,9 @@ async def generate_betslip(
         )
 
         if not resp or resp.status_code != 200:
-            # Use fallback data when API unavailable
-            logger.warning("Odds API unavailable for betslip, using fallback data")
-            return generate_fallback_betslip(sport_lower, game_id, bet_type, selection)
+            # Return error when API unavailable - no fake data
+            logger.warning("Odds API unavailable for betslip - no data available")
+            raise HTTPException(status_code=503, detail="Odds API unavailable - cannot generate betslip without live data")
 
         games = resp.json()
         target_game = None
@@ -3787,9 +3450,9 @@ async def generate_betslip(
                 break
 
         if not target_game:
-            # Game not found in API, use fallback
-            logger.warning("Game %s not found, using fallback data", game_id)
-            return generate_fallback_betslip(sport_lower, game_id, bet_type, selection)
+            # Game not found in API - return error
+            logger.warning("Game %s not found in API", game_id)
+            raise HTTPException(status_code=404, detail=f"Game {game_id} not found - may have already started or ended")
 
         betslip_options = []
 
@@ -3866,9 +3529,9 @@ async def generate_betslip(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Betslip generation failed: %s, using fallback", e)
-        # Return fallback data on any error
-        return generate_fallback_betslip(sport_lower, game_id, bet_type, selection)
+        logger.exception("Betslip generation failed: %s", e)
+        # Return error on failure - no fake data
+        raise HTTPException(status_code=500, detail=f"Betslip generation failed: {str(e)}")
 
 
 @router.get("/sportsbooks")
