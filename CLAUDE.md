@@ -381,6 +381,26 @@ GET /live/gann-physics-status   # GANN physics
 GET /esoteric/today-energy      # Daily energy
 ```
 
+### Frontend Compatibility Endpoints
+
+**These endpoints match the frontend api.js expected method names.**
+
+```
+GET  /live/games/{sport}              # Live games with odds (alias for /lines)
+GET  /live/slate/{sport}              # Today's game schedule
+GET  /live/roster/{sport}/{team}      # Team roster with injuries
+GET  /live/player/{player_name}       # Player stats, props, injury status
+POST /live/predict-live               # AI prediction lookup
+```
+
+| Frontend Method | Backend Endpoint | Returns |
+|-----------------|------------------|---------|
+| `api.getLiveGames(sport)` | `GET /live/games/{sport}` | Games with odds |
+| `api.getLiveSlate(sport)` | `GET /live/slate/{sport}` | Game schedule |
+| `api.getRoster(sport, team)` | `GET /live/roster/{sport}/{team}` | Roster + injuries |
+| `api.getPlayerStats(name)` | `GET /live/player/{name}?sport=nba` | Props + injury |
+| `api.predictLive(data)` | `POST /live/predict-live` | AI prediction |
+
 ### Consolidated Endpoints (Server-Side Fetching)
 
 **Use these endpoints to reduce client-side waterfalls. Each consolidates multiple API calls into one.**
@@ -865,21 +885,204 @@ This is a **Python/FastAPI backend deployed on Railway**, not a React/Next.js ap
 - Added confusion to the project instructions
 - Should live in the frontend repo (`bookie-member-app`) if needed
 
-### Backend Best Practices (What We Follow)
+---
+
+## Python/FastAPI Best Practices
+
+**ALWAYS apply these rules when working on this backend.**
+
+### 1. Async & Performance (CRITICAL)
+
+```python
+# ✅ CORRECT: Use async for all handlers
+@router.get("/endpoint")
+async def get_endpoint():
+    pass
+
+# ✅ CORRECT: Use httpx for async HTTP calls
+async with httpx.AsyncClient() as client:
+    resp = await client.get(url)
+
+# ❌ WRONG: Sync requests library blocks event loop
+import requests
+resp = requests.get(url)  # NEVER do this
+
+# ✅ CORRECT: Parallel fetching with asyncio.gather
+results = await asyncio.gather(
+    fetch_data_1(),
+    fetch_data_2(),
+    fetch_data_3(),
+    return_exceptions=True  # Don't fail all if one fails
+)
+
+# ❌ WRONG: Sequential fetching (waterfall)
+data1 = await fetch_data_1()
+data2 = await fetch_data_2()
+data3 = await fetch_data_3()
+```
+
+### 2. Input Validation (CRITICAL)
+
+```python
+# ✅ CORRECT: Pydantic models for request validation
+from pydantic import BaseModel, Field, validator
+
+class TrackBetRequest(BaseModel):
+    sport: str = Field(..., regex="^(NBA|NFL|MLB|NHL)$")
+    odds: int = Field(..., le=-100) | Field(..., ge=100)
+    stake: float = Field(default=0, ge=0)
+
+@router.post("/bets/track")
+async def track_bet(bet_data: TrackBetRequest):
+    pass  # Pydantic validates before handler runs
+
+# ✅ CORRECT: Validate and cap limits
+limit = min(max(1, limit), 500)  # Between 1-500
+
+# ❌ WRONG: Trust user input directly
+limit = request.query_params.get("limit")  # Could be 999999
+```
+
+### 3. Error Handling (HIGH)
+
+```python
+# ✅ CORRECT: Explicit status codes
+if resp.status_code == 429:
+    raise HTTPException(status_code=503, detail="Rate limited")
+
+if resp.status_code != 200:
+    raise HTTPException(status_code=502, detail=f"API error: {resp.status_code}")
+
+# ✅ CORRECT: Graceful degradation with fallback
+try:
+    data = await fetch_from_api()
+except Exception:
+    logger.exception("API failed, using fallback")
+    data = generate_fallback_data()
+
+# ❌ WRONG: Generic exception swallowing
+try:
+    data = await fetch_from_api()
+except:
+    pass  # Silent failure, returns None
+```
+
+### 4. Caching (HIGH)
+
+```python
+# ✅ CORRECT: Check cache first, set after fetch
+cache_key = f"endpoint:{sport}"
+cached = api_cache.get(cache_key)
+if cached:
+    return cached
+
+data = await fetch_data()
+api_cache.set(cache_key, data, ttl=300)  # 5 min default
+return data
+
+# Cache TTL guidelines:
+# - best-bets: 120s (2 min) - changes frequently
+# - splits/lines: 300s (5 min) - moderate
+# - injuries: 300s (5 min) - moderate
+# - consolidated endpoints: 120s (2 min) - match shortest TTL
+```
+
+### 5. Authentication (HIGH)
+
+```python
+# ✅ CORRECT: Auth on all mutating endpoints
+@router.post("/bets/track")
+async def track_bet(
+    data: TrackBetRequest,
+    auth: bool = Depends(verify_api_key)  # REQUIRED
+):
+    pass
+
+# ✅ CORRECT: Auth on sensitive GET endpoints
+@router.get("/bets/history")
+async def get_history(auth: bool = Depends(verify_api_key)):
+    pass
+
+# Health checks are public (for Railway)
+@router.get("/health")
+async def health():  # No auth - must be accessible
+    return {"status": "healthy"}
+```
+
+### 6. Response Normalization (MEDIUM)
+
+```python
+# ✅ CORRECT: Consistent response schema
+return {
+    "sport": sport.upper(),
+    "source": "playbook" | "odds_api" | "fallback",
+    "count": len(data),
+    "data": data,
+    "timestamp": datetime.now().isoformat()
+}
+
+# ✅ CORRECT: Include cache info for debugging
+return {
+    "data": data,
+    "cache_info": {"hit": True, "ttl_remaining": 120}
+}
+```
+
+### 7. Logging (MEDIUM)
+
+```python
+# ✅ CORRECT: Structured logging
+logger.info("Fetched %d games for %s", len(games), sport)
+logger.exception("Failed to fetch: %s", e)
+logger.warning("Rate limited by %s", api_name)
+
+# ❌ WRONG: Print statements
+print(f"Got {len(games)} games")  # NEVER use print
+```
+
+### 8. Type Hints (MEDIUM)
+
+```python
+# ✅ CORRECT: Full type hints
+async def fetch_data(sport: str, limit: int = 50) -> Dict[str, Any]:
+    pass
+
+async def get_games(sport: str) -> List[Dict[str, Any]]:
+    pass
+
+# ❌ WRONG: Missing types
+async def fetch_data(sport, limit=50):
+    pass
+```
+
+### Pre-Commit Checklist
+
+Before committing any backend code, verify:
+
+- [ ] All handlers use `async def`?
+- [ ] Using `httpx` not `requests`?
+- [ ] Pydantic validation on POST endpoints?
+- [ ] `verify_api_key` on mutating endpoints?
+- [ ] Cache check before expensive operations?
+- [ ] Proper error handling with HTTPException?
+- [ ] Logging instead of print statements?
+- [ ] Type hints on function signatures?
+- [ ] Limit parameters capped (max 500)?
+- [ ] Parallel fetching where possible (asyncio.gather)?
+
+### Quick Reference
 
 | Practice | Implementation |
 |----------|----------------|
 | Async endpoints | All handlers use `async def` |
-| Type hints | Function signatures typed |
-| Pydantic validation | Request models in `models/api_models.py` |
-| TTL caching | In-memory cache with configurable TTL |
-| Error handling | Explicit HTTPException with status codes |
-| Logging | Structured logging, no print statements |
-| Connection pooling | Shared httpx.AsyncClient |
-| Retry with backoff | 2 retries, exponential backoff |
-| Auth on mutations | All POST endpoints require X-API-Key |
-| Limit validation | History endpoints capped at 500 |
-| Parallel fetching | Consolidated endpoints use asyncio.gather() |
+| HTTP client | httpx.AsyncClient (not requests) |
+| Validation | Pydantic models in `models/api_models.py` |
+| Caching | HybridCache with TTL (5 min default) |
+| Error handling | HTTPException with status codes |
+| Logging | logger.info/warning/exception |
+| Auth | `Depends(verify_api_key)` on POST |
+| Limits | Cap at 500, validate with min/max |
+| Parallel fetch | asyncio.gather(return_exceptions=True) |
 
 ---
 
@@ -931,6 +1134,57 @@ Consolidated endpoints correctly use `asyncio.gather()`:
 ```
 live_data_router.py   (MODIFIED - Auth + validation)
 CLAUDE.md             (MODIFIED - Session log)
+```
+
+---
+
+## Session Log: January 18, 2026 - Frontend Compatibility Endpoints
+
+### What Was Done
+
+**1. Frontend API Audit**
+
+Identified gaps between frontend api.js and backend:
+- Frontend calling endpoints that don't exist
+- Missing methods in api.js for existing endpoints
+- Fallback/mock data flowing when live APIs should be used
+
+**2. Created 5 Frontend Compatibility Endpoints**
+
+| Endpoint | Purpose | Data Source |
+|----------|---------|-------------|
+| `GET /live/games/{sport}` | Live games with odds | Wraps `/lines` with frontend-friendly schema |
+| `GET /live/slate/{sport}` | Today's schedule | Derived from `/lines` |
+| `GET /live/roster/{sport}/{team}` | Team roster | Injuries data filtered by team |
+| `GET /live/player/{player_name}` | Player lookup | Props + injuries combined |
+| `POST /live/predict-live` | AI prediction | Filters `/best-bets` by player/game |
+
+**3. All Endpoints Follow Best Practices**
+
+- ✅ `verify_api_key` auth
+- ✅ Caching (180-300s TTL)
+- ✅ `asyncio.gather()` for parallel fetches
+- ✅ Consistent response schemas
+- ✅ Type hints and docstrings
+
+### Frontend Integration
+
+Frontend api.js can now use these without changes:
+
+```javascript
+// These now work directly
+api.getLiveGames('nba')     → GET /live/games/nba
+api.getLiveSlate('nba')     → GET /live/slate/nba
+api.getRoster('nba', 'lakers') → GET /live/roster/nba/lakers
+api.getPlayerStats('lebron')  → GET /live/player/lebron?sport=nba
+api.predictLive({...})      → POST /live/predict-live
+```
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - Added 5 endpoints, +382 lines)
+CLAUDE.md             (MODIFIED - Documentation + session log)
 ```
 
 ---
