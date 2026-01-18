@@ -1969,65 +1969,55 @@ async def get_best_bets(sport: str, debug: int = 0):
         # esoteric_raw already scaled to 0-10 via weights, just clamp
         esoteric_score = max(0, min(10, esoteric_raw))
 
-        # --- v10.1 DUAL-SCORE CONFLUENCE ---
-        if jarvis:
-            confluence = jarvis.calculate_confluence(
-                research_score=research_score,
-                esoteric_score=esoteric_score,
-                immortal_detected=immortal_detected,
-                jarvis_triggered=jarvis_triggered
-            )
-        else:
-            # Fallback confluence calculation (Production v3 deflated boosts)
-            alignment = 1 - abs(research_score - esoteric_score) / 10
-            alignment_pct = alignment * 100
-            both_high = research_score >= 7.0 and esoteric_score >= 7.0
-            is_aligned = alignment_pct >= 80
-            if immortal_detected and both_high and is_aligned:
-                confluence = {"level": "IMMORTAL", "boost": 1.0, "alignment_pct": alignment_pct}
-            elif jarvis_triggered and both_high and is_aligned:
-                confluence = {"level": "JARVIS_PERFECT", "boost": 0.6, "alignment_pct": alignment_pct}
-            elif both_high and is_aligned:
-                confluence = {"level": "PERFECT", "boost": 0.4, "alignment_pct": alignment_pct}
-            elif alignment_pct >= 70:
-                confluence = {"level": "STRONG", "boost": 0.3, "alignment_pct": alignment_pct}
-            elif alignment_pct >= 60:
-                confluence = {"level": "MODERATE", "boost": 0.0, "alignment_pct": alignment_pct}
-            else:
-                confluence = {"level": "DIVERGENT", "boost": 0, "alignment_pct": alignment_pct}
+        # --- v10.4 JARVIS CONFLUENCE DRIVER ---
+        # Jarvis affects picks ONLY through confluence boosts and SmashSpot tagging
+        # (not through inflating research score)
+        alignment = 1 - abs(research_score - esoteric_score) / 10
+        alignment_pct = alignment * 100
+        high_quality = (research_score >= 6.2 and esoteric_score >= 6.8)
+        is_aligned = (alignment >= 0.75)  # 75% alignment threshold
 
-        confluence_level = confluence.get("level", "DIVERGENT")
-        confluence_boost = confluence.get("boost", 0)
-
-        # Track confluence reasons
+        # Confluence boost calculation (micro-scaled)
+        confluence_boost = 0.0
+        confluence_level = "DIVERGENT"
         confluence_reasons = []
-        if confluence_level == "IMMORTAL":
-            confluence_reasons.append("CONFLUENCE: Immortal +1.0")
-        elif confluence_level == "JARVIS_PERFECT":
-            confluence_reasons.append("CONFLUENCE: Jarvis Perfect +0.6")
-        elif confluence_level == "PERFECT":
-            confluence_reasons.append("CONFLUENCE: Perfect Alignment +0.4")
-        elif confluence_level == "STRONG":
-            confluence_reasons.append("CONFLUENCE: Strong +0.3")
 
-        # --- Production v3 FINAL SCORE FORMULA ---
+        if immortal_detected and high_quality and is_aligned:
+            confluence_boost = 0.8
+            confluence_level = "IMMORTAL"
+            confluence_reasons.append("CONFLUENCE: IMMORTAL +0.8")
+        elif jarvis_triggered and high_quality and is_aligned:
+            confluence_boost = 0.5
+            confluence_level = "JARVIS_PERFECT"
+            confluence_reasons.append("CONFLUENCE: JARVIS PERFECT +0.5")
+        elif is_aligned:
+            confluence_boost = 0.3
+            confluence_level = "PERFECT"
+            confluence_reasons.append("CONFLUENCE: Perfect Alignment +0.3")
+        elif alignment_pct >= 60:
+            confluence_level = "MODERATE"
+            # No boost for moderate alignment
+
+        # --- FINAL SCORE FORMULA ---
         # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
         final_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence_boost
         final_score = max(0.0, min(10.0, float(final_score)))
 
-        # --- Production v3 BET TIER DETERMINATION ---
-        if jarvis:
-            bet_tier = jarvis.determine_bet_tier(final_score, confluence)
+        # --- SmashSpot FLAG ---
+        # True when: final >= 7.5 AND jarvis_active AND alignment >= 80%
+        smash_spot = (final_score >= 7.5 and jarvis_triggered and alignment_pct >= 80)
+        if smash_spot:
+            confluence_reasons.append("CONFLUENCE: SmashSpot Conditions Met")
+
+        # --- BET TIER DETERMINATION ---
+        if final_score >= 7.5:
+            bet_tier = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
+        elif final_score >= 6.5:
+            bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
+        elif final_score >= 5.5:
+            bet_tier = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
         else:
-            # Fallback with Production v3 thresholds
-            if final_score >= 7.5:
-                bet_tier = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
-            elif final_score >= 6.5:
-                bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
-            elif final_score >= 5.5:
-                bet_tier = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
-            else:
-                bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
+            bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
 
         # Map to confidence levels for backward compatibility
         confidence_map = {
@@ -2049,15 +2039,17 @@ async def get_best_bets(sport: str, debug: int = 0):
             "confidence": confidence,
             "confidence_score": confidence_score,  # Synced with final_score * 10
             "confluence_level": confluence_level,
+            "alignment_pct": round(alignment_pct, 1),  # v10.4: alignment percentage
+            "smash_spot": smash_spot,  # v10.4: SmashSpot flag
             "bet_tier": bet_tier,
-            "reasons": all_reasons,  # Explainability array (Production v3)
+            "reasons": all_reasons,  # Explainability array
             "scoring_breakdown": {
                 "research_score": round(research_score, 2),
                 "esoteric_score": round(esoteric_score, 2),
                 "base_score": base_ai,  # v10.3: 5.8 base
                 "pillar_boost": round(pillar_boost, 2),  # v10.3: additive pillars
-                "confluence_boost": confluence_boost,
-                "alignment_pct": confluence.get("alignment_pct", 0)
+                "confluence_boost": round(confluence_boost, 2),  # v10.4: jarvis confluence
+                "alignment_pct": round(alignment_pct, 1)
             },
             "esoteric_breakdown": {
                 "gematria": round(gematria_score, 2),       # 52% weight
@@ -2070,6 +2062,7 @@ async def get_best_bets(sport: str, debug: int = 0):
                 "trap_mod": round(trap_mod, 2)
             },
             "jarvis_triggers": jarvis_triggers_hit,
+            "jarvis_active": jarvis_triggered,  # v10.4: for SmashSpot check
             "immortal_detected": immortal_detected
         }
 
