@@ -2448,10 +2448,17 @@ async def get_best_bets(sport: str, debug: int = 0):
     else:
         data_message = f"Live data retrieved: {len(top_props)} prop picks, {len(top_game_picks)} game picks"
 
+    # Build root picks[] array for frontend compatibility (Schema Bridge)
+    # Merges top 3 game picks + top 7 props = 10 total root picks
+    merged_picks = []
+    merged_picks.extend(top_game_picks[:3])
+    merged_picks.extend(top_props[:7])
+
     result = {
         "sport": sport.upper(),
         "source": "production_v3",
         "scoring_system": "8 Pillars + Dual-Engine Confluence",
+        "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": {
             "count": len(top_props),
             "total_analyzed": len(props_picks),
@@ -6125,71 +6132,28 @@ async def get_live_games(sport: str, auth: bool = Depends(verify_api_key)):
 
 
 @router.get("/slate/{sport}")
-async def get_live_slate(sport: str, auth: bool = Depends(verify_api_key)):
+async def get_live_slate(sport: str, debug: int = 0, auth: bool = Depends(verify_api_key)):
     """
-    Get today's game slate for a sport.
+    Alias for /best-bets/{sport} - returns SmashSpots with root picks[] array.
 
-    Returns scheduled games for today with basic info.
-    This is similar to /games but focused on schedule.
+    This endpoint now returns the same response as /best-bets/{sport} for
+    frontend compatibility. The root picks[] array contains merged picks
+    (top 3 game picks + top 7 props).
+
+    Query Parameters:
+    - debug=1: Include diagnostic info
 
     Response Schema:
     {
         "sport": "NBA",
-        "date": "2026-01-18",
-        "count": N,
-        "slate": [...]
+        "picks": [...],           // Root picks[] for SmashSpots rendering
+        "props": {"picks": [...]},
+        "game_picks": {"picks": [...]},
+        ...
     }
     """
-    sport_lower = sport.lower()
-    if sport_lower not in SPORT_MAPPINGS:
-        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
-
-    # Check cache
-    cache_key = f"slate:{sport_lower}"
-    cached = api_cache.get(cache_key)
-    if cached:
-        return cached
-
-    # Get lines data which contains games
-    lines_data = await get_lines(sport)
-    games = lines_data.get("data", [])
-
-    # Format as slate
-    today = datetime.now().strftime("%Y-%m-%d")
-    slate = []
-
-    for game in games:
-        commence_time = game.get("commence_time", "")
-        # Parse time for display
-        try:
-            if commence_time:
-                dt = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
-                game_time = dt.strftime("%I:%M %p ET")
-            else:
-                game_time = "TBD"
-        except Exception:
-            game_time = "TBD"
-
-        slate.append({
-            "game_id": game.get("game_id") or game.get("id"),
-            "home_team": game.get("home_team"),
-            "away_team": game.get("away_team"),
-            "game_time": game_time,
-            "commence_time": commence_time,
-            "status": "scheduled"
-        })
-
-    result = {
-        "sport": sport.upper(),
-        "date": today,
-        "source": lines_data.get("source", "unknown"),
-        "count": len(slate),
-        "slate": slate,
-        "timestamp": datetime.now().isoformat()
-    }
-
-    api_cache.set(cache_key, result, ttl=600)
-    return result
+    # Delegate to get_best_bets for identical response
+    return await get_best_bets(sport, debug)
 
 
 @router.get("/roster/{sport}/{team}")
