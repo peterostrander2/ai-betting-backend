@@ -276,6 +276,26 @@ class HybridCache:
         self._memory_cache[key] = (value, expires_at)
         logger.debug("Memory SET: %s (TTL: %ds)", key, ttl)
 
+    def delete(self, key: str) -> bool:
+        """Delete a specific key from cache."""
+        deleted = False
+
+        if self._using_redis and self._redis_client:
+            try:
+                redis_key = self._make_key(key)
+                deleted = self._redis_client.delete(redis_key) > 0
+                logger.debug("Redis DELETE: %s (deleted: %s)", key, deleted)
+            except Exception as e:
+                logger.warning("Redis delete failed: %s", e)
+
+        # Also delete from memory cache
+        if key in self._memory_cache:
+            del self._memory_cache[key]
+            deleted = True
+            logger.debug("Memory DELETE: %s", key)
+
+        return deleted
+
     def clear(self) -> None:
         """Clear all cached values."""
         if self._using_redis and self._redis_client:
@@ -1667,7 +1687,8 @@ async def get_props(sport: str):
         logger.warning("No props data available for %s from any API source", sport)
 
     result = {"sport": sport.upper(), "source": "odds_api" if data else "none", "count": len(data), "data": data}
-    api_cache.set(cache_key, result)
+    # 8-hour TTL for props - refreshed via scheduler at 10am and 6pm
+    api_cache.set(cache_key, result, ttl=28800)
     return result
 
 

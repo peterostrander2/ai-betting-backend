@@ -1188,3 +1188,223 @@ CLAUDE.md             (MODIFIED - Documentation + session log)
 ```
 
 ---
+
+## Session Log: January 18, 2026 - API Integration & Optimization
+
+### What Was Done
+
+**1. Removed ALL Fake/Sample Data**
+
+The backend was generating fake data when APIs failed. This was removed because fake data is useless for real betting decisions.
+
+| Removed | Endpoint |
+|---------|----------|
+| `generate_fallback_sharp()` | `/live/sharp/{sport}` |
+| `generate_fallback_line_shop()` | `/live/line-shop/{sport}` |
+| `generate_fallback_betslip()` | `/live/betslip/generate` |
+| Fake props from player_birth_data | `/live/props/{sport}` |
+| Sample props/game picks | `/live/best-bets/{sport}` |
+
+**2. Added API Diagnostics to Response**
+
+`/live/best-bets/{sport}` now returns diagnostic info:
+
+```json
+{
+  "api_status": {
+    "odds_api_configured": true,
+    "playbook_api_configured": true,
+    "props_source": "odds_api",
+    "props_games_found": 7,
+    "sharp_source": "playbook"
+  },
+  "data_message": "Live data retrieved: 10 prop picks, 10 game picks"
+}
+```
+
+**3. Cache TTL Set to 10 Minutes (Testing Mode)**
+
+⚠️ **REMINDER: Change to 5 minutes before going live!**
+
+```python
+api_cache.set(cache_key, result, ttl=600)  # Currently 10 min for testing
+# Change to ttl=300 (5 min) for production
+```
+
+**4. Fetch ALL Games for Props**
+
+Changed from fetching only first 5 games to fetching ALL games so no smash picks are missed.
+
+```python
+for event in events:  # Fetch ALL games - don't miss any smash picks
+```
+
+### API Keys & Configuration
+
+**Railway Environment Variables (8 pillars project):**
+```
+ODDS_API_KEY=ceb2e3a6a3302e0f38fd0d34150294e9
+PLAYBOOK_API_KEY=pbk_d6f65d6a74c53d5ef9b455a9a147c853b82b
+```
+
+**Odds API:** 20K credits/month, used for live odds and player props
+**Playbook API:** Betting splits, sharp money signals, injuries
+
+### How the APIs Work Together
+
+| API | Role | Data Provided |
+|-----|------|---------------|
+| **Odds API** | "What can I bet on?" | Live odds, lines, player props from 15+ sportsbooks |
+| **Playbook API** | "What should I bet on?" | Betting splits, sharp money detection, injuries |
+
+**Sharp Money Detection:**
+- Playbook provides ticket% vs money%
+- When money% ≠ ticket%, sharps are moving
+- Example: 58% bets on Lakers, 63% money → Sharps on Lakers
+- This feeds the `SHARP_MONEY` badge on picks
+
+### API Usage
+
+**Per `/best-bets` call (uncached):**
+- ~1 call for sharp money
+- ~1 call for events list
+- ~N calls for props (one per game, typically 5-10)
+- ~1 call for game odds
+- **Total: ~8-12 API calls**
+
+**With 10-min cache:** ~48-72 calls/hour max
+**With 5-min cache:** ~96-144 calls/hour max
+
+### Testing the Endpoint
+
+```bash
+# Test best-bets
+curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
+  -H "X-API-Key: YOUR_BACKEND_API_KEY"
+
+# Check API usage
+curl "https://web-production-7b2a.up.railway.app/live/api-usage" \
+  -H "X-API-Key: YOUR_BACKEND_API_KEY"
+
+# Test Odds API directly
+curl "https://api.the-odds-api.com/v4/sports/basketball_nba/odds?apiKey=YOUR_ODDS_KEY&regions=us&markets=h2h"
+
+# Test Playbook API directly
+curl "https://api.playbook-api.com/v1/splits?league=NBA&api_key=YOUR_PLAYBOOK_KEY"
+```
+
+### Response Schema for Frontend
+
+Each pick in `props.picks[]` contains:
+
+```json
+{
+  "player_name": "LeBron James",
+  "stat_type": "player_assists",
+  "line": 7.5,
+  "over_under": "over",
+  "odds": -140,
+  "smash_score": 6.29,
+  "predicted_value": 9.5,
+  "confidence": "MEDIUM",
+  "badges": ["SHARP_MONEY", "JARVIS_TRIGGER"],
+  "rationale": "LeBron James prop analysis: Sharp money detected...",
+  "game": "Los Angeles Lakers @ Portland Trail Blazers",
+  "game_time": "2026-01-18T03:13:00Z",
+  "source": "odds_api"
+}
+```
+
+### Before Going Live Checklist
+
+- [ ] Change cache TTL from 10 min → 5 min in `live_data_router.py`
+- [ ] Verify Railway is using "8 pillars" project (not "devoted-inspiration")
+- [ ] Test all endpoints return real data
+- [ ] Monitor API usage first few days
+
+### Railway Setup
+
+**Correct project:** 8 pillars
+**Production URL:** https://web-production-7b2a.up.railway.app
+**Deleted:** devoted-inspiration (was unused)
+
+---
+
+## Session Log: January 18, 2026 - Scheduled Props Fetching (API Credit Optimization)
+
+### What Was Done
+
+**1. Added Scheduled Props Fetching**
+
+Props are now fetched on a smart schedule to minimize API credit usage:
+
+**Weekdays (Mon-Fri):**
+- **10 AM ET** - Fresh morning data for community
+- **6 PM ET** - Evening refresh for goldilocks zone
+
+**Weekends (Sat-Sun):**
+- **10 AM ET** - Morning data
+- **12 PM ET** - Noon games refresh
+- **2 PM ET** - Afternoon games refresh
+- **6 PM ET** - Evening games refresh
+
+**2. Updated Cache TTL**
+
+| Endpoint | Old TTL | New TTL | Reason |
+|----------|---------|---------|--------|
+| `/props/{sport}` | 10 min | **8 hours** | Refreshed by scheduler only |
+| Other endpoints | 10 min | 10 min | Still testing mode |
+
+**3. New Scheduler Jobs**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  DAILY SCHEDULER v2.0                                   │
+├─────────────────────────────────────────────────────────┤
+│  6 AM      → Daily Audit (grade picks, adjust weights) │
+│  10 AM     → Props Fetch (daily - morning)             │
+│  12 PM     → Props Fetch (weekends only - noon games)  │
+│  2 PM      → Props Fetch (weekends only - afternoon)   │
+│  6 PM      → Props Fetch (daily - evening)             │
+│  Sun 3 AM  → Weekly Cleanup                            │
+└─────────────────────────────────────────────────────────┘
+```
+
+### API Credit Savings
+
+**Before (10-min cache):**
+- ~8-12 API calls per `/best-bets` request (uncached)
+- Worst case: 72-144 calls/hour per sport
+- Monthly burn: thousands of credits
+
+**After (scheduled fetch):**
+- Weekdays: 2 fetches/day × 4 sports = 8 props fetches
+- Weekends: 4 fetches/day × 4 sports = 16 props fetches
+- ~10-15 calls per fetch = **~120-180 API calls/day**
+- Monthly: ~4,000-5,000 calls (vs potentially 100k+)
+
+### New Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /scheduler/run-props-fetch` | Manually trigger props refresh |
+| `GET /scheduler/status` | Shows next scheduled props fetch |
+
+### Manual Props Refresh
+
+If you need fresh props outside of 10 AM / 6 PM:
+
+```bash
+curl -X POST "https://web-production-7b2a.up.railway.app/scheduler/run-props-fetch" \
+  -H "X-API-Key: YOUR_KEY"
+```
+
+### Files Changed
+
+```
+daily_scheduler.py    (MODIFIED - Added PropsFetchJob, 10am+6pm schedule)
+live_data_router.py   (MODIFIED - Added cache.delete(), 8-hour props TTL)
+CLAUDE.md             (MODIFIED - Session log)
+```
+
+---
