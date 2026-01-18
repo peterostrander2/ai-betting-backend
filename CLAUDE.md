@@ -381,6 +381,26 @@ GET /live/gann-physics-status   # GANN physics
 GET /esoteric/today-energy      # Daily energy
 ```
 
+### Frontend Compatibility Endpoints
+
+**These endpoints match the frontend api.js expected method names.**
+
+```
+GET  /live/games/{sport}              # Live games with odds (alias for /lines)
+GET  /live/slate/{sport}              # Today's game schedule
+GET  /live/roster/{sport}/{team}      # Team roster with injuries
+GET  /live/player/{player_name}       # Player stats, props, injury status
+POST /live/predict-live               # AI prediction lookup
+```
+
+| Frontend Method | Backend Endpoint | Returns |
+|-----------------|------------------|---------|
+| `api.getLiveGames(sport)` | `GET /live/games/{sport}` | Games with odds |
+| `api.getLiveSlate(sport)` | `GET /live/slate/{sport}` | Game schedule |
+| `api.getRoster(sport, team)` | `GET /live/roster/{sport}/{team}` | Roster + injuries |
+| `api.getPlayerStats(name)` | `GET /live/player/{name}?sport=nba` | Props + injury |
+| `api.predictLive(data)` | `POST /live/predict-live` | AI prediction |
+
 ### Consolidated Endpoints (Server-Side Fetching)
 
 **Use these endpoints to reduce client-side waterfalls. Each consolidates multiple API calls into one.**
@@ -1114,6 +1134,57 @@ Consolidated endpoints correctly use `asyncio.gather()`:
 ```
 live_data_router.py   (MODIFIED - Auth + validation)
 CLAUDE.md             (MODIFIED - Session log)
+```
+
+---
+
+## Session Log: January 18, 2026 - Frontend Compatibility Endpoints
+
+### What Was Done
+
+**1. Frontend API Audit**
+
+Identified gaps between frontend api.js and backend:
+- Frontend calling endpoints that don't exist
+- Missing methods in api.js for existing endpoints
+- Fallback/mock data flowing when live APIs should be used
+
+**2. Created 5 Frontend Compatibility Endpoints**
+
+| Endpoint | Purpose | Data Source |
+|----------|---------|-------------|
+| `GET /live/games/{sport}` | Live games with odds | Wraps `/lines` with frontend-friendly schema |
+| `GET /live/slate/{sport}` | Today's schedule | Derived from `/lines` |
+| `GET /live/roster/{sport}/{team}` | Team roster | Injuries data filtered by team |
+| `GET /live/player/{player_name}` | Player lookup | Props + injuries combined |
+| `POST /live/predict-live` | AI prediction | Filters `/best-bets` by player/game |
+
+**3. All Endpoints Follow Best Practices**
+
+- ✅ `verify_api_key` auth
+- ✅ Caching (180-300s TTL)
+- ✅ `asyncio.gather()` for parallel fetches
+- ✅ Consistent response schemas
+- ✅ Type hints and docstrings
+
+### Frontend Integration
+
+Frontend api.js can now use these without changes:
+
+```javascript
+// These now work directly
+api.getLiveGames('nba')     → GET /live/games/nba
+api.getLiveSlate('nba')     → GET /live/slate/nba
+api.getRoster('nba', 'lakers') → GET /live/roster/nba/lakers
+api.getPlayerStats('lebron')  → GET /live/player/lebron?sport=nba
+api.predictLive({...})      → POST /live/predict-live
+```
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - Added 5 endpoints, +382 lines)
+CLAUDE.md             (MODIFIED - Documentation + session log)
 ```
 
 ---
