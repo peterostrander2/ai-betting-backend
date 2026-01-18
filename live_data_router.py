@@ -1693,13 +1693,22 @@ async def get_props(sport: str):
 
 
 @router.get("/best-bets/{sport}")
-async def get_best_bets(sport: str):
+async def get_best_bets(sport: str, debug: int = 0):
     """
     Get best bets using full 8 AI Models + 8 Pillars + JARVIS + Esoteric scoring.
     Returns TWO categories: props (player props) and game_picks (spreads, totals, ML).
 
-    Scoring Formula:
-    TOTAL = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
+    Query Parameters:
+    - debug=1: Include diagnostic info (games_pulled, candidates_scored, returned_picks)
+
+    Scoring Formula (Production v3):
+    FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
+
+    Thresholds:
+    - GOLD_STAR: >= 7.5
+    - EDGE_LEAN: >= 6.5
+    - MONITOR: >= 5.5
+    - PASS: < 5.5
 
     Response Schema:
     {
@@ -1766,7 +1775,7 @@ async def get_best_bets(sport: str):
             "daily_edge": 0.05   # 5%  - Daily energy
         }
 
-        # --- RESEARCH SCORE CALCULATION ---
+        # --- RESEARCH SCORE CALCULATION (8 Pillars v3) ---
         ai_score = base_ai
         if sharp_signal.get("signal_strength") == "STRONG":
             ai_score += 2.0
@@ -1774,13 +1783,71 @@ async def get_best_bets(sport: str):
             ai_score += 1.0
         ai_score = min(8.0, ai_score)
 
-        pillar_score = 3.0 if sharp_signal.get("line_variance", 0) > 1.0 else 2.0
-        pillar_score = min(8.0, pillar_score)
+        # 8 PILLARS SYSTEM (replaces hardcoded pillar_score)
+        pillar_score = 0.0
+        research_reasons = []
+        is_game_pick = not player_name
+
+        # Pillar 1: Sharp Money (higher weight for game picks)
+        sharp_diff = sharp_signal.get("diff", 0) or 0
+        sharp_strength = sharp_signal.get("signal_strength", "NONE")
+        if is_game_pick:
+            if sharp_strength == "STRONG" or sharp_diff >= 15:
+                pillar_score += 3.0
+                research_reasons.append("RESEARCH: Sharp Split (Game) +3.0")
+            elif sharp_strength == "MODERATE" or sharp_diff >= 10:
+                pillar_score += 1.5
+                research_reasons.append("RESEARCH: Sharp Split (Game) +1.5")
+        else:
+            if sharp_strength == "STRONG" or sharp_diff >= 15:
+                pillar_score += 1.0
+                research_reasons.append("RESEARCH: Sharp Split +1.0")
+            elif sharp_strength == "MODERATE" or sharp_diff >= 10:
+                pillar_score += 0.5
+                research_reasons.append("RESEARCH: Sharp Split +0.5")
+
+        # Pillar 2: Reverse Line Movement (RLM)
+        line_variance = sharp_signal.get("line_variance", 0) or 0
+        if line_variance > 1.0:
+            pillar_score += 1.0
+            research_reasons.append("RESEARCH: Reverse Line Move +1.0")
+
+        # Pillar 3: Public Fade
+        if public_pct >= 70:
+            pillar_score += 0.5
+            research_reasons.append("RESEARCH: Public Fade +0.5")
+
+        # Pillar 4: Goldilocks Spread
+        abs_spread = abs(spread) if spread else 0
+        if 4 <= abs_spread <= 9:
+            pillar_score += 0.3
+            research_reasons.append("RESEARCH: Goldilocks Spread +0.3")
+
+        # Pillar 5: Trap Gate (penalty)
+        if abs_spread > 15:
+            pillar_score -= 1.0
+            research_reasons.append("RESEARCH: Trap Gate -1.0")
+
+        # Pillar 6: High Total Indicator
+        if total > 230:
+            pillar_score += 0.2
+            research_reasons.append("RESEARCH: High Total +0.2")
+
+        # Pillar 7: Multi-Pillar Confluence Bonus
+        positive_pillars = len([r for r in research_reasons if "+0." in r or "+1" in r or "+2" in r or "+3" in r])
+        if positive_pillars >= 3:
+            pillar_score += 0.3
+            research_reasons.append("RESEARCH: Multi-Pillar Confluence +0.3")
+
+        # Clamp pillar_score to 0-8 range
+        pillar_score = max(0.0, min(8.0, float(pillar_score)))
 
         # Research score: (ai + pillar) / 16 * 10 = normalized to 0-10
         research_score = (ai_score + pillar_score) / 16 * 10
+        research_score = max(0.0, min(10.0, float(research_score)))
 
         # --- ESOTERIC SCORE CALCULATION (v10.2 Gematria-Dominant) ---
+        esoteric_reasons = []  # Track esoteric scoring reasons
         gematria_score = 0.0       # 0-5.2 pts (52%)
         jarvis_score = 0.0         # 0-2.0 pts (20%)
         astro_score = 0.0          # 0-1.3 pts (13%)
@@ -1809,6 +1876,9 @@ async def get_best_bets(sport: str):
                 })
                 if trig["number"] == 2178:
                     immortal_detected = True
+                    esoteric_reasons.append(f"ESOTERIC: IMMORTAL 2178 +0.8")
+                else:
+                    esoteric_reasons.append(f"ESOTERIC: Jarvis Trigger {trig['number']} +0.4")
             jarvis_triggered = len(jarvis_triggers_hit) > 0
             # Scale to 20% weight (max 2.0 pts)
             jarvis_score = min(1.0, raw_jarvis) * 10 * ESOTERIC_WEIGHTS["jarvis"]
@@ -1896,39 +1966,53 @@ async def get_best_bets(sport: str):
                 jarvis_triggered=jarvis_triggered
             )
         else:
-            # Fallback confluence calculation
+            # Fallback confluence calculation (Production v3 deflated boosts)
             alignment = 1 - abs(research_score - esoteric_score) / 10
             alignment_pct = alignment * 100
-            both_high = research_score >= 7.5 and esoteric_score >= 7.5
-            if immortal_detected and both_high and alignment_pct >= 80:
-                confluence = {"level": "IMMORTAL", "boost": 10, "alignment_pct": alignment_pct}
-            elif jarvis_triggered and both_high and alignment_pct >= 80:
-                confluence = {"level": "JARVIS_PERFECT", "boost": 7, "alignment_pct": alignment_pct}
-            elif both_high and alignment_pct >= 80:
-                confluence = {"level": "PERFECT", "boost": 5, "alignment_pct": alignment_pct}
+            both_high = research_score >= 7.0 and esoteric_score >= 7.0
+            is_aligned = alignment_pct >= 80
+            if immortal_detected and both_high and is_aligned:
+                confluence = {"level": "IMMORTAL", "boost": 1.0, "alignment_pct": alignment_pct}
+            elif jarvis_triggered and both_high and is_aligned:
+                confluence = {"level": "JARVIS_PERFECT", "boost": 0.6, "alignment_pct": alignment_pct}
+            elif both_high and is_aligned:
+                confluence = {"level": "PERFECT", "boost": 0.4, "alignment_pct": alignment_pct}
             elif alignment_pct >= 70:
-                confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
+                confluence = {"level": "STRONG", "boost": 0.3, "alignment_pct": alignment_pct}
             elif alignment_pct >= 60:
-                confluence = {"level": "MODERATE", "boost": 1, "alignment_pct": alignment_pct}
+                confluence = {"level": "MODERATE", "boost": 0.0, "alignment_pct": alignment_pct}
             else:
                 confluence = {"level": "DIVERGENT", "boost": 0, "alignment_pct": alignment_pct}
 
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
 
-        # --- v10.1 FINAL SCORE FORMULA ---
+        # Track confluence reasons
+        confluence_reasons = []
+        if confluence_level == "IMMORTAL":
+            confluence_reasons.append("CONFLUENCE: Immortal +1.0")
+        elif confluence_level == "JARVIS_PERFECT":
+            confluence_reasons.append("CONFLUENCE: Jarvis Perfect +0.6")
+        elif confluence_level == "PERFECT":
+            confluence_reasons.append("CONFLUENCE: Perfect Alignment +0.4")
+        elif confluence_level == "STRONG":
+            confluence_reasons.append("CONFLUENCE: Strong +0.3")
+
+        # --- Production v3 FINAL SCORE FORMULA ---
         # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
         final_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence_boost
+        final_score = max(0.0, min(10.0, float(final_score)))
 
-        # --- v10.1 BET TIER DETERMINATION ---
+        # --- Production v3 BET TIER DETERMINATION ---
         if jarvis:
             bet_tier = jarvis.determine_bet_tier(final_score, confluence)
         else:
-            if final_score >= 9.0:
+            # Fallback with Production v3 thresholds
+            if final_score >= 7.5:
                 bet_tier = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
-            elif final_score >= 7.5:
+            elif final_score >= 6.5:
                 bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
-            elif final_score >= 6.0:
+            elif final_score >= 5.5:
                 bet_tier = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
             else:
                 bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
@@ -1942,16 +2026,19 @@ async def get_best_bets(sport: str):
         }
         confidence = confidence_map.get(bet_tier.get("tier", "PASS"), "LOW")
 
-        # Numeric confidence score (0-100) for frontend compatibility
-        confidence_score_map = {"SMASH": 95, "HIGH": 80, "MEDIUM": 60, "LOW": 30}
-        confidence_score = confidence_score_map.get(confidence, 30)
+        # Confidence score synced with final_score (Production v3)
+        confidence_score = int(round(final_score * 10))  # 0-100 synced with final
+
+        # Combine all reasons for explainability (Production v3)
+        all_reasons = research_reasons + esoteric_reasons + confluence_reasons
 
         return {
             "total_score": round(final_score, 2),
             "confidence": confidence,
-            "confidence_score": confidence_score,  # Numeric version for frontend
+            "confidence_score": confidence_score,  # Synced with final_score * 10
             "confluence_level": confluence_level,
             "bet_tier": bet_tier,
+            "reasons": all_reasons,  # Explainability array (Production v3)
             "scoring_breakdown": {
                 "research_score": round(research_score, 2),
                 "esoteric_score": round(esoteric_score, 2),
@@ -1978,6 +2065,7 @@ async def get_best_bets(sport: str):
     # CATEGORY 1: PLAYER PROPS
     # ============================================
     props_picks = []
+    props_data = {"data": [], "source": "none"}  # Default fallback
     try:
         props_data = await get_props(sport)
         for game in props_data.get("data", []):
@@ -2022,9 +2110,12 @@ async def get_best_bets(sport: str):
                     rationale += "JARVIS immortal pattern triggered. "
                 rationale += f"Scoring confluence at {score_data.get('scoring_breakdown', {}).get('alignment_pct', 70):.0f}% alignment."
 
-                # Determine badges
+                # Get tier from bet_tier (Production v3)
+                tier = score_data.get("bet_tier", {}).get("tier", "PASS")
+
+                # Determine badges based on Production v3 thresholds
                 badges = []
-                if total_score >= 8.0:
+                if tier == "GOLD_STAR":
                     badges.append("SMASH_SPOT")
                 if sharp_signal.get("signal_strength") == "STRONG":
                     badges.append("SHARP_MONEY")
@@ -2046,16 +2137,22 @@ async def get_best_bets(sport: str):
                     "over_under": side.lower(),  # Frontend expected field
                     "odds": odds,
                     "game": f"{away_team} @ {home_team}",
+                    "matchup": f"{away_team} vs {home_team}",  # Production v3 schema
+                    "selection": f"{player} {side} {line}",    # Production v3 schema
                     "home_team": home_team,
                     "away_team": away_team,
                     "team": home_team,  # Frontend expected field
                     "opponent": away_team,  # Frontend expected field
-                    "game_time": game.get("commence_time", datetime.now().isoformat()),  # Frontend expected field
+                    "game_time": game.get("commence_time", datetime.now().isoformat()),
                     "recommendation": f"{side.upper()} {line}",
-                    "smash_score": total_score,  # Alias for frontend compatibility
-                    "predicted_value": round(predicted_value, 1),  # Frontend expected field
-                    "rationale": rationale,  # Frontend expected field
-                    "badges": badges,  # Frontend expected field
+                    "smash_score": total_score,
+                    "final_score": total_score,  # Production v3 schema
+                    "predicted_value": round(predicted_value, 1),
+                    "rationale": rationale,
+                    "badges": badges,
+                    "tier": tier,       # Production v3 schema
+                    "badge": tier,      # Alias for tier
+                    "reasons": score_data.get("reasons", []),  # Production v3 explainability
                     **score_data,
                     "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
                     "source": "odds_api"
@@ -2074,7 +2171,34 @@ async def get_best_bets(sport: str):
     # Sort deduplicated props by score and take top 10
     deduplicated_props = list(best_by_player_market.values())
     deduplicated_props.sort(key=lambda x: x["total_score"], reverse=True)
-    top_props = deduplicated_props[:10]
+
+    # VOLUME GOVERNOR (Production v3): Max 3 GOLD STAR, fill with EDGE LEAN
+    gold_count = 0
+    governed_props = []
+    for pick in deduplicated_props:
+        if pick.get("tier") == "GOLD_STAR":
+            gold_count += 1
+            if gold_count > 3:
+                # Downgrade to EDGE LEAN (tier only, not score)
+                pick["tier"] = "EDGE_LEAN"
+                pick["badge"] = "EDGE_LEAN"
+                pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Gold cap enforced"]
+        governed_props.append(pick)
+
+    # Fallback: Always return at least 3 picks if data exists
+    actionable = [p for p in governed_props if p.get("tier") in ["GOLD_STAR", "EDGE_LEAN"]]
+    if len(actionable) < 3 and len(governed_props) >= 3:
+        # Promote top MONITOR picks to EDGE_LEAN
+        monitor_picks = [p for p in governed_props if p.get("tier") == "MONITOR"]
+        for i, pick in enumerate(monitor_picks):
+            if len(actionable) >= 3:
+                break
+            pick["tier"] = "EDGE_LEAN"
+            pick["badge"] = "EDGE_LEAN"
+            pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Fallback fill"]
+            actionable.append(pick)
+
+    top_props = governed_props[:10]
 
     # ============================================
     # CATEGORY 2: GAME PICKS (Spreads, Totals, ML)
@@ -2127,11 +2251,12 @@ async def get_best_bets(sport: str):
                                 continue
 
                             # Calculate score with full esoteric integration
+                            # base_ai=5.0 (fixed from 4.5 per Production v3 spec)
                             score_data = calculate_pick_score(
                                 game_str,
                                 sharp_signal,
-                                base_ai=4.5,
-                                player_name="",
+                                base_ai=5.0,  # Fixed from 4.5
+                                player_name="",  # Empty = game pick flag
                                 home_team=home_team,
                                 away_team=away_team,
                                 spread=point if market_key == "spreads" and point else 0,
@@ -2141,6 +2266,7 @@ async def get_best_bets(sport: str):
 
                             # Calculate frontend-expected fields for game picks
                             total_score_game = score_data.get("total_score", 5.0)
+                            tier_game = score_data.get("bet_tier", {}).get("tier", "PASS")
 
                             # Generate rationale based on pick type
                             if pick_type == "SPREAD":
@@ -2152,9 +2278,9 @@ async def get_best_bets(sport: str):
                             else:  # MONEYLINE
                                 rationale_game = f"{pick_name} moneyline value identified. "
 
-                            # Determine badges
+                            # Determine badges based on tier (Production v3)
                             badges_game = []
-                            if total_score_game >= 8.0:
+                            if tier_game == "GOLD_STAR":
                                 badges_game.append("SMASH_SPOT")
                             if sharp_signal.get("signal_strength") == "STRONG":
                                 badges_game.append("SHARP_MONEY")
@@ -2168,15 +2294,21 @@ async def get_best_bets(sport: str):
                                 "line": point,
                                 "odds": odds,
                                 "game": f"{away_team} @ {home_team}",
+                                "matchup": f"{away_team} vs {home_team}",  # Production v3 schema
+                                "selection": display,  # Production v3 schema
                                 "home_team": home_team,
                                 "away_team": away_team,
                                 "market": market_key,
                                 "recommendation": display,
                                 "game_time": game.get("commence_time", datetime.now().isoformat()),
                                 "smash_score": total_score_game,
+                                "final_score": total_score_game,  # Production v3 schema
                                 "predicted_value": (point + 3) if market_key == "totals" else None,
                                 "rationale": rationale_game,
                                 "badges": badges_game,
+                                "tier": tier_game,  # Production v3 schema
+                                "badge": tier_game,  # Alias
+                                "reasons": score_data.get("reasons", []),  # Production v3 explainability
                                 **score_data,
                                 "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
                                 "source": "odds_api"
@@ -2205,6 +2337,7 @@ async def get_best_bets(sport: str):
 
             # Calculate frontend-expected fields for sharp money picks
             total_score_sharp = score_data.get("total_score", 5.0)
+            tier_sharp = score_data.get("bet_tier", {}).get("tier", "PASS")
             side_team = home_team if signal.get("side") == "HOME" else away_team
 
             # Generate rationale
@@ -2214,11 +2347,11 @@ async def get_best_bets(sport: str):
             else:
                 rationale += "Line movement suggests professional bettors favor this side."
 
-            # Determine badges
+            # Determine badges based on tier
             badges = ["SHARP_MONEY"]
             if signal.get("signal_strength") == "STRONG":
                 badges.append("RLM")  # Reverse Line Movement
-            if total_score_sharp >= 8.0:
+            if tier_sharp == "GOLD_STAR":
                 badges.append("SMASH_SPOT")
 
             game_picks.append({
@@ -2228,23 +2361,54 @@ async def get_best_bets(sport: str):
                 "line": signal.get("line_variance", 0),
                 "odds": -110,
                 "game": f"{away_team} @ {home_team}",
+                "matchup": f"{away_team} vs {home_team}",  # Production v3
+                "selection": f"Sharp on {signal.get('side', 'HOME')}",  # Production v3
                 "home_team": home_team,
                 "away_team": away_team,
                 "market": "sharp_money",
                 "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
                 "game_time": datetime.now().isoformat(),
                 "smash_score": total_score_sharp,
+                "final_score": total_score_sharp,  # Production v3
                 "predicted_value": None,
                 "rationale": rationale,
                 "badges": badges,
+                "tier": tier_sharp,  # Production v3
+                "badge": tier_sharp,  # Alias
+                "reasons": score_data.get("reasons", []),  # Production v3
                 **score_data,
                 "sharp_signal": signal.get("signal_strength", "MODERATE"),
                 "source": "sharp_fallback"
             })
 
-    # Sort game picks by score and take top 10
+    # Sort game picks by score
     game_picks.sort(key=lambda x: x["total_score"], reverse=True)
-    top_game_picks = game_picks[:10]
+
+    # VOLUME GOVERNOR for game picks (Production v3): Max 3 GOLD STAR
+    gold_count_games = 0
+    governed_games = []
+    for pick in game_picks:
+        if pick.get("tier") == "GOLD_STAR":
+            gold_count_games += 1
+            if gold_count_games > 3:
+                pick["tier"] = "EDGE_LEAN"
+                pick["badge"] = "EDGE_LEAN"
+                pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Gold cap enforced"]
+        governed_games.append(pick)
+
+    # Fallback: Always return at least 3 game picks if data exists
+    actionable_games = [p for p in governed_games if p.get("tier") in ["GOLD_STAR", "EDGE_LEAN"]]
+    if len(actionable_games) < 3 and len(governed_games) >= 3:
+        monitor_games = [p for p in governed_games if p.get("tier") == "MONITOR"]
+        for pick in monitor_games:
+            if len(actionable_games) >= 3:
+                break
+            pick["tier"] = "EDGE_LEAN"
+            pick["badge"] = "EDGE_LEAN"
+            pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Fallback fill"]
+            actionable_games.append(pick)
+
+    top_game_picks = governed_games[:10]
 
     # ============================================
     # BUILD FINAL RESPONSE
@@ -2286,8 +2450,8 @@ async def get_best_bets(sport: str):
 
     result = {
         "sport": sport.upper(),
-        "source": "jarvis_savant_v7.3",
-        "scoring_system": "Phase 1-3 Integrated",
+        "source": "production_v3",
+        "scoring_system": "8 Pillars + Dual-Engine Confluence",
         "props": {
             "count": len(top_props),
             "total_analyzed": len(props_picks),
@@ -2295,7 +2459,7 @@ async def get_best_bets(sport: str):
         },
         "game_picks": {
             "count": len(top_game_picks),
-            "total_analyzed": len(game_picks),
+            "total_analyzed": len(governed_games),
             "picks": top_game_picks
         },
         "esoteric": {
@@ -2308,6 +2472,18 @@ async def get_best_bets(sport: str):
         "data_message": data_message,
         "timestamp": datetime.now().isoformat()
     }
+
+    # Debug mode: Add diagnostic info
+    if debug == 1:
+        result["debug"] = {
+            "games_pulled": len(props_data.get("data", [])) if props_data else 0,
+            "candidates_scored": len(props_picks) + len(game_picks),
+            "returned_picks": len(top_props) + len(top_game_picks),
+            "gold_star_props": len([p for p in top_props if p.get("tier") == "GOLD_STAR"]),
+            "gold_star_games": len([p for p in top_game_picks if p.get("tier") == "GOLD_STAR"]),
+            "volume_governor_applied": gold_count > 3 or gold_count_games > 3,
+            "no_data": not has_live_data
+        }
     api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
     return result
 

@@ -28,12 +28,12 @@ THE FORMULA (v10.1 Spec Aligned):
 │                                                              │
 │  FINAL = (research × 0.67) + (esoteric × 0.33) + boost      │
 │                                                              │
-│  BET TIERS:                                                  │
-│  GOLD_STAR (2u): FINAL ≥ 9.0                                │
-│  EDGE_LEAN (1u): FINAL ≥ 7.5                                │
+│  BET TIERS (Production v3):                                  │
+│  GOLD_STAR (2u): FINAL ≥ 7.5                                │
+│  EDGE_LEAN (1u): FINAL ≥ 6.5                                │
 │  ML_DOG_LOTTO (0.5u): NHL Dog Protocol                      │
-│  MONITOR: FINAL ≥ 6.0                                        │
-│  PASS: FINAL < 6.0                                           │
+│  MONITOR: FINAL ≥ 5.5                                        │
+│  PASS: FINAL < 5.5                                           │
 └─────────────────────────────────────────────────────────────┘
 
 2178: THE IMMORTAL - Only number where n^4 = reverse AND n^4 = 66^4
@@ -645,35 +645,35 @@ class JarvisSavantEngine:
         aligned_70 = alignment_pct >= 70
         aligned_60 = alignment_pct >= 60
 
-        # Determine confluence level based on v10.1 spec
+        # Determine confluence level based on Production v3 spec (deflated boosts)
         if immortal_detected and both_high and aligned_80:
             level = "IMMORTAL"
-            boost = 10
+            boost = 1.0  # Deflated from 10 to prevent inflation
             color = "rainbow"
             action = "IMMORTAL CONFLUENCE - MAXIMUM SMASH"
         elif jarvis_triggered and both_high and aligned_80:
             level = "JARVIS_PERFECT"
-            boost = 7
+            boost = 0.6  # Deflated from 7
             color = "gold"
             action = "JARVIS PERFECT - STRONG SMASH"
         elif both_high and aligned_80:
             level = "PERFECT"
-            boost = 5
+            boost = 0.4  # Deflated from 5
             color = "purple"
             action = "PERFECT CONFLUENCE - PLAY"
         elif (both_high or either_high) and aligned_70:
             level = "STRONG"
-            boost = 3
+            boost = 0.3  # Deflated from 3
             color = "green"
             action = "STRONG CONFLUENCE - LEAN"
         elif aligned_60:
             level = "MODERATE"
-            boost = 1
+            boost = 0.0  # Deflated from 1
             color = "blue"
             action = "MODERATE - MONITOR"
         else:
             level = "DIVERGENT"
-            boost = 0
+            boost = 0.0
             color = "red"
             action = "DIVERGENT - PASS"
 
@@ -802,23 +802,23 @@ class JarvisSavantEngine:
             tier = "ML_DOG_LOTTO"
             unit_size = 0.5
             explanation = "NHL Dog Protocol triggered. ML dog lotto play."
-        # Standard tier determination based on final score
-        elif final_score >= 9.0:
+        # Standard tier determination based on final score (v3 thresholds)
+        elif final_score >= 7.5:
             tier = "GOLD_STAR"
             unit_size = 2.0
             explanation = "GOLD STAR - Maximum confidence. 2 unit play."
-        elif final_score >= 7.5:
+        elif final_score >= 6.5:
             tier = "EDGE_LEAN"
             unit_size = 1.0
             explanation = "EDGE LEAN - Strong edge detected. 1 unit play."
-        elif final_score >= 6.0:
+        elif final_score >= 5.5:
             tier = "MONITOR"
             unit_size = 0.0
             explanation = "MONITOR - Track but no action."
         else:
             tier = "PASS"
             unit_size = 0.0
-            explanation = "PASS - Insufficient edge."
+            explanation = "PASS - Insufficient edge (below 5.5)."
 
         return {
             "tier": tier,
