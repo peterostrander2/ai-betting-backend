@@ -1564,7 +1564,7 @@ async def get_props(sport: str):
             elif sport_lower == "nhl":
                 prop_markets = "player_points,player_shots_on_goal,player_assists"
 
-            for event in events[:5]:
+            for event in events:  # Fetch ALL games - don't miss any smash picks
                 event_id = event.get("id")
                 if not event_id:
                     continue
