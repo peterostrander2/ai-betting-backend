@@ -1188,3 +1188,144 @@ CLAUDE.md             (MODIFIED - Documentation + session log)
 ```
 
 ---
+
+## Session Log: January 18, 2026 - API Integration & Optimization
+
+### What Was Done
+
+**1. Removed ALL Fake/Sample Data**
+
+The backend was generating fake data when APIs failed. This was removed because fake data is useless for real betting decisions.
+
+| Removed | Endpoint |
+|---------|----------|
+| `generate_fallback_sharp()` | `/live/sharp/{sport}` |
+| `generate_fallback_line_shop()` | `/live/line-shop/{sport}` |
+| `generate_fallback_betslip()` | `/live/betslip/generate` |
+| Fake props from player_birth_data | `/live/props/{sport}` |
+| Sample props/game picks | `/live/best-bets/{sport}` |
+
+**2. Added API Diagnostics to Response**
+
+`/live/best-bets/{sport}` now returns diagnostic info:
+
+```json
+{
+  "api_status": {
+    "odds_api_configured": true,
+    "playbook_api_configured": true,
+    "props_source": "odds_api",
+    "props_games_found": 7,
+    "sharp_source": "playbook"
+  },
+  "data_message": "Live data retrieved: 10 prop picks, 10 game picks"
+}
+```
+
+**3. Cache TTL Set to 10 Minutes (Testing Mode)**
+
+⚠️ **REMINDER: Change to 5 minutes before going live!**
+
+```python
+api_cache.set(cache_key, result, ttl=600)  # Currently 10 min for testing
+# Change to ttl=300 (5 min) for production
+```
+
+**4. Fetch ALL Games for Props**
+
+Changed from fetching only first 5 games to fetching ALL games so no smash picks are missed.
+
+```python
+for event in events:  # Fetch ALL games - don't miss any smash picks
+```
+
+### API Keys & Configuration
+
+**Railway Environment Variables (8 pillars project):**
+```
+ODDS_API_KEY=ceb2e3a6a3302e0f38fd0d34150294e9
+PLAYBOOK_API_KEY=pbk_d6f65d6a74c53d5ef9b455a9a147c853b82b
+```
+
+**Odds API:** 20K credits/month, used for live odds and player props
+**Playbook API:** Betting splits, sharp money signals, injuries
+
+### How the APIs Work Together
+
+| API | Role | Data Provided |
+|-----|------|---------------|
+| **Odds API** | "What can I bet on?" | Live odds, lines, player props from 15+ sportsbooks |
+| **Playbook API** | "What should I bet on?" | Betting splits, sharp money detection, injuries |
+
+**Sharp Money Detection:**
+- Playbook provides ticket% vs money%
+- When money% ≠ ticket%, sharps are moving
+- Example: 58% bets on Lakers, 63% money → Sharps on Lakers
+- This feeds the `SHARP_MONEY` badge on picks
+
+### API Usage
+
+**Per `/best-bets` call (uncached):**
+- ~1 call for sharp money
+- ~1 call for events list
+- ~N calls for props (one per game, typically 5-10)
+- ~1 call for game odds
+- **Total: ~8-12 API calls**
+
+**With 10-min cache:** ~48-72 calls/hour max
+**With 5-min cache:** ~96-144 calls/hour max
+
+### Testing the Endpoint
+
+```bash
+# Test best-bets
+curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
+  -H "X-API-Key: YOUR_BACKEND_API_KEY"
+
+# Check API usage
+curl "https://web-production-7b2a.up.railway.app/live/api-usage" \
+  -H "X-API-Key: YOUR_BACKEND_API_KEY"
+
+# Test Odds API directly
+curl "https://api.the-odds-api.com/v4/sports/basketball_nba/odds?apiKey=YOUR_ODDS_KEY&regions=us&markets=h2h"
+
+# Test Playbook API directly
+curl "https://api.playbook-api.com/v1/splits?league=NBA&api_key=YOUR_PLAYBOOK_KEY"
+```
+
+### Response Schema for Frontend
+
+Each pick in `props.picks[]` contains:
+
+```json
+{
+  "player_name": "LeBron James",
+  "stat_type": "player_assists",
+  "line": 7.5,
+  "over_under": "over",
+  "odds": -140,
+  "smash_score": 6.29,
+  "predicted_value": 9.5,
+  "confidence": "MEDIUM",
+  "badges": ["SHARP_MONEY", "JARVIS_TRIGGER"],
+  "rationale": "LeBron James prop analysis: Sharp money detected...",
+  "game": "Los Angeles Lakers @ Portland Trail Blazers",
+  "game_time": "2026-01-18T03:13:00Z",
+  "source": "odds_api"
+}
+```
+
+### Before Going Live Checklist
+
+- [ ] Change cache TTL from 10 min → 5 min in `live_data_router.py`
+- [ ] Verify Railway is using "8 pillars" project (not "devoted-inspiration")
+- [ ] Test all endpoints return real data
+- [ ] Monitor API usage first few days
+
+### Railway Setup
+
+**Correct project:** 8 pillars
+**Production URL:** https://web-production-7b2a.up.railway.app
+**Deleted:** devoted-inspiration (was unused)
+
+---
