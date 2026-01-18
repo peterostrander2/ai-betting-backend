@@ -1329,3 +1329,71 @@ Each pick in `props.picks[]` contains:
 **Deleted:** devoted-inspiration (was unused)
 
 ---
+
+## Session Log: January 18, 2026 - Scheduled Props Fetching (API Credit Optimization)
+
+### What Was Done
+
+**1. Added Scheduled Props Fetching**
+
+Props are now fetched only twice daily to minimize API credit usage:
+- **10 AM ET** - Fresh morning data for community
+- **6 PM ET** - Evening refresh for goldilocks zone (news updates)
+
+**2. Updated Cache TTL**
+
+| Endpoint | Old TTL | New TTL | Reason |
+|----------|---------|---------|--------|
+| `/props/{sport}` | 10 min | **8 hours** | Refreshed by scheduler only |
+| Other endpoints | 10 min | 10 min | Still testing mode |
+
+**3. New Scheduler Jobs**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  DAILY SCHEDULER v2.0                                   │
+├─────────────────────────────────────────────────────────┤
+│  6 AM   → Daily Audit (grade picks, adjust weights)    │
+│  10 AM  → Props Fetch (all sports, fresh for morning)  │
+│  6 PM   → Props Fetch (refresh for evening games)      │
+│  Sun 3AM → Weekly Cleanup                              │
+└─────────────────────────────────────────────────────────┘
+```
+
+### API Credit Savings
+
+**Before (10-min cache):**
+- ~8-12 API calls per `/best-bets` request (uncached)
+- Worst case: 72-144 calls/hour per sport
+- Monthly burn: thousands of credits
+
+**After (scheduled fetch):**
+- 2 fetches per day × 4 sports = 8 total props fetches
+- ~10-15 calls per fetch = **~100 API calls/day**
+- Monthly: ~3,000 calls (vs potentially 100k+)
+
+### New Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /scheduler/run-props-fetch` | Manually trigger props refresh |
+| `GET /scheduler/status` | Shows next scheduled props fetch |
+
+### Manual Props Refresh
+
+If you need fresh props outside of 10 AM / 6 PM:
+
+```bash
+curl -X POST "https://web-production-7b2a.up.railway.app/scheduler/run-props-fetch" \
+  -H "X-API-Key: YOUR_KEY"
+```
+
+### Files Changed
+
+```
+daily_scheduler.py    (MODIFIED - Added PropsFetchJob, 10am+6pm schedule)
+live_data_router.py   (MODIFIED - Added cache.delete(), 8-hour props TTL)
+CLAUDE.md             (MODIFIED - Session log)
+```
+
+---

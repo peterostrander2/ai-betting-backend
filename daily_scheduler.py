@@ -1,5 +1,5 @@
 """
-⏰ DAILY SCHEDULER v1.0
+⏰ DAILY SCHEDULER v2.0
 ========================
 Automated daily tasks for Bookie-o-em:
 
@@ -7,6 +7,7 @@ Automated daily tasks for Bookie-o-em:
 2. Adjust weights based on bias
 3. Retrain LSTM if performance drops
 4. Clean up old prediction logs
+5. Fetch props twice daily (10 AM, 6 PM) - API credit optimization
 
 All 5 Sports: NBA, NFL, MLB, NHL, NCAAB
 """
@@ -35,18 +36,28 @@ except ImportError:
 
 class SchedulerConfig:
     """Scheduler configuration."""
-    
+
     # Audit time (6 AM ET)
     AUDIT_HOUR = 6
     AUDIT_MINUTE = 0
-    
+
+    # Props fetch times (10 AM and 6 PM ET)
+    PROPS_FETCH_HOURS = [10, 18]  # 10 AM and 6 PM
+    PROPS_FETCH_MINUTE = 0
+
+    # Props cache TTL - 8 hours to last between scheduled fetches
+    PROPS_CACHE_TTL = 28800  # 8 hours in seconds
+
     # Retrain threshold
     RETRAIN_MAE_THRESHOLD = 5.0  # Retrain if MAE exceeds this
     RETRAIN_HIT_RATE_THRESHOLD = 0.48  # Retrain if hit rate below this
-    
+
     # Cleanup
     KEEP_PREDICTIONS_DAYS = 30  # Keep 30 days of prediction history
-    
+
+    # Sports to fetch props for
+    PROPS_SPORTS = ["nba", "nfl", "mlb", "nhl"]
+
     # Sports and default stats
     SPORT_STATS = {
         "NBA": ["points", "rebounds", "assists"],
@@ -242,6 +253,93 @@ class CleanupJob:
 
 
 # ============================================
+# PROPS FETCH JOB
+# ============================================
+
+class PropsFetchJob:
+    """
+    Fetches props for all sports twice daily (10 AM and 6 PM).
+    This minimizes API credit usage while keeping data fresh.
+    """
+
+    def __init__(self):
+        self.last_run = None
+        self.last_results = {}
+
+    async def run_async(self):
+        """Execute props fetch for all sports (async version)."""
+        import httpx
+
+        logger.info("=" * 50)
+        logger.info("🎯 PROPS FETCH STARTING")
+        logger.info(f"   Time: {datetime.now().isoformat()}")
+        logger.info("=" * 50)
+
+        self.last_run = datetime.now()
+        results = {
+            "timestamp": self.last_run.isoformat(),
+            "sports": {},
+            "total_api_calls": 0
+        }
+
+        # Import here to avoid circular imports
+        try:
+            from live_data_router import get_props, api_cache
+        except ImportError:
+            logger.error("Could not import live_data_router")
+            return {"error": "Import failed"}
+
+        for sport in SchedulerConfig.PROPS_SPORTS:
+            try:
+                # Clear the cache for this sport to force fresh fetch
+                cache_key = f"props:{sport}"
+                api_cache.delete(cache_key)
+
+                # Fetch fresh props
+                props_data = await get_props(sport)
+
+                # Cache with 8-hour TTL
+                api_cache.set(cache_key, props_data, ttl=SchedulerConfig.PROPS_CACHE_TTL)
+
+                results["sports"][sport] = {
+                    "status": "success",
+                    "count": props_data.get("count", 0),
+                    "source": props_data.get("source", "unknown"),
+                    "games_with_props": len(props_data.get("data", []))
+                }
+                logger.info(f"[{sport.upper()}] Fetched {props_data.get('count', 0)} props from {props_data.get('source', 'unknown')}")
+
+            except Exception as e:
+                logger.error(f"[{sport.upper()}] Props fetch failed: {e}")
+                results["sports"][sport] = {"status": "error", "error": str(e)}
+
+        self.last_results = results
+
+        logger.info("=" * 50)
+        logger.info("✅ PROPS FETCH COMPLETE")
+        logger.info(f"   Sports fetched: {len(results['sports'])}")
+        logger.info("=" * 50)
+
+        return results
+
+    def run(self):
+        """Sync wrapper for scheduled execution."""
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're in an async context, create a new task
+                asyncio.create_task(self.run_async())
+                return {"status": "scheduled"}
+            else:
+                return loop.run_until_complete(self.run_async())
+        except RuntimeError:
+            # No event loop, create one
+            return asyncio.run(self.run_async())
+
+
+# ============================================
 # SCHEDULER
 # ============================================
 
@@ -255,6 +353,7 @@ class DailyScheduler:
         self.training_pipeline = training_pipeline
         self.audit_job = DailyAuditJob(auto_grader, training_pipeline)
         self.cleanup_job = CleanupJob(auto_grader)
+        self.props_job = PropsFetchJob()
         self.scheduler = None
         self.running = False
         self._thread = None
@@ -276,7 +375,7 @@ class DailyScheduler:
     def _start_apscheduler(self):
         """Start using APScheduler."""
         self.scheduler = BackgroundScheduler()
-        
+
         # Daily audit at 6 AM
         self.scheduler.add_job(
             self.audit_job.run,
@@ -284,7 +383,23 @@ class DailyScheduler:
             id="daily_audit",
             name="Daily Audit"
         )
-        
+
+        # Props fetch at 10 AM (morning fresh data for community)
+        self.scheduler.add_job(
+            self.props_job.run,
+            CronTrigger(hour=10, minute=SchedulerConfig.PROPS_FETCH_MINUTE),
+            id="props_fetch_morning",
+            name="Props Fetch (10 AM)"
+        )
+
+        # Props fetch at 6 PM (evening refresh for goldilocks zone)
+        self.scheduler.add_job(
+            self.props_job.run,
+            CronTrigger(hour=18, minute=SchedulerConfig.PROPS_FETCH_MINUTE),
+            id="props_fetch_evening",
+            name="Props Fetch (6 PM)"
+        )
+
         # Weekly cleanup on Sunday at 3 AM
         self.scheduler.add_job(
             self.cleanup_job.run,
@@ -292,33 +407,51 @@ class DailyScheduler:
             id="weekly_cleanup",
             name="Weekly Cleanup"
         )
-        
+
         self.scheduler.start()
-        logger.info("APScheduler started with daily audit at 6 AM")
+        logger.info("APScheduler started: audit@6AM, props@10AM+6PM, cleanup@Sun3AM")
     
     def _start_simple_scheduler(self):
         """Fallback simple scheduler using threading."""
         def run_scheduler():
             last_audit_date = None
-            
+            last_props_10am = None
+            last_props_6pm = None
+
             while self.running:
                 now = datetime.now()
                 today = now.date()
-                
+
                 # Check if we should run audit (6 AM, once per day)
-                if (now.hour == SchedulerConfig.AUDIT_HOUR and 
-                    now.minute < 5 and 
+                if (now.hour == SchedulerConfig.AUDIT_HOUR and
+                    now.minute < 5 and
                     last_audit_date != today):
-                    
+
                     self.audit_job.run()
                     last_audit_date = today
-                
+
+                # Check if we should run props fetch (10 AM)
+                if (now.hour == 10 and
+                    now.minute < 5 and
+                    last_props_10am != today):
+
+                    self.props_job.run()
+                    last_props_10am = today
+
+                # Check if we should run props fetch (6 PM)
+                if (now.hour == 18 and
+                    now.minute < 5 and
+                    last_props_6pm != today):
+
+                    self.props_job.run()
+                    last_props_6pm = today
+
                 # Sleep for 1 minute
                 time.sleep(60)
-        
+
         self._thread = threading.Thread(target=run_scheduler, daemon=True)
         self._thread.start()
-        logger.info("Simple scheduler started (APScheduler not available)")
+        logger.info("Simple scheduler started: audit@6AM, props@10AM+6PM")
     
     def stop(self):
         """Stop the scheduler."""
@@ -335,16 +468,25 @@ class DailyScheduler:
         logger.info("Manual audit triggered")
         return self.audit_job.run()
     
+    def run_props_fetch_now(self) -> Dict:
+        """Manually trigger props fetch."""
+        logger.info("Manual props fetch triggered")
+        return self.props_job.run()
+
     def get_status(self) -> Dict:
         """Get scheduler status."""
         status = {
             "running": self.running,
             "scheduler_type": "apscheduler" if SCHEDULER_AVAILABLE else "simple",
             "last_audit": self.audit_job.last_run.isoformat() if self.audit_job.last_run else None,
+            "last_props_fetch": self.props_job.last_run.isoformat() if self.props_job.last_run else None,
             "next_audit": f"{SchedulerConfig.AUDIT_HOUR:02d}:{SchedulerConfig.AUDIT_MINUTE:02d} daily",
-            "last_results": self.audit_job.last_results
+            "next_props_fetch": "10:00 AM and 6:00 PM daily",
+            "props_cache_ttl": f"{SchedulerConfig.PROPS_CACHE_TTL // 3600} hours",
+            "last_results": self.audit_job.last_results,
+            "last_props_results": self.props_job.last_results
         }
-        
+
         if SCHEDULER_AVAILABLE and self.scheduler:
             jobs = []
             for job in self.scheduler.get_jobs():
@@ -354,7 +496,7 @@ class DailyScheduler:
                     "next_run": job.next_run_time.isoformat() if job.next_run_time else None
                 })
             status["scheduled_jobs"] = jobs
-        
+
         return status
 
 
@@ -431,8 +573,24 @@ async def run_cleanup_now():
     """Manually trigger cleanup."""
     if not _scheduler:
         raise HTTPException(500, "Scheduler not initialized")
-    
+
     result = _scheduler.cleanup_job.run()
+    return {
+        "status": "success",
+        "result": result
+    }
+
+
+@scheduler_router.post("/run-props-fetch")
+async def run_props_fetch_now():
+    """
+    Manually trigger props fetch for all sports.
+    Use this to refresh props data outside of scheduled times (10 AM, 6 PM).
+    """
+    if not _scheduler:
+        raise HTTPException(500, "Scheduler not initialized")
+
+    result = await _scheduler.props_job.run_async()
     return {
         "status": "success",
         "result": result
