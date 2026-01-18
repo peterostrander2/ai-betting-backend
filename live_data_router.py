@@ -319,7 +319,7 @@ class HybridCache:
 
 
 # Global cache instance - 5 minute TTL for API responses
-api_cache = HybridCache(default_ttl=300, prefix="bookie")
+api_cache = HybridCache(default_ttl=600, prefix="bookie")
 
 
 # ============================================================================
@@ -2287,7 +2287,7 @@ async def get_best_bets(sport: str):
         "data_message": data_message,
         "timestamp": datetime.now().isoformat()
     }
-    api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
+    api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
     return result
 
 
@@ -3291,7 +3291,7 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
                 "message": "Odds API unavailable - check API key configuration",
                 "timestamp": datetime.now().isoformat()
             }
-            api_cache.set(cache_key, result, ttl=120)
+            api_cache.set(cache_key, result, ttl=600)
             return result
 
         games = resp.json()
@@ -3376,7 +3376,7 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
             "timestamp": datetime.now().isoformat()
         }
 
-        api_cache.set(cache_key, result, ttl=120)  # 2 min cache for line shopping
+        api_cache.set(cache_key, result, ttl=600)  # 2 min cache for line shopping
         return result
 
     except HTTPException:
@@ -3393,7 +3393,7 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
             "message": f"API error: {str(e)}",
             "timestamp": datetime.now().isoformat()
         }
-        api_cache.set(cache_key, result, ttl=120)
+        api_cache.set(cache_key, result, ttl=600)
         return result
 
 
@@ -5580,7 +5580,7 @@ async def get_sport_dashboard(sport: str, auth: bool = Depends(verify_api_key)):
         }
 
         # Cache for 2 minutes (limited by best-bets TTL)
-        api_cache.set(cache_key, result, ttl=120)
+        api_cache.set(cache_key, result, ttl=600)
         return result
 
     except Exception as e:
@@ -5706,7 +5706,7 @@ async def get_game_details(sport: str, game_id: str, auth: bool = Depends(verify
         }
 
         # Cache for 2 minutes
-        api_cache.set(cache_key, result, ttl=120)
+        api_cache.set(cache_key, result, ttl=600)
         return result
 
     except Exception as e:
@@ -5991,7 +5991,7 @@ async def get_live_slate(sport: str, auth: bool = Depends(verify_api_key)):
         "timestamp": datetime.now().isoformat()
     }
 
-    api_cache.set(cache_key, result, ttl=300)
+    api_cache.set(cache_key, result, ttl=600)
     return result
 
 
@@ -6066,7 +6066,7 @@ async def get_roster(sport: str, team: str, auth: bool = Depends(verify_api_key)
         "timestamp": datetime.now().isoformat()
     }
 
-    api_cache.set(cache_key, result, ttl=300)
+    api_cache.set(cache_key, result, ttl=600)
     return result
 
 
