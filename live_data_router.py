@@ -1148,10 +1148,9 @@ async def get_sharp_money(sport: str):
         )
 
         if not resp or resp.status_code != 200:
-            # Use fallback data when API unavailable
-            logger.warning("Odds API unavailable for sharp, using fallback data")
-            data = generate_fallback_sharp(sport_lower)
-            result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
+            # Return empty data when API unavailable - no fake data
+            logger.warning("Odds API unavailable for sharp - no data available")
+            result = {"sport": sport.upper(), "source": "none", "count": 0, "data": [], "movements": [], "message": "Odds API unavailable"}
             api_cache.set(cache_key, result)
             return result
 
@@ -1162,9 +1161,8 @@ async def get_sharp_money(sport: str):
             games = resp.json()
         except ValueError as e:
             logger.error("Failed to parse Odds API response: %s", e)
-            # Use fallback on parse error
-            data = generate_fallback_sharp(sport_lower)
-            result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
+            # Return empty data on parse error - no fake data
+            result = {"sport": sport.upper(), "source": "none", "count": 0, "data": [], "movements": [], "message": "Failed to parse API response"}
             api_cache.set(cache_key, result)
             return result
 
@@ -1193,10 +1191,9 @@ async def get_sharp_money(sport: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Odds API processing failed for %s: %s, using fallback", sport, e)
-        # Return fallback on any error
-        data = generate_fallback_sharp(sport_lower)
-        result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
+        logger.exception("Odds API processing failed for %s: %s", sport, e)
+        # Return empty data on error - no fake data
+        result = {"sport": sport.upper(), "source": "none", "count": 0, "data": [], "movements": [], "message": f"API error: {str(e)}"}
         api_cache.set(cache_key, result)
         return result
 
@@ -1665,91 +1662,11 @@ async def get_props(sport: str):
         except Exception as e:
             logger.warning("Playbook API props failed for %s: %s", sport, e)
 
-    # If still no data, generate sample props from today's games
+    # Log if no data was retrieved from any API
     if not data:
-        logger.info("No props from APIs, generating from game schedule for %s", sport)
-        try:
-            # Get today's games from Odds API (main odds endpoint works)
-            odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
-            resp = await fetch_with_retries(
-                "GET", odds_url,
-                params={
-                    "apiKey": ODDS_API_KEY,
-                    "regions": "us",
-                    "markets": "h2h",
-                    "oddsFormat": "american"
-                }
-            )
+        logger.warning("No props data available for %s from any API source", sport)
 
-            if resp and resp.status_code == 200:
-                games = resp.json()
-                # Import player data for realistic props
-                from player_birth_data import get_players_by_sport
-
-                sport_upper = sport.upper()
-                if sport_upper == "NCAAB":
-                    sport_upper = "NCAAB"
-                players = get_players_by_sport(sport_upper)
-                player_list = list(players.keys())
-
-                for game in games[:5]:  # Limit to 5 games
-                    home_team = game.get("home_team", "")
-                    away_team = game.get("away_team", "")
-
-                    # Find players on these teams
-                    team_players = [p for p, d in players.items() if d.get("team", "") in [home_team, away_team] or home_team in d.get("team", "") or away_team in d.get("team", "")]
-
-                    if not team_players and player_list:
-                        # Use random players if no team match
-                        import random
-                        random.seed(hash(home_team + away_team))
-                        team_players = random.sample(player_list, min(4, len(player_list)))
-
-                    game_props = {
-                        "game_id": game.get("id"),
-                        "home_team": home_team,
-                        "away_team": away_team,
-                        "commence_time": game.get("commence_time"),
-                        "props": []
-                    }
-
-                    # Generate props for found players
-                    prop_types = {
-                        "NBA": [("player_points", 22.5), ("player_rebounds", 6.5), ("player_assists", 5.5)],
-                        "NFL": [("player_pass_yds", 250.5), ("player_rush_yds", 65.5), ("player_rec_yds", 55.5)],
-                        "MLB": [("player_hits", 1.5), ("player_runs", 0.5), ("player_rbis", 0.5)],
-                        "NHL": [("player_points", 0.5), ("player_shots", 2.5), ("player_assists", 0.5)],
-                        "NCAAB": [("player_points", 15.5), ("player_rebounds", 5.5), ("player_assists", 3.5)],
-                    }
-
-                    for player in team_players[:3]:
-                        for prop_type, base_line in prop_types.get(sport.upper(), prop_types["NBA"]):
-                            game_props["props"].append({
-                                "player": player,
-                                "market": prop_type,
-                                "line": base_line,
-                                "odds": -110,
-                                "side": "Over",
-                                "book": "consensus"
-                            })
-                            game_props["props"].append({
-                                "player": player,
-                                "market": prop_type,
-                                "line": base_line,
-                                "odds": -110,
-                                "side": "Under",
-                                "book": "consensus"
-                            })
-
-                    if game_props["props"]:
-                        data.append(game_props)
-
-                logger.info("Generated props from schedule for %s: %d games with props", sport, len(data))
-
-        except Exception as e:
-            logger.warning("Failed to generate props from schedule for %s: %s", sport, e)
-
-    result = {"sport": sport.upper(), "source": "odds_api" if data else "generated", "count": len(data), "data": data}
+    result = {"sport": sport.upper(), "source": "odds_api" if data else "none", "count": len(data), "data": data}
     api_cache.set(cache_key, result)
     return result
 
@@ -1850,6 +1767,7 @@ async def get_best_bets(sport: str):
         vortex_score = 0.0         # 0-0.5 pts (5%)
         daily_edge_score = 0.0     # 0-0.5 pts (5%)
         public_fade_mod = 0.0      # Modifier (can be negative)
+        mid_spread_mod = 0.0       # Modifier
         trap_mod = 0.0             # Modifier (negative)
 
         jarvis_triggers_hit = []
@@ -2071,6 +1989,32 @@ async def get_best_bets(sport: str):
                     public_pct=50
                 )
 
+                # Calculate frontend-expected fields
+                total_score = score_data.get("total_score", 5.0)
+                confidence_score_val = score_data.get("confidence_score", 50)
+
+                # Generate rationale based on signals
+                rationale = f"{player} prop analysis: "
+                if sharp_signal.get("signal_strength") == "STRONG":
+                    rationale += "Sharp money detected. "
+                if score_data.get("immortal_detected"):
+                    rationale += "JARVIS immortal pattern triggered. "
+                rationale += f"Scoring confluence at {score_data.get('scoring_breakdown', {}).get('alignment_pct', 70):.0f}% alignment."
+
+                # Determine badges
+                badges = []
+                if total_score >= 8.0:
+                    badges.append("SMASH_SPOT")
+                if sharp_signal.get("signal_strength") == "STRONG":
+                    badges.append("SHARP_MONEY")
+                if score_data.get("immortal_detected"):
+                    badges.append("IMMORTAL")
+                if score_data.get("jarvis_triggers"):
+                    badges.append("JARVIS_TRIGGER")
+
+                # Estimated predicted value
+                predicted_value = line + (2.5 if side == "Over" else -2.5) * (total_score / 8.0)
+
                 props_picks.append({
                     "player": player,
                     "player_name": player,  # Alias for frontend compatibility
@@ -2078,13 +2022,22 @@ async def get_best_bets(sport: str):
                     "stat_type": market,    # Alias for frontend compatibility
                     "line": line,
                     "side": side,
+                    "over_under": side.lower(),  # Frontend expected field
                     "odds": odds,
                     "game": f"{away_team} @ {home_team}",
                     "home_team": home_team,
                     "away_team": away_team,
+                    "team": home_team,  # Frontend expected field
+                    "opponent": away_team,  # Frontend expected field
+                    "game_time": game.get("commence_time", datetime.now().isoformat()),  # Frontend expected field
                     "recommendation": f"{side.upper()} {line}",
+                    "smash_score": total_score,  # Alias for frontend compatibility
+                    "predicted_value": round(predicted_value, 1),  # Frontend expected field
+                    "rationale": rationale,  # Frontend expected field
+                    "badges": badges,  # Frontend expected field
                     **score_data,
-                    "sharp_signal": sharp_signal.get("signal_strength", "NONE")
+                    "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
+                    "source": "odds_api"
                 })
     except HTTPException:
         logger.warning("Props fetch failed for %s", sport)
@@ -2165,6 +2118,28 @@ async def get_best_bets(sport: str):
                                 public_pct=50
                             )
 
+                            # Calculate frontend-expected fields for game picks
+                            total_score_game = score_data.get("total_score", 5.0)
+
+                            # Generate rationale based on pick type
+                            if pick_type == "SPREAD":
+                                rationale_game = f"{pick_name} spread pick based on matchup analysis. "
+                                if sharp_signal.get("signal_strength") == "STRONG":
+                                    rationale_game += "Sharp money confirms this side."
+                            elif pick_type == "TOTAL":
+                                rationale_game = f"Total {pick_name} projection based on pace metrics. "
+                            else:  # MONEYLINE
+                                rationale_game = f"{pick_name} moneyline value identified. "
+
+                            # Determine badges
+                            badges_game = []
+                            if total_score_game >= 8.0:
+                                badges_game.append("SMASH_SPOT")
+                            if sharp_signal.get("signal_strength") == "STRONG":
+                                badges_game.append("SHARP_MONEY")
+                            if market_key == "spreads" and abs(point or 0) <= 3:
+                                badges_game.append("TIGHT_SPREAD")
+
                             game_picks.append({
                                 "pick_type": pick_type,
                                 "pick": display,
@@ -2176,8 +2151,14 @@ async def get_best_bets(sport: str):
                                 "away_team": away_team,
                                 "market": market_key,
                                 "recommendation": display,
+                                "game_time": game.get("commence_time", datetime.now().isoformat()),
+                                "smash_score": total_score_game,
+                                "predicted_value": (point + 3) if market_key == "totals" else None,
+                                "rationale": rationale_game,
+                                "badges": badges_game,
                                 **score_data,
-                                "sharp_signal": sharp_signal.get("signal_strength", "NONE")
+                                "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
+                                "source": "odds_api"
                             })
     except Exception as e:
         logger.warning("Game odds fetch failed: %s", e)
@@ -2201,10 +2182,28 @@ async def get_best_bets(sport: str):
                 public_pct=50
             )
 
+            # Calculate frontend-expected fields for sharp money picks
+            total_score_sharp = score_data.get("total_score", 5.0)
+            side_team = home_team if signal.get("side") == "HOME" else away_team
+
+            # Generate rationale
+            rationale = f"Sharp money detected on {side_team}. "
+            if signal.get("signal_strength") == "STRONG":
+                rationale += "Strong reverse line movement indicates professional action."
+            else:
+                rationale += "Line movement suggests professional bettors favor this side."
+
+            # Determine badges
+            badges = ["SHARP_MONEY"]
+            if signal.get("signal_strength") == "STRONG":
+                badges.append("RLM")  # Reverse Line Movement
+            if total_score_sharp >= 8.0:
+                badges.append("SMASH_SPOT")
+
             game_picks.append({
                 "pick_type": "SHARP",
                 "pick": f"Sharp on {signal.get('side', 'HOME')}",
-                "team": home_team if signal.get("side") == "HOME" else away_team,
+                "team": side_team,
                 "line": signal.get("line_variance", 0),
                 "odds": -110,
                 "game": f"{away_team} @ {home_team}",
@@ -2212,8 +2211,14 @@ async def get_best_bets(sport: str):
                 "away_team": away_team,
                 "market": "sharp_money",
                 "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
+                "game_time": datetime.now().isoformat(),
+                "smash_score": total_score_sharp,
+                "predicted_value": None,
+                "rationale": rationale,
+                "badges": badges,
                 **score_data,
-                "sharp_signal": signal.get("signal_strength", "MODERATE")
+                "sharp_signal": signal.get("signal_strength", "MODERATE"),
+                "source": "sharp_fallback"
             })
 
     # Sort game picks by score and take top 10
@@ -2235,6 +2240,29 @@ async def get_best_bets(sport: str):
         except Exception as e:
             logger.warning("Failed to get astro status: %s", e)
 
+    # Build diagnostic info about data sources
+    api_status = {
+        "odds_api_configured": bool(ODDS_API_KEY),
+        "playbook_api_configured": bool(PLAYBOOK_API_KEY),
+        "props_source": props_data.get("source", "none") if props_data else "none",
+        "props_games_found": len(props_data.get("data", [])) if props_data else 0,
+        "sharp_source": sharp_data.get("source", "none") if sharp_data else "none",
+    }
+
+    # Determine if we have real data or not
+    has_live_data = len(top_props) > 0 or len(top_game_picks) > 0
+
+    # Build message about data availability
+    if not has_live_data:
+        if not ODDS_API_KEY:
+            data_message = "ODDS_API_KEY not configured. Set this environment variable in Railway."
+        elif api_status["props_games_found"] == 0:
+            data_message = f"No games/props available for {sport.upper()} right now. This could mean no games are scheduled today or the API returned empty data."
+        else:
+            data_message = "Props data was retrieved but no picks met the scoring threshold."
+    else:
+        data_message = f"Live data retrieved: {len(top_props)} prop picks, {len(top_game_picks)} game picks"
+
     result = {
         "sport": sport.upper(),
         "source": "jarvis_savant_v7.3",
@@ -2255,6 +2283,8 @@ async def get_best_bets(sport: str):
             "learned_weights": esoteric_weights,
             "learning_active": learning is not None
         },
+        "api_status": api_status,
+        "data_message": data_message,
         "timestamp": datetime.now().isoformat()
     }
     api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
@@ -3250,15 +3280,15 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
         )
 
         if not resp or resp.status_code != 200:
-            # Use fallback data when API unavailable
-            logger.warning("Odds API unavailable for line-shop, using fallback data")
-            line_shop_data = generate_fallback_line_shop(sport_lower)
+            # Return empty data when API unavailable - no fake data
+            logger.warning("Odds API unavailable for line-shop - no data available")
             result = {
                 "sport": sport.upper(),
-                "source": "fallback",
-                "count": len(line_shop_data),
+                "source": "none",
+                "count": 0,
                 "sportsbooks": list(SPORTSBOOK_CONFIGS.keys()),
-                "data": line_shop_data,
+                "data": [],
+                "message": "Odds API unavailable - check API key configuration",
                 "timestamp": datetime.now().isoformat()
             }
             api_cache.set(cache_key, result, ttl=120)
@@ -3352,15 +3382,15 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Line shopping fetch failed: %s, using fallback", e)
-        # Return fallback data on any error
-        line_shop_data = generate_fallback_line_shop(sport_lower)
+        logger.exception("Line shopping fetch failed: %s", e)
+        # Return empty data on error - no fake data
         result = {
             "sport": sport.upper(),
-            "source": "fallback",
-            "count": len(line_shop_data),
+            "source": "none",
+            "count": 0,
             "sportsbooks": list(SPORTSBOOK_CONFIGS.keys()),
-            "data": line_shop_data,
+            "data": [],
+            "message": f"API error: {str(e)}",
             "timestamp": datetime.now().isoformat()
         }
         api_cache.set(cache_key, result, ttl=120)
@@ -3407,9 +3437,9 @@ async def generate_betslip(
         )
 
         if not resp or resp.status_code != 200:
-            # Use fallback data when API unavailable
-            logger.warning("Odds API unavailable for betslip, using fallback data")
-            return generate_fallback_betslip(sport_lower, game_id, bet_type, selection)
+            # Return error when API unavailable - no fake data
+            logger.warning("Odds API unavailable for betslip - no data available")
+            raise HTTPException(status_code=503, detail="Odds API unavailable - cannot generate betslip without live data")
 
         games = resp.json()
         target_game = None
@@ -3420,9 +3450,9 @@ async def generate_betslip(
                 break
 
         if not target_game:
-            # Game not found in API, use fallback
-            logger.warning("Game %s not found, using fallback data", game_id)
-            return generate_fallback_betslip(sport_lower, game_id, bet_type, selection)
+            # Game not found in API - return error
+            logger.warning("Game %s not found in API", game_id)
+            raise HTTPException(status_code=404, detail=f"Game {game_id} not found - may have already started or ended")
 
         betslip_options = []
 
@@ -3499,9 +3529,9 @@ async def generate_betslip(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Betslip generation failed: %s, using fallback", e)
-        # Return fallback data on any error
-        return generate_fallback_betslip(sport_lower, game_id, bet_type, selection)
+        logger.exception("Betslip generation failed: %s", e)
+        # Return error on failure - no fake data
+        raise HTTPException(status_code=500, detail=f"Betslip generation failed: {str(e)}")
 
 
 @router.get("/sportsbooks")
