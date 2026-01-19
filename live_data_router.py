@@ -701,6 +701,106 @@ def implied_prob(odds) -> float:
 MARKET_PREFERENCE = {"spreads": 0, "totals": 1, "h2h": 2}
 
 
+def calculate_market_modifier(market: str, odds: int, line: float, active_pillars: list) -> tuple:
+    """
+    v10.9: Market-Aware Research Modifiers to break ML/spread score symmetry.
+
+    Returns (delta, reason) to add to research score.
+
+    Rules:
+    - ML Heavy Favorite Tax: h2h odds <= -200 → -0.3
+    - ML Extreme Favorite Tax: h2h odds <= -400 → -0.6 (replaces -0.3)
+    - Tight Spread Slight Value: spreads |line| <= 2.5 → +0.1
+    - Wide Spread Variance Penalty: spreads |line| >= 8.5 → -0.2
+    - Totals + RLM Synergy: totals + RLM pillar active → +0.2
+    """
+    delta = 0.0
+    reason = None
+
+    if market == "h2h":
+        # ML favorite taxes (mutually exclusive - extreme replaces heavy)
+        if isinstance(odds, (int, float)) and odds <= -400:
+            delta = -0.6
+            reason = f"RESEARCH: Market Mod (ML Extreme Fav {odds}) -0.6"
+        elif isinstance(odds, (int, float)) and odds <= -200:
+            delta = -0.3
+            reason = f"RESEARCH: Market Mod (ML Heavy Fav {odds}) -0.3"
+
+    elif market == "spreads":
+        abs_line = abs(line) if line else 0
+        if abs_line <= 2.5:
+            delta = 0.1
+            reason = f"RESEARCH: Market Mod (Tight Spread {line:+.1f}) +0.1"
+        elif abs_line >= 8.5:
+            delta = -0.2
+            reason = f"RESEARCH: Market Mod (Wide Spread {line:+.1f}) -0.2"
+
+    elif market == "totals":
+        # Check if RLM is active
+        rlm_active = any("Reverse Line Move" in p for p in active_pillars)
+        if rlm_active:
+            delta = 0.2
+            reason = "RESEARCH: Market Mod (Totals + RLM Synergy) +0.2"
+
+    return (delta, reason)
+
+
+def resolve_prop_conflicts(prop_picks: list) -> tuple:
+    """
+    v10.9: Prop Deduplication - stop collisions like Maxey x4.
+
+    Groups by (player, market) and keeps only the BEST prop per group.
+
+    Selection Priority:
+    1. Highest final_score
+    2. If tie: better odds (lower implied probability)
+    3. If still tie: line closest to median (avoid extreme alt lines)
+
+    Returns (resolved_picks, dropped_count)
+    """
+    from collections import defaultdict
+
+    grouped = defaultdict(list)
+    for p in prop_picks:
+        player = p.get("player", p.get("player_name", ""))
+        market = p.get("market", "")
+        key = (player, market)
+        grouped[key].append(p)
+
+    resolved = []
+    dropped_count = 0
+
+    for key, group in grouped.items():
+        if len(group) == 1:
+            resolved.append(group[0])
+            continue
+
+        # Sort by: score (desc), implied_prob (asc), line distance from median (asc)
+        lines = [p.get("line", 0) or 0 for p in group]
+        median_line = sorted(lines)[len(lines) // 2] if lines else 0
+
+        def sort_key(x):
+            score = clamp_score(x.get("final_score", x.get("total_score", 0)))
+            odds = x.get("odds", -110)
+            prob = implied_prob(odds)
+            line = x.get("line", 0) or 0
+            line_dist = abs(line - median_line)
+            return (-score, prob, line_dist)
+
+        group.sort(key=sort_key)
+        best_pick = group[0]
+
+        # Add reason for kept pick
+        best_pick["reasons"] = best_pick.get("reasons", []) + [
+            f"RESOLVER: Kept best of {len(group)} props for {key[1]}"
+        ]
+
+        resolved.append(best_pick)
+        dropped_count += len(group) - 1
+
+    return (resolved, dropped_count)
+
+
 def resolve_same_direction(picks: list) -> list:
     """
     Resolve conflicts where multiple markets bet the SAME direction.
@@ -1981,7 +2081,7 @@ async def get_best_bets(sport: str, debug: int = 0):
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
     # Helper function to calculate scores with v10.1 dual-score confluence
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.8, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_home=False, team_rest_days=0, opp_rest_days=0, game_hour_et=20):
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.8, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_home=False, team_rest_days=0, opp_rest_days=0, game_hour_et=20, market="", odds=-110):
         # =====================================================================
         # v10.3 ADDITIVE SCORING SYSTEM (Sharp Quiet Fix)
         # =====================================================================
@@ -2086,9 +2186,21 @@ async def get_best_bets(sport: str, debug: int = 0):
         # Cap pillar_boost at 3.0 to prevent inflation
         pillar_boost = max(-1.0, min(3.0, float(pillar_boost)))
 
-        # ADDITIVE RESEARCH SCORE: base + pillars, clamped to 0-10
-        research_score = base_ai + pillar_boost
+        # v10.9: MARKET-AWARE RESEARCH MODIFIER (breaks ML/spread symmetry)
+        market_delta, market_reason = calculate_market_modifier(
+            market=market,
+            odds=odds,
+            line=spread,  # For spreads, use spread as line
+            active_pillars=research_reasons
+        )
+
+        # ADDITIVE RESEARCH SCORE: base + pillars + market_mod, clamped to 0-10
+        research_score = base_ai + pillar_boost + market_delta
         research_score = max(0.0, min(10.0, float(research_score)))
+
+        # Add market modifier reason if applied
+        if market_reason:
+            research_reasons.append(market_reason)
 
         # --- ESOTERIC SCORE CALCULATION (v10.2 Gematria-Dominant) ---
         esoteric_reasons = []  # Track esoteric scoring reasons
@@ -2221,34 +2333,42 @@ async def get_best_bets(sport: str, debug: int = 0):
         # esoteric_raw already scaled to 0-10 via weights, just clamp
         esoteric_score = max(0, min(10, esoteric_raw))
 
-        # --- v10.4 JARVIS CONFLUENCE DRIVER ---
+        # --- v10.9 JARVIS CONFLUENCE DRIVER ---
         # Jarvis affects picks ONLY through confluence boosts and SmashSpot tagging
         # (not through inflating research score)
         alignment = 1 - abs(research_score - esoteric_score) / 10
         alignment_pct = alignment * 100
-        high_quality = (research_score >= 6.2 and esoteric_score >= 6.8)
-        is_aligned = (alignment >= 0.75)  # 75% alignment threshold
+        high_quality = (research_score >= 7.5)  # v10.9: raised threshold for high_quality
+        high_quality_moderate = (research_score >= 6.2)  # v10.9: threshold for moderate boost
+        is_aligned_strong = (alignment_pct >= 80)  # 80% for strong alignment
+        is_aligned_moderate = (alignment_pct >= 62)  # 62% for moderate alignment
+        is_aligned = (alignment >= 0.75)  # 75% legacy threshold
 
         # Confluence boost calculation (micro-scaled)
         confluence_boost = 0.0
         confluence_level = "DIVERGENT"
         confluence_reasons = []
 
-        if immortal_detected and high_quality and is_aligned:
-            confluence_boost = 0.8
+        if immortal_detected and high_quality and is_aligned_strong:
+            confluence_boost = 1.0
             confluence_level = "IMMORTAL"
-            confluence_reasons.append("CONFLUENCE: IMMORTAL +0.8")
-        elif jarvis_triggered and high_quality and is_aligned:
-            confluence_boost = 0.5
+            confluence_reasons.append("CONFLUENCE: IMMORTAL +1.0")
+        elif jarvis_triggered and high_quality and is_aligned_strong:
+            confluence_boost = 0.6
             confluence_level = "JARVIS_PERFECT"
-            confluence_reasons.append("CONFLUENCE: JARVIS PERFECT +0.5")
+            confluence_reasons.append("CONFLUENCE: JARVIS PERFECT +0.6")
+        elif jarvis_triggered and high_quality_moderate and is_aligned_moderate:
+            # v10.9: Moderate Jarvis Confluence Boost
+            confluence_boost = 0.25
+            confluence_level = "JARVIS_MODERATE"
+            confluence_reasons.append("CONFLUENCE: Jarvis Moderate Alignment +0.25")
         elif is_aligned:
             confluence_boost = 0.3
             confluence_level = "PERFECT"
             confluence_reasons.append("CONFLUENCE: Perfect Alignment +0.3")
         elif alignment_pct >= 60:
             confluence_level = "MODERATE"
-            # No boost for moderate alignment
+            # No boost for moderate alignment without Jarvis
 
         # --- FINAL SCORE FORMULA ---
         # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
@@ -2358,7 +2478,7 @@ async def get_best_bets(sport: str, debug: int = 0):
                     except Exception:
                         pass
 
-                # Calculate score with full esoteric integration (v10.3)
+                # Calculate score with full esoteric integration (v10.9)
                 score_data = calculate_pick_score(
                     game_str + player,
                     sharp_signal,
@@ -2368,7 +2488,9 @@ async def get_best_bets(sport: str, debug: int = 0):
                     spread=0,
                     total=220,
                     public_pct=50,
-                    game_hour_et=game_hour_et
+                    game_hour_et=game_hour_et,
+                    market=market,  # v10.9: pass market for market-aware scoring
+                    odds=odds       # v10.9: pass odds for market modifier
                 )
 
                 # Calculate frontend-expected fields
@@ -2433,17 +2555,10 @@ async def get_best_bets(sport: str, debug: int = 0):
     except HTTPException:
         logger.warning("Props fetch failed for %s", sport)
 
-    # DEDUPLICATE: Only keep the best side (Over or Under) per player/market
-    # This prevents contradictory picks like "Maxey Over 26.5" AND "Maxey Under 26.5"
-    best_by_player_market = {}
-    for pick in props_picks:
-        key = f"{pick['player']}:{pick['market']}"
-        if key not in best_by_player_market or pick["total_score"] > best_by_player_market[key]["total_score"]:
-            best_by_player_market[key] = pick
-
-    # Sort deduplicated props by score and take top 10
-    deduplicated_props = list(best_by_player_market.values())
-    deduplicated_props.sort(key=lambda x: x["total_score"], reverse=True)
+    # v10.9: PROP DEDUPLICATION - stop collisions like Maxey x4
+    # Uses resolve_prop_conflicts for proper tie-breaking (score, odds, line distance)
+    deduplicated_props, props_dropped_count = resolve_prop_conflicts(props_picks)
+    deduplicated_props.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
 
     # VOLUME GOVERNOR (v10.6): Max 3 GOLD STAR, but NEVER lie about tiers
     # Tier is always accurate to score. Badge can change for display purposes.
@@ -2541,7 +2656,7 @@ async def get_best_bets(sport: str, debug: int = 0):
                             # Determine if this pick is for the home team
                             is_home_pick = (pick_name == home_team) if market_key != "totals" else False
 
-                            # Calculate score with full esoteric integration (v10.3 additive)
+                            # Calculate score with full esoteric integration (v10.9)
                             score_data = calculate_pick_score(
                                 game_str,
                                 sharp_signal,
@@ -2552,7 +2667,9 @@ async def get_best_bets(sport: str, debug: int = 0):
                                 total=point if market_key == "totals" and point else 220,
                                 public_pct=50,
                                 is_home=is_home_pick,
-                                game_hour_et=game_hour_et
+                                game_hour_et=game_hour_et,
+                                market=market_key,  # v10.9: pass market for market-aware scoring
+                                odds=odds           # v10.9: pass odds for market modifier
                             )
 
                             # Calculate frontend-expected fields for game picks
@@ -2617,7 +2734,7 @@ async def get_best_bets(sport: str, debug: int = 0):
             # Determine if sharp pick is on home team
             is_home_sharp = signal.get("side") == "HOME"
 
-            # Calculate score with v10.3 additive scoring
+            # Calculate score with v10.9 additive scoring
             score_data = calculate_pick_score(
                 game_str,
                 signal,
@@ -2627,7 +2744,9 @@ async def get_best_bets(sport: str, debug: int = 0):
                 spread=signal.get("line_variance", 0),
                 total=220,
                 public_pct=50,
-                is_home=is_home_sharp
+                is_home=is_home_sharp,
+                market="sharp_money",  # v10.9: sharp fallback market
+                odds=-110  # v10.9: default odds for sharp fallback
             )
 
             # Calculate frontend-expected fields for sharp money picks
@@ -2772,8 +2891,8 @@ async def get_best_bets(sport: str, debug: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.8",
-        "scoring_system": "8 Pillars + Dual-Engine Confluence + Market Edge Filters + Odds Tiebreaker",
+        "source": "production_v10.9",
+        "scoring_system": "8 Pillars + Dual-Engine + Market-Aware Scoring + Prop Dedup",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": {
             "count": len(top_props),
@@ -2796,11 +2915,13 @@ async def get_best_bets(sport: str, debug: int = 0):
         "timestamp": datetime.now().isoformat()
     }
 
-    # Debug mode: Add diagnostic info
+    # Debug mode: Add diagnostic info (v10.9 expanded)
     if debug == 1:
         result["debug"] = {
             "games_pulled": len(props_data.get("data", [])) if props_data else 0,
             "candidates_scored": len(props_picks) + len(game_picks),
+            "props_scored": len(props_picks),
+            "props_deduped": props_dropped_count,  # v10.9: track deduplication
             "returned_picks": len(top_props) + len(top_game_picks),
             "gold_star_props": len([p for p in top_props if p.get("tier") == "GOLD_STAR"]),
             "gold_star_games": len([p for p in top_game_picks if p.get("tier") == "GOLD_STAR"]),
