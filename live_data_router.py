@@ -700,6 +700,34 @@ def implied_prob(odds) -> float:
 # Market preference order for tiebreaker (lower = preferred)
 MARKET_PREFERENCE = {"spreads": 0, "totals": 1, "h2h": 2}
 
+# v10.10: Prop market labels for clear selection strings
+MARKET_LABELS = {
+    "player_points": "Points",
+    "player_assists": "Assists",
+    "player_rebounds": "Rebounds",
+    "player_threes": "3PT Made",
+    "player_blocks": "Blocks",
+    "player_steals": "Steals",
+    "player_turnovers": "Turnovers",
+    "player_pra": "Pts+Reb+Ast",
+    "player_pr": "Pts+Reb",
+    "player_pa": "Pts+Ast",
+    "player_ra": "Reb+Ast",
+    # NFL
+    "player_pass_tds": "Pass TDs",
+    "player_pass_yds": "Pass Yards",
+    "player_rush_yds": "Rush Yards",
+    "player_reception_yds": "Rec Yards",
+    "player_receptions": "Receptions",
+    # MLB
+    "batter_total_bases": "Total Bases",
+    "batter_hits": "Hits",
+    "batter_rbis": "RBIs",
+    "pitcher_strikeouts": "Strikeouts",
+    # NHL
+    "player_shots_on_goal": "Shots on Goal",
+}
+
 
 def calculate_market_modifier(market: str, odds: int, line: float, active_pillars: list) -> tuple:
     """
@@ -2094,7 +2122,7 @@ async def get_best_bets(sport: str, debug: int = 0):
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
     # Helper function to calculate scores with v10.1 dual-score confluence
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.8, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_home=False, team_rest_days=0, opp_rest_days=0, game_hour_et=20, market="", odds=-110):
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.8, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_home=False, team_rest_days=0, opp_rest_days=0, game_hour_et=20, market="", odds=-110, sharp_scope="GAME"):
         # =====================================================================
         # v10.3 ADDITIVE SCORING SYSTEM (Sharp Quiet Fix)
         # =====================================================================
@@ -2118,16 +2146,22 @@ async def get_best_bets(sport: str, debug: int = 0):
             "daily_edge": 0.05   # 5%  - Daily energy
         }
 
-        # --- RESEARCH SCORE CALCULATION (v10.3 Additive) ---
+        # --- RESEARCH SCORE CALCULATION (v10.10 Additive + Scoped Sharp) ---
         pillar_boost = 0.0
         research_reasons = []
         is_game_pick = not player_name
 
-        # ========== SHARP-DEPENDENT PILLARS ==========
-        # Pillar 1: Sharp Money (higher weight for game picks)
+        # v10.10: Scope multiplier for sharp pillars
+        # GAME-scoped signals apply at 0.5x for props (we don't have prop-level sharp data yet)
+        # PROP-scoped signals apply at 1.0x (when we get prop-level tracking)
+        scope_mult = 1.0 if (is_game_pick or sharp_scope == "PROP") else 0.5
+
+        # ========== SHARP-DEPENDENT PILLARS (v10.10: scope-weighted) ==========
+        # Pillar 1: Sharp Money (scope-weighted for props)
         sharp_diff = sharp_signal.get("diff", 0) or 0
         sharp_strength = sharp_signal.get("signal_strength", "NONE")
         if is_game_pick:
+            # Game picks always get full weight
             if sharp_strength == "STRONG" or sharp_diff >= 15:
                 pillar_boost += 2.0
                 research_reasons.append("RESEARCH: Sharp Split (Game) +2.0")
@@ -2135,18 +2169,26 @@ async def get_best_bets(sport: str, debug: int = 0):
                 pillar_boost += 1.0
                 research_reasons.append("RESEARCH: Sharp Split (Game) +1.0")
         else:
+            # Props get scope-weighted sharp (v10.10)
             if sharp_strength == "STRONG" or sharp_diff >= 15:
-                pillar_boost += 1.0
-                research_reasons.append("RESEARCH: Sharp Split +1.0")
+                boost = 1.0 * scope_mult
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Sharp Split ({sharp_scope} x{scope_mult}) +{boost:.2f}")
             elif sharp_strength == "MODERATE" or sharp_diff >= 10:
-                pillar_boost += 0.5
-                research_reasons.append("RESEARCH: Sharp Split +0.5")
+                boost = 0.5 * scope_mult
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Sharp Split ({sharp_scope} x{scope_mult}) +{boost:.2f}")
 
-        # Pillar 2: Reverse Line Movement (RLM)
+        # Pillar 2: Reverse Line Movement (RLM) - scope-weighted for props
         line_variance = sharp_signal.get("line_variance", 0) or 0
         if line_variance > 1.0:
-            pillar_boost += 1.0
-            research_reasons.append("RESEARCH: Reverse Line Move +1.0")
+            if is_game_pick:
+                pillar_boost += 1.0
+                research_reasons.append("RESEARCH: Reverse Line Move +1.0")
+            else:
+                boost = 1.0 * scope_mult
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Reverse Line Move ({sharp_scope} x{scope_mult}) +{boost:.2f}")
 
         # Pillar 3: Public Fade
         if public_pct >= 70:
@@ -2491,7 +2533,7 @@ async def get_best_bets(sport: str, debug: int = 0):
                     except Exception:
                         pass
 
-                # Calculate score with full esoteric integration (v10.9)
+                # Calculate score with full esoteric integration (v10.10)
                 score_data = calculate_pick_score(
                     game_str + player,
                     sharp_signal,
@@ -2503,15 +2545,28 @@ async def get_best_bets(sport: str, debug: int = 0):
                     public_pct=50,
                     game_hour_et=game_hour_et,
                     market=market,  # v10.9: pass market for market-aware scoring
-                    odds=odds       # v10.9: pass odds for market modifier
+                    odds=odds,      # v10.9: pass odds for market modifier
+                    sharp_scope="GAME"  # v10.10: game-level sharp applied at 0.5x for props
                 )
 
                 # Calculate frontend-expected fields
                 total_score = score_data.get("total_score", 5.0)
                 confidence_score_val = score_data.get("confidence_score", 50)
 
+                # v10.10: Get stat label for clear selection string
+                stat_label = MARKET_LABELS.get(market)
+                if not stat_label:
+                    # Fallback: convert market key to readable label
+                    stat_label = market.replace("player_", "").replace("batter_", "").replace("pitcher_", "").replace("_", " ").title()
+
+                # Force line to float
+                line_val = float(line) if line else 0.0
+
+                # v10.10: Format selection with stat label
+                formatted_selection = f"{player} {side} {line_val} {stat_label}".strip()
+
                 # Generate rationale based on signals
-                rationale = f"{player} prop analysis: "
+                rationale = f"{player} {stat_label.lower()} prop analysis: "
                 if sharp_signal.get("signal_strength") == "STRONG":
                     rationale += "Sharp money detected. "
                 if score_data.get("immortal_detected"):
@@ -2533,26 +2588,27 @@ async def get_best_bets(sport: str, debug: int = 0):
                     badges.append("JARVIS_TRIGGER")
 
                 # Estimated predicted value
-                predicted_value = line + (2.5 if side == "Over" else -2.5) * (total_score / 8.0)
+                predicted_value = line_val + (2.5 if side == "Over" else -2.5) * (total_score / 8.0)
 
                 props_picks.append({
                     "player": player,
                     "player_name": player,  # Alias for frontend compatibility
                     "market": market,
                     "stat_type": market,    # Alias for frontend compatibility
-                    "line": line,
+                    "stat_label": stat_label,  # v10.10: Human-readable stat label
+                    "line": line_val,
                     "side": side,
                     "over_under": side.lower(),  # Frontend expected field
                     "odds": odds,
                     "game": f"{away_team} @ {home_team}",
                     "matchup": f"{away_team} vs {home_team}",  # Production v3 schema
-                    "selection": f"{player} {side} {line}",    # Production v3 schema
+                    "selection": formatted_selection,  # v10.10: "Player Side Line StatLabel"
                     "home_team": home_team,
                     "away_team": away_team,
                     "team": home_team,  # Frontend expected field
                     "opponent": away_team,  # Frontend expected field
                     "game_time": game.get("commence_time", datetime.now().isoformat()),
-                    "recommendation": f"{side.upper()} {line}",
+                    "recommendation": f"{side.upper()} {line_val} {stat_label}",  # v10.10: include stat label
                     "smash_score": total_score,
                     "final_score": total_score,  # Production v3 schema
                     "predicted_value": round(predicted_value, 1),
@@ -2904,8 +2960,8 @@ async def get_best_bets(sport: str, debug: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.9",
-        "scoring_system": "8 Pillars + Dual-Engine + Market-Aware Scoring + Prop Dedup",
+        "source": "production_v10.10",
+        "scoring_system": "v10.10: Prop Market Labels + Scoped Sharp Pillars",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": {
             "count": len(top_props),
