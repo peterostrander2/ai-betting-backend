@@ -676,6 +676,31 @@ def filter_heavy_favorite_ml(picks: list) -> list:
     return filtered
 
 
+def implied_prob(odds) -> float:
+    """
+    Convert American odds to implied probability (break-even %).
+
+    Examples:
+    - -110 → 52.4%
+    - -280 → 73.7%
+    - -102 → 50.5%
+    - +150 → 40.0%
+
+    Lower implied probability = better odds for the bettor.
+    """
+    try:
+        odds = int(odds)
+    except (TypeError, ValueError):
+        odds = -110  # Default to standard juice
+    if odds < 0:
+        return (-odds) / ((-odds) + 100.0)
+    return 100.0 / (odds + 100.0)
+
+
+# Market preference order for tiebreaker (lower = preferred)
+MARKET_PREFERENCE = {"spreads": 0, "totals": 1, "h2h": 2}
+
+
 def resolve_same_direction(picks: list) -> list:
     """
     Resolve conflicts where multiple markets bet the SAME direction.
@@ -685,6 +710,11 @@ def resolve_same_direction(picks: list) -> list:
     - Lakers ML (score 7.0)
 
     These are SAME direction bets (Lakers win). Keep only the best-scoring market.
+
+    Selection Priority (v10.8):
+    1. Highest final_score
+    2. If tied (within 0.05), lowest implied probability (best odds)
+    3. If still tied, market preference: spreads > totals > h2h
 
     Groups by: (game, team/direction)
     - For spreads/ML: the team name is the direction
@@ -720,9 +750,27 @@ def resolve_same_direction(picks: list) -> list:
             resolved.append(group[0])
             continue
 
-        # Sort by score descending, take the best one
-        group.sort(key=lambda x: clamp_score(x.get("final_score", 0.0)), reverse=True)
+        # Sort by: score (desc), then implied_prob (asc), then market preference (asc)
+        def sort_key(x):
+            score = clamp_score(x.get("final_score", 0.0))
+            odds = x.get("odds", -110)
+            prob = implied_prob(odds)
+            market = x.get("market", "h2h")
+            market_rank = MARKET_PREFERENCE.get(market, 99)
+            # Negate score for descending, prob and market_rank ascending
+            return (-score, prob, market_rank)
+
+        group.sort(key=sort_key)
         best_pick = group[0]
+        second_pick = group[1] if len(group) > 1 else None
+
+        # Check if tiebreaker was used (scores within 0.05)
+        tiebreaker_used = False
+        if second_pick:
+            best_score = clamp_score(best_pick.get("final_score", 0.0))
+            second_score = clamp_score(second_pick.get("final_score", 0.0))
+            if abs(best_score - second_score) <= 0.05:
+                tiebreaker_used = True
 
         # Build list of alternate markets
         alternate_markets = []
@@ -731,14 +779,22 @@ def resolve_same_direction(picks: list) -> list:
                 "market": alt.get("market", ""),
                 "pick": alt.get("pick", ""),
                 "odds": alt.get("odds", -110),
-                "score": round(clamp_score(alt.get("final_score", 0)), 2)
+                "score": round(clamp_score(alt.get("final_score", 0)), 2),
+                "implied_prob": round(implied_prob(alt.get("odds", -110)) * 100, 1)
             })
 
         # Add transparency about the decision
         best_pick["alternate_markets"] = alternate_markets
-        best_pick["reasons"] = best_pick.get("reasons", []) + [
-            f"RESOLVER: Best market for {key[1]} direction (vs {len(group)-1} alternates)"
-        ]
+        if tiebreaker_used:
+            best_odds = best_pick.get("odds", -110)
+            best_prob = round(implied_prob(best_odds) * 100, 1)
+            best_pick["reasons"] = best_pick.get("reasons", []) + [
+                f"RESOLVER: Tie score -> preferred better odds ({best_prob}% break-even vs alternates)"
+            ]
+        else:
+            best_pick["reasons"] = best_pick.get("reasons", []) + [
+                f"RESOLVER: Best market for {key[1]} direction (vs {len(group)-1} alternates)"
+            ]
 
         resolved.append(best_pick)
 
@@ -2716,8 +2772,8 @@ async def get_best_bets(sport: str, debug: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.7",
-        "scoring_system": "8 Pillars + Dual-Engine Confluence + Market Edge Filters",
+        "source": "production_v10.8",
+        "scoring_system": "8 Pillars + Dual-Engine Confluence + Market Edge Filters + Odds Tiebreaker",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": {
             "count": len(top_props),
