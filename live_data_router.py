@@ -570,6 +570,73 @@ async def verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Ke
 
 
 # ============================================================================
+# SHARED TIER FUNCTIONS (v10.6 - Consistent Tier Assignment)
+# ============================================================================
+
+def clamp_score(x: float) -> float:
+    """Clamp score to 0-10 range."""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        x = 0.0
+    return max(0.0, min(10.0, x))
+
+
+def tier_from_score(score: float) -> tuple:
+    """
+    Return (tier, badge) from score. Single source of truth for tier assignment.
+
+    Thresholds:
+    - GOLD_STAR: >= 7.5
+    - EDGE_LEAN: >= 6.5
+    - MONITOR: >= 5.5
+    - PASS: < 5.5
+    """
+    score = clamp_score(score)
+    if score >= 7.5:
+        return ("GOLD_STAR", "GOLD STAR")
+    if score >= 6.5:
+        return ("EDGE_LEAN", "EDGE LEAN")
+    if score >= 5.5:
+        return ("MONITOR", "MONITOR")
+    return ("PASS", "PASS")
+
+
+def resolve_market_conflicts(picks: list) -> list:
+    """
+    Resolve conflicts where both sides of same market are returned.
+    Keep only the BEST pick per (matchup, pick_type) combination.
+
+    This ensures we never output both:
+    - Hawks ML and Bucks ML
+    - Both spread sides
+    - Multiple totals for same game
+    """
+    from collections import defaultdict
+
+    grouped = defaultdict(list)
+    for p in picks:
+        matchup = p.get("matchup", "") or p.get("game", "")
+        pick_type = p.get("pick_type", "") or p.get("market", "")
+        key = (matchup, pick_type)
+        grouped[key].append(p)
+
+    resolved = []
+    for key, group in grouped.items():
+        # Sort by final_score descending, take the best one
+        group.sort(key=lambda x: clamp_score(x.get("final_score", 0.0)), reverse=True)
+        best_pick = group[0]
+        # Add reason if we resolved a conflict
+        if len(group) > 1:
+            best_pick["reasons"] = best_pick.get("reasons", []) + [
+                f"RESOLVER: Best of {len(group)} candidates for {key[1]}"
+            ]
+        resolved.append(best_pick)
+
+    return resolved
+
+
+# ============================================================================
 # ROUTER SETUP
 # ============================================================================
 
@@ -2029,15 +2096,19 @@ async def get_best_bets(sport: str, debug: int = 0):
         if smash_spot:
             confluence_reasons.append("CONFLUENCE: SmashSpot Conditions Met")
 
-        # --- BET TIER DETERMINATION ---
-        if final_score >= 7.5:
-            bet_tier = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
-        elif final_score >= 6.5:
-            bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
-        elif final_score >= 5.5:
-            bet_tier = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
-        else:
-            bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
+        # --- BET TIER DETERMINATION (v10.6 - Use shared tier function) ---
+        final_score = clamp_score(final_score)
+        tier, badge = tier_from_score(final_score)
+
+        # Map tier to units and action
+        tier_config = {
+            "GOLD_STAR": {"units": 2.0, "action": "SMASH"},
+            "EDGE_LEAN": {"units": 1.0, "action": "PLAY"},
+            "MONITOR": {"units": 0.0, "action": "WATCH"},
+            "PASS": {"units": 0.0, "action": "SKIP"}
+        }
+        config = tier_config.get(tier, {"units": 0.0, "action": "SKIP"})
+        bet_tier = {"tier": tier, "units": config["units"], "action": config["action"]}
 
         # Map to confidence levels for backward compatibility
         confidence_map = {
@@ -2046,7 +2117,7 @@ async def get_best_bets(sport: str, debug: int = 0):
             "MONITOR": "MEDIUM",
             "PASS": "LOW"
         }
-        confidence = confidence_map.get(bet_tier.get("tier", "PASS"), "LOW")
+        confidence = confidence_map.get(tier, "LOW")
 
         # Confidence score synced with final_score (Production v3)
         confidence_score = int(round(final_score * 10))  # 0-100 synced with final
@@ -2209,31 +2280,35 @@ async def get_best_bets(sport: str, debug: int = 0):
     deduplicated_props = list(best_by_player_market.values())
     deduplicated_props.sort(key=lambda x: x["total_score"], reverse=True)
 
-    # VOLUME GOVERNOR (Production v3): Max 3 GOLD STAR, fill with EDGE LEAN
+    # VOLUME GOVERNOR (v10.6): Max 3 GOLD STAR, but NEVER lie about tiers
+    # Tier is always accurate to score. Badge can change for display purposes.
     gold_count = 0
     governed_props = []
     for pick in deduplicated_props:
-        if pick.get("tier") == "GOLD_STAR":
+        # Re-apply tier from score to ensure consistency
+        score = clamp_score(pick.get("final_score", pick.get("total_score", 0)))
+        tier, badge = tier_from_score(score)
+        pick["tier"] = tier
+        pick["badge"] = badge
+        pick["final_score"] = score
+        pick["confidence"] = int(round(score * 10))
+
+        if tier == "GOLD_STAR":
             gold_count += 1
             if gold_count > 3:
-                # Downgrade to EDGE LEAN (tier only, not score)
-                pick["tier"] = "EDGE_LEAN"
-                pick["badge"] = "EDGE_LEAN"
-                pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Gold cap enforced"]
+                # Keep tier accurate, but change badge to indicate capped
+                pick["badge"] = "GOLD (CAPPED)"
+                pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Gold cap enforced (4th+ gold)"]
         governed_props.append(pick)
 
-    # Fallback: Always return at least 3 picks if data exists
+    # Fallback: Surface top picks for minimum volume, but DON'T change their tier
     actionable = [p for p in governed_props if p.get("tier") in ["GOLD_STAR", "EDGE_LEAN"]]
     if len(actionable) < 3 and len(governed_props) >= 3:
-        # Promote top MONITOR picks to EDGE_LEAN
+        # Mark top MONITOR picks as "TOP VALUE" for display, but keep tier accurate
         monitor_picks = [p for p in governed_props if p.get("tier") == "MONITOR"]
-        for i, pick in enumerate(monitor_picks):
-            if len(actionable) >= 3:
-                break
-            pick["tier"] = "EDGE_LEAN"
-            pick["badge"] = "EDGE_LEAN"
-            pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Fallback fill"]
-            actionable.append(pick)
+        for pick in monitor_picks[:3 - len(actionable)]:
+            pick["badge"] = "TOP VALUE"
+            pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Filled slot for minimum volume (tier preserved)"]
 
     top_props = governed_props[:10]
 
@@ -2437,31 +2512,41 @@ async def get_best_bets(sport: str, debug: int = 0):
             })
 
     # Sort game picks by score
-    game_picks.sort(key=lambda x: x["total_score"], reverse=True)
+    game_picks.sort(key=lambda x: x.get("total_score", 0), reverse=True)
 
-    # VOLUME GOVERNOR for game picks (Production v3): Max 3 GOLD STAR
+    # MARKET CONFLICT RESOLVER (v10.6): One pick per (matchup, pick_type)
+    # Ensures we never return both Hawks ML and Bucks ML for same game
+    game_picks = resolve_market_conflicts(game_picks)
+    game_picks.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
+
+    # VOLUME GOVERNOR (v10.6): Max 3 GOLD STAR, but NEVER lie about tiers
+    # Tier is always accurate to score. Badge can change for display purposes.
     gold_count_games = 0
     governed_games = []
     for pick in game_picks:
-        if pick.get("tier") == "GOLD_STAR":
+        # Re-apply tier from score to ensure consistency
+        score = clamp_score(pick.get("final_score", pick.get("total_score", 0)))
+        tier, badge = tier_from_score(score)
+        pick["tier"] = tier
+        pick["badge"] = badge
+        pick["final_score"] = score
+
+        if tier == "GOLD_STAR":
             gold_count_games += 1
             if gold_count_games > 3:
-                pick["tier"] = "EDGE_LEAN"
-                pick["badge"] = "EDGE_LEAN"
-                pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Gold cap enforced"]
+                # Keep tier accurate, but change badge to indicate capped
+                pick["badge"] = "GOLD (CAPPED)"
+                pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Gold cap enforced (4th+ gold)"]
         governed_games.append(pick)
 
-    # Fallback: Always return at least 3 game picks if data exists
+    # Fallback: Surface top picks for minimum volume, but DON'T change their tier
     actionable_games = [p for p in governed_games if p.get("tier") in ["GOLD_STAR", "EDGE_LEAN"]]
     if len(actionable_games) < 3 and len(governed_games) >= 3:
+        # Mark top MONITOR picks as "TOP VALUE" for display, but keep tier accurate
         monitor_games = [p for p in governed_games if p.get("tier") == "MONITOR"]
-        for pick in monitor_games:
-            if len(actionable_games) >= 3:
-                break
-            pick["tier"] = "EDGE_LEAN"
-            pick["badge"] = "EDGE_LEAN"
-            pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Fallback fill"]
-            actionable_games.append(pick)
+        for pick in monitor_games[:3 - len(actionable_games)]:
+            pick["badge"] = "TOP VALUE"
+            pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Filled slot for minimum volume (tier preserved)"]
 
     top_game_picks = governed_games[:10]
 
