@@ -1944,17 +1944,30 @@ async def get_props(sport: str):
                             "props": []
                         }
 
-                        for bm in event_data.get("bookmakers", []):
+                        # v10.9: Track seen (player, market) to avoid alt lines
+                        # Only keep first/best line per player per market
+                        seen_player_markets = set()
+
+                        for bm in event_data.get("bookmakers", [])[:1]:  # Only first bookmaker (avoid duplicates)
                             for market in bm.get("markets", []):
                                 market_key = market.get("key", "")
                                 if "player" in market_key or "batter" in market_key or "pitcher" in market_key:
                                     for outcome in market.get("outcomes", []):
+                                        player = outcome.get("description", "")
+                                        side = outcome.get("name", "")
+
+                                        # Skip if we already have this player/market combo
+                                        dedup_key = f"{player}:{market_key}:{side}"
+                                        if dedup_key in seen_player_markets:
+                                            continue
+                                        seen_player_markets.add(dedup_key)
+
                                         game_props["props"].append({
-                                            "player": outcome.get("description", ""),
+                                            "player": player,
                                             "market": market_key,
                                             "line": outcome.get("point", 0),
                                             "odds": outcome.get("price", -110),
-                                            "side": outcome.get("name"),
+                                            "side": side,
                                             "book": bm.get("key")
                                         })
 
