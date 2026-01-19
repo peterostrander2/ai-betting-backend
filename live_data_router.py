@@ -782,6 +782,99 @@ RESOLVER_MARKET_TIEBREAK = {
     "sharp_money": 3  # Sharp fallback last
 }
 
+# v10.13: BASE BOOST CONSTANTS (transparent math)
+BASE_SHARP_SPLIT_BOOST = 1.0
+BASE_RLM_BOOST = 1.0
+
+# v10.13: NBA TEAM ABBREVIATION MAPPING
+# Maps various team name formats to official 3-letter abbreviations
+NBA_TEAM_MAP = {
+    # Atlanta Hawks
+    "atl": "ATL", "hawks": "ATL", "atlanta": "ATL", "atlanta_hawks": "ATL",
+    # Boston Celtics
+    "bos": "BOS", "celtics": "BOS", "boston": "BOS", "boston_celtics": "BOS",
+    # Brooklyn Nets
+    "bkn": "BKN", "brk": "BKN", "nets": "BKN", "brooklyn": "BKN", "brooklyn_nets": "BKN",
+    # Charlotte Hornets
+    "cha": "CHA", "cho": "CHA", "hornets": "CHA", "charlotte": "CHA", "charlotte_hornets": "CHA",
+    # Chicago Bulls
+    "chi": "CHI", "bulls": "CHI", "chicago": "CHI", "chicago_bulls": "CHI",
+    # Cleveland Cavaliers
+    "cle": "CLE", "cavs": "CLE", "cavaliers": "CLE", "cleveland": "CLE", "cleveland_cavaliers": "CLE",
+    # Dallas Mavericks
+    "dal": "DAL", "mavs": "DAL", "mavericks": "DAL", "dallas": "DAL", "dallas_mavericks": "DAL",
+    # Denver Nuggets
+    "den": "DEN", "nuggets": "DEN", "denver": "DEN", "denver_nuggets": "DEN",
+    # Detroit Pistons
+    "det": "DET", "pistons": "DET", "detroit": "DET", "detroit_pistons": "DET",
+    # Golden State Warriors
+    "gsw": "GSW", "gs": "GSW", "warriors": "GSW", "golden_state": "GSW", "golden_state_warriors": "GSW",
+    # Houston Rockets
+    "hou": "HOU", "rockets": "HOU", "houston": "HOU", "houston_rockets": "HOU",
+    # Indiana Pacers
+    "ind": "IND", "pacers": "IND", "indiana": "IND", "indiana_pacers": "IND",
+    # LA Clippers
+    "lac": "LAC", "clippers": "LAC", "la_clippers": "LAC", "los_angeles_clippers": "LAC",
+    # LA Lakers
+    "lal": "LAL", "lakers": "LAL", "la_lakers": "LAL", "los_angeles_lakers": "LAL",
+    # Memphis Grizzlies
+    "mem": "MEM", "grizzlies": "MEM", "memphis": "MEM", "memphis_grizzlies": "MEM",
+    # Miami Heat
+    "mia": "MIA", "heat": "MIA", "miami": "MIA", "miami_heat": "MIA",
+    # Milwaukee Bucks
+    "mil": "MIL", "bucks": "MIL", "milwaukee": "MIL", "milwaukee_bucks": "MIL",
+    # Minnesota Timberwolves
+    "min": "MIN", "timberwolves": "MIN", "wolves": "MIN", "minnesota": "MIN", "minnesota_timberwolves": "MIN",
+    # New Orleans Pelicans
+    "nop": "NOP", "no": "NOP", "pelicans": "NOP", "new_orleans": "NOP", "new_orleans_pelicans": "NOP",
+    # New York Knicks
+    "nyk": "NYK", "ny": "NYK", "knicks": "NYK", "new_york": "NYK", "new_york_knicks": "NYK",
+    # Oklahoma City Thunder
+    "okc": "OKC", "thunder": "OKC", "oklahoma_city": "OKC", "oklahoma_city_thunder": "OKC",
+    # Orlando Magic
+    "orl": "ORL", "magic": "ORL", "orlando": "ORL", "orlando_magic": "ORL",
+    # Philadelphia 76ers
+    "phi": "PHI", "sixers": "PHI", "76ers": "PHI", "philadelphia": "PHI", "philadelphia_76ers": "PHI",
+    # Phoenix Suns
+    "phx": "PHX", "pho": "PHX", "suns": "PHX", "phoenix": "PHX", "phoenix_suns": "PHX",
+    # Portland Trail Blazers
+    "por": "POR", "blazers": "POR", "trail_blazers": "POR", "portland": "POR", "portland_trail_blazers": "POR",
+    # Sacramento Kings
+    "sac": "SAC", "kings": "SAC", "sacramento": "SAC", "sacramento_kings": "SAC",
+    # San Antonio Spurs
+    "sas": "SAS", "sa": "SAS", "spurs": "SAS", "san_antonio": "SAS", "san_antonio_spurs": "SAS",
+    # Toronto Raptors
+    "tor": "TOR", "raptors": "TOR", "toronto": "TOR", "toronto_raptors": "TOR",
+    # Utah Jazz
+    "uta": "UTA", "jazz": "UTA", "utah": "UTA", "utah_jazz": "UTA",
+    # Washington Wizards
+    "was": "WAS", "wsh": "WAS", "wizards": "WAS", "washington": "WAS", "washington_wizards": "WAS",
+}
+
+
+def normalize_team_abbr(raw: str) -> str:
+    """
+    v10.13: Normalize team name/abbreviation to official 3-letter format.
+
+    Examples:
+    - "Lakers" -> "LAL"
+    - "Los Angeles Lakers" -> "LAL"
+    - "LAL" -> "LAL"
+    - "lal" -> "LAL"
+    """
+    if not raw:
+        return None
+
+    import re
+
+    # Normalize to lowercase, replace special chars
+    s = raw.lower().strip()
+    s = s.replace("&", "and")
+    key = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+
+    # Try direct match, then key match, then fallback to first 3 chars uppercased
+    return NBA_TEAM_MAP.get(s) or NBA_TEAM_MAP.get(key) or (raw.upper()[:3] if len(raw) >= 3 else None)
+
 
 def derive_game_sharp_side(sharp_signal: dict, home_team: str, away_team: str) -> str:
     """
@@ -839,26 +932,31 @@ def extract_game_sharp_direction(sharp_signal: dict) -> tuple:
     return (game_sharp_side, game_sharp_total)
 
 
-def get_directional_mult(prop_side: str, player_team_side: str, game_sharp_side: str,
-                         game_sharp_total: str) -> tuple:
+def get_directional_mult(prediction_data: dict) -> tuple:
     """
-    v10.12: True directional correlation for GAME-scoped sharps applied to PROP picks.
+    v10.13: True directional correlation for GAME-scoped sharps applied to PROP picks.
 
-    Returns (multiplier, label):
+    Returns (directional_mult, directional_label):
     - 1.0, "ALIGNED" = prop direction matches sharp direction
     - 0.0, "CONFLICT" = prop direction conflicts with sharp direction
-    - 0.5, "NEUTRAL" = direction is missing/ambiguous
+    - 0.5, "NEUTRAL" = direction is missing/ambiguous (only when data is missing)
+
+    Inputs from prediction_data:
+    - prop_side: "OVER" / "UNDER" (the prop's direction)
+    - player_team_side: "HOME" / "AWAY" / None (which side player's team is on)
+    - game_sharp_side: "HOME" / "AWAY" / None (which side sharps are on)
+    - game_sharp_total: "OVER" / "UNDER" / None (sharp total direction if available)
 
     Correlation Rules:
 
-    1) Total correlation applies to any prop:
+    1) Total correlation (OVER/UNDER):
        - If game_sharp_total exists:
          - Prop OVER + Game OVER = ALIGNED
          - Prop UNDER + Game UNDER = ALIGNED
          - Otherwise = CONFLICT
 
-    2) Side correlation applies only if player_team_side is known:
-       - If game_sharp_side exists AND player_team_side exists:
+    2) Side correlation (HOME/AWAY):
+       - If game_sharp_side exists AND player_team_side is known:
          - If player on sharp-favored team:
            - Prop OVER = ALIGNED (team wins → player performs)
            - Prop UNDER = CONFLICT (team wins → player shouldn't underperform)
@@ -866,20 +964,35 @@ def get_directional_mult(prop_side: str, player_team_side: str, game_sharp_side:
            - Prop OVER = CONFLICT (team loses → player shouldn't overperform)
            - Prop UNDER = ALIGNED (team loses → player underperforms)
 
-    3) If neither rule can be applied confidently → NEUTRAL (0.5)
+    3) If neither rule can be applied → NEUTRAL (0.5)
     """
-    prop_side = prop_side.upper() if prop_side else ""
+    prop_side = prediction_data.get("prop_side", "")
+    player_team_side = prediction_data.get("player_team_side")
+    game_sharp_side = prediction_data.get("game_sharp_side")
+    game_sharp_total = prediction_data.get("game_sharp_total")
 
-    # Rule 1: Total correlation (applies to any prop)
+    # Normalize prop_side
+    if isinstance(prop_side, str):
+        prop_side = prop_side.upper()
+
+    # Must have prop_side and some sharp direction to correlate
+    if not prop_side or (not game_sharp_side and not game_sharp_total):
+        return (0.5, "NEUTRAL")
+
+    # Rule 1: Total correlation (OVER/UNDER sharp direction)
     if game_sharp_total:
-        game_total = game_sharp_total.upper()
+        game_total = game_sharp_total.upper() if isinstance(game_sharp_total, str) else ""
         if prop_side == game_total:
             return (1.0, "ALIGNED")
         elif prop_side in ("OVER", "UNDER") and game_total in ("OVER", "UNDER"):
             return (0.0, "CONFLICT")
 
-    # Rule 2: Side correlation (requires player_team_side)
-    if game_sharp_side and player_team_side:
+    # Rule 2: Side correlation (HOME/AWAY sharp direction)
+    if game_sharp_side in ("HOME", "AWAY"):
+        if not player_team_side:
+            # Can't determine correlation without knowing player's team side
+            return (0.5, "NEUTRAL")
+
         player_on_sharp_team = (player_team_side == game_sharp_side)
 
         if prop_side == "OVER":
@@ -2281,18 +2394,20 @@ async def get_best_bets(sport: str, debug: int = 0):
         research_reasons = []
         is_game_pick = not player_name
 
-        # v10.12: Combined scope + direction multiplier for sharp pillars
+        # v10.13: Combined scope + direction multiplier for sharp pillars
         # - scope_mult: GAME-scoped signals apply at 0.5x for props (no prop-level sharp data yet)
-        # - direction_mult: ALIGNED=1.0, NEUTRAL=0.5, CONFLICT=0.0 (v10.12)
+        # - direction_mult: ALIGNED=1.0, NEUTRAL=0.5, CONFLICT=0.0 (v10.13)
         # For props: final_mult = scope_mult * direction_mult
         # For game picks: always 1.0 (full weight, no direction gating)
         scope_mult = 1.0 if (is_game_pick or sharp_scope == "PROP") else 0.5
         final_mult = 1.0 if is_game_pick else (scope_mult * direction_mult)
 
-        # ========== SHARP-DEPENDENT PILLARS (v10.12: scope + direction weighted) ==========
+        # ========== SHARP-DEPENDENT PILLARS (v10.13: transparent math with BASE constants) ==========
         # Pillar 1: Sharp Money (direction-gated for props)
         sharp_diff = sharp_signal.get("diff", 0) or 0
         sharp_strength = sharp_signal.get("signal_strength", "NONE")
+        has_sharp_signal = sharp_strength in ("STRONG", "MODERATE") or sharp_diff >= 10
+
         if is_game_pick:
             # Game picks always get full weight (no direction gating)
             if sharp_strength == "STRONG" or sharp_diff >= 15:
@@ -2301,24 +2416,12 @@ async def get_best_bets(sport: str, debug: int = 0):
             elif sharp_strength == "MODERATE" or sharp_diff >= 10:
                 pillar_boost += 1.0
                 research_reasons.append("RESEARCH: Sharp Split (Game) +1.0")
-        else:
-            # Props get scope + direction weighted sharp (v10.12)
-            if sharp_strength == "STRONG" or sharp_diff >= 15:
-                raw_boost = 1.0
-                boost = raw_boost * final_mult
-                pillar_boost += boost
-                if direction_mult > 0:
-                    research_reasons.append(f"RESEARCH: Sharp Split (GAME {direction_label} x{final_mult:.2f}) +{boost:.2f}")
-                else:
-                    research_reasons.append(f"RESEARCH: Sharp Split (GAME {direction_label} x0.00) +0.00")
-            elif sharp_strength == "MODERATE" or sharp_diff >= 10:
-                raw_boost = 0.5
-                boost = raw_boost * final_mult
-                pillar_boost += boost
-                if direction_mult > 0:
-                    research_reasons.append(f"RESEARCH: Sharp Split (GAME {direction_label} x{final_mult:.2f}) +{boost:.2f}")
-                else:
-                    research_reasons.append(f"RESEARCH: Sharp Split (GAME {direction_label} x0.00) +0.00")
+        elif has_sharp_signal:
+            # v10.13: Props use BASE_SHARP_SPLIT_BOOST = 1.0 with transparent math
+            # boost = BASE * scope_mult * direction_mult
+            boost = BASE_SHARP_SPLIT_BOOST * scope_mult * direction_mult
+            pillar_boost += boost
+            research_reasons.append(f"RESEARCH: Sharp Split (GAME {direction_label} x{scope_mult * direction_mult:.2f}) +{boost:.2f}")
 
         # Pillar 2: Reverse Line Movement (RLM) - direction-gated for props
         line_variance = sharp_signal.get("line_variance", 0) or 0
@@ -2327,13 +2430,10 @@ async def get_best_bets(sport: str, debug: int = 0):
                 pillar_boost += 1.0
                 research_reasons.append("RESEARCH: Reverse Line Move +1.0")
             else:
-                raw_boost = 1.0
-                boost = raw_boost * final_mult
+                # v10.13: Props use BASE_RLM_BOOST = 1.0 with transparent math
+                boost = BASE_RLM_BOOST * scope_mult * direction_mult
                 pillar_boost += boost
-                if direction_mult > 0:
-                    research_reasons.append(f"RESEARCH: Reverse Line Move (GAME {direction_label} x{final_mult:.2f}) +{boost:.2f}")
-                else:
-                    research_reasons.append(f"RESEARCH: Reverse Line Move (GAME {direction_label} x0.00) +0.00")
+                research_reasons.append(f"RESEARCH: Reverse Line Move (GAME {direction_label} x{scope_mult * direction_mult:.2f}) +{boost:.2f}")
 
         # Pillar 3: Public Fade
         if public_pct >= 70:
@@ -2659,6 +2759,10 @@ async def get_best_bets(sport: str, debug: int = 0):
             # v10.12: Extract game sharp direction (side + total)
             game_sharp_side, game_sharp_total = extract_game_sharp_direction(sharp_signal)
 
+            # v10.13: Normalize game team abbreviations
+            home_abbr = normalize_team_abbr(home_team)
+            away_abbr = normalize_team_abbr(away_team)
+
             for prop in game.get("props", []):
                 player = prop.get("player", "Unknown")
                 market = prop.get("market", "")
@@ -2669,18 +2773,40 @@ async def get_best_bets(sport: str, debug: int = 0):
                 if side not in ["Over", "Under"]:
                     continue
 
-                # v10.12: Determine player team side (HOME/AWAY/None)
-                # Odds API doesn't provide player_team directly
-                # Future: Add player-team lookup or roster matching
-                player_team_side = None  # TODO: Implement player-team mapping
-
-                # v10.12: Calculate directional multiplier with true ALIGNED/CONFLICT/NEUTRAL
-                direction_mult, direction_label = get_directional_mult(
-                    prop_side=side,
-                    player_team_side=player_team_side,
-                    game_sharp_side=game_sharp_side,
-                    game_sharp_total=game_sharp_total
+                # v10.13: Extract player team from prop (try multiple field names)
+                player_team_raw = (
+                    prop.get("team_abbr")
+                    or prop.get("team")
+                    or prop.get("player_team")
+                    or prop.get("team_name")
+                    or prop.get("teamName")
                 )
+                player_abbr = normalize_team_abbr(player_team_raw) if player_team_raw else None
+
+                # v10.13: Determine player_team_side (HOME/AWAY/None)
+                player_team_side = None
+                if player_abbr and home_abbr and player_abbr == home_abbr:
+                    player_team_side = "HOME"
+                elif player_abbr and away_abbr and player_abbr == away_abbr:
+                    player_team_side = "AWAY"
+
+                # v10.13: Extract prop direction (OVER/UNDER)
+                prop_side = side.upper() if isinstance(side, str) else None
+
+                # v10.13: Build prediction_data for directional correlation
+                direction_data = {
+                    "prop_side": prop_side,
+                    "player_team_side": player_team_side,
+                    "game_sharp_side": game_sharp_side,
+                    "game_sharp_total": game_sharp_total,
+                    "market": market,
+                    "player_team_abbr": player_abbr,
+                    "game_home_abbr": home_abbr,
+                    "game_away_abbr": away_abbr,
+                }
+
+                # v10.13: Calculate directional multiplier with true ALIGNED/CONFLICT/NEUTRAL
+                direction_mult, direction_label = get_directional_mult(direction_data)
 
                 # Extract game hour for Prime Time pillar
                 game_hour_et = 20  # Default to 8pm ET
@@ -2786,13 +2912,18 @@ async def get_best_bets(sport: str, debug: int = 0):
                     "source": "odds_api"
                 }
 
-                # v10.12: Add debug fields for correlation visibility when debug=1
+                # v10.13: Add debug fields for correlation visibility when debug=1
                 if debug:
                     prop_pick["sharp_scope"] = "GAME"
                     prop_pick["game_sharp_side"] = game_sharp_side
                     prop_pick["game_sharp_total"] = game_sharp_total
                     prop_pick["player_team_side"] = player_team_side
+                    prop_pick["player_team_abbr"] = player_abbr
+                    prop_pick["game_home_abbr"] = home_abbr
+                    prop_pick["game_away_abbr"] = away_abbr
+                    prop_pick["prop_side"] = prop_side
                     prop_pick["directional_mult"] = direction_mult
+                    prop_pick["directional_label"] = direction_label
 
                 props_picks.append(prop_pick)
     except HTTPException:
@@ -3134,8 +3265,8 @@ async def get_best_bets(sport: str, debug: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.12",
-        "scoring_system": "v10.12: Player-Team Mapping + Directional Sharp Correlation",
+        "source": "production_v10.13",
+        "scoring_system": "v10.13: Sharp Math Fix + Real Player Team Mapping + Prop Direction",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": {
             "count": len(top_props),
