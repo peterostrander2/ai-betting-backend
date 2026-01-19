@@ -636,6 +636,115 @@ def resolve_market_conflicts(picks: list) -> list:
     return resolved
 
 
+def filter_heavy_favorite_ml(picks: list) -> list:
+    """
+    Filter out heavy favorite ML picks that have unbeatable juice.
+
+    Rules:
+    - ML odds <= -600: ALWAYS reject (requires 86%+ win rate, impossible to predict)
+    - ML odds <= -400 AND score < 8.0: reject (requires 80%+ win rate, need elite confidence)
+
+    This protects the community from recommending bets that lose money even when "right".
+    """
+    filtered = []
+    for pick in picks:
+        market = pick.get("market", "")
+        odds = pick.get("odds", -110)
+        score = clamp_score(pick.get("final_score", pick.get("total_score", 0)))
+
+        # Only filter moneyline picks
+        if market != "h2h":
+            filtered.append(pick)
+            continue
+
+        # Heavy favorite detection (negative odds only)
+        if isinstance(odds, (int, float)) and odds < 0:
+            # -600 or worse: always reject
+            if odds <= -600:
+                pick["filtered"] = True
+                pick["filter_reason"] = f"FILTER: ML {odds} rejected (requires 86%+ hit rate, unbeatable juice)"
+                continue  # Don't add to filtered list
+
+            # -400 to -599: reject unless elite score (8.0+)
+            if odds <= -400 and score < 8.0:
+                pick["filtered"] = True
+                pick["filter_reason"] = f"FILTER: ML {odds} rejected (requires 80%+ hit rate, score {score:.1f} not elite)"
+                continue  # Don't add to filtered list
+
+        filtered.append(pick)
+
+    return filtered
+
+
+def resolve_same_direction(picks: list) -> list:
+    """
+    Resolve conflicts where multiple markets bet the SAME direction.
+
+    For example, if we have:
+    - Lakers -7 (score 7.2)
+    - Lakers ML (score 7.0)
+
+    These are SAME direction bets (Lakers win). Keep only the best-scoring market.
+
+    Groups by: (game, team/direction)
+    - For spreads/ML: the team name is the direction
+    - For totals: "OVER" or "UNDER" is the direction
+    """
+    from collections import defaultdict
+
+    grouped = defaultdict(list)
+    for p in picks:
+        game = p.get("game", "") or p.get("matchup", "")
+        market = p.get("market", "")
+
+        # Determine direction
+        if market == "totals":
+            # For totals, direction is OVER/UNDER
+            pick_text = p.get("pick", "")
+            if "Over" in pick_text or "OVER" in pick_text:
+                direction = "OVER"
+            elif "Under" in pick_text or "UNDER" in pick_text:
+                direction = "UNDER"
+            else:
+                direction = pick_text
+        else:
+            # For spreads and ML, direction is the team
+            direction = p.get("team", "") or p.get("pick", "").split()[0]
+
+        key = (game, direction)
+        grouped[key].append(p)
+
+    resolved = []
+    for key, group in grouped.items():
+        if len(group) == 1:
+            resolved.append(group[0])
+            continue
+
+        # Sort by score descending, take the best one
+        group.sort(key=lambda x: clamp_score(x.get("final_score", 0.0)), reverse=True)
+        best_pick = group[0]
+
+        # Build list of alternate markets
+        alternate_markets = []
+        for alt in group[1:]:
+            alternate_markets.append({
+                "market": alt.get("market", ""),
+                "pick": alt.get("pick", ""),
+                "odds": alt.get("odds", -110),
+                "score": round(clamp_score(alt.get("final_score", 0)), 2)
+            })
+
+        # Add transparency about the decision
+        best_pick["alternate_markets"] = alternate_markets
+        best_pick["reasons"] = best_pick.get("reasons", []) + [
+            f"RESOLVER: Best market for {key[1]} direction (vs {len(group)-1} alternates)"
+        ]
+
+        resolved.append(best_pick)
+
+    return resolved
+
+
 # ============================================================================
 # ROUTER SETUP
 # ============================================================================
@@ -2517,9 +2626,20 @@ async def get_best_bets(sport: str, debug: int = 0):
     # MARKET CONFLICT RESOLVER (v10.6): One pick per (matchup, pick_type)
     # Ensures we never return both Hawks ML and Bucks ML for same game
     game_picks = resolve_market_conflicts(game_picks)
+
+    # HEAVY FAVORITE ML FILTER (v10.7): Protect community from unbeatable juice
+    # - ML <= -600: always reject (requires 86%+ win rate)
+    # - ML <= -400 AND score < 8.0: reject (requires 80%+ win rate, need elite confidence)
+    game_picks = filter_heavy_favorite_ml(game_picks)
+
+    # SAME-DIRECTION RESOLVER (v10.7): One pick per directional bet
+    # Prevents Lakers -7 AND Lakers ML showing (same direction, pick best market)
+    game_picks = resolve_same_direction(game_picks)
+
+    # Re-sort after all filtering
     game_picks.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
 
-    # VOLUME GOVERNOR (v10.6): Max 3 GOLD STAR, but NEVER lie about tiers
+    # VOLUME GOVERNOR (v10.7): Max 3 GOLD STAR, but NEVER lie about tiers
     # Tier is always accurate to score. Badge can change for display purposes.
     gold_count_games = 0
     governed_games = []
@@ -2596,8 +2716,8 @@ async def get_best_bets(sport: str, debug: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v3",
-        "scoring_system": "8 Pillars + Dual-Engine Confluence",
+        "source": "production_v10.7",
+        "scoring_system": "8 Pillars + Dual-Engine Confluence + Market Edge Filters",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": {
             "count": len(top_props),
