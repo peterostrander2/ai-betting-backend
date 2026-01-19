@@ -1896,14 +1896,34 @@ async def get_best_bets(sport: str, debug: int = 0):
             jarvis_score = min(1.0, raw_jarvis) * 10 * ESOTERIC_WEIGHTS["jarvis"]
 
             # --- GEMATRIA (52% weight, max 5.2 pts) - DOMINANT SIGNAL ---
+            # v10.5: Uses RAW player gematria for differentiation, not just triggers
             if player_name and home_team:
                 gematria = jarvis.calculate_gematria_signal(player_name, home_team, away_team)
-                # Gematria signal_strength is 0-1, triggered boosts it
-                gematria_strength = gematria.get("signal_strength", 0)
+
+                # Get raw player gematria value for player-specific differentiation
+                player_gem_raw = gematria.get("player_gematria", {}).get("simple", 0)
+
+                # Normalize player gematria to 0-1 scale (mod 100 gives 0-99, then /100)
+                player_gem_normalized = (player_gem_raw % 100) / 100.0
+
+                # Base gematria from player name (0-0.5 pts contribution)
+                gematria_base = player_gem_normalized * 0.5
+
+                # Trigger bonus from JARVIS hits (0-0.5 pts contribution)
+                trigger_strength = gematria.get("signal_strength", 0)
                 if gematria.get("triggered"):
-                    gematria_strength = min(1.0, gematria_strength * 1.5)  # Boost when triggered
+                    trigger_strength = min(1.0, trigger_strength * 1.5)
+                trigger_bonus = trigger_strength * 0.5
+
+                # Combined gematria strength (0-1 scale, player-specific)
+                gematria_strength = min(1.0, gematria_base + trigger_bonus)
+
                 # Scale to 52% weight (max 5.2 pts)
                 gematria_score = gematria_strength * 10 * ESOTERIC_WEIGHTS["gematria"]
+
+                # Add reason if significant
+                if gematria_strength >= 0.5:
+                    esoteric_reasons.append(f"ESOTERIC: Gematria {player_gem_raw} +{round(gematria_score/10, 2)}")
 
                 # --- PUBLIC FADE (modifier, can be negative) ---
                 public_fade = jarvis.calculate_public_fade_signal(public_pct)
