@@ -810,60 +810,96 @@ def derive_game_sharp_side(sharp_signal: dict, home_team: str, away_team: str) -
     return ""
 
 
-def correlation_multiplier(prop_side: str, prop_market: str, sharp_team: str,
-                           home_team: str, away_team: str, player_team: str = "") -> tuple:
+def extract_game_sharp_direction(sharp_signal: dict) -> tuple:
     """
-    v10.11: Directional gating for sharp pillars on props.
+    v10.12: Extract game sharp direction for side and total.
 
-    Only boost props when direction ALIGNS with sharp team's direction.
+    Returns (game_sharp_side, game_sharp_total):
+    - game_sharp_side: "HOME" | "AWAY" | None
+    - game_sharp_total: "OVER" | "UNDER" | None
 
-    Logic:
-    - OVER props help the team the player is on (more stats = better performance)
-    - UNDER props hurt the team the player is on (fewer stats = worse performance)
-    - If sharps are on Team A, and player is on Team A:
-      - OVER aligns (Team A does well → player does well)
-      - UNDER conflicts (Team A does well → player shouldn't underperform)
-    - If sharps are on Team A, and player is on Team B:
-      - UNDER aligns (Team B does poorly → player underperforms)
-      - OVER conflicts (Team B does poorly → player shouldn't overperform)
+    Currently Playbook API provides side direction only.
+    Total direction would require additional data source.
+    """
+    if not sharp_signal:
+        return (None, None)
+
+    signal_strength = sharp_signal.get("signal_strength", "NONE")
+    if signal_strength == "NONE":
+        return (None, None)
+
+    # Extract side direction (HOME/AWAY)
+    side = sharp_signal.get("side", "")
+    game_sharp_side = side if side in ("HOME", "AWAY") else None
+
+    # Extract total direction (OVER/UNDER) - not currently available from Playbook API
+    # This would require additional API data or market-specific sharp signals
+    game_sharp_total = sharp_signal.get("total_direction", None)  # Future: when API supports it
+
+    return (game_sharp_side, game_sharp_total)
+
+
+def get_directional_mult(prop_side: str, player_team_side: str, game_sharp_side: str,
+                         game_sharp_total: str) -> tuple:
+    """
+    v10.12: True directional correlation for GAME-scoped sharps applied to PROP picks.
 
     Returns (multiplier, label):
-    - ALIGNED (1.0): prop direction matches sharp direction
-    - UNKNOWN (0.5): no sharp signal or unknown player team
-    - CONFLICT (0.0): prop direction conflicts with sharp direction
+    - 1.0, "ALIGNED" = prop direction matches sharp direction
+    - 0.0, "CONFLICT" = prop direction conflicts with sharp direction
+    - 0.5, "NEUTRAL" = direction is missing/ambiguous
+
+    Correlation Rules:
+
+    1) Total correlation applies to any prop:
+       - If game_sharp_total exists:
+         - Prop OVER + Game OVER = ALIGNED
+         - Prop UNDER + Game UNDER = ALIGNED
+         - Otherwise = CONFLICT
+
+    2) Side correlation applies only if player_team_side is known:
+       - If game_sharp_side exists AND player_team_side exists:
+         - If player on sharp-favored team:
+           - Prop OVER = ALIGNED (team wins → player performs)
+           - Prop UNDER = CONFLICT (team wins → player shouldn't underperform)
+         - If player on sharp-opposed team:
+           - Prop OVER = CONFLICT (team loses → player shouldn't overperform)
+           - Prop UNDER = ALIGNED (team loses → player underperforms)
+
+    3) If neither rule can be applied confidently → NEUTRAL (0.5)
     """
-    # No sharp signal detected
-    if not sharp_team:
-        return (0.5, "UNKNOWN")
-
-    # Unknown player team - can't determine alignment
-    if not player_team:
-        return (0.5, "UNKNOWN")
-
-    # Normalize inputs
     prop_side = prop_side.upper() if prop_side else ""
-    player_on_sharp_team = (player_team == sharp_team)
 
-    if prop_side == "OVER":
-        # OVER helps player's team
-        if player_on_sharp_team:
-            # Sharps on player's team + OVER = aligned (team wins, player performs)
+    # Rule 1: Total correlation (applies to any prop)
+    if game_sharp_total:
+        game_total = game_sharp_total.upper()
+        if prop_side == game_total:
             return (1.0, "ALIGNED")
-        else:
-            # Sharps against player's team + OVER = conflict
+        elif prop_side in ("OVER", "UNDER") and game_total in ("OVER", "UNDER"):
             return (0.0, "CONFLICT")
 
-    elif prop_side == "UNDER":
-        # UNDER hurts player's team
-        if player_on_sharp_team:
-            # Sharps on player's team + UNDER = conflict (team wins, why would player underperform?)
-            return (0.0, "CONFLICT")
-        else:
-            # Sharps against player's team + UNDER = aligned (team loses, player underperforms)
-            return (1.0, "ALIGNED")
+    # Rule 2: Side correlation (requires player_team_side)
+    if game_sharp_side and player_team_side:
+        player_on_sharp_team = (player_team_side == game_sharp_side)
 
-    # Unknown prop side (shouldn't happen for player props)
-    return (0.5, "UNKNOWN")
+        if prop_side == "OVER":
+            if player_on_sharp_team:
+                # Sharp team wins → player performs → OVER aligns
+                return (1.0, "ALIGNED")
+            else:
+                # Sharp team wins → opponent struggles → player shouldn't overperform
+                return (0.0, "CONFLICT")
+
+        elif prop_side == "UNDER":
+            if player_on_sharp_team:
+                # Sharp team wins → player performs → UNDER conflicts
+                return (0.0, "CONFLICT")
+            else:
+                # Sharp team wins → opponent struggles → player underperforms
+                return (1.0, "ALIGNED")
+
+    # Rule 3: Cannot determine correlation → NEUTRAL
+    return (0.5, "NEUTRAL")
 
 
 def resolve_prop_conflicts(prop_picks: list) -> tuple:
@@ -2245,15 +2281,15 @@ async def get_best_bets(sport: str, debug: int = 0):
         research_reasons = []
         is_game_pick = not player_name
 
-        # v10.11: Combined scope + direction multiplier for sharp pillars
+        # v10.12: Combined scope + direction multiplier for sharp pillars
         # - scope_mult: GAME-scoped signals apply at 0.5x for props (no prop-level sharp data yet)
-        # - direction_mult: ALIGNED=1.0, UNKNOWN=0.5, CONFLICT=0.0 (v10.11)
+        # - direction_mult: ALIGNED=1.0, NEUTRAL=0.5, CONFLICT=0.0 (v10.12)
         # For props: final_mult = scope_mult * direction_mult
         # For game picks: always 1.0 (full weight, no direction gating)
         scope_mult = 1.0 if (is_game_pick or sharp_scope == "PROP") else 0.5
         final_mult = 1.0 if is_game_pick else (scope_mult * direction_mult)
 
-        # ========== SHARP-DEPENDENT PILLARS (v10.11: scope + direction weighted) ==========
+        # ========== SHARP-DEPENDENT PILLARS (v10.12: scope + direction weighted) ==========
         # Pillar 1: Sharp Money (direction-gated for props)
         sharp_diff = sharp_signal.get("diff", 0) or 0
         sharp_strength = sharp_signal.get("signal_strength", "NONE")
@@ -2266,23 +2302,23 @@ async def get_best_bets(sport: str, debug: int = 0):
                 pillar_boost += 1.0
                 research_reasons.append("RESEARCH: Sharp Split (Game) +1.0")
         else:
-            # Props get scope + direction weighted sharp (v10.11)
+            # Props get scope + direction weighted sharp (v10.12)
             if sharp_strength == "STRONG" or sharp_diff >= 15:
                 raw_boost = 1.0
                 boost = raw_boost * final_mult
                 pillar_boost += boost
                 if direction_mult > 0:
-                    research_reasons.append(f"RESEARCH: Sharp Split ({direction_label} x{final_mult:.2f}) +{boost:.2f}")
+                    research_reasons.append(f"RESEARCH: Sharp Split (GAME {direction_label} x{final_mult:.2f}) +{boost:.2f}")
                 else:
-                    research_reasons.append(f"RESEARCH: Sharp Split ({direction_label}) +0.00 [gated]")
+                    research_reasons.append(f"RESEARCH: Sharp Split (GAME {direction_label} x0.00) +0.00")
             elif sharp_strength == "MODERATE" or sharp_diff >= 10:
                 raw_boost = 0.5
                 boost = raw_boost * final_mult
                 pillar_boost += boost
                 if direction_mult > 0:
-                    research_reasons.append(f"RESEARCH: Sharp Split ({direction_label} x{final_mult:.2f}) +{boost:.2f}")
+                    research_reasons.append(f"RESEARCH: Sharp Split (GAME {direction_label} x{final_mult:.2f}) +{boost:.2f}")
                 else:
-                    research_reasons.append(f"RESEARCH: Sharp Split ({direction_label}) +0.00 [gated]")
+                    research_reasons.append(f"RESEARCH: Sharp Split (GAME {direction_label} x0.00) +0.00")
 
         # Pillar 2: Reverse Line Movement (RLM) - direction-gated for props
         line_variance = sharp_signal.get("line_variance", 0) or 0
@@ -2295,9 +2331,9 @@ async def get_best_bets(sport: str, debug: int = 0):
                 boost = raw_boost * final_mult
                 pillar_boost += boost
                 if direction_mult > 0:
-                    research_reasons.append(f"RESEARCH: Reverse Line Move ({direction_label} x{final_mult:.2f}) +{boost:.2f}")
+                    research_reasons.append(f"RESEARCH: Reverse Line Move (GAME {direction_label} x{final_mult:.2f}) +{boost:.2f}")
                 else:
-                    research_reasons.append(f"RESEARCH: Reverse Line Move ({direction_label}) +0.00 [gated]")
+                    research_reasons.append(f"RESEARCH: Reverse Line Move (GAME {direction_label} x0.00) +0.00")
 
         # Pillar 3: Public Fade
         if public_pct >= 70:
@@ -2620,8 +2656,8 @@ async def get_best_bets(sport: str, debug: int = 0):
             game_str = f"{home_team}{away_team}"
             sharp_signal = sharp_lookup.get(game_key, {})
 
-            # v10.11: Derive sharp team for direction correlation
-            sharp_team = derive_game_sharp_side(sharp_signal, home_team, away_team)
+            # v10.12: Extract game sharp direction (side + total)
+            game_sharp_side, game_sharp_total = extract_game_sharp_direction(sharp_signal)
 
             for prop in game.get("props", []):
                 player = prop.get("player", "Unknown")
@@ -2633,17 +2669,17 @@ async def get_best_bets(sport: str, debug: int = 0):
                 if side not in ["Over", "Under"]:
                     continue
 
-                # v10.11: Calculate direction multiplier for sharp pillar gating
-                # Note: player_team is empty for now since Odds API doesn't provide it
-                # This will return UNKNOWN (0.5x) until we have player-team mapping
-                player_team = ""  # TODO: Add player-team lookup when available
-                direction_mult, direction_label = correlation_multiplier(
+                # v10.12: Determine player team side (HOME/AWAY/None)
+                # Odds API doesn't provide player_team directly
+                # Future: Add player-team lookup or roster matching
+                player_team_side = None  # TODO: Implement player-team mapping
+
+                # v10.12: Calculate directional multiplier with true ALIGNED/CONFLICT/NEUTRAL
+                direction_mult, direction_label = get_directional_mult(
                     prop_side=side,
-                    prop_market=market,
-                    sharp_team=sharp_team,
-                    home_team=home_team,
-                    away_team=away_team,
-                    player_team=player_team
+                    player_team_side=player_team_side,
+                    game_sharp_side=game_sharp_side,
+                    game_sharp_total=game_sharp_total
                 )
 
                 # Extract game hour for Prime Time pillar
@@ -2717,7 +2753,8 @@ async def get_best_bets(sport: str, debug: int = 0):
                 # Estimated predicted value
                 predicted_value = line_val + (2.5 if side == "Over" else -2.5) * (total_score / 8.0)
 
-                props_picks.append({
+                # Build the prop pick object
+                prop_pick = {
                     "player": player,
                     "player_name": player,  # Alias for frontend compatibility
                     "market": market,
@@ -2747,7 +2784,17 @@ async def get_best_bets(sport: str, debug: int = 0):
                     **score_data,
                     "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
                     "source": "odds_api"
-                })
+                }
+
+                # v10.12: Add debug fields for correlation visibility when debug=1
+                if debug:
+                    prop_pick["sharp_scope"] = "GAME"
+                    prop_pick["game_sharp_side"] = game_sharp_side
+                    prop_pick["game_sharp_total"] = game_sharp_total
+                    prop_pick["player_team_side"] = player_team_side
+                    prop_pick["directional_mult"] = direction_mult
+
+                props_picks.append(prop_pick)
     except HTTPException:
         logger.warning("Props fetch failed for %s", sport)
 
@@ -3087,8 +3134,8 @@ async def get_best_bets(sport: str, debug: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.11",
-        "scoring_system": "v10.11: Directional Sharp Correlation + Resolver Tie-Breakers",
+        "source": "production_v10.12",
+        "scoring_system": "v10.12: Player-Team Mapping + Directional Sharp Correlation",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": {
             "count": len(top_props),
