@@ -149,9 +149,16 @@ async def get_weather_context(city: str = None, lat: float = None, lon: float = 
 
 def _calculate_weather_impact(weather: Dict) -> str:
     """Determine if weather is favorable/unfavorable for betting."""
-    wind = weather.get("wind_mph", 0)
-    temp = weather.get("temp_f", 70)
-    condition = weather.get("condition", {}).get("text", "").lower()
+    # Ensure numeric types (API may return strings)
+    try:
+        wind = float(weather.get("wind_mph", 0) or 0)
+    except (TypeError, ValueError):
+        wind = 0.0
+    try:
+        temp = float(weather.get("temp_f", 70) or 70)
+    except (TypeError, ValueError):
+        temp = 70.0
+    condition = str(weather.get("condition", {}).get("text", "") or "").lower()
 
     # High wind affects passing/kicking
     if wind > 20:
@@ -250,7 +257,12 @@ async def get_astronomy_context(lat: float = 40.7128, lon: float = -74.0060) -> 
             moon_phase = moon_data.get("cells", [{}])[0].get("extraInfo", {}).get("phase", {})
 
             phase_name = moon_phase.get("string", "Unknown")
-            phase_pct = moon_phase.get("fraction", 0.5) * 100
+            # Ensure fraction is float (API may return string)
+            fraction_raw = moon_phase.get("fraction", 0.5)
+            try:
+                phase_pct = float(fraction_raw) * 100
+            except (TypeError, ValueError):
+                phase_pct = 50.0  # Default to half moon
 
             is_full = "full" in phase_name.lower()
             is_new = "new" in phase_name.lower()
