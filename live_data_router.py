@@ -2756,10 +2756,12 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
     # Check cache first
+    # v10.16: Skip cache for debug/inspection modes to ensure fresh diagnostic data
     cache_key = f"best-bets:{sport_lower}"
-    cached = api_cache.get(cache_key)
-    if cached:
-        return cached
+    if debug != 1 and include_conflicts != 1:
+        cached = api_cache.get(cache_key)
+        if cached:
+            return cached
 
     # Get MasterPredictionSystem
     mps = get_master_prediction_system()
