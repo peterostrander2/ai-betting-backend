@@ -464,3 +464,238 @@ def reset_config_to_factory(sport: str) -> Dict[str, Any]:
         "reset": True,
         "new_config": factory
     }
+
+
+# ============================================================================
+# v10.32 MICRO-WEIGHT TUNING
+# ============================================================================
+
+# Micro-weight tuning constants
+MICRO_WEIGHT_MIN = 0.85  # Floor for micro-weights
+MICRO_WEIGHT_MAX = 1.15  # Cap for micro-weights
+MICRO_WEIGHT_STEP = 0.01  # Small step per adjustment
+UPLIFT_THRESHOLD_POSITIVE = 0.08  # 8% ROI uplift required to increase
+UPLIFT_THRESHOLD_NEGATIVE = -0.08  # -8% ROI uplift required to decrease
+MIN_SIGNAL_COUNT = 10  # Minimum occurrences for adjustment
+MAX_ADJUSTMENTS_PER_DAY = 3  # Maximum signals to adjust per day per sport
+CIRCUIT_BREAKER_RATIO = 0.25  # Reset if 25% of signals at limits
+
+
+def tune_micro_weights_from_attribution(sport: str, window_days: int = 7) -> Dict[str, Any]:
+    """
+    v10.32: Tune micro-weights based on signal attribution analysis.
+
+    Rules (SAFE):
+    - Only adjust signals with count_present >= 10
+    - If uplift >= +8% ROI AND net_units positive: micro_weights[S] += 0.01 (cap 1.15)
+    - If uplift <= -8% ROI AND net_units negative: micro_weights[S] -= 0.01 (floor 0.85)
+    - No more than 3 signals adjusted per day per sport
+    - Circuit breaker: Reset all to 1.00 if 25%+ at limits
+
+    Args:
+        sport: Sport code
+        window_days: Analysis window
+
+    Returns:
+        Tuning result summary
+    """
+    from signal_attribution import compute_signal_uplift
+    from database import DEFAULT_MICRO_WEIGHTS
+
+    # Get attribution data
+    attribution = compute_signal_uplift(sport, window_days, min_count=MIN_SIGNAL_COUNT)
+
+    if attribution.get("error"):
+        return {
+            "sport": sport,
+            "tuned": False,
+            "reason": attribution.get("error"),
+            "micro_weights": {}
+        }
+
+    baseline = attribution.get("baseline", {})
+    signals = attribution.get("signals", [])
+
+    if baseline.get("picks", 0) < MIN_SETTLED_PICKS:
+        return {
+            "sport": sport,
+            "tuned": False,
+            "reason": f"Insufficient data: {baseline.get('picks', 0)} picks (need {MIN_SETTLED_PICKS})",
+            "micro_weights": {}
+        }
+
+    # Load current config
+    config = load_sport_config(sport)
+    current_micro_weights = config.get("micro_weights", DEFAULT_MICRO_WEIGHTS.copy())
+
+    # Track changes
+    changes = []
+    adjustments_made = 0
+
+    # Process signals sorted by absolute uplift (most impactful first)
+    signals_sorted = sorted(signals, key=lambda x: abs(x.get("uplift", 0)), reverse=True)
+
+    for signal_data in signals_sorted:
+        if adjustments_made >= MAX_ADJUSTMENTS_PER_DAY:
+            break
+
+        signal = signal_data.get("signal")
+        if not signal:
+            continue
+
+        uplift = signal_data.get("uplift", 0) / 100  # Convert to decimal
+        net_units = signal_data.get("net_units_present", 0)
+        count = signal_data.get("count_present", 0)
+
+        if count < MIN_SIGNAL_COUNT:
+            continue
+
+        current_weight = current_micro_weights.get(signal, 1.00)
+
+        # Rule: Increase weight for positive signals
+        if uplift >= UPLIFT_THRESHOLD_POSITIVE and net_units > 0:
+            new_weight = min(MICRO_WEIGHT_MAX, current_weight + MICRO_WEIGHT_STEP)
+            if new_weight != current_weight:
+                current_micro_weights[signal] = round(new_weight, 3)
+                changes.append({
+                    "signal": signal,
+                    "old": current_weight,
+                    "new": round(new_weight, 3),
+                    "direction": "increase",
+                    "reason": f"7d uplift +{uplift*100:.1f}%, net +{net_units:.2f}u"
+                })
+                adjustments_made += 1
+
+        # Rule: Decrease weight for negative signals
+        elif uplift <= UPLIFT_THRESHOLD_NEGATIVE and net_units < 0:
+            new_weight = max(MICRO_WEIGHT_MIN, current_weight - MICRO_WEIGHT_STEP)
+            if new_weight != current_weight:
+                current_micro_weights[signal] = round(new_weight, 3)
+                changes.append({
+                    "signal": signal,
+                    "old": current_weight,
+                    "new": round(new_weight, 3),
+                    "direction": "decrease",
+                    "reason": f"7d uplift {uplift*100:.1f}%, net {net_units:.2f}u"
+                })
+                adjustments_made += 1
+
+    # Circuit breaker check
+    at_limits = sum(
+        1 for v in current_micro_weights.values()
+        if v <= MICRO_WEIGHT_MIN or v >= MICRO_WEIGHT_MAX
+    )
+    total_signals = len(current_micro_weights)
+
+    if total_signals > 0 and at_limits / total_signals >= CIRCUIT_BREAKER_RATIO:
+        # Reset all micro-weights to 1.00
+        current_micro_weights = DEFAULT_MICRO_WEIGHTS.copy()
+        changes = [{
+            "signal": "ALL",
+            "old": "mixed",
+            "new": 1.00,
+            "direction": "reset",
+            "reason": f"Circuit breaker: {at_limits}/{total_signals} signals at limits"
+        }]
+        logger.warning(f"[{sport}] Micro-weights circuit breaker triggered, resetting all to 1.00")
+
+    # Save if changes were made
+    if changes:
+        config["micro_weights"] = current_micro_weights
+
+        # Build update reason
+        if len(changes) == 1 and changes[0].get("signal") == "ALL":
+            reason = "v10.32: CIRCUIT_BREAKER_RESET - micro-weights reset to 1.00"
+        else:
+            reason_parts = [f"v10.32: micro_weight {c['direction']} on {c['signal']} ({c['reason']})" for c in changes[:3]]
+            reason = "; ".join(reason_parts)
+
+        save_sport_config(sport, config, reason, {"attribution": attribution.get("baseline")})
+
+        return {
+            "sport": sport,
+            "tuned": True,
+            "adjustments": len(changes),
+            "changes": changes,
+            "micro_weights": current_micro_weights,
+            "circuit_breaker_triggered": changes[0].get("signal") == "ALL" if changes else False
+        }
+    else:
+        return {
+            "sport": sport,
+            "tuned": False,
+            "reason": "No signals qualified for adjustment",
+            "micro_weights": current_micro_weights,
+            "signals_analyzed": len(signals)
+        }
+
+
+def run_micro_weight_tuning() -> Dict[str, Any]:
+    """
+    v10.32: Run micro-weight tuning for all sports.
+
+    Returns:
+        Combined tuning results
+    """
+    sports = ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
+    results = {}
+    tuned_count = 0
+
+    for sport in sports:
+        try:
+            result = tune_micro_weights_from_attribution(sport)
+            results[sport] = result
+            if result.get("tuned"):
+                tuned_count += 1
+        except Exception as e:
+            logger.exception(f"Error tuning micro-weights for {sport}: {e}")
+            results[sport] = {"error": str(e)}
+
+    return {
+        "version": "v10.32",
+        "timestamp": datetime.utcnow().isoformat(),
+        "sports_tuned": tuned_count,
+        "by_sport": results
+    }
+
+
+def get_micro_weight_status(sport: str) -> Dict[str, Any]:
+    """
+    Get current micro-weight status for a sport.
+
+    Returns:
+        Current micro-weights with drift analysis
+    """
+    from database import DEFAULT_MICRO_WEIGHTS
+
+    config = load_sport_config(sport)
+    current_micro_weights = config.get("micro_weights", DEFAULT_MICRO_WEIGHTS.copy())
+
+    # Calculate stats
+    at_limits = sum(
+        1 for v in current_micro_weights.values()
+        if v <= MICRO_WEIGHT_MIN or v >= MICRO_WEIGHT_MAX
+    )
+
+    boosted = {k: v for k, v in current_micro_weights.items() if v > 1.00}
+    reduced = {k: v for k, v in current_micro_weights.items() if v < 1.00}
+    neutral = {k: v for k, v in current_micro_weights.items() if v == 1.00}
+
+    return {
+        "sport": sport.upper(),
+        "micro_weights": current_micro_weights,
+        "summary": {
+            "total_signals": len(current_micro_weights),
+            "boosted": len(boosted),
+            "reduced": len(reduced),
+            "neutral": len(neutral),
+            "at_limits": at_limits
+        },
+        "boosted_signals": boosted,
+        "reduced_signals": reduced,
+        "limits": {
+            "min": MICRO_WEIGHT_MIN,
+            "max": MICRO_WEIGHT_MAX,
+            "step": MICRO_WEIGHT_STEP
+        }
+    }

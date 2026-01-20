@@ -1,13 +1,14 @@
 """
-⏰ DAILY SCHEDULER v2.0
-========================
+⏰ DAILY SCHEDULER v2.1 (v10.32)
+================================
 Automated daily tasks for Bookie-o-em:
 
 1. Grade yesterday's predictions (6 AM)
 2. Adjust weights based on bias
-3. Retrain LSTM if performance drops
-4. Clean up old prediction logs
-5. Fetch props twice daily (10 AM, 6 PM) - API credit optimization
+3. v10.32: Tune micro-weights based on signal attribution
+4. Retrain LSTM if performance drops
+5. Clean up old prediction logs
+6. Fetch props twice daily (10 AM, 6 PM) - API credit optimization
 
 All 5 Sports: NBA, NFL, MLB, NHL, NCAAB
 """
@@ -28,6 +29,18 @@ try:
 except ImportError:
     SCHEDULER_AVAILABLE = False
     logger.warning("APScheduler not installed - using simple threading")
+
+# v10.32: Import micro-weight tuning
+try:
+    from learning_engine import (
+        tune_micro_weights_from_attribution,
+        get_micro_weight_status,
+        run_micro_weight_tuning
+    )
+    MICRO_WEIGHT_TUNING_AVAILABLE = True
+except ImportError:
+    MICRO_WEIGHT_TUNING_AVAILABLE = False
+    logger.warning("Micro-weight tuning not available")
 
 
 # ============================================
@@ -130,22 +143,23 @@ class DailyAuditJob:
             "graded": 0,
             "bias": {},
             "weights_adjusted": False,
+            "micro_weights_tuned": False,  # v10.32
             "retrain_triggered": False
         }
-        
+
         if not self.auto_grader:
             return {"error": "Auto-grader not initialized"}
-        
+
         # Get yesterday's predictions
         yesterday = datetime.now() - timedelta(days=1)
-        
+
         # Grade predictions for each stat type
         for stat_type in SchedulerConfig.SPORT_STATS.get(sport, ["points"]):
             try:
                 # Calculate bias
                 bias = self.auto_grader.calculate_bias(sport, stat_type, days_back=1)
                 result["bias"][stat_type] = bias
-                
+
                 # Check if weights need adjustment
                 if self._should_adjust_weights(bias):
                     adjustment = self.auto_grader.adjust_weights(
@@ -153,17 +167,31 @@ class DailyAuditJob:
                     )
                     result["weights_adjusted"] = True
                     logger.info(f"[{sport}/{stat_type}] Weights adjusted: {adjustment}")
-                
+
                 # Check if retrain needed
                 if self._should_retrain(bias):
                     result["retrain_triggered"] = True
                     logger.warning(f"[{sport}/{stat_type}] Retrain triggered due to high MAE")
                     if self.training_pipeline:
                         self.training_pipeline.train_sport(sport, stat_type, epochs=30)
-                
+
             except Exception as e:
                 logger.warning(f"[{sport}/{stat_type}] Bias calculation failed: {e}")
-        
+
+        # v10.32: Tune micro-weights based on signal attribution
+        if MICRO_WEIGHT_TUNING_AVAILABLE:
+            try:
+                mw_result = tune_micro_weights_from_attribution(sport)
+                if mw_result.get("adjustments_made", 0) > 0:
+                    result["micro_weights_tuned"] = True
+                    result["micro_weight_adjustments"] = mw_result.get("adjustments", [])
+                    logger.info(f"[{sport}] Micro-weights tuned: {mw_result.get('adjustments_made', 0)} adjustments")
+                else:
+                    logger.info(f"[{sport}] Micro-weights: No adjustments needed")
+            except Exception as e:
+                logger.warning(f"[{sport}] Micro-weight tuning failed: {e}")
+                result["micro_weight_error"] = str(e)
+
         # Get summary stats
         try:
             audit_summary = self.auto_grader.get_audit_summary(sport)
@@ -171,7 +199,7 @@ class DailyAuditJob:
             result["graded"] = audit_summary.get("total_graded", 0)
         except:
             pass
-        
+
         return result
     
     def _should_adjust_weights(self, bias: Dict) -> bool:
