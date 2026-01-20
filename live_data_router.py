@@ -604,7 +604,7 @@ def tier_from_score(score: float) -> tuple:
 
 def order_reasons(reasons: list) -> list:
     """
-    v10.18: Order reasons by category for clarity.
+    v10.19: Order reasons by category for clarity.
 
     Correct order (spec-compliant):
     1. RESEARCH: (sharp, RLM, pillars, prop-independent boosts)
@@ -612,24 +612,26 @@ def order_reasons(reasons: list) -> list:
     3. CORRELATION: (ALIGNED/NEUTRAL/CONFLICT/NO_SIGNAL - part of research phase)
     4. ESOTERIC: (Jarvis, Gematria, etc)
     5. CONFLUENCE: (alignment bonuses)
-    6. RESOLVER: (deduplication notes)
-    7. GOVERNOR: (volume cap notes)
+    6. SMASH: (smash spot confirmation - v10.19)
+    7. RESOLVER: (deduplication notes)
+    8. GOVERNOR: (volume cap notes)
 
     v10.18: RESEARCH reasons must come FIRST (before MAPPING/CORRELATION).
-    MAPPING and CORRELATION are conceptually part of research but use separate prefixes.
+    v10.19: SMASH category added after CONFLUENCE.
     """
     if not reasons:
         return []
 
-    # v10.18: Define category order with RESEARCH first
+    # v10.19: Define category order with SMASH after CONFLUENCE
     category_order = {
         "RESEARCH:": 0,
         "MAPPING:": 1,
         "CORRELATION:": 2,
         "ESOTERIC:": 3,
         "CONFLUENCE:": 4,
-        "RESOLVER:": 5,
-        "GOVERNOR:": 6,
+        "SMASH:": 5,
+        "RESOLVER:": 6,
+        "GOVERNOR:": 7,
     }
 
     def get_order(reason: str) -> int:
@@ -639,6 +641,41 @@ def order_reasons(reasons: list) -> list:
         return 99  # Unknown categories go last
 
     return sorted(reasons, key=get_order)
+
+
+def evaluate_smash_spot(final_score: float, alignment_pct: float, jarvis_active: bool, research_reasons: list) -> bool:
+    """
+    v10.19: Strict Smash Spot evaluation.
+
+    Smash Spot is a TRUTH FLAG, not a score boost.
+    It indicates when the ENTIRE system is truly aligned.
+
+    Requirements (ALL must pass):
+    1. final_score >= 8.0
+    2. alignment_pct >= 85%
+    3. jarvis_active == True (at least one Jarvis trigger)
+    4. BOTH Sharp Split AND Reverse Line Move pillars present
+
+    Returns:
+        bool: True only if all conditions are met
+    """
+    # Hard threshold checks
+    if final_score < 8.0:
+        return False
+    if alignment_pct < 85.0:
+        return False
+    if not jarvis_active:
+        return False
+
+    # Check for BOTH sharp pillars in research reasons
+    has_sharp_split = any("Sharp Split" in r for r in research_reasons)
+    has_rlm = any("Reverse Line Move" in r or "RLM" in r for r in research_reasons)
+
+    # Require BOTH sharp pillars for smash eligibility
+    if has_sharp_split and has_rlm:
+        return True
+
+    return False
 
 
 def resolve_market_conflicts(picks: list) -> list:
@@ -2738,19 +2775,19 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     - debug=1: Include diagnostic info (games_pulled, candidates_scored, correlation counters)
     - include_conflicts=1: Include filtered CONFLICT and NEUTRAL picks in separate arrays
 
-    Scoring Formula (v10.18):
+    Scoring Formula (v10.19):
     FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
 
-    v10.18 Changes:
-    - Prop-only independent pillars (Prop Stability, Prop Value, Pace Proxy, Home Micro)
-    - Truthful NO_SIGNAL correlation when no sharp direction exists (0.0 mult, not 0.5)
-    - Reasons ordering: RESEARCH first (before MAPPING/CORRELATION)
-    - Props score 6.2-6.5 on sharp-quiet nights (natural EDGE_LEAN volume)
+    v10.19 Smash Spot Logic:
+    - smash_spot is a TRUTH FLAG, not a score boost
+    - Requirements: score >= 8.0, align >= 85%, Jarvis active, BOTH Sharp Split AND RLM
+    - Badge logic: SMASH SPOT > GOLD STAR > tier name
+    - Governor can mark "GOLD (CAPPED)" but never lies about tier
 
-    v10.17 Props Fix (retained):
-    - Props base_ai = 6.0 (vs games 5.8)
-    - BASE_SHARP_SPLIT_BOOST = 2.0
-    - BASE_RLM_BOOST = 2.0
+    v10.18 Retained:
+    - Prop-only independent pillars (Prop Stability, Prop Value, Pace Proxy, Home Micro)
+    - Truthful NO_SIGNAL correlation
+    - RESEARCH-first reason ordering
 
     Thresholds:
     - GOLD_STAR: >= 7.5
@@ -3145,11 +3182,19 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         final_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence_boost
         final_score = max(0.0, min(10.0, float(final_score)))
 
-        # --- SmashSpot FLAG ---
-        # True when: final >= 7.5 AND jarvis_active AND alignment >= 80%
-        smash_spot = (final_score >= 7.5 and jarvis_triggered and alignment_pct >= 80)
+        # --- SmashSpot FLAG (v10.19 Strict) ---
+        # Smash Spot is a TRUTH FLAG, not a score boost.
+        # Requires: score >= 8.0, alignment >= 85%, jarvis active, BOTH Sharp Split AND RLM
+        smash_spot = evaluate_smash_spot(
+            final_score=final_score,
+            alignment_pct=alignment_pct,
+            jarvis_active=jarvis_triggered,
+            research_reasons=research_reasons
+        )
+        # v10.19: Add SMASH reason only if truly a smash spot
+        smash_reasons = []
         if smash_spot:
-            confluence_reasons.append("CONFLUENCE: SmashSpot Conditions Met")
+            smash_reasons.append("SMASH: Confluence locked (score>=8.0, align>=85%, Jarvis active, pillars confirmed)")
 
         # --- BET TIER DETERMINATION (v10.6 - Use shared tier function) ---
         final_score = clamp_score(final_score)
@@ -3177,8 +3222,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         # Confidence score synced with final_score (Production v3)
         confidence_score = int(round(final_score * 10))  # 0-100 synced with final
 
-        # Combine all reasons for explainability (Production v3)
-        all_reasons = research_reasons + esoteric_reasons + confluence_reasons
+        # Combine all reasons for explainability (v10.19: includes smash_reasons)
+        all_reasons = research_reasons + esoteric_reasons + confluence_reasons + smash_reasons
 
         return {
             "total_score": round(final_score, 2),
@@ -3355,10 +3400,24 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                 # Get tier from bet_tier (Production v3)
                 tier = score_data.get("bet_tier", {}).get("tier", "PASS")
 
-                # Determine badges based on Production v3 thresholds
+                # v10.19: Get smash_spot flag from score_data
+                is_smash_spot = score_data.get("smash_spot", False)
+
+                # v10.19: Determine badge based on smash_spot and tier
+                # Badge logic: SMASH SPOT > GOLD STAR > tier name
+                if is_smash_spot:
+                    badge_label = "SMASH SPOT"
+                elif tier == "GOLD_STAR":
+                    badge_label = "GOLD STAR"
+                else:
+                    badge_label = tier
+
+                # Determine badges array based on v10.19 rules
                 badges = []
-                if tier == "GOLD_STAR":
+                if is_smash_spot:
                     badges.append("SMASH_SPOT")
+                elif tier == "GOLD_STAR":
+                    badges.append("GOLD_STAR")
                 if sharp_signal.get("signal_strength") == "STRONG":
                     badges.append("SHARP_MONEY")
                 if score_data.get("immortal_detected"):
@@ -3394,8 +3453,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                     "predicted_value": round(predicted_value, 1),
                     "rationale": rationale,
                     "badges": badges,
-                    "tier": tier,       # Production v3 schema
-                    "badge": tier,      # Alias for tier
+                    "tier": tier,       # Production v3 schema (never modified by governor)
+                    "badge": badge_label,  # v10.19: SMASH SPOT, GOLD STAR, or tier name
                     "reasons": score_data.get("reasons", []),  # Production v3 explainability
                     **score_data,
                     "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
@@ -3494,18 +3553,22 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     deduplicated_props = aligned_props + neutral_props
     deduplicated_props.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
 
-    # VOLUME GOVERNOR (v10.6): Max 3 GOLD STAR, but NEVER lie about tiers
+    # VOLUME GOVERNOR (v10.19): Max 3 GOLD STAR, but NEVER lie about tiers
     # Tier is always accurate to score. Badge can change for display purposes.
+    # v10.19: Smash Spot badge logic integrated
     gold_count = 0
+    smash_count = 0
     governed_props = []
     for pick in deduplicated_props:
         # Re-apply tier from score to ensure consistency
         score = clamp_score(pick.get("final_score", pick.get("total_score", 0)))
-        tier, badge = tier_from_score(score)
+        tier, _ = tier_from_score(score)
         pick["tier"] = tier
-        pick["badge"] = badge
         pick["final_score"] = score
         pick["confidence"] = int(round(score * 10))
+
+        # v10.19: Determine badge based on smash_spot flag
+        is_smash = pick.get("smash_spot", False)
 
         if tier == "GOLD_STAR":
             gold_count += 1
@@ -3513,6 +3576,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                 # Keep tier accurate, but change badge to indicate capped
                 pick["badge"] = "GOLD (CAPPED)"
                 pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Gold cap enforced (4th+ gold)"]
+            elif is_smash:
+                pick["badge"] = "SMASH SPOT"
+                smash_count += 1
+            else:
+                pick["badge"] = "GOLD STAR"
+        else:
+            pick["badge"] = tier
         governed_props.append(pick)
 
     # Fallback: Surface top picks for minimum volume, but DON'T change their tier
@@ -3620,10 +3690,23 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                             else:  # MONEYLINE
                                 rationale_game = f"{pick_name} moneyline value identified. "
 
-                            # Determine badges based on tier (Production v3)
+                            # v10.19: Get smash_spot flag from score_data
+                            is_smash_game = score_data.get("smash_spot", False)
+
+                            # v10.19: Determine badge based on smash_spot and tier
+                            if is_smash_game:
+                                badge_label_game = "SMASH SPOT"
+                            elif tier_game == "GOLD_STAR":
+                                badge_label_game = "GOLD STAR"
+                            else:
+                                badge_label_game = tier_game
+
+                            # Determine badges array based on v10.19 rules
                             badges_game = []
-                            if tier_game == "GOLD_STAR":
+                            if is_smash_game:
                                 badges_game.append("SMASH_SPOT")
+                            elif tier_game == "GOLD_STAR":
+                                badges_game.append("GOLD_STAR")
                             if sharp_signal.get("signal_strength") == "STRONG":
                                 badges_game.append("SHARP_MONEY")
                             if market_key == "spreads" and abs(point or 0) <= 3:
@@ -3648,8 +3731,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                                 "predicted_value": (point + 3) if market_key == "totals" else None,
                                 "rationale": rationale_game,
                                 "badges": badges_game,
-                                "tier": tier_game,  # Production v3 schema
-                                "badge": tier_game,  # Alias
+                                "tier": tier_game,  # Production v3 schema (never modified by governor)
+                                "badge": badge_label_game,  # v10.19: SMASH SPOT, GOLD STAR, or tier name
                                 "reasons": score_data.get("reasons", []),  # Production v3 explainability
                                 **score_data,
                                 "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
@@ -3695,12 +3778,25 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             else:
                 rationale += "Line movement suggests professional bettors favor this side."
 
-            # Determine badges based on tier
+            # v10.19: Get smash_spot flag from score_data
+            is_smash_sharp = score_data.get("smash_spot", False)
+
+            # v10.19: Determine badge based on smash_spot and tier
+            if is_smash_sharp:
+                badge_label_sharp = "SMASH SPOT"
+            elif tier_sharp == "GOLD_STAR":
+                badge_label_sharp = "GOLD STAR"
+            else:
+                badge_label_sharp = tier_sharp
+
+            # Determine badges array based on v10.19 rules
             badges = ["SHARP_MONEY"]
             if signal.get("signal_strength") == "STRONG":
                 badges.append("RLM")  # Reverse Line Movement
-            if tier_sharp == "GOLD_STAR":
+            if is_smash_sharp:
                 badges.append("SMASH_SPOT")
+            elif tier_sharp == "GOLD_STAR":
+                badges.append("GOLD_STAR")
 
             game_picks.append({
                 "pick_type": "SHARP",
@@ -3721,8 +3817,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                 "predicted_value": None,
                 "rationale": rationale,
                 "badges": badges,
-                "tier": tier_sharp,  # Production v3
-                "badge": tier_sharp,  # Alias
+                "tier": tier_sharp,  # Production v3 (never modified by governor)
+                "badge": badge_label_sharp,  # v10.19: SMASH SPOT, GOLD STAR, or tier name
                 "reasons": score_data.get("reasons", []),  # Production v3
                 **score_data,
                 "sharp_signal": signal.get("signal_strength", "MODERATE"),
@@ -3752,17 +3848,21 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     for pick in game_picks:
         pick["reasons"] = order_reasons(pick.get("reasons", []))
 
-    # VOLUME GOVERNOR (v10.7): Max 3 GOLD STAR, but NEVER lie about tiers
+    # VOLUME GOVERNOR (v10.19): Max 3 GOLD STAR, but NEVER lie about tiers
     # Tier is always accurate to score. Badge can change for display purposes.
+    # v10.19: Smash Spot badge logic integrated
     gold_count_games = 0
+    smash_count_games = 0
     governed_games = []
     for pick in game_picks:
         # Re-apply tier from score to ensure consistency
         score = clamp_score(pick.get("final_score", pick.get("total_score", 0)))
-        tier, badge = tier_from_score(score)
+        tier, _ = tier_from_score(score)
         pick["tier"] = tier
-        pick["badge"] = badge
         pick["final_score"] = score
+
+        # v10.19: Determine badge based on smash_spot flag
+        is_smash = pick.get("smash_spot", False)
 
         if tier == "GOLD_STAR":
             gold_count_games += 1
@@ -3770,6 +3870,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                 # Keep tier accurate, but change badge to indicate capped
                 pick["badge"] = "GOLD (CAPPED)"
                 pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Gold cap enforced (4th+ gold)"]
+            elif is_smash:
+                pick["badge"] = "SMASH SPOT"
+                smash_count_games += 1
+            else:
+                pick["badge"] = "GOLD STAR"
+        else:
+            pick["badge"] = tier
         governed_games.append(pick)
 
     # Fallback: Surface top picks for minimum volume, but DON'T change their tier
@@ -3841,8 +3948,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.18",
-        "scoring_system": "v10.18: Prop independent pillars + truthful correlation + reasons ordering",
+        "source": "production_v10.19",
+        "scoring_system": "v10.19: Smash Spot logic + Elite tier discipline",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
