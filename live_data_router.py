@@ -5759,7 +5759,7 @@ async def get_micro_weight_status_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/live/signal-report")
+@router.get("/signal-report")
 async def get_signal_report(
     sport: str = "ALL",
     window_days: int = 7,
