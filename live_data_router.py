@@ -63,13 +63,16 @@ try:
     from database import (
         DB_ENABLED, init_database, load_sport_config, upsert_pick,
         get_picks_for_date, get_config_changes, FACTORY_SPORT_PROFILES,
-        get_micro_weights, DEFAULT_MICRO_WEIGHTS
+        get_micro_weights, DEFAULT_MICRO_WEIGHTS,
+        get_signal_policy, get_signal_performance, get_tuning_history
     )
     DATABASE_AVAILABLE = True
+    SIGNAL_POLICY_AVAILABLE = True
 except ImportError:
     DATABASE_AVAILABLE = False
     DB_ENABLED = False
     DEFAULT_MICRO_WEIGHTS = {}
+    SIGNAL_POLICY_AVAILABLE = False
 
 # v10.32: Import signal attribution for ROI analysis
 try:
@@ -3011,6 +3014,17 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         micro_weights = DEFAULT_MICRO_WEIGHTS.copy() if DEFAULT_MICRO_WEIGHTS else {}
     logger.debug(f"v10.32: Loaded {len(micro_weights)} micro-weights for {sport_lower}")
 
+    # v10.32: Load signal policy multipliers from database
+    # These are auto-tuned by the learning engine based on ROI correlation
+    # Combined effect: final_mult = micro_weight * policy_mult (both clamped to 0.85-1.15)
+    signal_policies = {}
+    if SIGNAL_POLICY_AVAILABLE:
+        try:
+            signal_policies = get_signal_policy(sport_lower.upper())
+            logger.debug(f"v10.32: Loaded {len(signal_policies)} signal policies for {sport_lower}")
+        except Exception as e:
+            logger.warning(f"v10.32: Signal policy load failed (using defaults): {e}")
+
     # v10.31: Load external context (Weather/Astronomy/NOAA/Planetary)
     # Provides micro-boosts for esoteric scoring (max ±0.25 total)
     external_context = {}
@@ -3382,9 +3396,15 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
         # ========== SHARP-DEPENDENT PILLARS (v10.13: transparent math with BASE constants) ==========
         # v10.32: Micro-weight helper - applies learned weight tuning to signal boosts
+        # Combines: micro_weights (from in-memory tuning) + signal_policies (from DB)
+        # Both are bounded [0.85, 1.15], so combined range is [0.7225, 1.3225]
         def get_mw(signal_key: str, default: float = 1.0) -> float:
-            """Get micro-weight for a signal (0.85-1.15 range, default 1.0)"""
-            return micro_weights.get(signal_key, default)
+            """Get combined micro-weight for a signal (0.7225-1.3225 range, default 1.0)"""
+            mw = micro_weights.get(signal_key, default)
+            policy = signal_policies.get(signal_key, 1.0)
+            # Combine and clamp to prevent extreme values
+            combined = mw * policy
+            return max(0.7, min(1.35, combined))
 
         # Pillar 1: Sharp Money (direction-gated for props)
         sharp_diff = sharp_signal.get("diff", 0) or 0
@@ -5735,6 +5755,111 @@ async def get_micro_weight_status_endpoint(
 
     except Exception as e:
         logger.exception("Failed to get micro-weight status: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/live/signal-report")
+async def get_signal_report(
+    sport: str = "ALL",
+    window_days: int = 7,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v10.32: Consolidated Signal Report - Policy multipliers, performance, and tuning history.
+
+    This is the primary transparency endpoint for the v10.32 self-learning system.
+
+    Query Parameters:
+    - sport: NBA, NFL, MLB, NHL, NCAAB, or ALL (default: ALL)
+    - window_days: Rolling window for analysis (default: 7, max: 30)
+
+    Returns:
+    - signal_policies: Current multipliers per signal per sport
+    - signal_performance: ROI stats per signal (win_rate, sample_size, net_units)
+    - tuning_history: Recent multiplier changes with reasons
+    - system_status: Circuit breaker and health info
+    """
+    if not DATABASE_AVAILABLE or not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database not available for signal report")
+
+    try:
+        window_days = min(max(1, window_days), 30)
+        sports_to_check = ["NBA", "NFL", "MLB", "NHL", "NCAAB"] if sport.upper() == "ALL" else [sport.upper()]
+
+        report = {
+            "version": "v10.32",
+            "generated_at": datetime.now().isoformat(),
+            "window_days": window_days,
+            "sports": {}
+        }
+
+        # Aggregate system status
+        total_signals_at_limit = 0
+        total_signals = 0
+
+        for sport_code in sports_to_check:
+            sport_report = {
+                "signal_policies": {},
+                "signal_performance": {},
+                "tuning_history": [],
+                "status": {}
+            }
+
+            # 1. Get signal policies (current multipliers)
+            if SIGNAL_POLICY_AVAILABLE:
+                try:
+                    policies = get_signal_policy(sport_code)
+                    sport_report["signal_policies"] = policies
+                    # Count signals at limits
+                    for key, mult in policies.items():
+                        total_signals += 1
+                        if mult <= 0.86 or mult >= 1.14:
+                            total_signals_at_limit += 1
+                except Exception as e:
+                    logger.warning(f"Signal policy load failed for {sport_code}: {e}")
+
+            # 2. Get signal performance
+            try:
+                perf_data = get_signal_performance(sport_code, window_days)
+                sport_report["signal_performance"] = perf_data
+            except Exception as e:
+                logger.warning(f"Signal performance load failed for {sport_code}: {e}")
+
+            # 3. Get tuning history
+            try:
+                history = get_tuning_history(sport_code, limit=10)
+                sport_report["tuning_history"] = history
+            except Exception as e:
+                logger.warning(f"Tuning history load failed for {sport_code}: {e}")
+
+            # 4. Get micro-weight status if available
+            if MICRO_WEIGHT_TUNING_AVAILABLE:
+                try:
+                    mw_status = get_micro_weight_status(sport_code)
+                    sport_report["status"] = {
+                        "signals_at_limit": mw_status.get("signals_at_limit", 0),
+                        "total_signals": mw_status.get("total_signals", 0),
+                        "circuit_breaker_triggered": mw_status.get("circuit_breaker_triggered", False),
+                        "last_tuning": mw_status.get("last_tuning", None)
+                    }
+                except:
+                    pass
+
+            report["sports"][sport_code] = sport_report
+
+        # System-wide health
+        circuit_breaker_risk = (total_signals_at_limit / total_signals) > 0.25 if total_signals > 0 else False
+        report["system_health"] = {
+            "total_signals_tracked": total_signals,
+            "signals_at_limit": total_signals_at_limit,
+            "circuit_breaker_risk": circuit_breaker_risk,
+            "recommendation": "HEALTHY" if not circuit_breaker_risk else "CONSIDER_RESET"
+        }
+
+        return report
+
+    except Exception as e:
+        logger.exception("Failed to generate signal report: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

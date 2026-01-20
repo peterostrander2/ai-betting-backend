@@ -50,6 +50,70 @@ except ImportError:
     SEASON_GATING_AVAILABLE = False
     logger.warning("Sport season gating not available")
 
+# v10.32: Redis for distributed locking
+try:
+    import redis
+    from env_config import Config
+    REDIS_AVAILABLE = bool(Config.REDIS_URL)
+    if REDIS_AVAILABLE:
+        _redis_client = redis.from_url(Config.REDIS_URL)
+        logger.info("Redis available for distributed locking")
+    else:
+        _redis_client = None
+except ImportError:
+    REDIS_AVAILABLE = False
+    _redis_client = None
+    logger.warning("Redis not available - using local locking only")
+
+
+def acquire_daily_lock(job_name: str, ttl_seconds: int = 7200) -> bool:
+    """
+    Acquire a distributed lock for a daily job.
+    Prevents duplicate runs across multiple instances.
+
+    Args:
+        job_name: Job identifier (e.g., "daily_grading")
+        ttl_seconds: Lock TTL (default 2 hours)
+
+    Returns:
+        True if lock acquired, False if already held
+    """
+    if not REDIS_AVAILABLE or _redis_client is None:
+        # Fallback: no distributed lock, allow run
+        logger.debug(f"No Redis - proceeding without distributed lock for {job_name}")
+        return True
+
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        lock_key = f"jarvis:{job_name}:{today}"
+
+        # NX = only set if not exists, EX = expire after ttl
+        acquired = _redis_client.set(lock_key, "locked", nx=True, ex=ttl_seconds)
+
+        if acquired:
+            logger.info(f"Acquired lock: {lock_key}")
+            return True
+        else:
+            logger.info(f"Lock already held: {lock_key}")
+            return False
+    except Exception as e:
+        logger.warning(f"Redis lock error (proceeding anyway): {e}")
+        return True  # On error, allow run to avoid blocking
+
+
+def release_daily_lock(job_name: str):
+    """Release a daily lock (optional, TTL handles cleanup)."""
+    if not REDIS_AVAILABLE or _redis_client is None:
+        return
+
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        lock_key = f"jarvis:{job_name}:{today}"
+        _redis_client.delete(lock_key)
+        logger.debug(f"Released lock: {lock_key}")
+    except Exception as e:
+        logger.warning(f"Failed to release lock: {e}")
+
 
 # ============================================
 # CONFIGURATION
@@ -113,8 +177,13 @@ class DailyAuditJob:
     
     def run(self):
         """Execute daily audit for all sports that are in-season."""
+        # v10.32: Acquire distributed lock to prevent duplicate runs
+        if not acquire_daily_lock("daily_audit"):
+            logger.info("Daily audit already running on another instance - skipping")
+            return {"skipped": True, "reason": "lock_held"}
+
         logger.info("=" * 50)
-        logger.info("⏰ DAILY AUDIT STARTING (v10.31)")
+        logger.info("⏰ DAILY AUDIT STARTING (v10.32)")
         logger.info(f"   Time: {datetime.now().isoformat()}")
         logger.info("=" * 50)
 
@@ -122,7 +191,8 @@ class DailyAuditJob:
         results = {
             "timestamp": self.last_run.isoformat(),
             "sports": {},
-            "skipped_off_season": []
+            "skipped_off_season": [],
+            "lock_acquired": True
         }
 
         # v10.31: Use season gating to only process in-season sports

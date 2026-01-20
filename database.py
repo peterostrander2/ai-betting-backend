@@ -440,6 +440,120 @@ class ConfigChangeLog(Base):
 
 
 # ============================================================================
+# v10.32 DATABASE MODELS - Signal Attribution & Policy Learning
+# ============================================================================
+
+class SignalLedger(Base):
+    """
+    v10.32: Granular signal attribution - one row per pick per signal fired.
+    Enables ROI analysis per signal to drive learning.
+    """
+    __tablename__ = "signal_ledger"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pick_uid = Column(String(64), nullable=False, index=True)  # FK to PickLedger.pick_uid
+    sport = Column(String(10), nullable=False, index=True)
+
+    # Signal identification
+    signal_key = Column(String(100), nullable=False, index=True)  # e.g., "PILLAR_SHARP_SPLIT"
+    signal_category = Column(String(50), nullable=True)  # "RESEARCH" | "ESOTERIC" | "CONFLUENCE"
+    signal_value = Column(Float, default=0.0)  # Boost value applied
+
+    # Tracking
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_signal_ledger_pick", "pick_uid"),
+        Index("ix_signal_ledger_signal_sport", "signal_key", "sport"),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "pick_uid": self.pick_uid,
+            "sport": self.sport,
+            "signal_key": self.signal_key,
+            "signal_category": self.signal_category,
+            "signal_value": self.signal_value,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None
+        }
+
+
+class SignalPolicyConfig(Base):
+    """
+    v10.32: Learning multipliers per sport per signal.
+    Multiplier range: [0.85, 1.15] - never disables a signal.
+    """
+    __tablename__ = "signal_policy_config"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sport = Column(String(10), nullable=False)
+    signal_key = Column(String(100), nullable=False)
+
+    # Policy values
+    multiplier = Column(Float, default=1.0)  # Current multiplier
+    min_mult = Column(Float, default=0.85)  # Floor
+    max_mult = Column(Float, default=1.15)  # Ceiling
+
+    # Tracking
+    last_updated = Column(DateTime, default=datetime.utcnow)
+    update_reason = Column(String(500), nullable=True)
+
+    __table_args__ = (
+        Index("ix_signal_policy_sport_key", "sport", "signal_key", unique=True),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "sport": self.sport,
+            "signal_key": self.signal_key,
+            "multiplier": self.multiplier,
+            "min_mult": self.min_mult,
+            "max_mult": self.max_mult,
+            "last_updated": self.last_updated.isoformat() if self.last_updated else None,
+            "update_reason": self.update_reason
+        }
+
+
+class TuningAuditLog(Base):
+    """
+    v10.32: Immutable audit trail for policy changes.
+    Enables transparency and rollback analysis.
+    """
+    __tablename__ = "tuning_audit_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sport = Column(String(10), nullable=False, index=True)
+    signal_key = Column(String(100), nullable=False, index=True)
+
+    # Change details
+    old_mult = Column(Float, nullable=False)
+    new_mult = Column(Float, nullable=False)
+    reason = Column(String(500), nullable=False)
+    window_days = Column(Integer, default=7)
+
+    # Metrics at time of change
+    roi_at_change = Column(Float, nullable=True)
+    win_rate_at_change = Column(Float, nullable=True)
+    sample_size = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "sport": self.sport,
+            "signal_key": self.signal_key,
+            "old_mult": self.old_mult,
+            "new_mult": self.new_mult,
+            "reason": self.reason,
+            "window_days": self.window_days,
+            "roi_at_change": self.roi_at_change,
+            "win_rate_at_change": self.win_rate_at_change,
+            "sample_size": self.sample_size,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
+
+# ============================================================================
 # v10.31 FACTORY SPORT PROFILES
 # ============================================================================
 
@@ -1006,3 +1120,291 @@ def _get_graded_picks_impl(sport: str, window_days: int, db: Session) -> List[Pi
         PickLedger.result.in_([PickResult.WIN, PickResult.LOSS, PickResult.PUSH]),
         PickLedger.created_at >= cutoff
     ).all()
+
+
+# ============================================================================
+# v10.32 SIGNAL LEDGER & POLICY HELPERS
+# ============================================================================
+
+def save_signal_ledger(
+    pick_uid: str,
+    sport: str,
+    signals: List[Dict[str, Any]],
+    db: Session = None
+) -> int:
+    """
+    Save signal entries to SignalLedger for a pick.
+    Returns count of signals saved.
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return 0
+            return _save_signal_ledger_impl(pick_uid, sport, signals, db)
+    else:
+        return _save_signal_ledger_impl(pick_uid, sport, signals, db)
+
+
+def _save_signal_ledger_impl(
+    pick_uid: str,
+    sport: str,
+    signals: List[Dict[str, Any]],
+    db: Session
+) -> int:
+    """Internal implementation."""
+    count = 0
+    try:
+        for sig in signals:
+            entry = SignalLedger(
+                pick_uid=pick_uid,
+                sport=sport.upper(),
+                signal_key=sig.get("signal_key", "UNKNOWN"),
+                signal_category=sig.get("category"),
+                signal_value=sig.get("value", 0.0)
+            )
+            db.add(entry)
+            count += 1
+        db.flush()
+    except Exception as e:
+        logger.exception(f"Failed to save signal ledger: {e}")
+    return count
+
+
+def get_signal_policy(sport: str, db: Session = None) -> Dict[str, float]:
+    """
+    Get all signal policy multipliers for a sport.
+    Returns dict of signal_key -> multiplier.
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return DEFAULT_MICRO_WEIGHTS.copy()
+            return _get_signal_policy_impl(sport, db)
+    else:
+        return _get_signal_policy_impl(sport, db)
+
+
+def _get_signal_policy_impl(sport: str, db: Session) -> Dict[str, float]:
+    """Internal implementation."""
+    try:
+        policies = db.query(SignalPolicyConfig).filter(
+            SignalPolicyConfig.sport == sport.upper()
+        ).all()
+
+        result = DEFAULT_MICRO_WEIGHTS.copy()
+        for p in policies:
+            result[p.signal_key] = p.multiplier
+        return result
+    except Exception as e:
+        logger.warning(f"Failed to get signal policy: {e}")
+        return DEFAULT_MICRO_WEIGHTS.copy()
+
+
+def upsert_signal_policy(
+    sport: str,
+    signal_key: str,
+    new_mult: float,
+    reason: str,
+    roi: float = None,
+    win_rate: float = None,
+    sample_size: int = None,
+    window_days: int = 7,
+    db: Session = None
+) -> bool:
+    """
+    Update or insert signal policy, log to audit trail.
+    Returns True on success.
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return False
+            return _upsert_signal_policy_impl(
+                sport, signal_key, new_mult, reason,
+                roi, win_rate, sample_size, window_days, db
+            )
+    else:
+        return _upsert_signal_policy_impl(
+            sport, signal_key, new_mult, reason,
+            roi, win_rate, sample_size, window_days, db
+        )
+
+
+def _upsert_signal_policy_impl(
+    sport: str,
+    signal_key: str,
+    new_mult: float,
+    reason: str,
+    roi: float,
+    win_rate: float,
+    sample_size: int,
+    window_days: int,
+    db: Session
+) -> bool:
+    """Internal implementation."""
+    try:
+        sport = sport.upper()
+
+        # Find or create policy
+        policy = db.query(SignalPolicyConfig).filter(
+            SignalPolicyConfig.sport == sport,
+            SignalPolicyConfig.signal_key == signal_key
+        ).first()
+
+        old_mult = 1.0
+        if policy:
+            old_mult = policy.multiplier
+            policy.multiplier = new_mult
+            policy.last_updated = datetime.utcnow()
+            policy.update_reason = reason
+        else:
+            policy = SignalPolicyConfig(
+                sport=sport,
+                signal_key=signal_key,
+                multiplier=new_mult,
+                update_reason=reason
+            )
+            db.add(policy)
+
+        # Log to audit trail
+        audit = TuningAuditLog(
+            sport=sport,
+            signal_key=signal_key,
+            old_mult=old_mult,
+            new_mult=new_mult,
+            reason=reason,
+            window_days=window_days,
+            roi_at_change=roi,
+            win_rate_at_change=win_rate,
+            sample_size=sample_size
+        )
+        db.add(audit)
+        db.flush()
+        return True
+    except Exception as e:
+        logger.exception(f"Failed to upsert signal policy: {e}")
+        return False
+
+
+def get_signal_performance(
+    sport: str,
+    window_days: int = 7,
+    db: Session = None
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Compute ROI and win rate per signal for a sport.
+    Returns dict of signal_key -> {count, win_rate, roi, total_units, profit_units}
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return {}
+            return _get_signal_performance_impl(sport, window_days, db)
+    else:
+        return _get_signal_performance_impl(sport, window_days, db)
+
+
+def _get_signal_performance_impl(
+    sport: str,
+    window_days: int,
+    db: Session
+) -> Dict[str, Dict[str, Any]]:
+    """Internal implementation."""
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=window_days)
+        sport = sport.upper()
+
+        # Get all settled picks in window
+        picks = db.query(PickLedger).filter(
+            PickLedger.sport == sport,
+            PickLedger.result.in_([PickResult.WIN, PickResult.LOSS, PickResult.PUSH]),
+            PickLedger.created_at >= cutoff
+        ).all()
+
+        # Get signal entries for these picks
+        pick_uids = [p.pick_uid for p in picks]
+        if not pick_uids:
+            return {}
+
+        signals = db.query(SignalLedger).filter(
+            SignalLedger.pick_uid.in_(pick_uids)
+        ).all()
+
+        # Map pick_uid to pick result/units
+        pick_map = {
+            p.pick_uid: {
+                "result": p.result,
+                "profit_units": p.profit_units or 0,
+                "recommended_units": p.recommended_units or 0.5
+            }
+            for p in picks
+        }
+
+        # Aggregate per signal
+        signal_stats = {}
+        for sig in signals:
+            key = sig.signal_key
+            if key not in signal_stats:
+                signal_stats[key] = {
+                    "count": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "pushes": 0,
+                    "total_units": 0.0,
+                    "profit_units": 0.0
+                }
+
+            pick_data = pick_map.get(sig.pick_uid)
+            if pick_data:
+                signal_stats[key]["count"] += 1
+                signal_stats[key]["total_units"] += pick_data["recommended_units"]
+                signal_stats[key]["profit_units"] += pick_data["profit_units"]
+
+                if pick_data["result"] == PickResult.WIN:
+                    signal_stats[key]["wins"] += 1
+                elif pick_data["result"] == PickResult.LOSS:
+                    signal_stats[key]["losses"] += 1
+                else:
+                    signal_stats[key]["pushes"] += 1
+
+        # Calculate rates
+        for key, stats in signal_stats.items():
+            total = stats["wins"] + stats["losses"]
+            stats["win_rate"] = (stats["wins"] / total * 100) if total > 0 else 0
+            stats["roi"] = (stats["profit_units"] / stats["total_units"] * 100) if stats["total_units"] > 0 else 0
+
+        return signal_stats
+    except Exception as e:
+        logger.exception(f"Failed to get signal performance: {e}")
+        return {}
+
+
+def get_tuning_history(
+    sport: str,
+    days_back: int = 30,
+    db: Session = None
+) -> List[Dict[str, Any]]:
+    """Get tuning audit history for a sport."""
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return []
+            return _get_tuning_history_impl(sport, days_back, db)
+    else:
+        return _get_tuning_history_impl(sport, days_back, db)
+
+
+def _get_tuning_history_impl(sport: str, days_back: int, db: Session) -> List[Dict[str, Any]]:
+    """Internal implementation."""
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=days_back)
+
+        audits = db.query(TuningAuditLog).filter(
+            TuningAuditLog.sport == sport.upper(),
+            TuningAuditLog.created_at >= cutoff
+        ).order_by(TuningAuditLog.created_at.desc()).all()
+
+        return [a.to_dict() for a in audits]
+    except Exception as e:
+        logger.exception(f"Failed to get tuning history: {e}")
+        return []
