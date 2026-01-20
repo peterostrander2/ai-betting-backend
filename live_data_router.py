@@ -1,4 +1,4 @@
-# live_data_router.py v14.9 - SCORING v10.25
+# live_data_router.py v14.9 - SCORING v10.26
 # Sport Profiles + Per-Sport Calibration + Cross-Sport Jarvis + NFL Conflict Fix
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
@@ -2960,18 +2960,31 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                     ["CONFLUENCE: JARVIS_MODERATE (+0.25) [align>=80%]"])
 
         # Rule 5: No confluence boost
-        return (0.0, None, "NONE", [])
+        return (0.0, "NONE", "NONE", [])
 
-    # v10.25: Confluence counter for debug output
-    confluence_counts = {
+    # v10.26: Confluence counters for debug output (candidates = all scored picks)
+    confluence_counts_candidates = {
         "IMMORTAL_CONFLUENCE": 0,
         "JARVIS_PERFECT": 0,
         "PERFECT_CONFLUENCE": 0,
         "JARVIS_MODERATE": 0,
         "NONE": 0
     }
-    alignment_pct_sum = 0.0
-    alignment_pct_count = 0
+    alignment_pct_sum_candidates = 0.0
+    alignment_pct_count_candidates = 0
+
+    # v10.26: Separate counters for RETURNED picks only (populated after filtering)
+    confluence_counts_returned = {
+        "IMMORTAL_CONFLUENCE": 0,
+        "JARVIS_PERFECT": 0,
+        "PERFECT_CONFLUENCE": 0,
+        "JARVIS_MODERATE": 0,
+        "NONE": 0
+    }
+    alignment_pct_sum_returned = 0.0
+    alignment_pct_count_returned = 0
+    alignment_min_returned = 100.0
+    alignment_max_returned = 0.0
 
     # Helper function to calculate scores with v10.1 dual-score confluence
     # v10.18: Added prop_line, player_team_side, game_total for prop-independent pillars
@@ -3364,14 +3377,12 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             immortal_active=immortal_detected
         )
 
-        # v10.25: Track confluence stats for debug output (nonlocal access)
-        nonlocal confluence_counts, alignment_pct_sum, alignment_pct_count
-        if confluence_label:
-            confluence_counts[confluence_label] = confluence_counts.get(confluence_label, 0) + 1
-        else:
-            confluence_counts["NONE"] = confluence_counts.get("NONE", 0) + 1
-        alignment_pct_sum += alignment_pct
-        alignment_pct_count += 1
+        # v10.26: Track confluence stats for ALL candidates (debug output)
+        nonlocal confluence_counts_candidates, alignment_pct_sum_candidates, alignment_pct_count_candidates
+        # confluence_label is always a string now ("NONE" when no boost)
+        confluence_counts_candidates[confluence_label] = confluence_counts_candidates.get(confluence_label, 0) + 1
+        alignment_pct_sum_candidates += alignment_pct
+        alignment_pct_count_candidates += 1
 
         # --- FINAL SCORE FORMULA (v10.24: 3-Engine Blend) ---
         # Get sport profile for weight calibration
@@ -4216,7 +4227,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     # ================================================================
     def enforce_scoring_fields(pick):
         """
-        v10.24: Ensure pick has all required scoring fields (AI + Jarvis + Research).
+        v10.26: Ensure pick has all required scoring fields (AI + Jarvis + Research + Confluence).
         Returns True if any field was missing and had to be defaulted.
         """
         was_missing = False
@@ -4251,6 +4262,26 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         if "esoteric_score" not in pick.get("scoring_breakdown", {}):
             pick["scoring_breakdown"]["esoteric_score"] = 5.0
             was_missing = True
+        if "alignment_pct" not in pick.get("scoring_breakdown", {}):
+            pick["scoring_breakdown"]["alignment_pct"] = 0.0
+            was_missing = True
+
+        # --- v10.26: CONFLUENCE FIELDS (always required, never null) ---
+        # Ensure confluence_label is ALWAYS a string ("NONE" if missing/null)
+        if not pick.get("confluence_label"):
+            pick["confluence_label"] = "NONE"
+            was_missing = True
+
+        if "confluence_boost" not in pick:
+            pick["confluence_boost"] = 0.0
+            was_missing = True
+
+        if not pick.get("confluence_level"):
+            pick["confluence_level"] = "NONE"
+            was_missing = True
+
+        # v10.26: Ensure alignment_pct is sourced ONLY from scoring_breakdown (single source of truth)
+        pick["alignment_pct"] = round(pick.get("scoring_breakdown", {}).get("alignment_pct", 0.0), 1)
 
         # --- REASONS VALIDATION ---
         reasons = pick.get("reasons", [])
@@ -4274,11 +4305,23 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
 
         return was_missing
 
-    # Apply guardrail to all returned picks (v10.24: validates AI + Jarvis + Research)
+    # Apply guardrail to all returned picks (v10.26: validates AI + Jarvis + Research + Confluence)
     all_returned_picks = top_props + top_game_picks
     for pick in all_returned_picks:
         if enforce_scoring_fields(pick):
             jarvis_debug["missing_on_returned"] += 1
+
+        # v10.26: Track confluence stats for RETURNED picks only
+        label = pick.get("confluence_label", "NONE")
+        confluence_counts_returned[label] = confluence_counts_returned.get(label, 0) + 1
+
+        align_pct = pick.get("alignment_pct", 0.0)
+        alignment_pct_sum_returned += align_pct
+        alignment_pct_count_returned += 1
+        if align_pct < alignment_min_returned:
+            alignment_min_returned = align_pct
+        if align_pct > alignment_max_returned:
+            alignment_max_returned = align_pct
 
     # Also enforce on merged_picks (which are references to same objects, but ensure coverage)
     for pick in merged_picks:
@@ -4286,8 +4329,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.25",
-        "scoring_system": "v10.25: Confluence Ladder + Badges (tier-safe, max 0.75 boost)",
+        "source": "production_v10.26",
+        "scoring_system": "v10.26: Confluence Ladder persisted + alignment unified (never null)",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
@@ -4332,9 +4375,15 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             "jarvis_calls_props": jarvis_debug["calls_props"],
             "jarvis_missing_on_returned_picks": jarvis_debug["missing_on_returned"],
             "jarvis_engine_available": jarvis is not None,
-            # v10.25: Confluence ladder debug
-            "confluence_counts": confluence_counts,
-            "avg_alignment_pct": round(alignment_pct_sum / max(1, alignment_pct_count), 1),
+            # v10.26: Confluence ladder debug (candidates vs returned separation)
+            "confluence_counts_candidates": confluence_counts_candidates,
+            "avg_alignment_candidates": round(alignment_pct_sum_candidates / max(1, alignment_pct_count_candidates), 1),
+            "confluence_counts_returned": confluence_counts_returned,
+            "avg_alignment_returned": round(alignment_pct_sum_returned / max(1, alignment_pct_count_returned), 1),
+            "returned_alignment_minmax": {
+                "min": round(alignment_min_returned, 1) if alignment_pct_count_returned > 0 else 0.0,
+                "max": round(alignment_max_returned, 1) if alignment_pct_count_returned > 0 else 0.0
+            },
             # v10.22: Sport profile info
             "sport_profile": {
                 "weights": sport_profile["weights"],
