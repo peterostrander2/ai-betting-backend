@@ -3106,6 +3106,84 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     alignment_min_returned = 100.0
     alignment_max_returned = 0.0
 
+    # v10.29: Confidence grade counters for debug output
+    confidence_grade_counts = {"A": 0, "B": 0, "C": 0}
+    alignment_gap_sum_returned = 0.0
+    alignment_gap_count_returned = 0
+    alignment_gap_min_returned = 100.0
+    alignment_gap_max_returned = 0.0
+
+    # ========================================================================
+    # v10.29: CONFIDENCE GRADE + ALIGNMENT GAP HELPERS
+    # ========================================================================
+    def compute_alignment_gap(research_score: float, esoteric_score: float) -> float:
+        """Compute the gap between research and esoteric engines."""
+        try:
+            return round(abs(float(research_score) - float(esoteric_score)), 2)
+        except Exception:
+            return 0.0
+
+    def compute_confidence_grade(confluence_label: str, alignment_gap: float) -> str:
+        """
+        Compute confidence grade based on confluence quality and alignment.
+        A = Top confluence (IMMORTAL/JARVIS_PERFECT/PERFECT) AND tight alignment (gap <= 1.0)
+        B = JARVIS_MODERATE AND moderate alignment (gap <= 1.5)
+        C = Everything else
+        """
+        top_confluence = {"IMMORTAL_CONFLUENCE", "JARVIS_PERFECT", "PERFECT_CONFLUENCE"}
+        if confluence_label in top_confluence and alignment_gap <= 1.0:
+            return "A"
+        if confluence_label == "JARVIS_MODERATE" and alignment_gap <= 1.5:
+            return "B"
+        return "C"
+
+    def derive_confluence_miss_reason(
+        confluence_label: str,
+        fail_reasons: list,
+        repair_hints: list
+    ) -> str:
+        """
+        Derive the top reason why a pick didn't reach the next confluence rung.
+        Uses failure reasons first, then repair hints as fallback.
+        """
+        # Define the confluence ladder order
+        ladder_order = ["IMMORTAL_CONFLUENCE", "JARVIS_PERFECT", "PERFECT_CONFLUENCE", "JARVIS_MODERATE", "NONE"]
+
+        # Find the current position and the next rung
+        try:
+            current_idx = ladder_order.index(confluence_label) if confluence_label in ladder_order else 4
+        except ValueError:
+            current_idx = 4  # Default to NONE position
+
+        # If at the top, no upgrade available
+        if current_idx == 0:
+            return "MISS: Already at IMMORTAL_CONFLUENCE (highest rung)"
+
+        # Look for failures related to the next rung above
+        next_rung = ladder_order[current_idx - 1] if current_idx > 0 else None
+
+        if fail_reasons and next_rung:
+            # Find first failure for the next rung
+            for reason in fail_reasons:
+                if next_rung in reason:
+                    # Extract the condition that failed
+                    # Format: "FAIL: JARVIS_PERFECT esoteric_score 6.82 < 7.00"
+                    parts = reason.replace("FAIL: ", "").split(" ", 1)
+                    if len(parts) > 1:
+                        return f"MISS: {parts[0]} blocked — {parts[1]}"
+                    return f"MISS: {reason.replace('FAIL: ', '')}"
+
+        if repair_hints:
+            # Use first repair hint that mentions the next rung
+            for hint in repair_hints:
+                if next_rung and next_rung in hint:
+                    return hint.replace("REPAIR: ", "MISS: ")
+            # Fallback to first repair hint
+            if repair_hints[0]:
+                return repair_hints[0].replace("REPAIR: ", "MISS: ")
+
+        return "MISS: No confluence upgrade available"
+
     # Helper function to calculate scores with v10.1 dual-score confluence
     # v10.18: Added prop_line, player_team_side, game_total for prop-independent pillars
     def calculate_pick_score(game_str, sharp_signal, base_ai=5.8, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_home=False, team_rest_days=0, opp_rest_days=0, game_hour_et=20, market="", odds=-110, sharp_scope="GAME", direction_mult=1.0, direction_label="N/A", prop_line=None, player_team_side=None, game_total=None, pick_against_public=None, sport="nba"):
@@ -4354,7 +4432,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     # ================================================================
     def enforce_scoring_fields(pick):
         """
-        v10.26: Ensure pick has all required scoring fields (AI + Jarvis + Research + Confluence).
+        v10.29: Ensure pick has all required scoring fields (AI + Jarvis + Research + Confluence + Confidence).
         Returns True if any field was missing and had to be defaulted.
         """
         was_missing = False
@@ -4389,6 +4467,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         if "esoteric_score" not in pick.get("scoring_breakdown", {}):
             pick["scoring_breakdown"]["esoteric_score"] = 5.0
             was_missing = True
+        if "research_score" not in pick.get("scoring_breakdown", {}):
+            pick["scoring_breakdown"]["research_score"] = 5.0
+            was_missing = True
         if "alignment_pct" not in pick.get("scoring_breakdown", {}):
             pick["scoring_breakdown"]["alignment_pct"] = 0.0
             was_missing = True
@@ -4409,6 +4490,48 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
 
         # v10.26: Ensure alignment_pct is sourced ONLY from scoring_breakdown (single source of truth)
         pick["alignment_pct"] = round(pick.get("scoring_breakdown", {}).get("alignment_pct", 0.0), 1)
+
+        # --- v10.29: CONFIDENCE GRADE + ALIGNMENT GAP FIELDS ---
+        # Compute alignment_gap from scoring_breakdown scores
+        research = pick.get("scoring_breakdown", {}).get("research_score", 5.0)
+        esoteric = pick.get("scoring_breakdown", {}).get("esoteric_score", 5.0)
+
+        if "alignment_gap" not in pick:
+            pick["alignment_gap"] = compute_alignment_gap(research, esoteric)
+            was_missing = True
+
+        # Compute confidence_grade based on confluence_label and alignment_gap
+        if "confidence_grade" not in pick:
+            pick["confidence_grade"] = compute_confidence_grade(
+                pick.get("confluence_label", "NONE"),
+                pick.get("alignment_gap", 0.0)
+            )
+            was_missing = True
+
+        # Generate confluence_miss_reason_top from debug fields (if available)
+        if "confluence_miss_reason_top" not in pick:
+            # Get debug fields (they may be internal _debug_* or exposed debug_*)
+            fail_reasons = (
+                pick.get("_debug_confluence_failures", []) or
+                pick.get("debug_confluence_failures", []) or
+                []
+            )
+            repair_hints = (
+                pick.get("_debug_confluence_repairs", []) or
+                pick.get("debug_confluence_repairs", []) or
+                []
+            )
+
+            if fail_reasons or repair_hints:
+                pick["confluence_miss_reason_top"] = derive_confluence_miss_reason(
+                    pick.get("confluence_label", "NONE"),
+                    fail_reasons,
+                    repair_hints
+                )
+            else:
+                # No debug data available
+                pick["confluence_miss_reason_top"] = "MISS: Debug not enabled (use ?debug=1 to inspect confluence ladder)"
+            was_missing = True
 
         # --- REASONS VALIDATION ---
         reasons = pick.get("reasons", [])
@@ -4450,6 +4573,18 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         if align_pct > alignment_max_returned:
             alignment_max_returned = align_pct
 
+        # v10.29: Track confidence_grade and alignment_gap for returned picks
+        grade = pick.get("confidence_grade", "C")
+        confidence_grade_counts[grade] = confidence_grade_counts.get(grade, 0) + 1
+
+        gap = pick.get("alignment_gap", 0.0)
+        alignment_gap_sum_returned += gap
+        alignment_gap_count_returned += 1
+        if gap < alignment_gap_min_returned:
+            alignment_gap_min_returned = gap
+        if gap > alignment_gap_max_returned:
+            alignment_gap_max_returned = gap
+
     # Also enforce on merged_picks (which are references to same objects, but ensure coverage)
     for pick in merged_picks:
         enforce_scoring_fields(pick)
@@ -4479,8 +4614,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.28",
-        "scoring_system": "v10.28: Confluence repair hints + alignment gap debug (no scoring changes)",
+        "source": "production_v10.29",
+        "scoring_system": "v10.29: Confidence Grade + Alignment Gap + Confluence Miss Reason",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
@@ -4533,6 +4668,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             "returned_alignment_minmax": {
                 "min": round(alignment_min_returned, 1) if alignment_pct_count_returned > 0 else 0.0,
                 "max": round(alignment_max_returned, 1) if alignment_pct_count_returned > 0 else 0.0
+            },
+            # v10.29: Confidence grade + alignment gap debug
+            "confidence_grade_counts": confidence_grade_counts,
+            "avg_alignment_gap_returned": round(alignment_gap_sum_returned / max(1, alignment_gap_count_returned), 2),
+            "alignment_gap_minmax_returned": {
+                "min": round(alignment_gap_min_returned, 2) if alignment_gap_count_returned > 0 else 0.0,
+                "max": round(alignment_gap_max_returned, 2) if alignment_gap_count_returned > 0 else 0.0
             },
             # v10.22: Sport profile info
             "sport_profile": {
