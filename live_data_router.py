@@ -3310,6 +3310,21 @@ async def get_best_bets(sport: str, debug: int = 0):
                         "MAPPING: player_team_side missing -> directional NEUTRAL (0.5)"
                     ]
 
+                # v10.15: Add standalone CORRELATION reason for easy filtering
+                # This makes ALIGNED/CONFLICT/NEUTRAL searchable without parsing embedded reasons
+                if direction_label == "ALIGNED":
+                    prop_pick["reasons"] = prop_pick.get("reasons", []) + [
+                        f"CORRELATION: ALIGNED (prop {prop_side} matches sharp direction, mult={direction_mult:.1f})"
+                    ]
+                elif direction_label == "CONFLICT":
+                    prop_pick["reasons"] = prop_pick.get("reasons", []) + [
+                        f"CORRELATION: CONFLICT (prop {prop_side} opposes sharp direction, mult={direction_mult:.1f})"
+                    ]
+                elif direction_label.startswith("NEUTRAL"):
+                    prop_pick["reasons"] = prop_pick.get("reasons", []) + [
+                        f"CORRELATION: {direction_label} (mult={direction_mult:.1f})"
+                    ]
+
                 # v10.14: Add debug fields for correlation visibility when debug=1
                 if debug:
                     prop_pick["sharp_scope"] = "GAME"
