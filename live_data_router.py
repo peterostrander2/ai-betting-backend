@@ -876,6 +876,186 @@ def normalize_team_abbr(raw: str) -> str:
     return NBA_TEAM_MAP.get(s) or NBA_TEAM_MAP.get(key) or (raw.upper()[:3] if len(raw) >= 3 else None)
 
 
+# v10.14: PLAYER TEAM OVERRIDES (emergency hotfixes)
+# Add manual mappings here when API data is wrong or missing
+PLAYER_TEAM_OVERRIDES = {
+    # Format: "player_name_slug": "HOME" or "AWAY"
+    # Example: "tyrese_maxey": "AWAY",
+}
+
+
+def slug_player(name: str) -> str:
+    """
+    v10.14: Convert player name to normalized slug for cache/lookup.
+
+    Examples:
+    - "Tyrese Maxey" -> "tyrese_maxey"
+    - "LeBron James" -> "lebron_james"
+    """
+    if not name:
+        return ""
+    import re
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
+def build_player_team_cache(games_data: list, home_abbr_map: dict, away_abbr_map: dict) -> dict:
+    """
+    v10.14: Build player -> team side cache from game roster data.
+
+    Scans game objects for any available player lists (rosters, starters, etc.)
+    and maps each player to HOME or AWAY.
+
+    Args:
+        games_data: List of game objects from props API
+        home_abbr_map: Dict mapping game_key -> home team abbreviation
+        away_abbr_map: Dict mapping game_key -> away team abbreviation
+
+    Returns:
+        Dict mapping player_slug -> "HOME" or "AWAY"
+    """
+    cache = {}
+
+    for game in games_data:
+        home_team = game.get("home_team", "")
+        away_team = game.get("away_team", "")
+        game_key = f"{away_team}@{home_team}"
+
+        home_abbr = normalize_team_abbr(home_team)
+        away_abbr = normalize_team_abbr(away_team)
+
+        # Try various roster field names that APIs might use
+        home_players = (
+            game.get("home_players", [])
+            or game.get("home_roster", [])
+            or game.get("home_starters", [])
+            or game.get("homeTeam", {}).get("players", [])
+        )
+
+        away_players = (
+            game.get("away_players", [])
+            or game.get("away_roster", [])
+            or game.get("away_starters", [])
+            or game.get("awayTeam", {}).get("players", [])
+        )
+
+        # Cache home players
+        for player in home_players:
+            if isinstance(player, str):
+                player_name = player
+            elif isinstance(player, dict):
+                player_name = player.get("name") or player.get("player_name") or player.get("playerName", "")
+            else:
+                continue
+            if player_name:
+                cache[slug_player(player_name)] = "HOME"
+
+        # Cache away players
+        for player in away_players:
+            if isinstance(player, str):
+                player_name = player
+            elif isinstance(player, dict):
+                player_name = player.get("name") or player.get("player_name") or player.get("playerName", "")
+            else:
+                continue
+            if player_name:
+                cache[slug_player(player_name)] = "AWAY"
+
+        # Also try generic players list with team info
+        all_players = game.get("players", []) or game.get("roster", [])
+        for player in all_players:
+            if not isinstance(player, dict):
+                continue
+            player_name = player.get("name") or player.get("player_name") or player.get("playerName", "")
+            player_team = player.get("team") or player.get("team_abbr") or player.get("teamAbbr", "")
+
+            if player_name and player_team:
+                player_team_abbr = normalize_team_abbr(player_team)
+                if player_team_abbr == home_abbr:
+                    cache[slug_player(player_name)] = "HOME"
+                elif player_team_abbr == away_abbr:
+                    cache[slug_player(player_name)] = "AWAY"
+
+    return cache
+
+
+def resolve_player_team_side(prop: dict, player_name: str, home_abbr: str, away_abbr: str,
+                              player_team_cache: dict) -> tuple:
+    """
+    v10.14: Resolve player's team side using resolver chain.
+
+    Resolver order (highest confidence first):
+    1. Direct field (if prop contains team info)
+    2. Override dictionary (manual hotfixes)
+    3. Player team cache (built from rosters)
+    4. String inference (player label contains team abbr)
+
+    Returns:
+        (player_team_side, source): ("HOME"/"AWAY"/None, "DIRECT"/"OVERRIDE"/"CACHE"/"INFER"/"MISSING")
+    """
+    import re
+
+    player_slug = slug_player(player_name)
+
+    # 1) Direct field from prop
+    raw_team = (
+        prop.get("team_abbr")
+        or prop.get("team")
+        or prop.get("player_team")
+        or prop.get("team_name")
+        or prop.get("teamName")
+    )
+
+    if raw_team:
+        team_abbr = normalize_team_abbr(raw_team)
+        if team_abbr and home_abbr and team_abbr == home_abbr:
+            return ("HOME", "DIRECT")
+        elif team_abbr and away_abbr and team_abbr == away_abbr:
+            return ("AWAY", "DIRECT")
+
+    # 2) Override dictionary (emergency hotfixes)
+    if player_slug in PLAYER_TEAM_OVERRIDES:
+        return (PLAYER_TEAM_OVERRIDES[player_slug], "OVERRIDE")
+
+    # 3) Cache lookup (from roster data)
+    if player_slug in player_team_cache:
+        return (player_team_cache[player_slug], "CACHE")
+
+    # 4) String inference - look for team abbr in player description
+    # Examples: "LeBron James (LAL)", "LeBron James - LAL", "LAL - LeBron James"
+    description = (
+        prop.get("description")
+        or prop.get("name")
+        or prop.get("player")
+        or player_name
+        or ""
+    )
+
+    # Try to extract team from parentheses: "Player (TEAM)"
+    if "(" in description and ")" in description:
+        inside = description.split("(")[-1].split(")")[0].strip()
+        if 2 <= len(inside) <= 4:
+            inferred_abbr = normalize_team_abbr(inside)
+            if inferred_abbr and home_abbr and inferred_abbr == home_abbr:
+                return ("HOME", "INFER")
+            elif inferred_abbr and away_abbr and inferred_abbr == away_abbr:
+                return ("AWAY", "INFER")
+
+    # Try to extract team from dash: "Player - TEAM" or "TEAM - Player"
+    if " - " in description:
+        parts = description.split(" - ")
+        for part in parts:
+            part = part.strip()
+            if 2 <= len(part) <= 4:
+                inferred_abbr = normalize_team_abbr(part)
+                if inferred_abbr and home_abbr and inferred_abbr == home_abbr:
+                    return ("HOME", "INFER")
+                elif inferred_abbr and away_abbr and inferred_abbr == away_abbr:
+                    return ("AWAY", "INFER")
+
+    # 5) Could not resolve
+    return (None, "MISSING")
+
+
 def derive_game_sharp_side(sharp_signal: dict, home_team: str, away_team: str) -> str:
     """
     v10.11: Derive which team the sharps are betting on.
@@ -934,12 +1114,12 @@ def extract_game_sharp_direction(sharp_signal: dict) -> tuple:
 
 def get_directional_mult(prediction_data: dict) -> tuple:
     """
-    v10.13: True directional correlation for GAME-scoped sharps applied to PROP picks.
+    v10.14: True directional correlation for GAME-scoped sharps applied to PROP picks.
 
     Returns (directional_mult, directional_label):
     - 1.0, "ALIGNED" = prop direction matches sharp direction
     - 0.0, "CONFLICT" = prop direction conflicts with sharp direction
-    - 0.5, "NEUTRAL" = direction is missing/ambiguous (only when data is missing)
+    - 0.5, "NEUTRAL (reason)" = direction is missing/ambiguous with explicit reason
 
     Inputs from prediction_data:
     - prop_side: "OVER" / "UNDER" (the prop's direction)
@@ -964,7 +1144,7 @@ def get_directional_mult(prediction_data: dict) -> tuple:
            - Prop OVER = CONFLICT (team loses → player shouldn't overperform)
            - Prop UNDER = ALIGNED (team loses → player underperforms)
 
-    3) If neither rule can be applied → NEUTRAL (0.5)
+    3) If neither rule can be applied → NEUTRAL with explicit reason
     """
     prop_side = prediction_data.get("prop_side", "")
     player_team_side = prediction_data.get("player_team_side")
@@ -975,9 +1155,12 @@ def get_directional_mult(prediction_data: dict) -> tuple:
     if isinstance(prop_side, str):
         prop_side = prop_side.upper()
 
-    # Must have prop_side and some sharp direction to correlate
-    if not prop_side or (not game_sharp_side and not game_sharp_total):
-        return (0.5, "NEUTRAL")
+    # v10.14: Explicit NEUTRAL reasons
+    if not prop_side:
+        return (0.5, "NEUTRAL (no prop direction)")
+
+    if not game_sharp_side and not game_sharp_total:
+        return (0.5, "NEUTRAL (no sharp signal)")
 
     # Rule 1: Total correlation (OVER/UNDER sharp direction)
     if game_sharp_total:
@@ -990,8 +1173,8 @@ def get_directional_mult(prediction_data: dict) -> tuple:
     # Rule 2: Side correlation (HOME/AWAY sharp direction)
     if game_sharp_side in ("HOME", "AWAY"):
         if not player_team_side:
-            # Can't determine correlation without knowing player's team side
-            return (0.5, "NEUTRAL")
+            # v10.14: Explicit reason - can't correlate without player team
+            return (0.5, "NEUTRAL (missing player team)")
 
         player_on_sharp_team = (player_team_side == game_sharp_side)
 
@@ -2749,6 +2932,11 @@ async def get_best_bets(sport: str, debug: int = 0):
     props_data = {"data": [], "source": "none"}  # Default fallback
     try:
         props_data = await get_props(sport)
+
+        # v10.14: Build player team cache from any available roster data
+        player_team_cache = build_player_team_cache(props_data.get("data", []), {}, {})
+        logger.info("v10.14: Player team cache built with %d entries", len(player_team_cache))
+
         for game in props_data.get("data", []):
             home_team = game.get("home_team", "")
             away_team = game.get("away_team", "")
@@ -2773,7 +2961,16 @@ async def get_best_bets(sport: str, debug: int = 0):
                 if side not in ["Over", "Under"]:
                     continue
 
-                # v10.13: Extract player team from prop (try multiple field names)
+                # v10.14: Use resolver chain to determine player_team_side
+                player_team_side, team_resolver_source = resolve_player_team_side(
+                    prop=prop,
+                    player_name=player,
+                    home_abbr=home_abbr,
+                    away_abbr=away_abbr,
+                    player_team_cache=player_team_cache
+                )
+
+                # v10.14: Get player abbr from prop if available (for debug output)
                 player_team_raw = (
                     prop.get("team_abbr")
                     or prop.get("team")
@@ -2783,17 +2980,10 @@ async def get_best_bets(sport: str, debug: int = 0):
                 )
                 player_abbr = normalize_team_abbr(player_team_raw) if player_team_raw else None
 
-                # v10.13: Determine player_team_side (HOME/AWAY/None)
-                player_team_side = None
-                if player_abbr and home_abbr and player_abbr == home_abbr:
-                    player_team_side = "HOME"
-                elif player_abbr and away_abbr and player_abbr == away_abbr:
-                    player_team_side = "AWAY"
-
                 # v10.13: Extract prop direction (OVER/UNDER)
                 prop_side = side.upper() if isinstance(side, str) else None
 
-                # v10.13: Build prediction_data for directional correlation
+                # v10.14: Build prediction_data for directional correlation
                 direction_data = {
                     "prop_side": prop_side,
                     "player_team_side": player_team_side,
@@ -2803,9 +2993,10 @@ async def get_best_bets(sport: str, debug: int = 0):
                     "player_team_abbr": player_abbr,
                     "game_home_abbr": home_abbr,
                     "game_away_abbr": away_abbr,
+                    "team_resolver_source": team_resolver_source,  # v10.14
                 }
 
-                # v10.13: Calculate directional multiplier with true ALIGNED/CONFLICT/NEUTRAL
+                # v10.14: Calculate directional multiplier with true ALIGNED/CONFLICT/NEUTRAL
                 direction_mult, direction_label = get_directional_mult(direction_data)
 
                 # Extract game hour for Prime Time pillar
@@ -2912,7 +3103,17 @@ async def get_best_bets(sport: str, debug: int = 0):
                     "source": "odds_api"
                 }
 
-                # v10.13: Add debug fields for correlation visibility when debug=1
+                # v10.14: Add mapping reason for explainability
+                if player_team_side:
+                    prop_pick["reasons"] = prop_pick.get("reasons", []) + [
+                        f"MAPPING: player_team_side={player_team_side} via {team_resolver_source}"
+                    ]
+                else:
+                    prop_pick["reasons"] = prop_pick.get("reasons", []) + [
+                        "MAPPING: player_team_side missing -> directional NEUTRAL (0.5)"
+                    ]
+
+                # v10.14: Add debug fields for correlation visibility when debug=1
                 if debug:
                     prop_pick["sharp_scope"] = "GAME"
                     prop_pick["game_sharp_side"] = game_sharp_side
@@ -2924,6 +3125,7 @@ async def get_best_bets(sport: str, debug: int = 0):
                     prop_pick["prop_side"] = prop_side
                     prop_pick["directional_mult"] = direction_mult
                     prop_pick["directional_label"] = direction_label
+                    prop_pick["team_resolver_source"] = team_resolver_source
 
                 props_picks.append(prop_pick)
     except HTTPException:
@@ -3265,8 +3467,8 @@ async def get_best_bets(sport: str, debug: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.13",
-        "scoring_system": "v10.13: Sharp Math Fix + Real Player Team Mapping + Prop Direction",
+        "source": "production_v10.14",
+        "scoring_system": "v10.14: Player-Team Resolver (CACHE/OVERRIDE/INFER)",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": {
             "count": len(top_props),
