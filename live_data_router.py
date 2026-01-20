@@ -979,22 +979,24 @@ def build_player_team_cache(games_data: list, home_abbr_map: dict, away_abbr_map
 
 
 def resolve_player_team_side(prop: dict, player_name: str, home_abbr: str, away_abbr: str,
-                              player_team_cache: dict) -> tuple:
+                              player_team_cache: dict, playbook_roster: dict = None) -> tuple:
     """
     v10.14: Resolve player's team side using resolver chain.
 
     Resolver order (highest confidence first):
     1. Direct field (if prop contains team info)
     2. Override dictionary (manual hotfixes)
-    3. Player team cache (built from rosters)
-    4. String inference (player label contains team abbr)
+    3. Playbook roster (from Playbook API /teams or /injuries)
+    4. Player team cache (built from game rosters)
+    5. String inference (player label contains team abbr)
 
     Returns:
-        (player_team_side, source): ("HOME"/"AWAY"/None, "DIRECT"/"OVERRIDE"/"CACHE"/"INFER"/"MISSING")
+        (player_team_side, source): ("HOME"/"AWAY"/None, "DIRECT"/"OVERRIDE"/"PLAYBOOK"/"CACHE"/"INFER"/"MISSING")
     """
     import re
 
     player_slug = slug_player(player_name)
+    playbook_roster = playbook_roster or {}
 
     # 1) Direct field from prop
     raw_team = (
@@ -1016,7 +1018,15 @@ def resolve_player_team_side(prop: dict, player_name: str, home_abbr: str, away_
     if player_slug in PLAYER_TEAM_OVERRIDES:
         return (PLAYER_TEAM_OVERRIDES[player_slug], "OVERRIDE")
 
-    # 3) Cache lookup (from roster data)
+    # 3) Playbook roster lookup (from Playbook API)
+    if player_slug in playbook_roster:
+        team_abbr = playbook_roster[player_slug]
+        if team_abbr and home_abbr and team_abbr == home_abbr:
+            return ("HOME", "PLAYBOOK")
+        elif team_abbr and away_abbr and team_abbr == away_abbr:
+            return ("AWAY", "PLAYBOOK")
+
+    # 4) Cache lookup (from game roster data)
     if player_slug in player_team_cache:
         return (player_team_cache[player_slug], "CACHE")
 
@@ -2120,6 +2130,140 @@ async def get_splits(sport: str):
     return result
 
 
+async def fetch_playbook_rosters(sport: str) -> dict:
+    """
+    v10.14: Fetch team rosters from Playbook API for player-team mapping.
+
+    Uses /teams endpoint which returns team metadata including player lists.
+
+    Returns:
+        Dict mapping player_slug -> team_abbr (e.g., "tyrese_maxey" -> "PHI")
+    """
+    player_to_team = {}
+
+    if not PLAYBOOK_API_KEY:
+        logger.warning("v10.14: No PLAYBOOK_API_KEY - cannot fetch rosters")
+        return player_to_team
+
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        return player_to_team
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    # Check cache first (rosters don't change often)
+    cache_key = f"rosters:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        logger.info("v10.14: Using cached roster data with %d players", len(cached))
+        return cached
+
+    try:
+        # Try /teams endpoint for roster data
+        teams_url = f"{PLAYBOOK_API_BASE}/teams"
+        resp = await fetch_with_retries(
+            "GET", teams_url,
+            params={
+                "league": sport_config["playbook"],
+                "api_key": PLAYBOOK_API_KEY
+            }
+        )
+
+        if resp and resp.status_code == 200:
+            teams_data = resp.json()
+
+            # Handle various response formats
+            teams_list = teams_data.get("teams", teams_data.get("data", []))
+            if isinstance(teams_data, list):
+                teams_list = teams_data
+
+            for team in teams_list:
+                team_abbr = (
+                    team.get("abbreviation")
+                    or team.get("abbr")
+                    or team.get("team_abbr")
+                    or team.get("code")
+                    or ""
+                )
+                team_abbr = normalize_team_abbr(team_abbr) if team_abbr else None
+
+                if not team_abbr:
+                    continue
+
+                # Get players from various field names
+                players = (
+                    team.get("players", [])
+                    or team.get("roster", [])
+                    or team.get("active_roster", [])
+                    or []
+                )
+
+                for player in players:
+                    if isinstance(player, str):
+                        player_name = player
+                    elif isinstance(player, dict):
+                        player_name = (
+                            player.get("name")
+                            or player.get("player_name")
+                            or player.get("full_name")
+                            or player.get("playerName")
+                            or ""
+                        )
+                    else:
+                        continue
+
+                    if player_name:
+                        player_to_team[slug_player(player_name)] = team_abbr
+
+            logger.info("v10.14: Fetched %d players from Playbook /teams", len(player_to_team))
+
+        # Also try /injuries endpoint which often includes player names with team info
+        injuries_url = f"{PLAYBOOK_API_BASE}/injuries"
+        injuries_resp = await fetch_with_retries(
+            "GET", injuries_url,
+            params={
+                "league": sport_config["playbook"],
+                "api_key": PLAYBOOK_API_KEY
+            }
+        )
+
+        if injuries_resp and injuries_resp.status_code == 200:
+            injuries_data = injuries_resp.json()
+            injuries_list = injuries_data.get("injuries", injuries_data.get("data", []))
+            if isinstance(injuries_data, list):
+                injuries_list = injuries_data
+
+            for injury in injuries_list:
+                player_name = (
+                    injury.get("player_name")
+                    or injury.get("player")
+                    or injury.get("name")
+                    or ""
+                )
+                team_abbr = (
+                    injury.get("team_abbr")
+                    or injury.get("team")
+                    or injury.get("team_abbreviation")
+                    or ""
+                )
+
+                if player_name and team_abbr:
+                    normalized_abbr = normalize_team_abbr(team_abbr)
+                    if normalized_abbr:
+                        player_to_team[slug_player(player_name)] = normalized_abbr
+
+            logger.info("v10.14: Added players from injuries, total now %d", len(player_to_team))
+
+    except Exception as e:
+        logger.warning("v10.14: Failed to fetch Playbook rosters: %s", e)
+
+    # Cache for 1 hour (rosters don't change often)
+    if player_to_team:
+        api_cache.set(cache_key, player_to_team, ttl=3600)
+
+    return player_to_team
+
+
 @router.get("/injuries/{sport}")
 async def get_injuries(sport: str):
     """
@@ -2933,7 +3077,11 @@ async def get_best_bets(sport: str, debug: int = 0):
     try:
         props_data = await get_props(sport)
 
-        # v10.14: Build player team cache from any available roster data
+        # v10.14: Fetch Playbook rosters for player-team mapping
+        playbook_roster = await fetch_playbook_rosters(sport)
+        logger.info("v10.14: Playbook roster fetched with %d players", len(playbook_roster))
+
+        # v10.14: Build player team cache from any available roster data in props
         player_team_cache = build_player_team_cache(props_data.get("data", []), {}, {})
         logger.info("v10.14: Player team cache built with %d entries", len(player_team_cache))
 
@@ -2967,7 +3115,8 @@ async def get_best_bets(sport: str, debug: int = 0):
                     player_name=player,
                     home_abbr=home_abbr,
                     away_abbr=away_abbr,
-                    player_team_cache=player_team_cache
+                    player_team_cache=player_team_cache,
+                    playbook_roster=playbook_roster
                 )
 
                 # v10.14: Get player abbr from prop if available (for debug output)
