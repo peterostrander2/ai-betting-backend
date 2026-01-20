@@ -256,6 +256,85 @@ class CleanupJob:
 
 
 # ============================================
+# v10.31 GRADING + TUNING JOB
+# ============================================
+
+class V1031GradingJob:
+    """
+    v10.31 Daily grading and tuning job:
+    1. Grade yesterday's picks from PickLedger
+    2. Run conservative tuning on sport configs
+    3. Log all changes to ConfigChangeLog
+    """
+
+    def __init__(self):
+        self.last_run = None
+        self.last_results = {}
+
+    async def run_async(self):
+        """Execute v10.31 grading and tuning for all sports."""
+        logger.info("=" * 50)
+        logger.info("📊 v10.31 GRADING + TUNING STARTING")
+        logger.info(f"   Time: {datetime.now().isoformat()}")
+        logger.info("=" * 50)
+
+        self.last_run = datetime.now()
+        results = {
+            "timestamp": self.last_run.isoformat(),
+            "grading": {},
+            "tuning": {}
+        }
+
+        # Import engines
+        try:
+            from grading_engine import run_daily_grading
+            from learning_engine import run_daily_tuning
+        except ImportError as e:
+            logger.error(f"Could not import v10.31 engines: {e}")
+            return {"error": f"Import failed: {e}"}
+
+        # Step 1: Grade yesterday's picks
+        try:
+            grading_results = await run_daily_grading(days_back=1)
+            results["grading"] = grading_results
+            logger.info(f"Grading complete: {grading_results.get('totals', {})}")
+        except Exception as e:
+            logger.error(f"Grading failed: {e}")
+            results["grading"] = {"error": str(e)}
+
+        # Step 2: Run conservative tuning
+        try:
+            tuning_results = run_daily_tuning()
+            results["tuning"] = tuning_results
+            logger.info(f"Tuning complete: {tuning_results.get('sports_tuned', 0)} sports tuned")
+        except Exception as e:
+            logger.error(f"Tuning failed: {e}")
+            results["tuning"] = {"error": str(e)}
+
+        self.last_results = results
+
+        logger.info("=" * 50)
+        logger.info("✅ v10.31 GRADING + TUNING COMPLETE")
+        logger.info("=" * 50)
+
+        return results
+
+    def run(self):
+        """Sync wrapper for scheduled execution."""
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.run_async())
+                return {"status": "scheduled"}
+            else:
+                return loop.run_until_complete(self.run_async())
+        except RuntimeError:
+            return asyncio.run(self.run_async())
+
+
+# ============================================
 # PROPS FETCH JOB
 # ============================================
 
@@ -350,13 +429,14 @@ class DailyScheduler:
     """
     Manages scheduled tasks.
     """
-    
+
     def __init__(self, auto_grader=None, training_pipeline=None):
         self.auto_grader = auto_grader
         self.training_pipeline = training_pipeline
         self.audit_job = DailyAuditJob(auto_grader, training_pipeline)
         self.cleanup_job = CleanupJob(auto_grader)
         self.props_job = PropsFetchJob()
+        self.v1031_job = V1031GradingJob()  # v10.31: New grading + tuning job
         self.scheduler = None
         self.running = False
         self._thread = None
@@ -378,6 +458,14 @@ class DailyScheduler:
     def _start_apscheduler(self):
         """Start using APScheduler."""
         self.scheduler = BackgroundScheduler()
+
+        # v10.31 Grading + Tuning at 5 AM ET (before legacy audit)
+        self.scheduler.add_job(
+            self.v1031_job.run,
+            CronTrigger(hour=5, minute=0, timezone="America/New_York"),
+            id="v1031_grading_tuning",
+            name="v10.31 Daily Grading + Tuning (5 AM ET)"
+        )
 
         # Daily audit at 6 AM
         self.scheduler.add_job(
@@ -631,6 +719,22 @@ async def run_props_fetch_now():
         raise HTTPException(500, "Scheduler not initialized")
 
     result = await _scheduler.props_job.run_async()
+    return {
+        "status": "success",
+        "result": result
+    }
+
+
+@scheduler_router.post("/run-v1031-grading")
+async def run_v1031_grading_now():
+    """
+    v10.31: Manually trigger daily grading + tuning.
+    Grades yesterday's picks and runs conservative config tuning.
+    """
+    if not _scheduler:
+        raise HTTPException(500, "Scheduler not initialized")
+
+    result = await _scheduler.v1031_job.run_async()
     return {
         "status": "success",
         "result": result
