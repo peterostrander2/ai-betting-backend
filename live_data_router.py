@@ -1,4 +1,4 @@
-# live_data_router.py v14.9 - SCORING v10.24
+# live_data_router.py v14.9 - SCORING v10.25
 # Sport Profiles + Per-Sport Calibration + Cross-Sport Jarvis + NFL Conflict Fix
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
@@ -2928,6 +2928,51 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     # Get learned weights for esoteric scoring
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
+    # ========================================================================
+    # v10.25: CONFLUENCE LADDER (tier-safe, capped at 0.75)
+    # ========================================================================
+    def compute_confluence_ladder(research_score, esoteric_score, alignment_pct, jarvis_active, immortal_active=False):
+        """
+        Compute confluence boost using a ladder system.
+        Returns: (boost: float, label: str | None, level: str, reasons: List[str])
+
+        v10.25: Boosts are capped and never exceed +0.75 total.
+        First matching rule wins (evaluated in priority order).
+        """
+        # Rule 1: IMMORTAL_CONFLUENCE (rare capstone)
+        if immortal_active and research_score >= 7.5 and esoteric_score >= 7.5 and alignment_pct >= 85:
+            return (0.75, "IMMORTAL_CONFLUENCE", "IMMORTAL",
+                    ["CONFLUENCE: IMMORTAL_CONFLUENCE (+0.75) [R>=7.5 E>=7.5 align>=85%]"])
+
+        # Rule 2: JARVIS_PERFECT
+        if jarvis_active and research_score >= 7.5 and esoteric_score >= 7.0 and alignment_pct >= 85:
+            return (0.50, "JARVIS_PERFECT", "PERFECT",
+                    ["CONFLUENCE: JARVIS_PERFECT (+0.50) [R>=7.5 E>=7.0 align>=85%]"])
+
+        # Rule 3: PERFECT_CONFLUENCE
+        if research_score >= 7.0 and esoteric_score >= 7.0 and alignment_pct >= 85:
+            return (0.35, "PERFECT_CONFLUENCE", "PERFECT",
+                    ["CONFLUENCE: PERFECT_CONFLUENCE (+0.35) [R>=7.0 E>=7.0 align>=85%]"])
+
+        # Rule 4: JARVIS_MODERATE
+        if jarvis_active and alignment_pct >= 80:
+            return (0.25, "JARVIS_MODERATE", "MODERATE",
+                    ["CONFLUENCE: JARVIS_MODERATE (+0.25) [align>=80%]"])
+
+        # Rule 5: No confluence boost
+        return (0.0, None, "NONE", [])
+
+    # v10.25: Confluence counter for debug output
+    confluence_counts = {
+        "IMMORTAL_CONFLUENCE": 0,
+        "JARVIS_PERFECT": 0,
+        "PERFECT_CONFLUENCE": 0,
+        "JARVIS_MODERATE": 0,
+        "NONE": 0
+    }
+    alignment_pct_sum = 0.0
+    alignment_pct_count = 0
+
     # Helper function to calculate scores with v10.1 dual-score confluence
     # v10.18: Added prop_line, player_team_side, game_total for prop-independent pillars
     def calculate_pick_score(game_str, sharp_signal, base_ai=5.8, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_home=False, team_rest_days=0, opp_rest_days=0, game_hour_et=20, market="", odds=-110, sharp_scope="GAME", direction_mult=1.0, direction_label="N/A", prop_line=None, player_team_side=None, game_total=None, pick_against_public=None, sport="nba"):
@@ -3304,42 +3349,29 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         # v10.20: Ritual base ensures esoteric score starts at 6.0 minimum
         esoteric_score = max(0, min(10, esoteric_raw))
 
-        # --- v10.9 JARVIS CONFLUENCE DRIVER ---
-        # Jarvis affects picks ONLY through confluence boosts and SmashSpot tagging
-        # (not through inflating research score)
+        # --- v10.25 CONFLUENCE LADDER ---
+        # Jarvis affects picks through confluence boosts and SmashSpot tagging
+        # Uses compute_confluence_ladder() for tier-safe, capped boosts
         alignment = 1 - abs(research_score - esoteric_score) / 10
         alignment_pct = alignment * 100
-        high_quality = (research_score >= 7.5)  # v10.9: raised threshold for high_quality
-        high_quality_moderate = (research_score >= 6.2)  # v10.9: threshold for moderate boost
-        is_aligned_strong = (alignment_pct >= 80)  # 80% for strong alignment
-        is_aligned_moderate = (alignment_pct >= 62)  # 62% for moderate alignment
-        is_aligned = (alignment >= 0.75)  # 75% legacy threshold
 
-        # Confluence boost calculation (micro-scaled)
-        confluence_boost = 0.0
-        confluence_level = "DIVERGENT"
-        confluence_reasons = []
+        # v10.25: Use the new confluence ladder function
+        confluence_boost, confluence_label, confluence_level, confluence_reasons = compute_confluence_ladder(
+            research_score=research_score,
+            esoteric_score=esoteric_score,
+            alignment_pct=alignment_pct,
+            jarvis_active=jarvis_triggered,
+            immortal_active=immortal_detected
+        )
 
-        if immortal_detected and high_quality and is_aligned_strong:
-            confluence_boost = 1.0
-            confluence_level = "IMMORTAL"
-            confluence_reasons.append("CONFLUENCE: IMMORTAL +1.0")
-        elif jarvis_triggered and high_quality and is_aligned_strong:
-            confluence_boost = 0.6
-            confluence_level = "JARVIS_PERFECT"
-            confluence_reasons.append("CONFLUENCE: JARVIS PERFECT +0.6")
-        elif jarvis_triggered and high_quality_moderate and is_aligned_moderate:
-            # v10.9: Moderate Jarvis Confluence Boost
-            confluence_boost = 0.25
-            confluence_level = "JARVIS_MODERATE"
-            confluence_reasons.append("CONFLUENCE: Jarvis Moderate Alignment +0.25")
-        elif is_aligned:
-            confluence_boost = 0.3
-            confluence_level = "PERFECT"
-            confluence_reasons.append("CONFLUENCE: Perfect Alignment +0.3")
-        elif alignment_pct >= 60:
-            confluence_level = "MODERATE"
-            # No boost for moderate alignment without Jarvis
+        # v10.25: Track confluence stats for debug output (nonlocal access)
+        nonlocal confluence_counts, alignment_pct_sum, alignment_pct_count
+        if confluence_label:
+            confluence_counts[confluence_label] = confluence_counts.get(confluence_label, 0) + 1
+        else:
+            confluence_counts["NONE"] = confluence_counts.get("NONE", 0) + 1
+        alignment_pct_sum += alignment_pct
+        alignment_pct_count += 1
 
         # --- FINAL SCORE FORMULA (v10.24: 3-Engine Blend) ---
         # Get sport profile for weight calibration
@@ -3400,6 +3432,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             "confidence": confidence,
             "confidence_score": confidence_score,  # Synced with final_score * 10
             "confluence_level": confluence_level,
+            "confluence_label": confluence_label,  # v10.25: Ladder label (IMMORTAL_CONFLUENCE, etc.)
+            "confluence_boost": round(confluence_boost, 2),  # v10.25: Actual boost applied
             "alignment_pct": round(alignment_pct, 1),  # v10.4: alignment percentage
             "smash_spot": smash_spot,  # v10.4: SmashSpot flag
             "bet_tier": bet_tier,
@@ -4252,8 +4286,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.24",
-        "scoring_system": "v10.24: 8 AI Engine Layer + Sport Profiles + Cross-Sport Jarvis Calibration",
+        "source": "production_v10.25",
+        "scoring_system": "v10.25: Confluence Ladder + Badges (tier-safe, max 0.75 boost)",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
@@ -4298,6 +4332,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             "jarvis_calls_props": jarvis_debug["calls_props"],
             "jarvis_missing_on_returned_picks": jarvis_debug["missing_on_returned"],
             "jarvis_engine_available": jarvis is not None,
+            # v10.25: Confluence ladder debug
+            "confluence_counts": confluence_counts,
+            "avg_alignment_pct": round(alignment_pct_sum / max(1, alignment_pct_count), 1),
             # v10.22: Sport profile info
             "sport_profile": {
                 "weights": sport_profile["weights"],
