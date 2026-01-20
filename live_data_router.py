@@ -1,4 +1,4 @@
-# live_data_router.py v14.9 - SCORING v10.27
+# live_data_router.py v14.9 - SCORING v10.28
 # Sport Profiles + Per-Sport Calibration + Cross-Sport Jarvis + NFL Conflict Fix
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
@@ -2929,160 +2929,158 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
     # ========================================================================
-    # v10.27: CONFLUENCE LADDER (tier-safe, capped at 0.75) + Debug Diagnostics
+    # v10.28: CONFLUENCE LADDER (tier-safe, capped at 0.75) + Debug Diagnostics
     # ========================================================================
     def compute_confluence_ladder(research_score, esoteric_score, alignment_pct, jarvis_active, immortal_active=False):
         """
         Compute confluence boost using a ladder system.
-        Returns: (boost, label, level, applied_reasons, fail_reasons, rule_trace)
+        Returns: (boost, label, level, applied_reasons, fail_reasons, rule_trace, repair_hints, alignment_gap)
 
-        v10.27: Added fail_reasons and rule_trace for debug transparency.
+        v10.28: Added repair_hints and alignment_gap for debug transparency.
+        Fixed truthfulness bug in failure messages.
         Boosts are capped and never exceed +0.75 total.
         First matching rule wins (evaluated in priority order).
         """
         def fmt(x, nd=2):
-            """Format numeric value for debug output."""
+            """Format numeric value for debug output - consistent string formatting."""
             try:
-                return round(float(x), nd)
+                return f"{float(x):.{nd}f}"
             except Exception:
-                return x
+                return str(x)
+
+        # v10.28: Alignment gap diagnostic
+        alignment_gap = round(abs(research_score - esoteric_score), 2)
 
         # Track rule evaluations for debug
         fail_reasons = []
+        repair_hints = []
         evaluated = []
 
-        # Rule 1: IMMORTAL_CONFLUENCE (rare capstone)
-        rule1_checks = [
-            (immortal_active, "immortal_active", True),
-            (research_score >= 7.5, f"research_score {fmt(research_score)} >= 7.50", 7.5),
-            (esoteric_score >= 7.5, f"esoteric_score {fmt(esoteric_score)} >= 7.50", 7.5),
-            (alignment_pct >= 85, f"alignment_pct {fmt(alignment_pct, 1)} >= 85.0", 85),
+        # Rule thresholds for repair hint calculations
+        RULES = [
+            {
+                "name": "IMMORTAL_CONFLUENCE",
+                "r_min": 7.5, "e_min": 7.5, "align_min": 85.0,
+                "requires_jarvis": False, "requires_immortal": True,
+                "boost": 0.75, "level": "IMMORTAL"
+            },
+            {
+                "name": "JARVIS_PERFECT",
+                "r_min": 7.5, "e_min": 7.0, "align_min": 85.0,
+                "requires_jarvis": True, "requires_immortal": False,
+                "boost": 0.50, "level": "PERFECT"
+            },
+            {
+                "name": "PERFECT_CONFLUENCE",
+                "r_min": 7.0, "e_min": 7.0, "align_min": 85.0,
+                "requires_jarvis": False, "requires_immortal": False,
+                "boost": 0.35, "level": "PERFECT"
+            },
+            {
+                "name": "JARVIS_MODERATE",
+                "r_min": 0.0, "e_min": 0.0, "align_min": 80.0,
+                "requires_jarvis": True, "requires_immortal": False,
+                "boost": 0.25, "level": "MODERATE"
+            },
         ]
-        rule1_passed = all(c[0] for c in rule1_checks)
-        evaluated.append({"rule": "IMMORTAL_CONFLUENCE", "passed": rule1_passed})
 
-        if rule1_passed:
-            rule_trace = {
-                "research_score": fmt(research_score),
-                "esoteric_score": fmt(esoteric_score),
-                "alignment_pct": fmt(alignment_pct, 1),
-                "evaluated": evaluated
-            }
-            return (0.75, "IMMORTAL_CONFLUENCE", "IMMORTAL",
-                    ["CONFLUENCE: IMMORTAL_CONFLUENCE (+0.75) [R>=7.5 E>=7.5 align>=85%]"],
-                    [], rule_trace)
+        applied_rule = None
 
-        # Record failures for Rule 1
-        for check, desc, _ in rule1_checks:
-            if not check:
-                if "immortal_active" in desc:
-                    fail_reasons.append("FAIL: IMMORTAL_CONFLUENCE immortal_active=False")
-                elif "research_score" in desc:
-                    fail_reasons.append(f"FAIL: IMMORTAL_CONFLUENCE research_score {fmt(research_score)} < 7.50")
-                elif "esoteric_score" in desc:
-                    fail_reasons.append(f"FAIL: IMMORTAL_CONFLUENCE esoteric_score {fmt(esoteric_score)} < 7.50")
-                elif "alignment_pct" in desc:
-                    fail_reasons.append(f"FAIL: IMMORTAL_CONFLUENCE alignment_pct {fmt(alignment_pct, 1)} < 85.0")
+        for rule in RULES:
+            rule_name = rule["name"]
 
-        # Rule 2: JARVIS_PERFECT
-        rule2_checks = [
-            (jarvis_active, "jarvis_active", True),
-            (research_score >= 7.5, f"research_score {fmt(research_score)} >= 7.50", 7.5),
-            (esoteric_score >= 7.0, f"esoteric_score {fmt(esoteric_score)} >= 7.00", 7.0),
-            (alignment_pct >= 85, f"alignment_pct {fmt(alignment_pct, 1)} >= 85.0", 85),
-        ]
-        rule2_passed = all(c[0] for c in rule2_checks)
-        evaluated.append({"rule": "JARVIS_PERFECT", "passed": rule2_passed})
+            # Check all conditions for this rule
+            checks_failed = []
 
-        if rule2_passed:
-            rule_trace = {
-                "research_score": fmt(research_score),
-                "esoteric_score": fmt(esoteric_score),
-                "alignment_pct": fmt(alignment_pct, 1),
-                "evaluated": evaluated
-            }
-            return (0.50, "JARVIS_PERFECT", "PERFECT",
-                    ["CONFLUENCE: JARVIS_PERFECT (+0.50) [R>=7.5 E>=7.0 align>=85%]"],
-                    fail_reasons, rule_trace)
+            if rule["requires_immortal"] and not immortal_active:
+                checks_failed.append(("immortal_active", False, True))
+            if rule["requires_jarvis"] and not jarvis_active:
+                checks_failed.append(("jarvis_active", False, True))
+            if rule["r_min"] > 0 and research_score < rule["r_min"]:
+                checks_failed.append(("research_score", research_score, rule["r_min"]))
+            if rule["e_min"] > 0 and esoteric_score < rule["e_min"]:
+                checks_failed.append(("esoteric_score", esoteric_score, rule["e_min"]))
+            if alignment_pct < rule["align_min"]:
+                checks_failed.append(("alignment_pct", alignment_pct, rule["align_min"]))
 
-        # Record failures for Rule 2
-        for check, desc, _ in rule2_checks:
-            if not check:
-                if "jarvis_active" in desc:
-                    fail_reasons.append("FAIL: JARVIS_PERFECT jarvis_active=False")
-                elif "research_score" in desc:
-                    fail_reasons.append(f"FAIL: JARVIS_PERFECT research_score {fmt(research_score)} < 7.50")
-                elif "esoteric_score" in desc:
-                    fail_reasons.append(f"FAIL: JARVIS_PERFECT esoteric_score {fmt(esoteric_score)} < 7.00")
-                elif "alignment_pct" in desc:
-                    fail_reasons.append(f"FAIL: JARVIS_PERFECT alignment_pct {fmt(alignment_pct, 1)} < 85.0")
+            rule_passed = len(checks_failed) == 0
+            evaluated.append({"rule": rule_name, "passed": rule_passed})
 
-        # Rule 3: PERFECT_CONFLUENCE
-        rule3_checks = [
-            (research_score >= 7.0, f"research_score {fmt(research_score)} >= 7.00", 7.0),
-            (esoteric_score >= 7.0, f"esoteric_score {fmt(esoteric_score)} >= 7.00", 7.0),
-            (alignment_pct >= 85, f"alignment_pct {fmt(alignment_pct, 1)} >= 85.0", 85),
-        ]
-        rule3_passed = all(c[0] for c in rule3_checks)
-        evaluated.append({"rule": "PERFECT_CONFLUENCE", "passed": rule3_passed})
+            if rule_passed and applied_rule is None:
+                # This rule passes - it's the applied rule
+                applied_rule = rule
+            elif not rule_passed and applied_rule is None:
+                # This rule failed and we haven't found a passing rule yet
+                # Record failures with truthful comparisons
+                for field, actual_val, required_val in checks_failed:
+                    if field == "immortal_active":
+                        fail_reasons.append(f"FAIL: {rule_name} immortal_active=False (required=True)")
+                    elif field == "jarvis_active":
+                        fail_reasons.append(f"FAIL: {rule_name} jarvis_active=False (required=True)")
+                    elif field == "research_score":
+                        fail_reasons.append(f"FAIL: {rule_name} research_score {fmt(actual_val)} < {fmt(required_val)}")
+                    elif field == "esoteric_score":
+                        fail_reasons.append(f"FAIL: {rule_name} esoteric_score {fmt(actual_val)} < {fmt(required_val)}")
+                    elif field == "alignment_pct":
+                        fail_reasons.append(f"FAIL: {rule_name} alignment_pct {fmt(actual_val, 1)} < {fmt(required_val, 1)}")
 
-        if rule3_passed:
-            rule_trace = {
-                "research_score": fmt(research_score),
-                "esoteric_score": fmt(esoteric_score),
-                "alignment_pct": fmt(alignment_pct, 1),
-                "evaluated": evaluated
-            }
-            return (0.35, "PERFECT_CONFLUENCE", "PERFECT",
-                    ["CONFLUENCE: PERFECT_CONFLUENCE (+0.35) [R>=7.0 E>=7.0 align>=85%]"],
-                    fail_reasons, rule_trace)
+        # Generate repair hints for rules ABOVE the applied rule
+        for rule in RULES:
+            if applied_rule and rule["name"] == applied_rule["name"]:
+                break  # Stop at the applied rule
 
-        # Record failures for Rule 3
-        for check, desc, _ in rule3_checks:
-            if not check:
-                if "research_score" in desc:
-                    fail_reasons.append(f"FAIL: PERFECT_CONFLUENCE research_score {fmt(research_score)} < 7.00")
-                elif "esoteric_score" in desc:
-                    fail_reasons.append(f"FAIL: PERFECT_CONFLUENCE esoteric_score {fmt(esoteric_score)} < 7.00")
-                elif "alignment_pct" in desc:
-                    fail_reasons.append(f"FAIL: PERFECT_CONFLUENCE alignment_pct {fmt(alignment_pct, 1)} < 85.0")
+            rule_name = rule["name"]
 
-        # Rule 4: JARVIS_MODERATE
-        rule4_checks = [
-            (jarvis_active, "jarvis_active", True),
-            (alignment_pct >= 80, f"alignment_pct {fmt(alignment_pct, 1)} >= 80.0", 80),
-        ]
-        rule4_passed = all(c[0] for c in rule4_checks)
-        evaluated.append({"rule": "JARVIS_MODERATE", "passed": rule4_passed})
+            # Calculate deltas needed to reach this rule
+            if rule["requires_immortal"] and not immortal_active:
+                repair_hints.append(f"REPAIR: Need immortal_active=True to reach {rule_name}")
+            if rule["requires_jarvis"] and not jarvis_active:
+                repair_hints.append(f"REPAIR: Need jarvis_active=True to reach {rule_name}")
 
-        if rule4_passed:
-            rule_trace = {
-                "research_score": fmt(research_score),
-                "esoteric_score": fmt(esoteric_score),
-                "alignment_pct": fmt(alignment_pct, 1),
-                "evaluated": evaluated
-            }
-            return (0.25, "JARVIS_MODERATE", "MODERATE",
-                    ["CONFLUENCE: JARVIS_MODERATE (+0.25) [align>=80%]"],
-                    fail_reasons, rule_trace)
+            if rule["r_min"] > 0:
+                need_r = max(0, rule["r_min"] - research_score)
+                if need_r > 0:
+                    repair_hints.append(f"REPAIR: Need research_score +{fmt(need_r)} to reach {rule_name} (min {fmt(rule['r_min'])})")
 
-        # Record failures for Rule 4
-        for check, desc, _ in rule4_checks:
-            if not check:
-                if "jarvis_active" in desc:
-                    fail_reasons.append("FAIL: JARVIS_MODERATE jarvis_active=False")
-                elif "alignment_pct" in desc:
-                    fail_reasons.append(f"FAIL: JARVIS_MODERATE alignment_pct {fmt(alignment_pct, 1)} < 80.0")
+            if rule["e_min"] > 0:
+                need_e = max(0, rule["e_min"] - esoteric_score)
+                if need_e > 0:
+                    repair_hints.append(f"REPAIR: Need esoteric_score +{fmt(need_e)} to reach {rule_name} (min {fmt(rule['e_min'])})")
+
+            need_a = max(0, rule["align_min"] - alignment_pct)
+            if need_a > 0:
+                repair_hints.append(f"REPAIR: Need alignment_pct +{fmt(need_a, 1)} to reach {rule_name} (min {fmt(rule['align_min'], 1)})")
+
+        # Add alignment gap hint if high divergence
+        if alignment_gap >= 1.5:
+            repair_hints.append(f"REPAIR: Alignment gap {fmt(alignment_gap)} is high; reduce divergence between engines for higher confluence")
+
+        # Build rule_trace
+        rule_trace = {
+            "research_score": float(fmt(research_score)),
+            "esoteric_score": float(fmt(esoteric_score)),
+            "alignment_pct": float(fmt(alignment_pct, 1)),
+            "alignment_gap": alignment_gap,
+            "evaluated": evaluated
+        }
+
+        # Return based on applied rule
+        if applied_rule:
+            applied_reasons = [f"CONFLUENCE: {applied_rule['name']} (+{fmt(applied_rule['boost'])}) [applied]"]
+            return (
+                applied_rule["boost"],
+                applied_rule["name"],
+                applied_rule["level"],
+                applied_reasons,
+                fail_reasons,
+                rule_trace,
+                repair_hints,
+                alignment_gap
+            )
 
         # Rule 5: No confluence boost (NONE)
         evaluated.append({"rule": "NONE", "passed": True})
-        rule_trace = {
-            "research_score": fmt(research_score),
-            "esoteric_score": fmt(esoteric_score),
-            "alignment_pct": fmt(alignment_pct, 1),
-            "evaluated": evaluated
-        }
-        return (0.0, "NONE", "NONE", [], fail_reasons, rule_trace)
+        return (0.0, "NONE", "NONE", [], fail_reasons, rule_trace, repair_hints, alignment_gap)
 
     # v10.26: Confluence counters for debug output (candidates = all scored picks)
     confluence_counts_candidates = {
@@ -3490,9 +3488,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         alignment = 1 - abs(research_score - esoteric_score) / 10
         alignment_pct = alignment * 100
 
-        # v10.27: Now returns 6-tuple with debug diagnostics
+        # v10.28: Returns 8-tuple with repair_hints and alignment_gap
         (confluence_boost, confluence_label, confluence_level, confluence_reasons,
-         confluence_fail_reasons, confluence_rule_trace) = compute_confluence_ladder(
+         confluence_fail_reasons, confluence_rule_trace, confluence_repair_hints,
+         confluence_alignment_gap) = compute_confluence_ladder(
             research_score=research_score,
             esoteric_score=esoteric_score,
             alignment_pct=alignment_pct,
@@ -3596,9 +3595,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             "jarvis_triggers": jarvis_triggers_hit,
             "jarvis_active": jarvis_triggered,  # v10.4: for SmashSpot check
             "immortal_detected": immortal_detected,
-            # v10.27: Debug-only confluence diagnostics (stripped unless debug=1)
+            # v10.28: Debug-only confluence diagnostics (stripped unless debug=1)
             "_debug_confluence_failures": confluence_fail_reasons,
-            "_debug_confluence_trace": confluence_rule_trace
+            "_debug_confluence_trace": confluence_rule_trace,
+            "_debug_confluence_repairs": confluence_repair_hints,
+            "_debug_alignment_gap": confluence_alignment_gap
         }
 
     # ============================================
@@ -4453,7 +4454,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     for pick in merged_picks:
         enforce_scoring_fields(pick)
 
-    # v10.27: Handle debug-only confluence failure fields
+    # v10.28: Handle debug-only confluence diagnostic fields
     # When debug=1: Rename _debug_* to debug_* (expose diagnostics)
     # When debug!=1: Strip _debug_* fields (don't leak to production responses)
     all_picks_to_clean = list(set(top_props + top_game_picks + merged_picks))
@@ -4464,15 +4465,22 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                 pick["debug_confluence_failures"] = pick.pop("_debug_confluence_failures")
             if "_debug_confluence_trace" in pick:
                 pick["debug_confluence_trace"] = pick.pop("_debug_confluence_trace")
+            # v10.28: New debug fields
+            if "_debug_confluence_repairs" in pick:
+                pick["debug_confluence_repairs"] = pick.pop("_debug_confluence_repairs")
+            if "_debug_alignment_gap" in pick:
+                pick["debug_alignment_gap"] = pick.pop("_debug_alignment_gap")
         else:
             # Strip debug fields for non-debug responses
             pick.pop("_debug_confluence_failures", None)
             pick.pop("_debug_confluence_trace", None)
+            pick.pop("_debug_confluence_repairs", None)
+            pick.pop("_debug_alignment_gap", None)
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.27",
-        "scoring_system": "v10.27: Confluence failure reasons (debug-only)",
+        "source": "production_v10.28",
+        "scoring_system": "v10.28: Confluence repair hints + alignment gap debug (no scoring changes)",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
