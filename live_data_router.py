@@ -57,7 +57,17 @@ try:
     AUTO_GRADER_AVAILABLE = True
 except ImportError:
     AUTO_GRADER_AVAILABLE = False
-    logger.warning("auto_grader module not available")
+
+# v10.31: Import database layer for pick ledger + config
+try:
+    from database import (
+        DB_ENABLED, init_database, load_sport_config, upsert_pick,
+        get_picks_for_date, get_config_changes, FACTORY_SPORT_PROFILES
+    )
+    DATABASE_AVAILABLE = True
+except ImportError:
+    DATABASE_AVAILABLE = False
+    DB_ENABLED = False
 
 # Import AI Engine Layer (v10.24: 8 AI Models)
 try:
@@ -4739,8 +4749,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.30",
-        "scoring_system": "v10.30: Confidence Filter + Recommended Units + Multi-Key Sorting",
+        "source": "production_v10.31",
+        "scoring_system": "v10.31: Auto-grading + Conservative Self-Correction + Daily Transparency",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
@@ -4813,8 +4823,30 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "tiers": sport_profile["tiers"],
                 "limits": sport_profile["limits"],
                 "conflict_policy": sport_profile["conflict_policy"]
-            }
+            },
+            # v10.31: Database status
+            "database_available": DATABASE_AVAILABLE and DB_ENABLED
         }
+
+    # ================================================================
+    # v10.31: SAVE PICKS TO LEDGER (deduplication via pick_uid)
+    # ================================================================
+    if DATABASE_AVAILABLE and DB_ENABLED:
+        picks_saved = 0
+        all_picks_to_save = top_props + top_game_picks
+        for pick in all_picks_to_save:
+            # Enrich pick data with sport and version
+            pick_data = {
+                **pick,
+                "sport": sport.upper(),
+                "version": "production_v10.31"
+            }
+            if upsert_pick(pick_data):
+                picks_saved += 1
+        if debug == 1:
+            result["debug"]["picks_saved_to_ledger"] = picks_saved
+            result["debug"]["picks_attempted_save"] = len(all_picks_to_save)
+
     api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
     return result
 
@@ -5215,6 +5247,200 @@ Whether we win or lose, we're always improving! 💪
 
     except Exception as e:
         logger.exception("Failed to generate daily report: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/daily-report/{sport}")
+async def get_v1031_daily_report(sport: str, date_str: str = None):
+    """
+    v10.31: Get daily report for a sport from PickLedger.
+
+    Query Parameters:
+    - date: YYYY-MM-DD format (default: yesterday)
+
+    Returns:
+    - Performance summary (W-L-P, net_units, ROI)
+    - Top picks with results
+    - Breakdown by tier and confidence grade
+    - Config changes made that day
+    """
+    if not DATABASE_AVAILABLE or not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database not available for v10.31 reports")
+
+    try:
+        from datetime import date as date_type
+        from database import get_picks_for_date, get_config_changes, PickResult
+
+        # Parse date
+        if date_str:
+            target_date = date_type.fromisoformat(date_str)
+        else:
+            target_date = (datetime.now() - timedelta(days=1)).date()
+
+        sport_upper = sport.upper()
+
+        # Get picks for the date
+        picks = get_picks_for_date(target_date, sport_upper)
+
+        if not picks:
+            return {
+                "sport": sport_upper,
+                "date": target_date.isoformat(),
+                "message": "No picks found for this date",
+                "record": "0-0-0",
+                "net_units": 0.0,
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Calculate summary stats
+        wins = sum(1 for p in picks if p.result == PickResult.WIN)
+        losses = sum(1 for p in picks if p.result == PickResult.LOSS)
+        pushes = sum(1 for p in picks if p.result == PickResult.PUSH)
+        pending = sum(1 for p in picks if p.result == PickResult.PENDING)
+        net_units = sum(p.profit_units or 0 for p in picks if p.result in [PickResult.WIN, PickResult.LOSS, PickResult.PUSH])
+
+        # Calculate ROI (total units wagered)
+        settled_picks = [p for p in picks if p.result in [PickResult.WIN, PickResult.LOSS, PickResult.PUSH]]
+        total_wagered = sum(p.recommended_units or 0.5 for p in settled_picks)
+        roi = (net_units / total_wagered * 100) if total_wagered > 0 else 0
+
+        # Breakdown by tier
+        tier_breakdown = {}
+        for tier in ["GOLD_STAR", "EDGE_LEAN", "MONITOR"]:
+            tier_picks = [p for p in settled_picks if p.tier == tier]
+            if tier_picks:
+                tier_wins = sum(1 for p in tier_picks if p.result == PickResult.WIN)
+                tier_units = sum(p.profit_units or 0 for p in tier_picks)
+                tier_breakdown[tier] = {
+                    "picks": len(tier_picks),
+                    "wins": tier_wins,
+                    "losses": len(tier_picks) - tier_wins,
+                    "net_units": round(tier_units, 2),
+                    "hit_rate": round(tier_wins / len(tier_picks) * 100, 1) if tier_picks else 0
+                }
+
+        # Breakdown by confidence grade
+        confidence_breakdown = {}
+        for grade in ["A", "B", "C"]:
+            grade_picks = [p for p in settled_picks if p.confidence_grade == grade]
+            if grade_picks:
+                grade_wins = sum(1 for p in grade_picks if p.result == PickResult.WIN)
+                grade_units = sum(p.profit_units or 0 for p in grade_picks)
+                confidence_breakdown[grade] = {
+                    "picks": len(grade_picks),
+                    "wins": grade_wins,
+                    "net_units": round(grade_units, 2),
+                    "hit_rate": round(grade_wins / len(grade_picks) * 100, 1) if grade_picks else 0
+                }
+
+        # Get top picks (by profit_units, top 5)
+        top_picks = sorted(
+            [p for p in picks if p.result in [PickResult.WIN, PickResult.LOSS]],
+            key=lambda p: p.profit_units or 0,
+            reverse=True
+        )[:5]
+
+        top_picks_data = [
+            {
+                "selection": p.selection,
+                "matchup": p.matchup,
+                "tier": p.tier,
+                "confidence_grade": p.confidence_grade,
+                "result": p.result.value if p.result else "PENDING",
+                "profit_units": round(p.profit_units or 0, 2),
+                "odds": p.odds
+            }
+            for p in top_picks
+        ]
+
+        # Get config changes for the date
+        changes = get_config_changes(sport_upper, days_back=1)
+        config_changes = [
+            {
+                "timestamp": c.timestamp.isoformat() if c.timestamp else None,
+                "reason": c.reason
+            }
+            for c in changes
+        ]
+
+        # Build report
+        report = {
+            "sport": sport_upper,
+            "date": target_date.isoformat(),
+            "record": f"{wins}-{losses}-{pushes}",
+            "pending": pending,
+            "net_units": round(net_units, 2),
+            "roi": f"{roi:.1f}%",
+            "total_picks": len(picks),
+            "top_picks": top_picks_data,
+            "tier_breakdown": tier_breakdown,
+            "confidence_breakdown": confidence_breakdown,
+            "config_changes": config_changes,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        return report
+
+    except Exception as e:
+        logger.exception("Failed to generate v10.31 daily report: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/admin/grade-now")
+async def admin_grade_now(
+    date: str = None,
+    sport: str = None,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v10.31: Admin endpoint to manually trigger grading and tuning.
+
+    Query Parameters:
+    - date: YYYY-MM-DD format (default: yesterday)
+    - sport: NBA, NFL, MLB, NHL, NCAAB (default: all sports)
+
+    Requires X-API-Key header.
+
+    Steps:
+    1. Grade picks for the specified date
+    2. Run conservative tuning based on rolling performance
+    """
+    if not DATABASE_AVAILABLE or not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database not available for v10.31 grading")
+
+    try:
+        from datetime import date as date_type
+        from grading_engine import grade_picks_for_date, run_daily_grading
+        from learning_engine import tune_config_conservatively, run_daily_tuning
+
+        # Parse date
+        if date:
+            target_date = date_type.fromisoformat(date)
+        else:
+            target_date = (datetime.now() - timedelta(days=1)).date()
+
+        # Grade picks
+        if sport:
+            sport_upper = sport.upper()
+            grading_result = await grade_picks_for_date(target_date, sport_upper)
+            tuning_result = tune_config_conservatively(sport_upper)
+            grading_summary = {sport_upper: grading_result}
+            tuning_summary = {sport_upper: tuning_result}
+        else:
+            grading_summary = await run_daily_grading(days_back=(datetime.now().date() - target_date).days)
+            tuning_summary = run_daily_tuning()
+
+        return {
+            "success": True,
+            "date": target_date.isoformat(),
+            "sport": sport.upper() if sport else "ALL",
+            "grading": grading_summary,
+            "tuning": tuning_summary,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.exception("Admin grade-now failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

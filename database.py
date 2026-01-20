@@ -1,15 +1,17 @@
 # database.py - PostgreSQL Database Models
-# For auto-grader prediction storage and weight persistence
+# For auto-grader prediction storage, weight persistence, and v10.31 pick ledger
 
 import os
 import logging
-from datetime import datetime
-from typing import Optional, Dict, Any
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, Index
+import json
+import hashlib
+from datetime import datetime, date, timedelta
+from typing import Optional, Dict, Any, List
+from enum import Enum as PyEnum
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, Index, Enum
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
-import json
 
 logger = logging.getLogger("database")
 
@@ -21,23 +23,30 @@ Base = declarative_base()
 engine = None
 SessionLocal = None
 DB_ENABLED = False
+DB_TYPE = "none"
 
 
 def init_database():
     """Initialize database connection and create tables."""
-    global engine, SessionLocal, DB_ENABLED
+    global engine, SessionLocal, DB_ENABLED, DB_TYPE
 
-    if not DATABASE_URL:
-        logger.warning("DATABASE_URL not set - database features disabled")
-        return False
-
-    try:
+    if DATABASE_URL:
+        # Production: Postgres
         # Railway PostgreSQL URLs use postgres:// but SQLAlchemy needs postgresql://
         db_url = DATABASE_URL
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-        engine = create_engine(db_url, pool_pre_ping=True, pool_size=5)
+        engine = create_engine(db_url, pool_pre_ping=True, pool_size=5, max_overflow=10)
+        DB_TYPE = "postgresql"
+        logger.info("Database: Using PostgreSQL (production)")
+    else:
+        # Local: SQLite fallback
+        engine = create_engine("sqlite:///./local.db", connect_args={"check_same_thread": False})
+        DB_TYPE = "sqlite"
+        logger.info("Database: Using SQLite (local fallback)")
+
+    try:
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
         # Create all tables
@@ -70,8 +79,29 @@ def get_db():
         db.close()
 
 
+def get_db_session() -> Optional[Session]:
+    """Get a direct database session (caller must close)."""
+    if not DB_ENABLED or SessionLocal is None:
+        return None
+    return SessionLocal()
+
+
 # ============================================================================
-# DATABASE MODELS
+# ENUMS (v10.31)
+# ============================================================================
+
+class PickResult(PyEnum):
+    """Result status for graded picks."""
+    PENDING = "PENDING"
+    WIN = "WIN"
+    LOSS = "LOSS"
+    PUSH = "PUSH"
+    VOID = "VOID"
+    MISSING = "MISSING"  # Results provider not available
+
+
+# ============================================================================
+# DATABASE MODELS (Legacy)
 # ============================================================================
 
 class PredictionRecord(Base):
@@ -244,7 +274,235 @@ class DailyEnergy(Base):
 
 
 # ============================================================================
-# DATABASE HELPER FUNCTIONS
+# v10.31 DATABASE MODELS
+# ============================================================================
+
+class PickLedger(Base):
+    """
+    v10.31: Store every pick returned to the community.
+    Uses pick_uid for deduplication (prevents duplicate inserts on repeated API calls).
+    """
+    __tablename__ = "pick_ledger"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Deduplication key (UNIQUE)
+    pick_uid = Column(String(64), unique=True, nullable=False, index=True)
+
+    # Core pick data
+    sport = Column(String(10), nullable=False, index=True)
+    event_id = Column(String(100), nullable=True, index=True)
+    start_time = Column(DateTime, nullable=True)
+    matchup = Column(String(200), nullable=False)
+    home_team = Column(String(100), nullable=True)
+    away_team = Column(String(100), nullable=True)
+    market = Column(String(50), nullable=False)
+    selection = Column(String(200), nullable=False)
+    side = Column(String(20), nullable=True)  # OVER/UNDER/HOME/AWAY
+    player_name = Column(String(100), nullable=True, index=True)
+    line = Column(Float, nullable=True)
+    odds = Column(Integer, nullable=False)
+    implied_prob = Column(Float, nullable=True)
+
+    # Scoring data
+    tier = Column(String(20), nullable=False)
+    confidence_grade = Column(String(1), nullable=False)  # A/B/C
+    recommended_units = Column(Float, default=0.5)
+    final_score = Column(Float, nullable=False)
+    research_score = Column(Float, nullable=True)
+    esoteric_score = Column(Float, nullable=True)
+    alignment_pct = Column(Float, nullable=True)
+    alignment_gap = Column(Float, nullable=True)
+    confluence_label = Column(String(50), nullable=True)
+    confluence_level = Column(String(20), nullable=True)
+    confluence_boost = Column(Float, default=0.0)
+    reasons = Column(Text, nullable=True)  # JSON string
+
+    # Version tracking
+    version = Column(String(50), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    # Grading fields
+    result = Column(Enum(PickResult), default=PickResult.PENDING, index=True)
+    settled_at = Column(DateTime, nullable=True)
+    profit_units = Column(Float, default=0.0)
+    actual_value = Column(Float, nullable=True)  # For props: actual stat value
+
+    __table_args__ = (
+        Index("ix_pick_ledger_sport_date", "sport", "created_at"),
+        Index("ix_pick_ledger_result_date", "result", "created_at"),
+    )
+
+    @staticmethod
+    def generate_pick_uid(
+        sport: str,
+        event_id: Optional[str],
+        market: str,
+        selection: str,
+        line: Optional[float],
+        odds: int,
+        version: str,
+        pick_date: date
+    ) -> str:
+        """
+        Generate unique pick identifier for deduplication.
+        Uses event_id if available, otherwise falls back to selection-based key.
+        """
+        if event_id:
+            key = f"{sport}|{event_id}|{market}|{selection}|{line}|{odds}|{version}|{pick_date.isoformat()}"
+        else:
+            key = f"{sport}|{market}|{selection}|{line}|{odds}|{version}|{pick_date.isoformat()}"
+        return hashlib.sha256(key.encode()).hexdigest()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "pick_uid": self.pick_uid,
+            "sport": self.sport,
+            "event_id": self.event_id,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "matchup": self.matchup,
+            "home_team": self.home_team,
+            "away_team": self.away_team,
+            "market": self.market,
+            "selection": self.selection,
+            "side": self.side,
+            "player_name": self.player_name,
+            "line": self.line,
+            "odds": self.odds,
+            "tier": self.tier,
+            "confidence_grade": self.confidence_grade,
+            "recommended_units": self.recommended_units,
+            "final_score": self.final_score,
+            "result": self.result.value if self.result else "PENDING",
+            "profit_units": self.profit_units,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "settled_at": self.settled_at.isoformat() if self.settled_at else None
+        }
+
+
+class SystemConfig(Base):
+    """
+    v10.31: Sport-specific config values that the engine reads live.
+    Stores full sport_profile blob (weights, thresholds, policies).
+    """
+    __tablename__ = "system_config"
+
+    sport = Column(String(10), primary_key=True)
+    config_json = Column(Text, nullable=False)  # Current config (mutable)
+    factory_config_json = Column(Text, nullable=False)  # Immutable factory baseline
+    last_updated = Column(DateTime, default=datetime.utcnow)
+    update_reason = Column(String(500), nullable=True)
+
+    def get_config(self) -> Dict[str, Any]:
+        """Parse config_json to dict."""
+        return json.loads(self.config_json) if self.config_json else {}
+
+    def set_config(self, config: Dict[str, Any]):
+        """Set config_json from dict."""
+        self.config_json = json.dumps(config)
+
+    def get_factory_config(self) -> Dict[str, Any]:
+        """Parse factory_config_json to dict."""
+        return json.loads(self.factory_config_json) if self.factory_config_json else {}
+
+
+class ConfigChangeLog(Base):
+    """
+    v10.31: Audit trail for config changes.
+    Enables transparency, traceability, and rollback capability.
+    """
+    __tablename__ = "config_change_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sport = Column(String(10), nullable=False, index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    old_config_json = Column(Text, nullable=True)
+    new_config_json = Column(Text, nullable=False)
+    reason = Column(String(500), nullable=False)
+    metrics_snapshot_json = Column(Text, nullable=True)  # Performance metrics at time of change
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "sport": self.sport,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "reason": self.reason,
+            "old_config": json.loads(self.old_config_json) if self.old_config_json else None,
+            "new_config": json.loads(self.new_config_json) if self.new_config_json else None,
+            "metrics_snapshot": json.loads(self.metrics_snapshot_json) if self.metrics_snapshot_json else None
+        }
+
+
+# ============================================================================
+# v10.31 FACTORY SPORT PROFILES
+# ============================================================================
+
+FACTORY_SPORT_PROFILES = {
+    "NBA": {
+        "weights": {"research": 0.67, "esoteric": 0.33},
+        "tiers": {
+            "GOLD_STAR": 7.5,
+            "EDGE_LEAN": 6.5,
+            "MONITOR": 5.5,
+            "PASS": 0.0
+        },
+        "limits": {"props": 10, "game_picks": 10},
+        "conflict_policy": {"exclude_conflicts": True},
+        "market_biases": {}
+    },
+    "NFL": {
+        "weights": {"research": 0.67, "esoteric": 0.33},
+        "tiers": {
+            "GOLD_STAR": 7.5,
+            "EDGE_LEAN": 6.5,
+            "MONITOR": 5.5,
+            "PASS": 0.0
+        },
+        "limits": {"props": 10, "game_picks": 10},
+        "conflict_policy": {"exclude_conflicts": True},
+        "market_biases": {}
+    },
+    "MLB": {
+        "weights": {"research": 0.67, "esoteric": 0.33},
+        "tiers": {
+            "GOLD_STAR": 7.5,
+            "EDGE_LEAN": 6.5,
+            "MONITOR": 5.5,
+            "PASS": 0.0
+        },
+        "limits": {"props": 10, "game_picks": 10},
+        "conflict_policy": {"exclude_conflicts": True},
+        "market_biases": {}
+    },
+    "NHL": {
+        "weights": {"research": 0.67, "esoteric": 0.33},
+        "tiers": {
+            "GOLD_STAR": 7.5,
+            "EDGE_LEAN": 6.5,
+            "MONITOR": 5.5,
+            "PASS": 0.0
+        },
+        "limits": {"props": 10, "game_picks": 10},
+        "conflict_policy": {"exclude_conflicts": True},
+        "market_biases": {"ml_dog_boost": 0.5}  # NHL ML Dog Weapon
+    },
+    "NCAAB": {
+        "weights": {"research": 0.67, "esoteric": 0.33},
+        "tiers": {
+            "GOLD_STAR": 7.5,
+            "EDGE_LEAN": 6.5,
+            "MONITOR": 5.5,
+            "PASS": 0.0
+        },
+        "limits": {"props": 10, "game_picks": 10},
+        "conflict_policy": {"exclude_conflicts": True},
+        "market_biases": {}
+    }
+}
+
+
+# ============================================================================
+# DATABASE HELPER FUNCTIONS (Legacy)
 # ============================================================================
 
 def save_prediction(db: Session, prediction_data: Dict[str, Any]) -> Optional[PredictionRecord]:
@@ -329,5 +587,346 @@ def get_database_status() -> Dict[str, Any]:
     return {
         "enabled": DB_ENABLED,
         "configured": bool(DATABASE_URL),
-        "url_set": "DATABASE_URL" in os.environ
+        "url_set": "DATABASE_URL" in os.environ,
+        "db_type": DB_TYPE
     }
+
+
+# ============================================================================
+# v10.31 DATABASE HELPER FUNCTIONS
+# ============================================================================
+
+def load_sport_config(sport: str, db: Session = None) -> Dict[str, Any]:
+    """
+    Load config for a sport. If not found, insert factory defaults.
+    Returns the config dict.
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                # Database not available, return factory defaults
+                sport_upper = sport.upper()
+                return FACTORY_SPORT_PROFILES.get(sport_upper, FACTORY_SPORT_PROFILES["NBA"])
+            return _load_sport_config_impl(sport, db)
+    else:
+        return _load_sport_config_impl(sport, db)
+
+
+def _load_sport_config_impl(sport: str, db: Session) -> Dict[str, Any]:
+    """Internal implementation of load_sport_config."""
+    sport_upper = sport.upper()
+    config = db.query(SystemConfig).filter(SystemConfig.sport == sport_upper).first()
+
+    if config is None:
+        # Insert factory defaults
+        factory = FACTORY_SPORT_PROFILES.get(sport_upper, FACTORY_SPORT_PROFILES["NBA"])
+        config = SystemConfig(
+            sport=sport_upper,
+            config_json=json.dumps(factory),
+            factory_config_json=json.dumps(factory),
+            last_updated=datetime.utcnow(),
+            update_reason="Factory defaults initialized"
+        )
+        db.add(config)
+        db.flush()
+        logger.info(f"Initialized factory config for {sport_upper}")
+        return factory
+
+    return config.get_config()
+
+
+def save_sport_config(
+    sport: str,
+    new_config: Dict[str, Any],
+    reason: str,
+    metrics_snapshot: Optional[Dict[str, Any]] = None,
+    db: Session = None
+) -> bool:
+    """
+    Save updated config for a sport and log the change.
+    Returns True on success.
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                logger.warning("Cannot save config: database not available")
+                return False
+            return _save_sport_config_impl(sport, new_config, reason, metrics_snapshot, db)
+    else:
+        return _save_sport_config_impl(sport, new_config, reason, metrics_snapshot, db)
+
+
+def _save_sport_config_impl(
+    sport: str,
+    new_config: Dict[str, Any],
+    reason: str,
+    metrics_snapshot: Optional[Dict[str, Any]],
+    db: Session
+) -> bool:
+    """Internal implementation of save_sport_config."""
+    try:
+        sport_upper = sport.upper()
+        config = db.query(SystemConfig).filter(SystemConfig.sport == sport_upper).first()
+
+        if config is None:
+            logger.error(f"Cannot save config for {sport_upper}: not found")
+            return False
+
+        old_config_json = config.config_json
+
+        # Update config
+        config.config_json = json.dumps(new_config)
+        config.last_updated = datetime.utcnow()
+        config.update_reason = reason
+
+        # Log the change
+        change_log = ConfigChangeLog(
+            sport=sport_upper,
+            old_config_json=old_config_json,
+            new_config_json=config.config_json,
+            reason=reason,
+            metrics_snapshot_json=json.dumps(metrics_snapshot) if metrics_snapshot else None
+        )
+        db.add(change_log)
+        db.flush()
+
+        logger.info(f"Config updated for {sport_upper}: {reason}")
+        return True
+    except Exception as e:
+        logger.exception(f"Failed to save config for {sport}: {e}")
+        return False
+
+
+def upsert_pick(pick_data: Dict[str, Any], db: Session = None) -> bool:
+    """
+    Insert a pick into the ledger if it doesn't exist (dedupe by pick_uid).
+    Returns True if inserted, False if already exists or error.
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return False
+            return _upsert_pick_impl(pick_data, db)
+    else:
+        return _upsert_pick_impl(pick_data, db)
+
+
+def _upsert_pick_impl(pick_data: Dict[str, Any], db: Session) -> bool:
+    """Internal implementation of upsert_pick."""
+    try:
+        # Generate pick_uid
+        pick_uid = PickLedger.generate_pick_uid(
+            sport=pick_data.get("sport", "NBA"),
+            event_id=pick_data.get("event_id"),
+            market=pick_data.get("market", ""),
+            selection=pick_data.get("selection", ""),
+            line=pick_data.get("line"),
+            odds=pick_data.get("odds", -110),
+            version=pick_data.get("version", "production_v10.31"),
+            pick_date=datetime.utcnow().date()
+        )
+
+        # Check if exists
+        existing = db.query(PickLedger).filter(PickLedger.pick_uid == pick_uid).first()
+        if existing:
+            return False  # Already exists
+
+        # Parse start_time if string
+        start_time = pick_data.get("start_time") or pick_data.get("game_time")
+        if isinstance(start_time, str):
+            try:
+                start_time = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                start_time = None
+
+        # Get scoring breakdown
+        scoring_breakdown = pick_data.get("scoring_breakdown", {})
+
+        # Create new pick
+        pick = PickLedger(
+            pick_uid=pick_uid,
+            sport=pick_data.get("sport", "NBA").upper(),
+            event_id=pick_data.get("event_id"),
+            start_time=start_time,
+            matchup=pick_data.get("matchup", pick_data.get("game", "")),
+            home_team=pick_data.get("home_team"),
+            away_team=pick_data.get("away_team"),
+            market=pick_data.get("market", ""),
+            selection=pick_data.get("selection", ""),
+            side=pick_data.get("side") or pick_data.get("over_under"),
+            player_name=pick_data.get("player_name"),
+            line=pick_data.get("line"),
+            odds=pick_data.get("odds", -110),
+            implied_prob=pick_data.get("implied_prob"),
+            tier=pick_data.get("tier", "MONITOR"),
+            confidence_grade=pick_data.get("confidence_grade", "C"),
+            recommended_units=pick_data.get("recommended_units", 0.5),
+            final_score=pick_data.get("final_score", pick_data.get("smash_score", 5.0)),
+            research_score=scoring_breakdown.get("research_score"),
+            esoteric_score=scoring_breakdown.get("esoteric_score"),
+            alignment_pct=pick_data.get("alignment_pct"),
+            alignment_gap=pick_data.get("alignment_gap"),
+            confluence_label=pick_data.get("confluence_label"),
+            confluence_level=pick_data.get("confluence_level"),
+            confluence_boost=pick_data.get("confluence_boost", 0.0),
+            reasons=json.dumps(pick_data.get("reasons", [])),
+            version=pick_data.get("version", pick_data.get("source", "production_v10.31")),
+        )
+
+        db.add(pick)
+        db.flush()
+        return True
+    except Exception as e:
+        logger.exception(f"Failed to upsert pick: {e}")
+        return False
+
+
+def get_pending_picks_for_date(
+    target_date: date,
+    sport: Optional[str] = None,
+    db: Session = None
+) -> List[PickLedger]:
+    """Get all PENDING picks for a specific date."""
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return []
+            return _get_pending_picks_impl(target_date, sport, db)
+    else:
+        return _get_pending_picks_impl(target_date, sport, db)
+
+
+def _get_pending_picks_impl(target_date: date, sport: Optional[str], db: Session) -> List[PickLedger]:
+    """Internal implementation."""
+    query = db.query(PickLedger).filter(
+        PickLedger.result == PickResult.PENDING,
+        PickLedger.created_at >= datetime.combine(target_date, datetime.min.time()),
+        PickLedger.created_at < datetime.combine(target_date + timedelta(days=1), datetime.min.time())
+    )
+
+    if sport:
+        query = query.filter(PickLedger.sport == sport.upper())
+
+    return query.all()
+
+
+def get_settled_picks(
+    sport: str,
+    days_back: int = 7,
+    db: Session = None
+) -> List[PickLedger]:
+    """Get settled picks for a sport within the rolling window."""
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return []
+            return _get_settled_picks_impl(sport, days_back, db)
+    else:
+        return _get_settled_picks_impl(sport, days_back, db)
+
+
+def _get_settled_picks_impl(sport: str, days_back: int, db: Session) -> List[PickLedger]:
+    """Internal implementation."""
+    cutoff = datetime.utcnow() - timedelta(days=days_back)
+
+    return db.query(PickLedger).filter(
+        PickLedger.sport == sport.upper(),
+        PickLedger.result.in_([PickResult.WIN, PickResult.LOSS, PickResult.PUSH]),
+        PickLedger.settled_at >= cutoff
+    ).all()
+
+
+def get_picks_for_date(
+    target_date: date,
+    sport: Optional[str] = None,
+    db: Session = None
+) -> List[PickLedger]:
+    """Get all picks for a specific date (any status)."""
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return []
+            return _get_picks_for_date_impl(target_date, sport, db)
+    else:
+        return _get_picks_for_date_impl(target_date, sport, db)
+
+
+def _get_picks_for_date_impl(target_date: date, sport: Optional[str], db: Session) -> List[PickLedger]:
+    """Internal implementation."""
+    query = db.query(PickLedger).filter(
+        PickLedger.created_at >= datetime.combine(target_date, datetime.min.time()),
+        PickLedger.created_at < datetime.combine(target_date + timedelta(days=1), datetime.min.time())
+    )
+
+    if sport:
+        query = query.filter(PickLedger.sport == sport.upper())
+
+    return query.all()
+
+
+def get_config_changes(
+    sport: str,
+    days_back: int = 7,
+    db: Session = None
+) -> List[ConfigChangeLog]:
+    """Get recent config changes for a sport."""
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return []
+            return _get_config_changes_impl(sport, days_back, db)
+    else:
+        return _get_config_changes_impl(sport, days_back, db)
+
+
+def _get_config_changes_impl(sport: str, days_back: int, db: Session) -> List[ConfigChangeLog]:
+    """Internal implementation."""
+    cutoff = datetime.utcnow() - timedelta(days=days_back)
+
+    return db.query(ConfigChangeLog).filter(
+        ConfigChangeLog.sport == sport.upper(),
+        ConfigChangeLog.timestamp >= cutoff
+    ).order_by(ConfigChangeLog.timestamp.desc()).all()
+
+
+def update_pick_result(
+    pick_uid: str,
+    result: PickResult,
+    profit_units: float,
+    actual_value: Optional[float] = None,
+    db: Session = None
+) -> bool:
+    """Update a pick's result after grading."""
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return False
+            return _update_pick_result_impl(pick_uid, result, profit_units, actual_value, db)
+    else:
+        return _update_pick_result_impl(pick_uid, result, profit_units, actual_value, db)
+
+
+def _update_pick_result_impl(
+    pick_uid: str,
+    result: PickResult,
+    profit_units: float,
+    actual_value: Optional[float],
+    db: Session
+) -> bool:
+    """Internal implementation."""
+    try:
+        pick = db.query(PickLedger).filter(PickLedger.pick_uid == pick_uid).first()
+        if pick is None:
+            return False
+
+        pick.result = result
+        pick.profit_units = profit_units
+        pick.settled_at = datetime.utcnow()
+        if actual_value is not None:
+            pick.actual_value = actual_value
+
+        db.flush()
+        return True
+    except Exception as e:
+        logger.exception(f"Failed to update pick result: {e}")
+        return False
