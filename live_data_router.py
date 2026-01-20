@@ -604,25 +604,28 @@ def tier_from_score(score: float) -> tuple:
 
 def order_reasons(reasons: list) -> list:
     """
-    v10.16: Order reasons by category for clarity.
+    v10.18: Order reasons by category for clarity.
 
-    Correct order:
-    1. MAPPING: (team resolver result)
-    2. CORRELATION: (ALIGNED/NEUTRAL/CONFLICT)
-    3. RESEARCH: (sharp, RLM, pillars)
+    Correct order (spec-compliant):
+    1. RESEARCH: (sharp, RLM, pillars, prop-independent boosts)
+    2. MAPPING: (team resolver result - part of research phase)
+    3. CORRELATION: (ALIGNED/NEUTRAL/CONFLICT/NO_SIGNAL - part of research phase)
     4. ESOTERIC: (Jarvis, Gematria, etc)
     5. CONFLUENCE: (alignment bonuses)
     6. RESOLVER: (deduplication notes)
     7. GOVERNOR: (volume cap notes)
+
+    v10.18: RESEARCH reasons must come FIRST (before MAPPING/CORRELATION).
+    MAPPING and CORRELATION are conceptually part of research but use separate prefixes.
     """
     if not reasons:
         return []
 
-    # Define category order
+    # v10.18: Define category order with RESEARCH first
     category_order = {
-        "MAPPING:": 0,
-        "CORRELATION:": 1,
-        "RESEARCH:": 2,
+        "RESEARCH:": 0,
+        "MAPPING:": 1,
+        "CORRELATION:": 2,
         "ESOTERIC:": 3,
         "CONFLUENCE:": 4,
         "RESOLVER:": 5,
@@ -1212,8 +1215,10 @@ def get_directional_mult(prediction_data: dict) -> tuple:
     if not prop_side:
         return (0.5, "NEUTRAL (no prop direction)")
 
+    # v10.18: Truthful NO_SIGNAL when sharps are absent
+    # This ensures 0.0 sharp boost is applied (not 0.5 NEUTRAL)
     if not game_sharp_side and not game_sharp_total:
-        return (0.5, "NEUTRAL (no sharp signal)")
+        return (0.0, "NO_SIGNAL")
 
     # Rule 1: Total correlation (OVER/UNDER sharp direction)
     if game_sharp_total:
@@ -2733,14 +2738,19 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     - debug=1: Include diagnostic info (games_pulled, candidates_scored, correlation counters)
     - include_conflicts=1: Include filtered CONFLICT and NEUTRAL picks in separate arrays
 
-    Scoring Formula (v10.17):
+    Scoring Formula (v10.18):
     FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
 
-    v10.17 Props Fix:
-    - Props base_ai raised from 5.8 to 6.0
-    - BASE_SHARP_SPLIT_BOOST raised from 1.0 to 2.0
-    - BASE_RLM_BOOST raised from 1.0 to 2.0
-    - This gives ALIGNED props ~1.0 pillar boost (vs games' 2.0)
+    v10.18 Changes:
+    - Prop-only independent pillars (Prop Stability, Prop Value, Pace Proxy, Home Micro)
+    - Truthful NO_SIGNAL correlation when no sharp direction exists (0.0 mult, not 0.5)
+    - Reasons ordering: RESEARCH first (before MAPPING/CORRELATION)
+    - Props score 6.2-6.5 on sharp-quiet nights (natural EDGE_LEAN volume)
+
+    v10.17 Props Fix (retained):
+    - Props base_ai = 6.0 (vs games 5.8)
+    - BASE_SHARP_SPLIT_BOOST = 2.0
+    - BASE_RLM_BOOST = 2.0
 
     Thresholds:
     - GOLD_STAR: >= 7.5
@@ -2793,7 +2803,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
     # Helper function to calculate scores with v10.1 dual-score confluence
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.8, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_home=False, team_rest_days=0, opp_rest_days=0, game_hour_et=20, market="", odds=-110, sharp_scope="GAME", direction_mult=1.0, direction_label="N/A"):
+    # v10.18: Added prop_line, player_team_side, game_total for prop-independent pillars
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.8, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_home=False, team_rest_days=0, opp_rest_days=0, game_hour_et=20, market="", odds=-110, sharp_scope="GAME", direction_mult=1.0, direction_label="N/A", prop_line=None, player_team_side=None, game_total=None):
         # =====================================================================
         # v10.3 ADDITIVE SCORING SYSTEM (Sharp Quiet Fix)
         # =====================================================================
@@ -2887,6 +2898,37 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         if 19 <= game_hour_et <= 22:
             pillar_boost += 0.2
             research_reasons.append("RESEARCH: Prime Time +0.2")
+
+        # ========== PROP-ONLY INDEPENDENT PILLARS (v10.18) ==========
+        # These provide micro-boosts for props when sharps are silent
+        # Max total independent_prop_boost capped at 0.35
+        if not is_game_pick:
+            independent_prop_boost = 0.0
+
+            # Prop Stability (low line) - easier to predict
+            if prop_line is not None and prop_line <= 10.5:
+                independent_prop_boost += 0.15
+                research_reasons.append("RESEARCH: Prop Stability (low line) +0.15")
+
+            # Prop Value (good juice) - favorable odds
+            if odds is not None and abs(odds) <= 120:
+                independent_prop_boost += 0.10
+                research_reasons.append("RESEARCH: Prop Value (good juice) +0.10")
+
+            # Pace Proxy (high total) - high-scoring game expected
+            effective_total = game_total if game_total is not None else total
+            if effective_total is not None and effective_total >= 224:
+                independent_prop_boost += 0.10
+                research_reasons.append("RESEARCH: Pace Proxy (high total) +0.10")
+
+            # Home Micro - player on home team has slight advantage
+            if player_team_side == "HOME":
+                independent_prop_boost += 0.10
+                research_reasons.append("RESEARCH: Home Micro +0.10")
+
+            # Cap independent prop boost at 0.35 (spec requirement)
+            independent_prop_boost = min(0.35, independent_prop_boost)
+            pillar_boost += independent_prop_boost
 
         # ========== CONTEXT MODIFIERS ==========
         # Pillar 7: Goldilocks Spread
@@ -3261,9 +3303,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                     except Exception:
                         pass
 
-                # Calculate score with full esoteric integration (v10.17)
+                # Calculate score with full esoteric integration (v10.18)
                 # v10.17: Props use base_ai=6.0 (vs games 5.8) to compensate for
                 # reduced sharp pillar weights (scope_mult=0.5)
+                # v10.18: Add prop_line, player_team_side, game_total for prop-independent pillars
                 score_data = calculate_pick_score(
                     game_str + player,
                     sharp_signal,
@@ -3279,7 +3322,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                     odds=odds,      # v10.9: pass odds for market modifier
                     sharp_scope="GAME",  # v10.10: game-level sharp applied at 0.5x for props
                     direction_mult=direction_mult,  # v10.11: direction gating
-                    direction_label=direction_label  # v10.11: for reasons tracking
+                    direction_label=direction_label,  # v10.11: for reasons tracking
+                    prop_line=line,  # v10.18: prop line for Prop Stability pillar
+                    player_team_side=player_team_side,  # v10.18: for Home Micro pillar
+                    game_total=None  # v10.18: game total for Pace Proxy (use total param)
                 )
 
                 # Calculate frontend-expected fields
@@ -3367,7 +3413,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                     ]
 
                 # v10.15: Add standalone CORRELATION reason for easy filtering
-                # This makes ALIGNED/CONFLICT/NEUTRAL searchable without parsing embedded reasons
+                # This makes ALIGNED/CONFLICT/NEUTRAL/NO_SIGNAL searchable without parsing embedded reasons
+                # v10.18: Add NO_SIGNAL handling for truthful correlation messaging
                 if direction_label == "ALIGNED":
                     prop_pick["reasons"] = prop_pick.get("reasons", []) + [
                         f"CORRELATION: ALIGNED (prop {prop_side} matches sharp direction, mult={direction_mult:.1f})"
@@ -3375,6 +3422,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                 elif direction_label == "CONFLICT":
                     prop_pick["reasons"] = prop_pick.get("reasons", []) + [
                         f"CORRELATION: CONFLICT (prop {prop_side} opposes sharp direction, mult={direction_mult:.1f})"
+                    ]
+                elif direction_label == "NO_SIGNAL":
+                    # v10.18: Truthful NO_SIGNAL when no sharp direction available
+                    prop_pick["reasons"] = prop_pick.get("reasons", []) + [
+                        f"CORRELATION: NO_SIGNAL (no sharp direction available, mult={direction_mult:.1f})"
                     ]
                 elif direction_label.startswith("NEUTRAL"):
                     prop_pick["reasons"] = prop_pick.get("reasons", []) + [
@@ -3789,8 +3841,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.16",
-        "scoring_system": "v10.16: include_conflicts + correlation debug + ordered reasons",
+        "source": "production_v10.18",
+        "scoring_system": "v10.18: Prop independent pillars + truthful correlation + reasons ordering",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
