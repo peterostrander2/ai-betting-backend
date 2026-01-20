@@ -22,18 +22,22 @@ logger = logging.getLogger(__name__)
 
 # ============================================================================
 # CONFIGURATION (ENV VARS ONLY - NO HARDCODED SECRETS)
+# Matches Railway env var names with EXPO_PUBLIC_ prefix
 # ============================================================================
 
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
 WEATHER_API_BASE = os.getenv("WEATHER_API_BASE", "https://api.weatherapi.com/v1")
 
-ASTRONOMY_API_ID = os.getenv("ASTRONOMY_API_ID", "")
-ASTRONOMY_API_SECRET = os.getenv("ASTRONOMY_API_SECRET", "")
+# Astronomy API - try EXPO_PUBLIC_ prefix first, then fallback
+ASTRONOMY_API_ID = os.getenv("EXPO_PUBLIC_ASTRONOMY_API_ID", os.getenv("ASTRONOMY_API_ID", ""))
+ASTRONOMY_API_SECRET = os.getenv("EXPO_PUBLIC_ASTRONOMY_API_SECRET", os.getenv("ASTRONOMY_API_SECRET", ""))
 ASTRONOMY_API_BASE = os.getenv("ASTRONOMY_API_BASE", "https://api.astronomyapi.com/api/v2")
 
-NOAA_BASE_URL = os.getenv("NOAA_BASE_URL", "https://services.swpc.noaa.gov")
+# NOAA - try EXPO_PUBLIC_ prefix first
+NOAA_BASE_URL = os.getenv("EXPO_PUBLIC_NOAA_BASE_URL", os.getenv("NOAA_BASE_URL", "https://services.swpc.noaa.gov"))
 
-PLANETARY_HOURS_API_URL = os.getenv("PLANETARY_HOURS_API_URL", "")
+# Planetary Hours - try EXPO_PUBLIC_ prefix first
+PLANETARY_HOURS_API_URL = os.getenv("EXPO_PUBLIC_PLANETARY_HOURS_API_URL", os.getenv("PLANETARY_HOURS_API_URL", ""))
 
 # Cache TTL (15 minutes)
 CACHE_TTL_SECONDS = 900
