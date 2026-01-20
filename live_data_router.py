@@ -99,6 +99,16 @@ except ImportError:
     SEASON_GATING_AVAILABLE = False
     logger.warning("sport_seasons module not available - season gating disabled")
 
+# v10.31: Import external signals for multi-API enrichment
+try:
+    from external_signals import (
+        get_external_context, calculate_external_micro_boost
+    )
+    EXTERNAL_SIGNALS_AVAILABLE = True
+except ImportError:
+    EXTERNAL_SIGNALS_AVAILABLE = False
+    logger.warning("external_signals module not available - enrichment disabled")
+
 # Import AI Engine Layer (v10.24: 8 AI Models)
 try:
     from ai_engine_layer import calculate_ai_engine_score, get_ai_engine_defaults
@@ -3001,6 +3011,18 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         micro_weights = DEFAULT_MICRO_WEIGHTS.copy() if DEFAULT_MICRO_WEIGHTS else {}
     logger.debug(f"v10.32: Loaded {len(micro_weights)} micro-weights for {sport_lower}")
 
+    # v10.31: Load external context (Weather/Astronomy/NOAA/Planetary)
+    # Provides micro-boosts for esoteric scoring (max ±0.25 total)
+    external_context = {}
+    external_micro_boost_data = {"total_boost": 0, "breakdown": {}, "reasons": []}
+    if EXTERNAL_SIGNALS_AVAILABLE:
+        try:
+            external_context = await get_external_context(sport=sport_lower.upper())
+            external_micro_boost_data = calculate_external_micro_boost(external_context)
+            logger.debug(f"v10.31: External context loaded, boost={external_micro_boost_data.get('total_boost', 0)}")
+        except Exception as e:
+            logger.warning(f"v10.31: External signals failed (continuing without): {e}")
+
     # Fetch sharp money for both categories
     sharp_data = await get_sharp_money(sport)
     sharp_lookup = {}
@@ -3671,6 +3693,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         micro_boost_vortex = min(0.1, vortex_score / 5.0)          # 0.5 max → 0.1 max
         micro_boost_daily = min(0.1, daily_edge_score / 5.0)       # 0.5 max → 0.1 max
 
+        # v10.31: External signals micro-boost (Weather/Astronomy/NOAA/Planetary)
+        # Capped at ±0.25 total, never dominates picks
+        micro_boost_external = external_micro_boost_data.get("total_boost", 0)
+        external_reasons = external_micro_boost_data.get("reasons", [])
+        for ext_reason in external_reasons:
+            esoteric_reasons.append(ext_reason)
+
         esoteric_raw = (
             RITUAL_BASE +         # 6.0 base (Ritual Score backbone)
             micro_boost_gematria +  # +0.0 to +0.4
@@ -3679,6 +3708,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             micro_boost_fib +       # +0.0 to +0.1
             micro_boost_vortex +    # +0.0 to +0.1
             micro_boost_daily +     # +0.0 to +0.1
+            micro_boost_external +  # +/-0.0 to +/-0.25 (v10.31 external signals)
             mid_spread_mod +        # Modifier
             public_fade_mod +       # Modifier (usually negative)
             trap_mod                # Modifier (negative)
