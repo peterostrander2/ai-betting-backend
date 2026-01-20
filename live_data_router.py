@@ -4785,7 +4785,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     # v10.28: Handle debug-only confluence diagnostic fields
     # When debug=1: Rename _debug_* to debug_* (expose diagnostics)
     # When debug!=1: Strip _debug_* fields (don't leak to production responses)
-    all_picks_to_clean = list(set(top_props + top_game_picks + merged_picks))
+    # Note: Can't use set() on dicts - just concatenate lists
+    all_picks_to_clean = top_props + top_game_picks + merged_picks
     for pick in all_picks_to_clean:
         if debug == 1:
             # Expose debug fields by renaming
