@@ -1073,7 +1073,7 @@ def derive_game_sharp_side(sharp_signal: dict, home_team: str, away_team: str) -
     Returns team name (home or away) if sharp signal detected, empty string if no signal.
 
     Sharp signal structure:
-    - side: "HOME" or "AWAY"
+    - side/sharp_side: "HOME" or "AWAY" (uppercase)
     - signal_strength: "STRONG", "MODERATE", or "NONE"
     - diff: money% - ticket% (positive = sharp activity)
     """
@@ -1084,7 +1084,10 @@ def derive_game_sharp_side(sharp_signal: dict, home_team: str, away_team: str) -
     if signal_strength == "NONE":
         return ""
 
-    side = sharp_signal.get("side", "")
+    # v10.14: Check both side and sharp_side fields, normalize to uppercase
+    side = sharp_signal.get("side") or sharp_signal.get("sharp_side") or ""
+    side = side.upper() if side else ""
+
     if side == "HOME":
         return home_team
     elif side == "AWAY":
@@ -1928,15 +1931,18 @@ async def get_sharp_money(sport: str):
                         diff = abs(money_pct - ticket_pct)
 
                         if diff >= 10:  # 10%+ difference indicates sharp action
-                            sharp_side = "home" if money_pct > ticket_pct else "away"
+                            # v10.14: Uppercase for consistency with directional correlation
+                            sharp_side = "HOME" if money_pct > ticket_pct else "AWAY"
                             data.append({
                                 "game_id": game.get("id", game.get("gameId")),
                                 "home_team": game.get("home_team", game.get("homeTeam")),
                                 "away_team": game.get("away_team", game.get("awayTeam")),
                                 "sharp_side": sharp_side,
+                                "side": sharp_side,  # Alias for compatibility
                                 "money_pct": money_pct,
                                 "ticket_pct": ticket_pct,
-                                "signal_strength": "STRONG" if diff >= 20 else "MODERATE"
+                                "signal_strength": "STRONG" if diff >= 20 else "MODERATE",
+                                "source": "playbook_splits"
                             })
 
                     if data:
@@ -1994,12 +2000,37 @@ async def get_sharp_money(sport: str):
             if len(spreads) >= 3:
                 variance = max(spreads) - min(spreads)
                 if variance >= 1.5:
+                    # v10.14: Infer sharp side from line movement direction
+                    # If line moved more negative (home bigger favorite), sharps on home
+                    # If line moved more positive (away bigger favorite), sharps on away
+                    avg_spread = sum(spreads) / len(spreads)
+                    median_spread = sorted(spreads)[len(spreads) // 2]
+
+                    # Compare outliers to median to determine movement direction
+                    max_diff = abs(max(spreads) - median_spread)
+                    min_diff = abs(min(spreads) - median_spread)
+
+                    if max_diff > min_diff:
+                        # Line moved toward away being bigger dog (more positive)
+                        # Sharps bet away, pushed line toward home favorite
+                        sharp_side = "HOME"
+                    elif min_diff > max_diff:
+                        # Line moved toward home being bigger dog (more negative)
+                        # Sharps bet home, pushed line toward away favorite
+                        sharp_side = "AWAY"
+                    else:
+                        sharp_side = None  # Can't determine
+
                     data.append({
                         "game_id": game.get("id"),
                         "home_team": game.get("home_team"),
                         "away_team": game.get("away_team"),
                         "line_variance": round(variance, 1),
-                        "signal_strength": "STRONG" if variance >= 2 else "MODERATE"
+                        "signal_strength": "STRONG" if variance >= 2 else "MODERATE",
+                        "sharp_side": sharp_side,
+                        "side": sharp_side,  # Alias for compatibility
+                        "avg_spread": round(avg_spread, 1),
+                        "source": "odds_api_variance"
                     })
 
         logger.info("Odds API sharp analysis for %s: %d signals found", sport, len(data))
