@@ -1,5 +1,5 @@
-# live_data_router.py v14.9 - SCORING v10.28
-# Sport Profiles + Per-Sport Calibration + Cross-Sport Jarvis + NFL Conflict Fix
+# live_data_router.py v15.0 - SCORING v10.32
+# v10.32: Signal Attribution + Micro-Weight Tuning + Self-Learning System
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
 from fastapi import APIRouter, HTTPException, Depends, Header
@@ -62,12 +62,34 @@ except ImportError:
 try:
     from database import (
         DB_ENABLED, init_database, load_sport_config, upsert_pick,
-        get_picks_for_date, get_config_changes, FACTORY_SPORT_PROFILES
+        get_picks_for_date, get_config_changes, FACTORY_SPORT_PROFILES,
+        get_micro_weights, DEFAULT_MICRO_WEIGHTS
     )
     DATABASE_AVAILABLE = True
 except ImportError:
     DATABASE_AVAILABLE = False
     DB_ENABLED = False
+    DEFAULT_MICRO_WEIGHTS = {}
+
+# v10.32: Import signal attribution for ROI analysis
+try:
+    from signal_attribution import (
+        extract_fired_signals, enrich_pick_with_signals,
+        compute_feature_table, compute_signal_uplift
+    )
+    SIGNAL_ATTRIBUTION_AVAILABLE = True
+except ImportError:
+    SIGNAL_ATTRIBUTION_AVAILABLE = False
+
+# v10.32: Import micro-weight tuning
+try:
+    from learning_engine import (
+        tune_micro_weights_from_attribution, get_micro_weight_status,
+        run_micro_weight_tuning
+    )
+    MICRO_WEIGHT_TUNING_AVAILABLE = True
+except ImportError:
+    MICRO_WEIGHT_TUNING_AVAILABLE = False
 
 # Import AI Engine Layer (v10.24: 8 AI Models)
 try:
@@ -2949,6 +2971,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     mps = get_master_prediction_system()
     daily_energy = get_daily_energy()
 
+    # v10.32: Load micro-weights for signal attribution tuning
+    # These weights adjust pillar boosts based on ROI correlation analysis
+    if DATABASE_AVAILABLE:
+        micro_weights = get_micro_weights(sport_lower.upper())
+    else:
+        micro_weights = DEFAULT_MICRO_WEIGHTS.copy() if DEFAULT_MICRO_WEIGHTS else {}
+    logger.debug(f"v10.32: Loaded {len(micro_weights)} micro-weights for {sport_lower}")
+
     # Fetch sharp money for both categories
     sharp_data = await get_sharp_money(sport)
     sharp_lookup = {}
@@ -3307,6 +3337,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         final_mult = 1.0 if is_game_pick else (scope_mult * direction_mult)
 
         # ========== SHARP-DEPENDENT PILLARS (v10.13: transparent math with BASE constants) ==========
+        # v10.32: Micro-weight helper - applies learned weight tuning to signal boosts
+        def get_mw(signal_key: str, default: float = 1.0) -> float:
+            """Get micro-weight for a signal (0.85-1.15 range, default 1.0)"""
+            return micro_weights.get(signal_key, default)
+
         # Pillar 1: Sharp Money (direction-gated for props)
         sharp_diff = sharp_signal.get("diff", 0) or 0
         sharp_strength = sharp_signal.get("signal_strength", "NONE")
@@ -3314,60 +3349,75 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
         if is_game_pick:
             # Game picks always get full weight (no direction gating)
+            mw_sharp = get_mw("PILLAR_SHARP_SPLIT")
             if sharp_strength == "STRONG" or sharp_diff >= 15:
-                pillar_boost += 2.0
-                research_reasons.append("RESEARCH: Sharp Split (Game) +2.0")
+                boost = 2.0 * mw_sharp
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Sharp Split (Game) +{boost:.2f}")
             elif sharp_strength == "MODERATE" or sharp_diff >= 10:
-                pillar_boost += 1.0
-                research_reasons.append("RESEARCH: Sharp Split (Game) +1.0")
+                boost = 1.0 * mw_sharp
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Sharp Split (Game) +{boost:.2f}")
         elif has_sharp_signal:
             # v10.13: Props use BASE_SHARP_SPLIT_BOOST = 1.0 with transparent math
-            # boost = BASE * scope_mult * direction_mult
-            boost = BASE_SHARP_SPLIT_BOOST * scope_mult * direction_mult
+            # boost = BASE * scope_mult * direction_mult * micro_weight
+            mw_sharp = get_mw("PILLAR_SHARP_SPLIT")
+            boost = BASE_SHARP_SPLIT_BOOST * scope_mult * direction_mult * mw_sharp
             pillar_boost += boost
             research_reasons.append(f"RESEARCH: Sharp Split (GAME {direction_label} x{scope_mult * direction_mult:.2f}) +{boost:.2f}")
 
         # Pillar 2: Reverse Line Movement (RLM) - direction-gated for props
         line_variance = sharp_signal.get("line_variance", 0) or 0
         if line_variance > 1.0:
+            mw_rlm = get_mw("PILLAR_RLM")
             if is_game_pick:
-                pillar_boost += 1.0
-                research_reasons.append("RESEARCH: Reverse Line Move +1.0")
+                boost = 1.0 * mw_rlm
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Reverse Line Move +{boost:.2f}")
             else:
                 # v10.13: Props use BASE_RLM_BOOST = 1.0 with transparent math
-                boost = BASE_RLM_BOOST * scope_mult * direction_mult
+                boost = BASE_RLM_BOOST * scope_mult * direction_mult * mw_rlm
                 pillar_boost += boost
                 research_reasons.append(f"RESEARCH: Reverse Line Move (GAME {direction_label} x{scope_mult * direction_mult:.2f}) +{boost:.2f}")
 
         # Pillar 3: Public Fade (v10.20: directional with >= 65 threshold)
         # +0.5 when fading heavy public, -0.5 when riding with heavy public
         if public_pct >= 65:
+            mw_public = get_mw("SIGNAL_PUBLIC_FADE")
             if pick_against_public is True:
-                pillar_boost += 0.5
-                research_reasons.append("RESEARCH: Public Fade (against public) +0.5")
+                boost = 0.5 * mw_public
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Public Fade (against public) +{boost:.2f}")
             elif pick_against_public is False:
-                pillar_boost -= 0.5
-                research_reasons.append("RESEARCH: Public Trap (with public) -0.5")
+                boost = -0.5 * mw_public
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Public Trap (with public) {boost:.2f}")
 
         # ========== SHARP-INDEPENDENT PILLARS (v10.3) ==========
         # Pillar 4: Home Court Advantage (game picks only)
         if is_game_pick and is_home:
-            pillar_boost += 0.25
-            research_reasons.append("RESEARCH: Home Court +0.25")
+            mw_situational = get_mw("PILLAR_SITUATIONAL")
+            boost = 0.25 * mw_situational
+            pillar_boost += boost
+            research_reasons.append(f"RESEARCH: Home Court +{boost:.2f}")
 
         # Pillar 5: Rest Advantage (RELATIVE, not absolute)
         rest_diff = team_rest_days - opp_rest_days
+        mw_situational = get_mw("PILLAR_SITUATIONAL")
         if rest_diff >= 2:
-            pillar_boost += 0.4
-            research_reasons.append("RESEARCH: Rest Advantage +0.4")
+            boost = 0.4 * mw_situational
+            pillar_boost += boost
+            research_reasons.append(f"RESEARCH: Rest Advantage +{boost:.2f}")
         elif rest_diff == 1:
-            pillar_boost += 0.2
-            research_reasons.append("RESEARCH: Rest Advantage +0.2")
+            boost = 0.2 * mw_situational
+            pillar_boost += boost
+            research_reasons.append(f"RESEARCH: Rest Advantage +{boost:.2f}")
 
         # Pillar 6: Prime Time Boost (7pm-10pm ET)
         if 19 <= game_hour_et <= 22:
-            pillar_boost += 0.2
-            research_reasons.append("RESEARCH: Prime Time +0.2")
+            boost = 0.2 * mw_situational
+            pillar_boost += boost
+            research_reasons.append(f"RESEARCH: Prime Time +{boost:.2f}")
 
         # ========== PROP-ONLY INDEPENDENT PILLARS (v10.18) ==========
         # These provide micro-boosts for props when sharps are silent
@@ -3404,24 +3454,32 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         # Pillar 7: Mid-Spread Boss Zone (v10.20: renamed from Goldilocks)
         abs_spread = abs(spread) if spread else 0
         if 4 <= abs_spread <= 9:
-            pillar_boost += 0.2
-            research_reasons.append("RESEARCH: Mid-Spread Boss Zone +0.2")
+            mw_goldilocks = get_mw("SIGNAL_GOLDILOCKS")
+            boost = 0.2 * mw_goldilocks
+            pillar_boost += boost
+            research_reasons.append(f"RESEARCH: Mid-Spread Boss Zone +{boost:.2f}")
 
         # Pillar 8: Trap Gate (penalty)
         if abs_spread > 15:
-            pillar_boost -= 1.0
-            research_reasons.append("RESEARCH: Trap Gate -1.0")
+            mw_trap = get_mw("SIGNAL_TRAP_GATE")
+            penalty = -1.0 * mw_trap
+            pillar_boost += penalty
+            research_reasons.append(f"RESEARCH: Trap Gate {penalty:.2f}")
 
         # Pillar 9: High Total Indicator
         if total > 230:
-            pillar_boost += 0.2
-            research_reasons.append("RESEARCH: High Total +0.2")
+            mw_high_total = get_mw("SIGNAL_HIGH_TOTAL")
+            boost = 0.2 * mw_high_total
+            pillar_boost += boost
+            research_reasons.append(f"RESEARCH: High Total +{boost:.2f}")
 
         # Pillar 10: Multi-Pillar Confluence Bonus
         positive_pillars = len([r for r in research_reasons if "+" in r])
         if positive_pillars >= 3:
-            pillar_boost += 0.3
-            research_reasons.append("RESEARCH: Multi-Pillar Confluence +0.3")
+            mw_multi = get_mw("SIGNAL_MULTI_PILLAR")
+            boost = 0.3 * mw_multi
+            pillar_boost += boost
+            research_reasons.append(f"RESEARCH: Multi-Pillar Confluence +{boost:.2f}")
 
         # Cap pillar_boost at 3.0 to prevent inflation
         pillar_boost = max(-1.0, min(3.0, float(pillar_boost)))
@@ -4749,7 +4807,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.31",
+        "source": "production_v10.32",
         "scoring_system": "v10.31: Auto-grading + Conservative Self-Correction + Daily Transparency",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
@@ -4829,23 +4887,30 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         }
 
     # ================================================================
-    # v10.31: SAVE PICKS TO LEDGER (deduplication via pick_uid)
+    # v10.32: ENRICH PICKS WITH FIRED_SIGNALS + SAVE TO LEDGER
     # ================================================================
     if DATABASE_AVAILABLE and DB_ENABLED:
         picks_saved = 0
         all_picks_to_save = top_props + top_game_picks
+
         for pick in all_picks_to_save:
+            # v10.32: Enrich pick with fired_signals before saving
+            if SIGNAL_ATTRIBUTION_AVAILABLE:
+                pick = enrich_pick_with_signals(pick)
+
             # Enrich pick data with sport and version
             pick_data = {
                 **pick,
                 "sport": sport.upper(),
-                "version": "production_v10.31"
+                "version": "production_v10.32"
             }
             if upsert_pick(pick_data):
                 picks_saved += 1
+
         if debug == 1:
             result["debug"]["picks_saved_to_ledger"] = picks_saved
             result["debug"]["picks_attempted_save"] = len(all_picks_to_save)
+            result["debug"]["signal_attribution_available"] = SIGNAL_ATTRIBUTION_AVAILABLE
 
     api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
     return result
@@ -5441,6 +5506,183 @@ async def admin_grade_now(
 
     except Exception as e:
         logger.exception("Admin grade-now failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# v10.32: SIGNAL ATTRIBUTION ENDPOINTS
+# ============================================================================
+
+@router.get("/attribution-report/{sport}")
+async def get_attribution_report(
+    sport: str,
+    window_days: int = 7,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v10.32: Signal Attribution Report - Shows which signals correlate with ROI.
+
+    Query Parameters:
+    - window_days: Rolling window for analysis (default: 7, max: 30)
+
+    Returns:
+    - Baseline performance (total picks, net units, ROI)
+    - Top positive signals (ordered by ROI uplift)
+    - Top negative signals (ordered by ROI drag)
+    - Performance by confluence level
+    - Performance by confidence grade
+
+    This endpoint is the core of the v10.32 self-learning system.
+    Used for daily transparency reports and micro-weight tuning decisions.
+    """
+    if not SIGNAL_ATTRIBUTION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Signal attribution module not available")
+
+    if not DATABASE_AVAILABLE or not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database not available for v10.32 attribution")
+
+    try:
+        sport_upper = sport.upper()
+        window_days = min(max(1, window_days), 30)  # Clamp to 1-30 days
+
+        # Compute comprehensive feature table
+        report = compute_feature_table(sport_upper, window_days)
+
+        # Add micro-weight status
+        if MICRO_WEIGHT_TUNING_AVAILABLE:
+            mw_status = get_micro_weight_status(sport_upper)
+            report["micro_weights"] = mw_status
+        else:
+            report["micro_weights"] = {"available": False}
+
+        # Add version and timestamp
+        report["version"] = "v10.32"
+        report["generated_at"] = datetime.now().isoformat()
+
+        return report
+
+    except Exception as e:
+        logger.exception("Failed to generate attribution report: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/signal-uplift/{sport}")
+async def get_signal_uplift(
+    sport: str,
+    window_days: int = 7,
+    min_count: int = 8,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v10.32: Signal-level ROI uplift analysis.
+
+    For each signal S:
+    - ROI_when_present = ROI of picks where S fired
+    - ROI_when_absent = ROI of picks where S didn't fire
+    - uplift = ROI_present - ROI_absent
+
+    Positive uplift = signal predicts wins
+    Negative uplift = signal should be weighted down
+
+    Query Parameters:
+    - window_days: Rolling window (default: 7, max: 30)
+    - min_count: Minimum occurrences for a signal (default: 8)
+    """
+    if not SIGNAL_ATTRIBUTION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Signal attribution module not available")
+
+    if not DATABASE_AVAILABLE or not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    try:
+        sport_upper = sport.upper()
+        window_days = min(max(1, window_days), 30)
+        min_count = max(1, min_count)
+
+        return compute_signal_uplift(sport_upper, window_days, min_count)
+
+    except Exception as e:
+        logger.exception("Failed to compute signal uplift: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/admin/tune-micro-weights")
+async def admin_tune_micro_weights(
+    sport: str = None,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v10.32: Admin endpoint to manually trigger micro-weight tuning.
+
+    Query Parameters:
+    - sport: NBA, NFL, MLB, NHL, NCAAB (default: all sports)
+
+    Requires X-API-Key header.
+
+    Tuning Rules:
+    - Only signals with >= 10 occurrences are considered
+    - Only adjust if uplift exceeds ±8% threshold
+    - Step size: ±0.01 per day
+    - Range: 0.85-1.15 (±15% from baseline)
+    - Circuit breaker: Reset if 25% of signals at limits
+    - Max 3 adjustments per sport per day
+    """
+    if not MICRO_WEIGHT_TUNING_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Micro-weight tuning module not available")
+
+    if not DATABASE_AVAILABLE or not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    try:
+        if sport:
+            sport_upper = sport.upper()
+            result = tune_micro_weights_from_attribution(sport_upper)
+            return {
+                "success": True,
+                "sport": sport_upper,
+                "tuning_result": result,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            # Run for all sports
+            all_results = run_micro_weight_tuning()
+            return {
+                "success": True,
+                "sport": "ALL",
+                "tuning_results": all_results,
+                "timestamp": datetime.now().isoformat()
+            }
+
+    except Exception as e:
+        logger.exception("Micro-weight tuning failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/micro-weight-status/{sport}")
+async def get_micro_weight_status_endpoint(
+    sport: str,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v10.32: Get current micro-weight status for a sport.
+
+    Returns:
+    - Current micro-weights for all signals
+    - How many signals are at limits (0.85 or 1.15)
+    - Circuit breaker status
+    - Last tuning timestamp
+    """
+    if not MICRO_WEIGHT_TUNING_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Micro-weight tuning module not available")
+
+    try:
+        sport_upper = sport.upper()
+        status = get_micro_weight_status(sport_upper)
+        status["timestamp"] = datetime.now().isoformat()
+        return status
+
+    except Exception as e:
+        logger.exception("Failed to get micro-weight status: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

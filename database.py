@@ -328,6 +328,12 @@ class PickLedger(Base):
     profit_units = Column(Float, default=0.0)
     actual_value = Column(Float, nullable=True)  # For props: actual stat value
 
+    # v10.32: Signal attribution fields
+    fired_signals = Column(Text, nullable=True)  # JSON list[str] of normalized signal keys
+    fired_signal_count = Column(Integer, default=0)
+    research_components = Column(Text, nullable=True)  # JSON dict of research signal weights
+    esoteric_components = Column(Text, nullable=True)  # JSON dict of esoteric signal weights
+
     __table_args__ = (
         Index("ix_pick_ledger_sport_date", "sport", "created_at"),
         Index("ix_pick_ledger_result_date", "result", "created_at"),
@@ -437,6 +443,25 @@ class ConfigChangeLog(Base):
 # v10.31 FACTORY SPORT PROFILES
 # ============================================================================
 
+# v10.32: Default micro-weights for all signals (1.0 = no change)
+DEFAULT_MICRO_WEIGHTS = {
+    "PILLAR_SHARP_SPLIT": 1.00,
+    "PILLAR_RLM": 1.00,
+    "PILLAR_HOSPITAL_FADE": 1.00,
+    "PILLAR_SITUATIONAL": 1.00,
+    "PILLAR_EXPERT_CONSENSUS": 1.00,
+    "PILLAR_HOOK_DISCIPLINE": 1.00,
+    "PILLAR_PROP_CORRELATION": 1.00,
+    "SIGNAL_PUBLIC_FADE": 1.00,
+    "SIGNAL_LINE_VALUE": 1.00,
+    "ESOTERIC_GEMATRIA": 1.00,
+    "ESOTERIC_JARVIS_TRIGGER": 1.00,
+    "ESOTERIC_ASTRO": 1.00,
+    "ESOTERIC_FIBONACCI": 1.00,
+    "CONFLUENCE_BONUS": 1.00,
+    "CORRELATION_ALIGNED": 1.00,
+}
+
 FACTORY_SPORT_PROFILES = {
     "NBA": {
         "weights": {"research": 0.67, "esoteric": 0.33},
@@ -448,7 +473,8 @@ FACTORY_SPORT_PROFILES = {
         },
         "limits": {"props": 10, "game_picks": 10},
         "conflict_policy": {"exclude_conflicts": True},
-        "market_biases": {}
+        "market_biases": {},
+        "micro_weights": DEFAULT_MICRO_WEIGHTS.copy()
     },
     "NFL": {
         "weights": {"research": 0.67, "esoteric": 0.33},
@@ -460,7 +486,8 @@ FACTORY_SPORT_PROFILES = {
         },
         "limits": {"props": 10, "game_picks": 10},
         "conflict_policy": {"exclude_conflicts": True},
-        "market_biases": {}
+        "market_biases": {},
+        "micro_weights": DEFAULT_MICRO_WEIGHTS.copy()
     },
     "MLB": {
         "weights": {"research": 0.67, "esoteric": 0.33},
@@ -472,7 +499,8 @@ FACTORY_SPORT_PROFILES = {
         },
         "limits": {"props": 10, "game_picks": 10},
         "conflict_policy": {"exclude_conflicts": True},
-        "market_biases": {}
+        "market_biases": {},
+        "micro_weights": DEFAULT_MICRO_WEIGHTS.copy()
     },
     "NHL": {
         "weights": {"research": 0.67, "esoteric": 0.33},
@@ -484,7 +512,8 @@ FACTORY_SPORT_PROFILES = {
         },
         "limits": {"props": 10, "game_picks": 10},
         "conflict_policy": {"exclude_conflicts": True},
-        "market_biases": {"ml_dog_boost": 0.5}  # NHL ML Dog Weapon
+        "market_biases": {"ml_dog_boost": 0.5},
+        "micro_weights": DEFAULT_MICRO_WEIGHTS.copy()
     },
     "NCAAB": {
         "weights": {"research": 0.67, "esoteric": 0.33},
@@ -496,7 +525,8 @@ FACTORY_SPORT_PROFILES = {
         },
         "limits": {"props": 10, "game_picks": 10},
         "conflict_policy": {"exclude_conflicts": True},
-        "market_biases": {}
+        "market_biases": {},
+        "micro_weights": DEFAULT_MICRO_WEIGHTS.copy()
     }
 }
 
@@ -770,7 +800,12 @@ def _upsert_pick_impl(pick_data: Dict[str, Any], db: Session) -> bool:
             confluence_level=pick_data.get("confluence_level"),
             confluence_boost=pick_data.get("confluence_boost", 0.0),
             reasons=json.dumps(pick_data.get("reasons", [])),
-            version=pick_data.get("version", pick_data.get("source", "production_v10.31")),
+            version=pick_data.get("version", pick_data.get("source", "production_v10.32")),
+            # v10.32 signal attribution
+            fired_signals=json.dumps(pick_data.get("fired_signals", [])),
+            fired_signal_count=pick_data.get("fired_signal_count", 0),
+            research_components=json.dumps(pick_data.get("research_components", {})),
+            esoteric_components=json.dumps(pick_data.get("esoteric_components", {})),
         )
 
         db.add(pick)
@@ -930,3 +965,44 @@ def _update_pick_result_impl(
     except Exception as e:
         logger.exception(f"Failed to update pick result: {e}")
         return False
+
+
+# ============================================================================
+# v10.32 MICRO-WEIGHTS HELPERS
+# ============================================================================
+
+def get_micro_weights(sport: str, db: Session = None) -> Dict[str, float]:
+    """
+    Get micro-weights for a sport.
+    Returns DEFAULT_MICRO_WEIGHTS if not found.
+    """
+    config = load_sport_config(sport, db)
+    return config.get("micro_weights", DEFAULT_MICRO_WEIGHTS.copy())
+
+
+def get_graded_picks_for_window(
+    sport: str,
+    window_days: int = 7,
+    db: Session = None
+) -> List[PickLedger]:
+    """
+    Get all graded (WIN/LOSS/PUSH) picks for attribution analysis.
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return []
+            return _get_graded_picks_impl(sport, window_days, db)
+    else:
+        return _get_graded_picks_impl(sport, window_days, db)
+
+
+def _get_graded_picks_impl(sport: str, window_days: int, db: Session) -> List[PickLedger]:
+    """Internal implementation."""
+    cutoff = datetime.utcnow() - timedelta(days=window_days)
+
+    return db.query(PickLedger).filter(
+        PickLedger.sport == sport.upper(),
+        PickLedger.result.in_([PickResult.WIN, PickResult.LOSS, PickResult.PUSH]),
+        PickLedger.created_at >= cutoff
+    ).all()
