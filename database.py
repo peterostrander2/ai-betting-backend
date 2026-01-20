@@ -1408,3 +1408,309 @@ def _get_tuning_history_impl(sport: str, days_back: int, db: Session) -> List[Di
     except Exception as e:
         logger.exception(f"Failed to get tuning history: {e}")
         return []
+
+
+# ============================================================================
+# v10.32+ DATABASE HEALTH CHECK
+# ============================================================================
+
+def get_db_health() -> Dict[str, Any]:
+    """
+    Comprehensive database health check for /live/db/status endpoint.
+    Returns connection status, table counts, and any errors.
+    """
+    health = {
+        "db_url_present": bool(DATABASE_URL),
+        "db_connect_ok": False,
+        "db_type": DB_TYPE,
+        "db_enabled": DB_ENABLED,
+        "tables_found": [],
+        "missing_tables": [],
+        "table_counts": {},
+        "last_error": None
+    }
+
+    expected_tables = [
+        "predictions", "weights", "bias_history", "daily_energy",
+        "pick_ledger", "system_config", "config_change_log",
+        "signal_ledger", "signal_policy_config", "tuning_audit_log"
+    ]
+
+    if not DB_ENABLED or engine is None:
+        health["last_error"] = "Database not initialized"
+        health["missing_tables"] = expected_tables
+        return health
+
+    try:
+        with get_db() as db:
+            if db is None:
+                health["last_error"] = "Could not acquire database session"
+                return health
+
+            # Test connection
+            db.execute("SELECT 1")
+            health["db_connect_ok"] = True
+
+            # Check tables exist and get counts
+            for table in expected_tables:
+                try:
+                    result = db.execute(f"SELECT COUNT(*) FROM {table}")
+                    count = result.scalar()
+                    health["tables_found"].append(table)
+                    health["table_counts"][table] = count
+                except Exception:
+                    health["missing_tables"].append(table)
+
+    except Exception as e:
+        health["last_error"] = str(e)
+
+    return health
+
+
+def get_signal_ledger_stats(sport: str, window_days: int = 7, db: Session = None) -> Dict[str, Any]:
+    """
+    Get aggregated stats from SignalLedger for signal-report.
+    Returns pick counts, win/loss/push breakdown, and per-signal stats.
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return _empty_signal_stats()
+            return _get_signal_ledger_stats_impl(sport, window_days, db)
+    else:
+        return _get_signal_ledger_stats_impl(sport, window_days, db)
+
+
+def _empty_signal_stats() -> Dict[str, Any]:
+    """Return empty stats structure when DB not available."""
+    return {
+        "totals": {
+            "picks_logged": 0,
+            "wins": 0,
+            "losses": 0,
+            "pushes": 0,
+            "pending": 0,
+            "win_rate": 0.0,
+            "roi": 0.0
+        },
+        "signal_breakdown": [],
+        "top_positive_signals": [],
+        "top_negative_signals": [],
+        "synergy_pairs": []
+    }
+
+
+def _get_signal_ledger_stats_impl(sport: str, window_days: int, db: Session) -> Dict[str, Any]:
+    """Internal implementation of signal ledger stats."""
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=window_days)
+        sport = sport.upper()
+
+        # Get all picks in window
+        query = db.query(PickLedger).filter(
+            PickLedger.created_at >= cutoff
+        )
+        if sport != "ALL":
+            query = query.filter(PickLedger.sport == sport)
+
+        picks = query.all()
+
+        if not picks:
+            return _empty_signal_stats()
+
+        # Calculate totals
+        wins = sum(1 for p in picks if p.result == PickResult.WIN)
+        losses = sum(1 for p in picks if p.result == PickResult.LOSS)
+        pushes = sum(1 for p in picks if p.result == PickResult.PUSH)
+        pending = sum(1 for p in picks if p.result == PickResult.PENDING)
+        total_graded = wins + losses
+
+        total_units = sum(p.recommended_units or 0.5 for p in picks if p.result in [PickResult.WIN, PickResult.LOSS])
+        profit_units = sum(p.profit_units or 0 for p in picks if p.result in [PickResult.WIN, PickResult.LOSS])
+
+        totals = {
+            "picks_logged": len(picks),
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "pending": pending,
+            "win_rate": round((wins / total_graded * 100) if total_graded > 0 else 0, 2),
+            "roi": round((profit_units / total_units * 100) if total_units > 0 else 0, 2)
+        }
+
+        # Get signal breakdown from SignalLedger
+        graded_pick_uids = [p.pick_uid for p in picks if p.result in [PickResult.WIN, PickResult.LOSS]]
+
+        signal_breakdown = []
+        top_positive = []
+        top_negative = []
+
+        if graded_pick_uids:
+            signals = db.query(SignalLedger).filter(
+                SignalLedger.pick_uid.in_(graded_pick_uids)
+            ).all()
+
+            # Map pick_uid to result
+            pick_map = {
+                p.pick_uid: {
+                    "result": p.result,
+                    "profit_units": p.profit_units or 0,
+                    "units": p.recommended_units or 0.5
+                }
+                for p in picks if p.result in [PickResult.WIN, PickResult.LOSS]
+            }
+
+            # Aggregate by signal
+            signal_stats = {}
+            for sig in signals:
+                key = sig.signal_key
+                if key not in signal_stats:
+                    signal_stats[key] = {
+                        "signal_key": key,
+                        "fired_count": 0,
+                        "wins": 0,
+                        "losses": 0,
+                        "total_units": 0.0,
+                        "profit_units": 0.0,
+                        "avg_value": []
+                    }
+
+                pick_data = pick_map.get(sig.pick_uid)
+                if pick_data:
+                    signal_stats[key]["fired_count"] += 1
+                    signal_stats[key]["total_units"] += pick_data["units"]
+                    signal_stats[key]["profit_units"] += pick_data["profit_units"]
+                    signal_stats[key]["avg_value"].append(sig.signal_value or 0)
+
+                    if pick_data["result"] == PickResult.WIN:
+                        signal_stats[key]["wins"] += 1
+                    else:
+                        signal_stats[key]["losses"] += 1
+
+            # Calculate rates and sort
+            for key, stats in signal_stats.items():
+                total = stats["wins"] + stats["losses"]
+                stats["win_rate"] = round((stats["wins"] / total * 100) if total > 0 else 0, 2)
+                stats["roi"] = round((stats["profit_units"] / stats["total_units"] * 100) if stats["total_units"] > 0 else 0, 2)
+                stats["avg_score_delta"] = round(sum(stats["avg_value"]) / len(stats["avg_value"]), 3) if stats["avg_value"] else 0
+                del stats["avg_value"]  # Remove temp list
+
+            signal_breakdown = sorted(signal_stats.values(), key=lambda x: x["fired_count"], reverse=True)
+
+            # Top positive (best ROI with min 3 samples)
+            top_positive = sorted(
+                [s for s in signal_breakdown if s["fired_count"] >= 3],
+                key=lambda x: x["roi"],
+                reverse=True
+            )[:5]
+
+            # Top negative (worst ROI with min 3 samples)
+            top_negative = sorted(
+                [s for s in signal_breakdown if s["fired_count"] >= 3],
+                key=lambda x: x["roi"]
+            )[:5]
+
+        return {
+            "totals": totals,
+            "signal_breakdown": signal_breakdown,
+            "top_positive_signals": top_positive,
+            "top_negative_signals": top_negative,
+            "synergy_pairs": []  # MVP: implement later
+        }
+
+    except Exception as e:
+        logger.exception(f"Failed to get signal ledger stats: {e}")
+        return _empty_signal_stats()
+
+
+# ============================================================================
+# v10.32+ SEASON CALENDAR HELPER
+# ============================================================================
+
+# Approximate season dates (month, day)
+SEASON_CALENDAR = {
+    "NFL": {
+        "start": (9, 5),    # Early September
+        "end": (2, 15)      # Mid February (Super Bowl)
+    },
+    "NBA": {
+        "start": (10, 15),  # Mid October
+        "end": (6, 20)      # Mid June (Finals)
+    },
+    "MLB": {
+        "start": (3, 28),   # Late March
+        "end": (11, 5)      # Early November (World Series)
+    },
+    "NHL": {
+        "start": (10, 5),   # Early October
+        "end": (6, 25)      # Late June (Stanley Cup)
+    },
+    "NCAAB": {
+        "start": (11, 5),   # Early November
+        "end": (4, 8)       # Early April (Championship)
+    }
+}
+
+
+def is_sport_in_season(sport: str, check_date: date = None) -> bool:
+    """
+    Check if a sport is currently in season.
+    NFL wraps around year boundary (Sep -> Feb).
+    """
+    if check_date is None:
+        check_date = date.today()
+
+    sport = sport.upper()
+    if sport not in SEASON_CALENDAR:
+        return True  # Unknown sport, assume active
+
+    cal = SEASON_CALENDAR[sport]
+    start_month, start_day = cal["start"]
+    end_month, end_day = cal["end"]
+
+    # Handle NFL (wraps around new year: Sep-Feb)
+    if sport == "NFL":
+        # In season if: Sep-Dec OR Jan-Feb
+        if check_date.month >= start_month:  # Sep onwards
+            return True
+        if check_date.month <= end_month:  # Jan-Feb
+            if check_date.month < end_month or check_date.day <= end_day:
+                return True
+        return False
+
+    # Regular sports (start < end within same year)
+    start_date = date(check_date.year, start_month, start_day)
+    end_date = date(check_date.year, end_month, end_day)
+
+    return start_date <= check_date <= end_date
+
+
+def get_active_sports(check_date: date = None) -> List[str]:
+    """
+    Get list of sports currently in season.
+    """
+    all_sports = ["NFL", "NBA", "MLB", "NHL", "NCAAB"]
+    return [s for s in all_sports if is_sport_in_season(s, check_date)]
+
+
+def get_season_status() -> Dict[str, Any]:
+    """
+    Get comprehensive season status for all sports.
+    """
+    today = date.today()
+    status = {
+        "check_date": today.isoformat(),
+        "active_sports": get_active_sports(today),
+        "sports": {}
+    }
+
+    for sport in ["NFL", "NBA", "MLB", "NHL", "NCAAB"]:
+        in_season = is_sport_in_season(sport, today)
+        cal = SEASON_CALENDAR[sport]
+        status["sports"][sport] = {
+            "in_season": in_season,
+            "season_start": f"{cal['start'][0]:02d}-{cal['start'][1]:02d}",
+            "season_end": f"{cal['end'][0]:02d}-{cal['end'][1]:02d}"
+        }
+
+    return status

@@ -26,6 +26,7 @@ import random
 from datetime import datetime, timedelta
 import math
 import json
+import re
 import numpy as np
 
 # Import MasterPredictionSystem for comprehensive AI scoring
@@ -64,15 +65,22 @@ try:
         DB_ENABLED, init_database, load_sport_config, upsert_pick,
         get_picks_for_date, get_config_changes, FACTORY_SPORT_PROFILES,
         get_micro_weights, DEFAULT_MICRO_WEIGHTS,
-        get_signal_policy, get_signal_performance, get_tuning_history
+        get_signal_policy, get_signal_performance, get_tuning_history,
+        # v10.32+: DB health and signal ledger stats
+        get_db_health, get_signal_ledger_stats,
+        # v10.32+: Season calendar
+        is_sport_in_season, get_active_sports, get_season_status,
+        # v10.32+: Signal logging
+        save_signal_ledger, PickLedger
     )
     DATABASE_AVAILABLE = True
     SIGNAL_POLICY_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     DATABASE_AVAILABLE = False
     DB_ENABLED = False
     DEFAULT_MICRO_WEIGHTS = {}
     SIGNAL_POLICY_AVAILABLE = False
+    logger.warning(f"Database module import failed: {e}")
 
 # v10.32: Import signal attribution for ROI analysis
 try:
@@ -248,6 +256,99 @@ SPORT_PROFILES = {
 def get_sport_profile(sport_name: str) -> dict:
     """Get sport profile with safe fallback to NBA defaults."""
     return SPORT_PROFILES.get(sport_name.lower(), SPORT_PROFILES["nba"])
+
+
+# ============================================================================
+# v10.32+: SIGNAL EXTRACTION HELPER
+# ============================================================================
+
+# Signal key mappings from reasons text to normalized signal keys
+REASON_TO_SIGNAL_MAP = {
+    # Research signals (pillars)
+    "sharp split": {"signal_key": "PILLAR_SHARP_SPLIT", "category": "RESEARCH"},
+    "sharp money": {"signal_key": "PILLAR_SHARP_SPLIT", "category": "RESEARCH"},
+    "reverse line": {"signal_key": "PILLAR_RLM", "category": "RESEARCH"},
+    "rlm": {"signal_key": "PILLAR_RLM", "category": "RESEARCH"},
+    "hospital fade": {"signal_key": "PILLAR_HOSPITAL_FADE", "category": "RESEARCH"},
+    "injury fade": {"signal_key": "PILLAR_HOSPITAL_FADE", "category": "RESEARCH"},
+    "situational": {"signal_key": "PILLAR_SITUATIONAL", "category": "RESEARCH"},
+    "rest advantage": {"signal_key": "PILLAR_SITUATIONAL", "category": "RESEARCH"},
+    "back-to-back": {"signal_key": "PILLAR_SITUATIONAL", "category": "RESEARCH"},
+    "expert consensus": {"signal_key": "PILLAR_EXPERT_CONSENSUS", "category": "RESEARCH"},
+    "hook discipline": {"signal_key": "PILLAR_HOOK_DISCIPLINE", "category": "RESEARCH"},
+    "prop correlation": {"signal_key": "PILLAR_PROP_CORRELATION", "category": "RESEARCH"},
+    "correlation boost": {"signal_key": "PILLAR_PROP_CORRELATION", "category": "RESEARCH"},
+    "public fade": {"signal_key": "SIGNAL_PUBLIC_FADE", "category": "RESEARCH"},
+    "public %": {"signal_key": "SIGNAL_PUBLIC_FADE", "category": "RESEARCH"},
+    "line value": {"signal_key": "SIGNAL_LINE_VALUE", "category": "RESEARCH"},
+    "goldilocks": {"signal_key": "SIGNAL_GOLDILOCKS_ZONE", "category": "RESEARCH"},
+    "mid-spread": {"signal_key": "SIGNAL_GOLDILOCKS_ZONE", "category": "RESEARCH"},
+
+    # Esoteric signals
+    "gematria": {"signal_key": "ESOTERIC_GEMATRIA", "category": "ESOTERIC"},
+    "jarvis": {"signal_key": "ESOTERIC_JARVIS_TRIGGER", "category": "ESOTERIC"},
+    "jarvis trigger": {"signal_key": "ESOTERIC_JARVIS_TRIGGER", "category": "ESOTERIC"},
+    "saturn": {"signal_key": "ESOTERIC_ASTRO", "category": "ESOTERIC"},
+    "moon": {"signal_key": "ESOTERIC_ASTRO", "category": "ESOTERIC"},
+    "planetary": {"signal_key": "ESOTERIC_ASTRO", "category": "ESOTERIC"},
+    "astro": {"signal_key": "ESOTERIC_ASTRO", "category": "ESOTERIC"},
+    "fibonacci": {"signal_key": "ESOTERIC_FIBONACCI", "category": "ESOTERIC"},
+    "tesla": {"signal_key": "ESOTERIC_TESLA", "category": "ESOTERIC"},
+    "numerology": {"signal_key": "ESOTERIC_NUMEROLOGY", "category": "ESOTERIC"},
+    "geomagnetic": {"signal_key": "ESOTERIC_GEOMAGNETIC", "category": "ESOTERIC"},
+    "schumann": {"signal_key": "ESOTERIC_SCHUMANN", "category": "ESOTERIC"},
+    "solar": {"signal_key": "ESOTERIC_SOLAR", "category": "ESOTERIC"},
+    "weather": {"signal_key": "EXTERNAL_WEATHER", "category": "EXTERNAL"},
+    "atmospheric": {"signal_key": "EXTERNAL_WEATHER", "category": "EXTERNAL"},
+
+    # Confluence signals
+    "confluence": {"signal_key": "CONFLUENCE_BONUS", "category": "CONFLUENCE"},
+    "perfect alignment": {"signal_key": "CONFLUENCE_BONUS", "category": "CONFLUENCE"},
+    "strong alignment": {"signal_key": "CONFLUENCE_BONUS", "category": "CONFLUENCE"},
+    "immortal": {"signal_key": "CONFLUENCE_IMMORTAL", "category": "CONFLUENCE"},
+}
+
+
+def _extract_signals_from_reasons(reasons: list) -> list:
+    """
+    v10.32+: Extract fired signals from reasons array.
+    Returns list of dicts: [{"signal_key": "PILLAR_SHARP_SPLIT", "category": "RESEARCH", "value": 1.0}, ...]
+    """
+    if not reasons:
+        return []
+
+    fired_signals = []
+    seen_keys = set()
+
+    for reason in reasons:
+        if not isinstance(reason, str):
+            continue
+
+        reason_lower = reason.lower()
+
+        # Extract numeric value if present (e.g., "+1.5" -> 1.5)
+        value = 0.0
+        value_match = re.search(r'([+-]?\d+\.?\d*)', reason)
+        if value_match:
+            try:
+                value = float(value_match.group(1))
+            except ValueError:
+                pass
+
+        # Match against known signal patterns
+        for pattern, signal_info in REASON_TO_SIGNAL_MAP.items():
+            if pattern in reason_lower:
+                signal_key = signal_info["signal_key"]
+                if signal_key not in seen_keys:
+                    seen_keys.add(signal_key)
+                    fired_signals.append({
+                        "signal_key": signal_key,
+                        "category": signal_info["category"],
+                        "value": value
+                    })
+                break  # Only one signal per reason
+
+    return fired_signals
 
 
 # ============================================================================
@@ -4960,10 +5061,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         }
 
     # ================================================================
-    # v10.32: ENRICH PICKS WITH FIRED_SIGNALS + SAVE TO LEDGER
+    # v10.32+: ENRICH PICKS WITH FIRED_SIGNALS + SAVE TO LEDGER + SIGNAL_LEDGER
     # ================================================================
     if DATABASE_AVAILABLE and DB_ENABLED:
         picks_saved = 0
+        signals_saved = 0
         all_picks_to_save = top_props + top_game_picks
 
         for pick in all_picks_to_save:
@@ -4971,17 +5073,45 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             if SIGNAL_ATTRIBUTION_AVAILABLE:
                 pick = enrich_pick_with_signals(pick)
 
+            # v10.32+: Extract signals from reasons array for SignalLedger
+            fired_signals_list = _extract_signals_from_reasons(pick.get("reasons", []))
+            pick["fired_signals"] = [s["signal_key"] for s in fired_signals_list]
+            pick["fired_signal_count"] = len(fired_signals_list)
+
             # Enrich pick data with sport and version
             pick_data = {
                 **pick,
                 "sport": sport.upper(),
-                "version": "production_v10.32"
+                "version": "production_v10.32+"
             }
+
+            # Save to PickLedger
             if upsert_pick(pick_data):
                 picks_saved += 1
 
+                # v10.32+: Also save to SignalLedger for ROI tracking
+                # Generate pick_uid same way as PickLedger for foreign key
+                pick_uid = PickLedger.generate_pick_uid(
+                    sport=sport.upper(),
+                    event_id=pick.get("event_id"),
+                    market=pick.get("market", pick.get("stat_type", "")),
+                    selection=pick.get("selection", pick.get("player_name", "")),
+                    line=pick.get("line"),
+                    odds=pick.get("odds", -110),
+                    version="production_v10.32+",
+                    pick_date=datetime.utcnow().date()
+                )
+
+                # Save each fired signal to SignalLedger
+                try:
+                    saved = save_signal_ledger(pick_uid, sport.upper(), fired_signals_list)
+                    signals_saved += saved
+                except Exception as e:
+                    logger.warning(f"SignalLedger save failed for {pick_uid}: {e}")
+
         if debug == 1:
             result["debug"]["picks_saved_to_ledger"] = picks_saved
+            result["debug"]["signals_saved_to_ledger"] = signals_saved
             result["debug"]["picks_attempted_save"] = len(all_picks_to_save)
             result["debug"]["signal_attribution_available"] = SIGNAL_ATTRIBUTION_AVAILABLE
 
@@ -5759,6 +5889,63 @@ async def get_micro_weight_status_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/db/status")
+async def get_db_status(auth: bool = Depends(verify_api_key)):
+    """
+    v10.32+: Database health check endpoint.
+    Returns connection status, table counts, and diagnostics.
+    Always returns 200 OK (health info in response body).
+    """
+    if DATABASE_AVAILABLE:
+        try:
+            health = get_db_health()
+            return {
+                "status": "ok" if health["db_connect_ok"] else "degraded",
+                "timestamp": datetime.now().isoformat(),
+                **health
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "timestamp": datetime.now().isoformat(),
+                "db_url_present": bool(os.getenv("DATABASE_URL", "")),
+                "db_connect_ok": False,
+                "last_error": str(e)
+            }
+    else:
+        return {
+            "status": "unavailable",
+            "timestamp": datetime.now().isoformat(),
+            "db_url_present": bool(os.getenv("DATABASE_URL", "")),
+            "db_connect_ok": False,
+            "db_enabled": False,
+            "last_error": "Database module not available",
+            "note": "Add PostgreSQL service in Railway to enable database features"
+        }
+
+
+@router.get("/season/status")
+async def get_season_status_endpoint(auth: bool = Depends(verify_api_key)):
+    """
+    v10.32+: Get current season status for all sports.
+    Shows which sports are in-season and their approximate season dates.
+    """
+    if DATABASE_AVAILABLE:
+        try:
+            return get_season_status()
+        except Exception as e:
+            logger.warning(f"Season status failed: {e}")
+
+    # Fallback if database module not available
+    from datetime import date as dt_date
+    today = dt_date.today()
+    return {
+        "check_date": today.isoformat(),
+        "active_sports": ["NBA", "NFL", "NHL", "NCAAB"],  # Default winter assumption
+        "note": "Season calendar requires database module"
+    }
+
+
 @router.get("/signal-report")
 async def get_signal_report(
     sport: str = "ALL",
@@ -5766,70 +5953,115 @@ async def get_signal_report(
     auth: bool = Depends(verify_api_key)
 ):
     """
-    v10.32: Consolidated Signal Report - Policy multipliers, performance, and tuning history.
+    v10.32+: Consolidated Signal Report - Policy multipliers, performance, and tuning history.
 
     This is the primary transparency endpoint for the v10.32 self-learning system.
+    ALWAYS returns 200 OK with db_status indicating availability.
 
     Query Parameters:
     - sport: NBA, NFL, MLB, NHL, NCAAB, or ALL (default: ALL)
     - window_days: Rolling window for analysis (default: 7, max: 30)
 
     Returns:
+    - db_status: Database connection health
+    - totals: Aggregate win/loss/ROI stats
+    - signal_breakdown: Per-signal performance
     - signal_policies: Current multipliers per signal per sport
-    - signal_performance: ROI stats per signal (win_rate, sample_size, net_units)
     - tuning_history: Recent multiplier changes with reasons
-    - system_status: Circuit breaker and health info
+    - system_health: Circuit breaker and recommendation
     """
-    if not DATABASE_AVAILABLE or not DB_ENABLED:
-        raise HTTPException(status_code=503, detail="Database not available for signal report")
+    window_days = min(max(1, window_days), 30)
+    sports_to_check = ["NBA", "NFL", "MLB", "NHL", "NCAAB"] if sport.upper() == "ALL" else [sport.upper()]
 
-    try:
-        window_days = min(max(1, window_days), 30)
-        sports_to_check = ["NBA", "NFL", "MLB", "NHL", "NCAAB"] if sport.upper() == "ALL" else [sport.upper()]
+    # Always include db_status
+    db_status = {
+        "db_url_present": bool(os.getenv("DATABASE_URL", "")),
+        "db_connect_ok": False,
+        "db_enabled": DATABASE_AVAILABLE and DB_ENABLED,
+        "tables_found": [],
+        "missing_tables": []
+    }
 
-        report = {
-            "version": "v10.32",
-            "generated_at": datetime.now().isoformat(),
-            "window_days": window_days,
-            "sports": {}
+    # Try to get real DB health
+    if DATABASE_AVAILABLE:
+        try:
+            db_health = get_db_health()
+            db_status.update(db_health)
+        except Exception as e:
+            db_status["last_error"] = str(e)
+
+    report = {
+        "version": "v10.32+",
+        "generated_at": datetime.now().isoformat(),
+        "window_days": window_days,
+        "sport_filter": sport.upper(),
+        "db_status": db_status,
+        "sports": {}
+    }
+
+    # If DB not available, return empty structure with db_status
+    if not DATABASE_AVAILABLE or not DB_ENABLED or not db_status["db_connect_ok"]:
+        for sport_code in sports_to_check:
+            report["sports"][sport_code] = {
+                "totals": {"picks_logged": 0, "wins": 0, "losses": 0, "pushes": 0, "pending": 0, "win_rate": 0, "roi": 0},
+                "signal_breakdown": [],
+                "signal_policies": DEFAULT_MICRO_WEIGHTS.copy() if DEFAULT_MICRO_WEIGHTS else {},
+                "tuning_history": [],
+                "top_positive_signals": [],
+                "top_negative_signals": []
+            }
+        report["system_health"] = {
+            "total_signals_tracked": 0,
+            "signals_at_limit": 0,
+            "circuit_breaker_risk": False,
+            "recommendation": "DB_UNAVAILABLE",
+            "note": "Add PostgreSQL in Railway to enable signal tracking"
         }
+        return report
 
-        # Aggregate system status
+    # DB is available - fetch real data
+    try:
         total_signals_at_limit = 0
         total_signals = 0
 
         for sport_code in sports_to_check:
             sport_report = {
+                "totals": {"picks_logged": 0, "wins": 0, "losses": 0, "pushes": 0, "pending": 0, "win_rate": 0, "roi": 0},
+                "signal_breakdown": [],
                 "signal_policies": {},
-                "signal_performance": {},
                 "tuning_history": [],
+                "top_positive_signals": [],
+                "top_negative_signals": [],
                 "status": {}
             }
 
-            # 1. Get signal policies (current multipliers)
+            # 1. Get signal ledger stats (totals + breakdown)
+            try:
+                ledger_stats = get_signal_ledger_stats(sport_code, window_days)
+                sport_report["totals"] = ledger_stats.get("totals", sport_report["totals"])
+                sport_report["signal_breakdown"] = ledger_stats.get("signal_breakdown", [])
+                sport_report["top_positive_signals"] = ledger_stats.get("top_positive_signals", [])
+                sport_report["top_negative_signals"] = ledger_stats.get("top_negative_signals", [])
+            except Exception as e:
+                logger.warning(f"Signal ledger stats failed for {sport_code}: {e}")
+
+            # 2. Get signal policies (current multipliers)
             if SIGNAL_POLICY_AVAILABLE:
                 try:
                     policies = get_signal_policy(sport_code)
                     sport_report["signal_policies"] = policies
-                    # Count signals at limits
                     for key, mult in policies.items():
                         total_signals += 1
                         if mult <= 0.86 or mult >= 1.14:
                             total_signals_at_limit += 1
                 except Exception as e:
                     logger.warning(f"Signal policy load failed for {sport_code}: {e}")
+                    sport_report["signal_policies"] = DEFAULT_MICRO_WEIGHTS.copy()
 
-            # 2. Get signal performance
+            # 3. Get tuning history (fixed: days_back instead of limit)
             try:
-                perf_data = get_signal_performance(sport_code, window_days)
-                sport_report["signal_performance"] = perf_data
-            except Exception as e:
-                logger.warning(f"Signal performance load failed for {sport_code}: {e}")
-
-            # 3. Get tuning history
-            try:
-                history = get_tuning_history(sport_code, limit=10)
-                sport_report["tuning_history"] = history
+                history = get_tuning_history(sport_code, days_back=30)
+                sport_report["tuning_history"] = history[:10]  # Limit to 10 most recent
             except Exception as e:
                 logger.warning(f"Tuning history load failed for {sport_code}: {e}")
 
@@ -5843,7 +6075,7 @@ async def get_signal_report(
                         "circuit_breaker_triggered": mw_status.get("circuit_breaker_triggered", False),
                         "last_tuning": mw_status.get("last_tuning", None)
                     }
-                except:
+                except Exception:
                     pass
 
             report["sports"][sport_code] = sport_report
@@ -5861,7 +6093,15 @@ async def get_signal_report(
 
     except Exception as e:
         logger.exception("Failed to generate signal report: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        # Still return 200 with error info
+        report["error"] = str(e)
+        report["system_health"] = {
+            "total_signals_tracked": 0,
+            "signals_at_limit": 0,
+            "circuit_breaker_risk": False,
+            "recommendation": "ERROR"
+        }
+        return report
 
 
 @router.get("/scheduler/status")
