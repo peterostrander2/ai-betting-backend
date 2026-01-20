@@ -818,9 +818,13 @@ RESOLVER_MARKET_TIEBREAK = {
     "sharp_money": 3  # Sharp fallback last
 }
 
-# v10.13: BASE BOOST CONSTANTS (transparent math)
-BASE_SHARP_SPLIT_BOOST = 1.0
-BASE_RLM_BOOST = 1.0
+# v10.17: BASE BOOST CONSTANTS (transparent math)
+# Doubled from 1.0 to 2.0 to give props scoring parity with game picks
+# Props apply scope_mult=0.5 and direction_mult, so:
+#   ALIGNED prop (1.0 × 0.5 × 2.0) = 1.0 boost (vs games 2.0)
+#   NEUTRAL prop (0.5 × 0.5 × 2.0) = 0.5 boost
+BASE_SHARP_SPLIT_BOOST = 2.0
+BASE_RLM_BOOST = 2.0
 
 # v10.13: NBA TEAM ABBREVIATION MAPPING
 # Maps various team name formats to official 3-letter abbreviations
@@ -2729,8 +2733,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     - debug=1: Include diagnostic info (games_pulled, candidates_scored, correlation counters)
     - include_conflicts=1: Include filtered CONFLICT and NEUTRAL picks in separate arrays
 
-    Scoring Formula (Production v3):
+    Scoring Formula (v10.17):
     FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
+
+    v10.17 Props Fix:
+    - Props base_ai raised from 5.8 to 6.0
+    - BASE_SHARP_SPLIT_BOOST raised from 1.0 to 2.0
+    - BASE_RLM_BOOST raised from 1.0 to 2.0
+    - This gives ALIGNED props ~1.0 pillar boost (vs games' 2.0)
 
     Thresholds:
     - GOLD_STAR: >= 7.5
@@ -3251,10 +3261,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                     except Exception:
                         pass
 
-                # Calculate score with full esoteric integration (v10.11)
+                # Calculate score with full esoteric integration (v10.17)
+                # v10.17: Props use base_ai=6.0 (vs games 5.8) to compensate for
+                # reduced sharp pillar weights (scope_mult=0.5)
                 score_data = calculate_pick_score(
                     game_str + player,
                     sharp_signal,
+                    base_ai=6.0,  # v10.17: Raised from 5.8 for props parity
                     player_name=player,
                     home_team=home_team,
                     away_team=away_team,

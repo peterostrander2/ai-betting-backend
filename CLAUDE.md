@@ -1511,3 +1511,69 @@ curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" 
 Expected: `tier` = "GOLD_STAR" or "EDGE_LEAN", `reasons[]` populated
 
 ---
+
+## Session Log: January 20, 2026 - Props Scoring Fix v10.17
+
+### The Problem
+
+Props picks were returning empty for GOLD_STAR and EDGE_LEAN tiers.
+
+Diagnostic commands showed:
+- Game picks: EDGE_LEAN tier working correctly
+- Props picks: All MONITOR tier (never reaching actionable thresholds)
+
+### Root Cause Analysis
+
+Props scoring was mathematically suppressed due to compounding multipliers:
+
+| Factor | Props Value | Games Value |
+|--------|-------------|-------------|
+| base_ai | 5.8 | 5.8 |
+| scope_mult (sharp pillars) | 0.5x | 1.0x |
+| direction_mult (NEUTRAL) | 0.5x | N/A |
+| **Combined final_mult** | **0.25x** | **1.0x** |
+
+**Math for NEUTRAL prop with STRONG sharp:**
+- Sharp boost = 1.0 × 0.5 × 0.5 = **0.25** (vs games 2.0)
+- research_score = 5.8 + 0.25 = 6.05
+- final = (6.05 × 0.67) + (5 × 0.33) = **5.7** → MONITOR
+
+### What Was Fixed
+
+**1. Doubled BASE_SHARP_SPLIT_BOOST and BASE_RLM_BOOST (1.0 → 2.0)**
+
+| Constant | Old | New | Effect |
+|----------|-----|-----|--------|
+| BASE_SHARP_SPLIT_BOOST | 1.0 | 2.0 | ALIGNED props get 1.0 boost |
+| BASE_RLM_BOOST | 1.0 | 2.0 | Reverse line move parity |
+
+**2. Raised props base_ai (5.8 → 6.0)**
+
+Props now start 0.2 higher to compensate for reduced pillar weights.
+
+### Expected Results (After Fix)
+
+| Prop Type | Old Final | New Final | Tier |
+|-----------|-----------|-----------|------|
+| ALIGNED + STRONG sharp | 6.5 | 7.2 | EDGE_LEAN |
+| NEUTRAL + STRONG sharp | 5.7 | 6.5 | EDGE_LEAN |
+| ALIGNED + multiple pillars | 6.8 | 7.6 | GOLD_STAR |
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - v10.17 props scoring fix)
+CLAUDE.md             (MODIFIED - Session log)
+```
+
+### Verification
+
+After deploy, run:
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
+  -H "X-API-Key: YOUR_KEY" | jq '.props.picks[] | select(.tier == "GOLD_STAR" or .tier == "EDGE_LEAN") | {player_name, tier, smash_score}'
+```
+
+Expected: At least 1-3 EDGE_LEAN or GOLD_STAR props returned.
+
+---
