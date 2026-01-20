@@ -602,6 +602,42 @@ def tier_from_score(score: float) -> tuple:
     return ("PASS", "PASS")
 
 
+def order_reasons(reasons: list) -> list:
+    """
+    v10.16: Order reasons by category for clarity.
+
+    Correct order:
+    1. MAPPING: (team resolver result)
+    2. CORRELATION: (ALIGNED/NEUTRAL/CONFLICT)
+    3. RESEARCH: (sharp, RLM, pillars)
+    4. ESOTERIC: (Jarvis, Gematria, etc)
+    5. CONFLUENCE: (alignment bonuses)
+    6. RESOLVER: (deduplication notes)
+    7. GOVERNOR: (volume cap notes)
+    """
+    if not reasons:
+        return []
+
+    # Define category order
+    category_order = {
+        "MAPPING:": 0,
+        "CORRELATION:": 1,
+        "RESEARCH:": 2,
+        "ESOTERIC:": 3,
+        "CONFLUENCE:": 4,
+        "RESOLVER:": 5,
+        "GOVERNOR:": 6,
+    }
+
+    def get_order(reason: str) -> int:
+        for prefix, order in category_order.items():
+            if reason.startswith(prefix):
+                return order
+        return 99  # Unknown categories go last
+
+    return sorted(reasons, key=get_order)
+
+
 def resolve_market_conflicts(picks: list) -> list:
     """
     Resolve conflicts where both sides of same market are returned.
@@ -2684,13 +2720,14 @@ async def get_props(sport: str):
 
 
 @router.get("/best-bets/{sport}")
-async def get_best_bets(sport: str, debug: int = 0):
+async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     """
     Get best bets using full 8 AI Models + 8 Pillars + JARVIS + Esoteric scoring.
     Returns TWO categories: props (player props) and game_picks (spreads, totals, ML).
 
     Query Parameters:
-    - debug=1: Include diagnostic info (games_pulled, candidates_scored, returned_picks)
+    - debug=1: Include diagnostic info (games_pulled, candidates_scored, correlation counters)
+    - include_conflicts=1: Include filtered CONFLICT and NEUTRAL picks in separate arrays
 
     Scoring Formula (Production v3):
     FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
@@ -2704,8 +2741,12 @@ async def get_best_bets(sport: str, debug: int = 0):
     Response Schema:
     {
         "sport": "NBA",
-        "props": [...],       // Player props
-        "game_picks": [...],  // Spreads, totals, moneylines
+        "props": {
+            "picks": [...],      // ALIGNED picks (best-bets)
+            "conflicts": [...],  // Only if include_conflicts=1
+            "neutrals": [...]    // Only if include_conflicts=1
+        },
+        "game_picks": [...],
         "daily_energy": {...},
         "timestamp": "ISO timestamp"
     }
@@ -2715,10 +2756,12 @@ async def get_best_bets(sport: str, debug: int = 0):
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
     # Check cache first
+    # v10.16: Skip cache for debug/inspection modes to ensure fresh diagnostic data
     cache_key = f"best-bets:{sport_lower}"
-    cached = api_cache.get(cache_key)
-    if cached:
-        return cached
+    if debug != 1 and include_conflicts != 1:
+        cached = api_cache.get(cache_key)
+        if cached:
+            return cached
 
     # Get MasterPredictionSystem
     mps = get_master_prediction_system()
@@ -3346,6 +3389,44 @@ async def get_best_bets(sport: str, debug: int = 0):
     # v10.9: PROP DEDUPLICATION - stop collisions like Maxey x4
     # Uses resolve_prop_conflicts for proper tie-breaking (score, odds, line distance)
     deduplicated_props, props_dropped_count = resolve_prop_conflicts(props_picks)
+
+    # v10.16: Apply reason ordering to each pick (MAPPING → CORRELATION → RESEARCH → ...)
+    for pick in deduplicated_props:
+        pick["reasons"] = order_reasons(pick.get("reasons", []))
+
+    # v10.16: Bucket props by correlation for visibility and debugging
+    aligned_props = []
+    neutral_props = []
+    conflict_props = []
+
+    for p in deduplicated_props:
+        mult = p.get("directional_mult", 0.5)
+        label = p.get("directional_label", "")
+
+        if mult == 1.0 or label == "ALIGNED":
+            aligned_props.append(p)
+        elif mult == 0.0 or label == "CONFLICT":
+            conflict_props.append(p)
+        else:
+            # NEUTRAL or unknown
+            neutral_props.append(p)
+
+    # Sort each bucket by score (best first)
+    aligned_props.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
+    neutral_props.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
+    conflict_props.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
+
+    # v10.16: Track correlation counters for debug
+    correlation_counters = {
+        "aligned_count": len(aligned_props),
+        "neutral_count": len(neutral_props),
+        "conflict_count": len(conflict_props),
+        "excluded_conflicts_count": len(conflict_props)  # All conflicts are excluded from best-bets
+    }
+
+    # Main selection: Prioritize ALIGNED, then NEUTRAL (conflicts excluded from best-bets)
+    # This ensures the clean feed only shows directionally-consistent picks
+    deduplicated_props = aligned_props + neutral_props
     deduplicated_props.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
 
     # VOLUME GOVERNOR (v10.6): Max 3 GOLD STAR, but NEVER lie about tiers
@@ -3602,6 +3683,10 @@ async def get_best_bets(sport: str, debug: int = 0):
     # Re-sort after all filtering
     game_picks.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
 
+    # v10.16: Apply reason ordering to game picks (MAPPING → CORRELATION → RESEARCH → ...)
+    for pick in game_picks:
+        pick["reasons"] = order_reasons(pick.get("reasons", []))
+
     # VOLUME GOVERNOR (v10.7): Max 3 GOLD STAR, but NEVER lie about tiers
     # Tier is always accurate to score. Badge can change for display purposes.
     gold_count_games = 0
@@ -3677,16 +3762,24 @@ async def get_best_bets(sport: str, debug: int = 0):
     merged_picks.extend(top_game_picks[:3])
     merged_picks.extend(top_props[:7])
 
+    # v10.16: Build props object with optional conflicts/neutrals
+    props_result = {
+        "count": len(top_props),
+        "total_analyzed": len(props_picks),
+        "picks": top_props
+    }
+
+    # v10.16: Include conflicts/neutrals when requested for debugging
+    if include_conflicts == 1:
+        props_result["conflicts"] = conflict_props[:25]  # Cap at 25 for payload safety
+        props_result["neutrals"] = neutral_props[:25]    # Cap at 25 for payload safety
+
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.14",
-        "scoring_system": "v10.14: Player-Team Resolver (CACHE/OVERRIDE/INFER)",
+        "source": "production_v10.16",
+        "scoring_system": "v10.16: include_conflicts + correlation debug + ordered reasons",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
-        "props": {
-            "count": len(top_props),
-            "total_analyzed": len(props_picks),
-            "picks": top_props
-        },
+        "props": props_result,
         "game_picks": {
             "count": len(top_game_picks),
             "total_analyzed": len(governed_games),
@@ -3703,7 +3796,7 @@ async def get_best_bets(sport: str, debug: int = 0):
         "timestamp": datetime.now().isoformat()
     }
 
-    # Debug mode: Add diagnostic info (v10.9 expanded)
+    # Debug mode: Add diagnostic info (v10.16 expanded with correlation counters)
     if debug == 1:
         result["debug"] = {
             "games_pulled": len(props_data.get("data", [])) if props_data else 0,
@@ -3714,7 +3807,12 @@ async def get_best_bets(sport: str, debug: int = 0):
             "gold_star_props": len([p for p in top_props if p.get("tier") == "GOLD_STAR"]),
             "gold_star_games": len([p for p in top_game_picks if p.get("tier") == "GOLD_STAR"]),
             "volume_governor_applied": gold_count > 3 or gold_count_games > 3,
-            "no_data": not has_live_data
+            "no_data": not has_live_data,
+            # v10.16: Correlation debug counters
+            "aligned_count": correlation_counters["aligned_count"],
+            "neutral_count": correlation_counters["neutral_count"],
+            "conflict_count": correlation_counters["conflict_count"],
+            "excluded_conflicts_count": correlation_counters["excluded_conflicts_count"]
         }
     api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
     return result
