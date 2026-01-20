@@ -1,5 +1,5 @@
-# live_data_router.py v14.8 - SCORING v10.21
-# Jarvis Enforced Across All Sports + Debug Proof + Validation Guardrail
+# live_data_router.py v14.9 - SCORING v10.22
+# Sport Profiles + Per-Sport Calibration + Cross-Sport Jarvis + NFL Conflict Fix
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
 from fastapi import APIRouter, HTTPException, Depends, Header
@@ -128,7 +128,65 @@ SPORT_MAPPINGS = {
     "nfl": {"odds": "americanfootball_nfl", "espn": "football/nfl", "playbook": "NFL"},
     "mlb": {"odds": "baseball_mlb", "espn": "baseball/mlb", "playbook": "MLB"},
     "nhl": {"odds": "icehockey_nhl", "espn": "hockey/nhl", "playbook": "NHL"},
+    "ncaab": {"odds": "basketball_ncaab", "espn": "basketball/mens-college-basketball", "playbook": "CFB"},
 }
+
+# ============================================================================
+# v10.22: SPORT PROFILES - Per-sport calibration (single source of truth)
+# ============================================================================
+SPORT_PROFILES = {
+    "nba": {
+        "weights": {"research": 0.67, "esoteric": 0.33},
+        "tiers": {"PASS": 4.75, "MONITOR": 5.75, "EDGE_LEAN": 6.50, "GOLD_STAR": 7.50},
+        "limits": {"game_picks": 10, "prop_picks": 10},
+        "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
+        "market_preference": ["totals", "spreads", "h2h"],
+        "boosts": {},
+        "notes": "NBA props are high signal; keep stricter tiers."
+    },
+    "nhl": {
+        "weights": {"research": 0.62, "esoteric": 0.38},
+        "tiers": {"PASS": 4.50, "MONITOR": 5.50, "EDGE_LEAN": 6.25, "GOLD_STAR": 7.25},
+        "limits": {"game_picks": 10, "prop_picks": 10},
+        "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
+        "market_preference": ["totals", "spreads", "h2h"],
+        "boosts": {"nhl_ml_dog": 0.50},
+        "notes": "Higher variance; lower tier thresholds slightly."
+    },
+    "nfl": {
+        "weights": {"research": 0.72, "esoteric": 0.28},
+        "tiers": {"PASS": 4.60, "MONITOR": 5.60, "EDGE_LEAN": 6.40, "GOLD_STAR": 7.40},
+        "limits": {"game_picks": 6, "prop_picks": 6},
+        "conflict_policy": {"exclude_conflicts": False, "neutral_mult_default": 0.5, "conflicts_bucket": True},
+        "market_preference": ["spreads", "totals", "h2h"],
+        "boosts": {"spreads_bias": 0.10},
+        "notes": "NFL lines are sharper; let some conflicts through but label them."
+    },
+    "mlb": {
+        "weights": {"research": 0.70, "esoteric": 0.30},
+        "tiers": {"PASS": 4.60, "MONITOR": 5.60, "EDGE_LEAN": 6.35, "GOLD_STAR": 7.35},
+        "limits": {"game_picks": 8, "prop_picks": 0},
+        "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
+        "market_preference": ["h2h", "totals", "spreads"],
+        "boosts": {"ml_bias": 0.05},
+        "notes": "Low scoring sport; rely more on research than esoteric."
+    },
+    "ncaab": {
+        "weights": {"research": 0.66, "esoteric": 0.34},
+        "tiers": {"PASS": 4.50, "MONITOR": 5.50, "EDGE_LEAN": 6.25, "GOLD_STAR": 7.25},
+        "limits": {"game_picks": 10, "prop_picks": 0},
+        "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
+        "market_preference": ["spreads", "totals", "h2h"],
+        "boosts": {},
+        "notes": "High variance; slightly easier EDGE_LEAN thresholds."
+    },
+}
+
+
+def get_sport_profile(sport_name: str) -> dict:
+    """Get sport profile with safe fallback to NBA defaults."""
+    return SPORT_PROFILES.get(sport_name.lower(), SPORT_PROFILES["nba"])
+
 
 # ============================================================================
 # SHARED HTTP CLIENT
@@ -582,22 +640,28 @@ def clamp_score(x: float) -> float:
     return max(0.0, min(10.0, x))
 
 
-def tier_from_score(score: float) -> tuple:
+def tier_from_score(score: float, tiers: dict = None) -> tuple:
     """
     Return (tier, badge) from score. Single source of truth for tier assignment.
 
-    Thresholds:
+    v10.22: Now accepts optional per-sport tier thresholds.
+
+    Default Thresholds (NBA):
     - GOLD_STAR: >= 7.5
     - EDGE_LEAN: >= 6.5
     - MONITOR: >= 5.5
     - PASS: < 5.5
     """
+    # Default NBA thresholds if not provided
+    if tiers is None:
+        tiers = {"PASS": 5.5, "MONITOR": 5.5, "EDGE_LEAN": 6.5, "GOLD_STAR": 7.5}
+
     score = clamp_score(score)
-    if score >= 7.5:
+    if score >= tiers.get("GOLD_STAR", 7.5):
         return ("GOLD_STAR", "GOLD STAR")
-    if score >= 6.5:
+    if score >= tiers.get("EDGE_LEAN", 6.5):
         return ("EDGE_LEAN", "EDGE LEAN")
-    if score >= 5.5:
+    if score >= tiers.get("MONITOR", 5.5):
         return ("MONITOR", "MONITOR")
     return ("PASS", "PASS")
 
@@ -3020,8 +3084,27 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             active_pillars=research_reasons
         )
 
-        # ADDITIVE RESEARCH SCORE: base + pillars + market_mod, clamped to 0-10
-        research_score = base_ai + pillar_boost + market_delta
+        # v10.22: Sport-specific market bias (from SPORT_PROFILES)
+        sport_profile_local = get_sport_profile(sport)
+        sport_market_bias = 0.0
+
+        # NFL spreads bonus
+        if sport.lower() == "nfl" and market == "spreads":
+            sport_market_bias += sport_profile_local.get("boosts", {}).get("spreads_bias", 0.0)
+            if sport_market_bias > 0:
+                research_reasons.append(f"RESEARCH: Sport Market Bias (NFL spreads) +{sport_market_bias:.2f}")
+
+        # MLB moneyline bonus
+        if sport.lower() == "mlb" and market == "h2h":
+            sport_market_bias += sport_profile_local.get("boosts", {}).get("ml_bias", 0.0)
+            if sport_market_bias > 0:
+                research_reasons.append(f"RESEARCH: Sport Market Bias (MLB ML) +{sport_market_bias:.2f}")
+
+        # NHL ML dog weapon (handled separately in game picks loop, but tracked here for visibility)
+        # Note: actual boost applied in game_picks section
+
+        # ADDITIVE RESEARCH SCORE: base + pillars + market_mod + sport_bias, clamped to 0-10
+        research_score = base_ai + pillar_boost + market_delta + sport_market_bias
         research_score = max(0.0, min(10.0, float(research_score)))
 
         # Add market modifier reason if applied
@@ -3210,9 +3293,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             confluence_level = "MODERATE"
             # No boost for moderate alignment without Jarvis
 
-        # --- FINAL SCORE FORMULA ---
-        # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
-        final_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence_boost
+        # --- FINAL SCORE FORMULA (v10.22: Sport Profile Weights) ---
+        # Get sport profile for weight calibration
+        profile = get_sport_profile(sport)
+        w_research = profile["weights"]["research"]
+        w_esoteric = profile["weights"]["esoteric"]
+
+        # FINAL = (research × w_r) + (esoteric × w_e) + confluence_boost
+        final_score = (research_score * w_research) + (esoteric_score * w_esoteric) + confluence_boost
         final_score = max(0.0, min(10.0, float(final_score)))
 
         # --- SmashSpot FLAG (v10.19 Strict) ---
@@ -3229,9 +3317,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         if smash_spot:
             smash_reasons.append("SMASH: Confluence locked (score>=8.0, align>=85%, Jarvis active, pillars confirmed)")
 
-        # --- BET TIER DETERMINATION (v10.6 - Use shared tier function) ---
+        # --- BET TIER DETERMINATION (v10.22: Sport Profile Tiers) ---
         final_score = clamp_score(final_score)
-        tier, badge = tier_from_score(final_score)
+        tier, badge = tier_from_score(final_score, profile["tiers"])
 
         # Map tier to units and action
         tier_config = {
@@ -3555,6 +3643,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     for pick in deduplicated_props:
         pick["reasons"] = order_reasons(pick.get("reasons", []))
 
+    # v10.22: Get sport profile for conflict filtering policy
+    sport_profile = get_sport_profile(sport_lower)
+    exclude_conflicts = sport_profile["conflict_policy"].get("exclude_conflicts", True)
+
     # v10.16: Bucket props by correlation for visibility and debugging
     aligned_props = []
     neutral_props = []
@@ -3567,6 +3659,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         if mult == 1.0 or label == "ALIGNED":
             aligned_props.append(p)
         elif mult == 0.0 or label == "CONFLICT":
+            # v10.22: If sport allows conflicts (NFL), label them instead of excluding
+            if not exclude_conflicts:
+                p["badges"] = p.get("badges", []) + ["CONFLICT"]
             conflict_props.append(p)
         else:
             # NEUTRAL or unknown
@@ -3577,17 +3672,25 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     neutral_props.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
     conflict_props.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
 
-    # v10.16: Track correlation counters for debug
+    # v10.22: Track correlation counters for debug
+    excluded_conflict_count = len(conflict_props) if exclude_conflicts else 0
     correlation_counters = {
         "aligned_count": len(aligned_props),
         "neutral_count": len(neutral_props),
         "conflict_count": len(conflict_props),
-        "excluded_conflicts_count": len(conflict_props)  # All conflicts are excluded from best-bets
+        "excluded_conflicts_count": excluded_conflict_count,
+        "conflicts_included": not exclude_conflicts  # v10.22: for debug visibility
     }
 
-    # Main selection: Prioritize ALIGNED, then NEUTRAL (conflicts excluded from best-bets)
-    # This ensures the clean feed only shows directionally-consistent picks
-    deduplicated_props = aligned_props + neutral_props
+    # v10.22: Main selection based on sport conflict policy
+    # If exclude_conflicts=True (NBA, NHL, MLB, NCAAB): exclude conflicts
+    # If exclude_conflicts=False (NFL): include conflicts but they're labeled
+    if exclude_conflicts:
+        deduplicated_props = aligned_props + neutral_props
+    else:
+        # NFL: include all, conflicts already labeled with CONFLICT badge
+        deduplicated_props = aligned_props + neutral_props + conflict_props
+
     deduplicated_props.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
 
     # VOLUME GOVERNOR (v10.19): Max 3 GOLD STAR, but NEVER lie about tiers
@@ -3597,9 +3700,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     smash_count = 0
     governed_props = []
     for pick in deduplicated_props:
-        # Re-apply tier from score to ensure consistency
+        # Re-apply tier from score to ensure consistency (v10.22: sport profile tiers)
         score = clamp_score(pick.get("final_score", pick.get("total_score", 0)))
-        tier, _ = tier_from_score(score)
+        tier, _ = tier_from_score(score, sport_profile["tiers"])
         pick["tier"] = tier
         pick["final_score"] = score
         pick["confidence"] = int(round(score * 10))
@@ -3631,7 +3734,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             pick["badge"] = "TOP VALUE"
             pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Filled slot for minimum volume (tier preserved)"]
 
-    top_props = governed_props[:10]
+    # v10.22: Use sport profile limits
+    max_prop_picks = sport_profile["limits"].get("prop_picks", 10)
+    top_props = governed_props[:max_prop_picks]
 
     # ============================================
     # CATEGORY 2: GAME PICKS (Spreads, Totals, ML)
@@ -3923,9 +4028,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     smash_count_games = 0
     governed_games = []
     for pick in game_picks:
-        # Re-apply tier from score to ensure consistency
+        # Re-apply tier from score to ensure consistency (v10.22: sport profile tiers)
         score = clamp_score(pick.get("final_score", pick.get("total_score", 0)))
-        tier, _ = tier_from_score(score)
+        tier, _ = tier_from_score(score, sport_profile["tiers"])
         pick["tier"] = tier
         pick["final_score"] = score
 
@@ -3956,7 +4061,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             pick["badge"] = "TOP VALUE"
             pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Filled slot for minimum volume (tier preserved)"]
 
-    top_game_picks = governed_games[:10]
+    # v10.22: Use sport profile limits
+    max_game_picks = sport_profile["limits"].get("game_picks", 10)
+    top_game_picks = governed_games[:max_game_picks]
 
     # ============================================
     # BUILD FINAL RESPONSE
@@ -4063,8 +4170,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.21",
-        "scoring_system": "v10.21: Jarvis enforced across all sports/candidates + debug proof",
+        "source": "production_v10.22",
+        "scoring_system": "v10.22: Sport Profiles + Cross-Sport Jarvis Calibration",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
@@ -4083,7 +4190,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         "timestamp": datetime.now().isoformat()
     }
 
-    # Debug mode: Add diagnostic info (v10.21 expanded with Jarvis enforcement)
+    # Debug mode: Add diagnostic info (v10.22 expanded with sport profiles)
     if debug == 1:
         result["debug"] = {
             "games_pulled": len(props_data.get("data", [])) if props_data else 0,
@@ -4100,12 +4207,20 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             "neutral_count": correlation_counters["neutral_count"],
             "conflict_count": correlation_counters["conflict_count"],
             "excluded_conflicts_count": correlation_counters["excluded_conflicts_count"],
+            "conflicts_included": correlation_counters.get("conflicts_included", False),
             # v10.21: Jarvis enforcement counters
             "jarvis_calls_total": jarvis_debug["calls_total"],
             "jarvis_calls_game": jarvis_debug["calls_game"],
             "jarvis_calls_props": jarvis_debug["calls_props"],
             "jarvis_missing_on_returned_picks": jarvis_debug["missing_on_returned"],
-            "jarvis_engine_available": jarvis is not None
+            "jarvis_engine_available": jarvis is not None,
+            # v10.22: Sport profile info
+            "sport_profile": {
+                "weights": sport_profile["weights"],
+                "tiers": sport_profile["tiers"],
+                "limits": sport_profile["limits"],
+                "conflict_policy": sport_profile["conflict_policy"]
+            }
         }
     api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
     return result
