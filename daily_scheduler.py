@@ -42,6 +42,14 @@ except ImportError:
     MICRO_WEIGHT_TUNING_AVAILABLE = False
     logger.warning("Micro-weight tuning not available")
 
+# v10.31: Import sport season gating
+try:
+    from sport_seasons import is_in_season, get_in_season_sports
+    SEASON_GATING_AVAILABLE = True
+except ImportError:
+    SEASON_GATING_AVAILABLE = False
+    logger.warning("Sport season gating not available")
+
 
 # ============================================
 # CONFIGURATION
@@ -50,8 +58,8 @@ except ImportError:
 class SchedulerConfig:
     """Scheduler configuration."""
 
-    # Audit time (6 AM ET)
-    AUDIT_HOUR = 6
+    # Audit time (5 AM ET) - v10.31 changed from 6 AM to 5 AM
+    AUDIT_HOUR = 5
     AUDIT_MINUTE = 0
 
     # Props fetch times
@@ -104,19 +112,31 @@ class DailyAuditJob:
         self.last_results = {}
     
     def run(self):
-        """Execute daily audit for all sports."""
+        """Execute daily audit for all sports that are in-season."""
         logger.info("=" * 50)
-        logger.info("⏰ DAILY AUDIT STARTING")
+        logger.info("⏰ DAILY AUDIT STARTING (v10.31)")
         logger.info(f"   Time: {datetime.now().isoformat()}")
         logger.info("=" * 50)
-        
+
         self.last_run = datetime.now()
         results = {
             "timestamp": self.last_run.isoformat(),
-            "sports": {}
+            "sports": {},
+            "skipped_off_season": []
         }
-        
-        for sport in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
+
+        # v10.31: Use season gating to only process in-season sports
+        all_sports = ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
+        if SEASON_GATING_AVAILABLE:
+            in_season_sports = get_in_season_sports()
+            logger.info(f"v10.31: Sports in season: {in_season_sports}")
+            sports_to_process = [s for s in all_sports if s in in_season_sports]
+            results["skipped_off_season"] = [s for s in all_sports if s not in in_season_sports]
+        else:
+            sports_to_process = all_sports
+            logger.warning("Season gating not available - processing all sports")
+
+        for sport in sports_to_process:
             try:
                 sport_result = self.audit_sport(sport)
                 results["sports"][sport] = sport_result

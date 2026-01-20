@@ -91,6 +91,14 @@ try:
 except ImportError:
     MICRO_WEIGHT_TUNING_AVAILABLE = False
 
+# v10.31: Import sport season gating
+try:
+    from sport_seasons import is_in_season, get_off_season_response, get_season_info
+    SEASON_GATING_AVAILABLE = True
+except ImportError:
+    SEASON_GATING_AVAILABLE = False
+    logger.warning("sport_seasons module not available - season gating disabled")
+
 # Import AI Engine Layer (v10.24: 8 AI Models)
 try:
     from ai_engine_layer import calculate_ai_engine_score, get_ai_engine_defaults
@@ -2924,6 +2932,20 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # v10.31: Season gating - return empty response for off-season sports
+    if SEASON_GATING_AVAILABLE:
+        sport_upper = sport_lower.upper()
+        if not is_in_season(sport_upper):
+            logger.info(f"v10.31: {sport_upper} is off-season, returning empty response")
+            off_season_response = get_off_season_response(sport_upper)
+            if debug == 1:
+                off_season_response["debug"] = {
+                    "no_data": True,
+                    "reason": "sport_off_season",
+                    "season_info": get_season_info(sport_upper)
+                }
+            return off_season_response
 
     # v10.30: Validate and normalize min_confidence parameter
     min_confidence = min_confidence.upper() if min_confidence else "C"
