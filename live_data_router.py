@@ -4979,10 +4979,20 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         grade = pick.get("confidence_grade", "C")
         confidence_grade_counts_returned[grade] = confidence_grade_counts_returned.get(grade, 0) + 1
 
+    # v10.33: Initialize DB persistence counters BEFORE result construction
+    # These will be populated by the save logic below and included at TOP LEVEL
+    picks_saved = 0
+    signals_saved = 0
+    save_errors = []
+    db_error = None
+
+    # Determine database availability (fast check - no DB call needed)
+    database_available = DATABASE_AVAILABLE and DB_ENABLED
+
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.32",
-        "scoring_system": "v10.31: Auto-grading + Conservative Self-Correction + Daily Transparency",
+        "source": "production_v10.33",
+        "scoring_system": "v10.33: Top-level DB health fields + Auto-grading + Daily Transparency",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
@@ -4998,7 +5008,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         },
         "api_status": api_status,
         "data_message": data_message,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        # v10.33: TOP-LEVEL database health fields (ALWAYS present)
+        "database_available": database_available,
+        "picks_saved": 0,  # Will be updated by save logic below
+        "signals_saved": 0  # Will be updated by save logic below
     }
 
     # Debug mode: Add diagnostic info (v10.22 expanded with sport profiles)
@@ -5056,64 +5070,92 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "limits": sport_profile["limits"],
                 "conflict_policy": sport_profile["conflict_policy"]
             },
-            # v10.31: Database status
+            # v10.31: Database status (kept for backward compatibility)
             "database_available": DATABASE_AVAILABLE and DB_ENABLED
         }
 
     # ================================================================
-    # v10.32+: ENRICH PICKS WITH FIRED_SIGNALS + SAVE TO LEDGER + SIGNAL_LEDGER
+    # v10.33+: ENRICH PICKS WITH FIRED_SIGNALS + SAVE TO LEDGER + SIGNAL_LEDGER
+    # Now updates TOP-LEVEL picks_saved/signals_saved fields
     # ================================================================
-    if DATABASE_AVAILABLE and DB_ENABLED:
-        picks_saved = 0
-        signals_saved = 0
-        all_picks_to_save = top_props + top_game_picks
+    all_picks_to_save = top_props + top_game_picks
 
-        for pick in all_picks_to_save:
-            # v10.32: Enrich pick with fired_signals before saving
-            if SIGNAL_ATTRIBUTION_AVAILABLE:
-                pick = enrich_pick_with_signals(pick)
+    if database_available:
+        try:
+            for pick in all_picks_to_save:
+                # v10.32: Enrich pick with fired_signals before saving
+                if SIGNAL_ATTRIBUTION_AVAILABLE:
+                    pick = enrich_pick_with_signals(pick)
 
-            # v10.32+: Extract signals from reasons array for SignalLedger
-            fired_signals_list = _extract_signals_from_reasons(pick.get("reasons", []))
-            pick["fired_signals"] = [s["signal_key"] for s in fired_signals_list]
-            pick["fired_signal_count"] = len(fired_signals_list)
+                # v10.32+: Extract signals from reasons array for SignalLedger
+                fired_signals_list = _extract_signals_from_reasons(pick.get("reasons", []))
+                pick["fired_signals"] = [s["signal_key"] for s in fired_signals_list]
+                pick["fired_signal_count"] = len(fired_signals_list)
 
-            # Enrich pick data with sport and version
-            pick_data = {
-                **pick,
-                "sport": sport.upper(),
-                "version": "production_v10.32+"
-            }
+                # Enrich pick data with sport and version
+                pick_data = {
+                    **pick,
+                    "sport": sport.upper(),
+                    "version": "production_v10.33+"
+                }
 
-            # Save to PickLedger
-            if upsert_pick(pick_data):
-                picks_saved += 1
-
-                # v10.32+: Also save to SignalLedger for ROI tracking
-                # Generate pick_uid same way as PickLedger for foreign key
-                pick_uid = PickLedger.generate_pick_uid(
-                    sport=sport.upper(),
-                    event_id=pick.get("event_id"),
-                    market=pick.get("market", pick.get("stat_type", "")),
-                    selection=pick.get("selection", pick.get("player_name", "")),
-                    line=pick.get("line"),
-                    odds=pick.get("odds", -110),
-                    version="production_v10.32+",
-                    pick_date=datetime.utcnow().date()
-                )
-
-                # Save each fired signal to SignalLedger
+                # Save to PickLedger
                 try:
-                    saved = save_signal_ledger(pick_uid, sport.upper(), fired_signals_list)
-                    signals_saved += saved
-                except Exception as e:
-                    logger.warning(f"SignalLedger save failed for {pick_uid}: {e}")
+                    if upsert_pick(pick_data):
+                        picks_saved += 1
 
-        if debug == 1:
-            result["debug"]["picks_saved_to_ledger"] = picks_saved
-            result["debug"]["signals_saved_to_ledger"] = signals_saved
-            result["debug"]["picks_attempted_save"] = len(all_picks_to_save)
-            result["debug"]["signal_attribution_available"] = SIGNAL_ATTRIBUTION_AVAILABLE
+                        # v10.32+: Also save to SignalLedger for ROI tracking
+                        # Generate pick_uid same way as PickLedger for foreign key
+                        pick_uid = PickLedger.generate_pick_uid(
+                            sport=sport.upper(),
+                            event_id=pick.get("event_id"),
+                            market=pick.get("market", pick.get("stat_type", "")),
+                            selection=pick.get("selection", pick.get("player_name", "")),
+                            line=pick.get("line"),
+                            odds=pick.get("odds", -110),
+                            version="production_v10.33+",
+                            pick_date=datetime.utcnow().date()
+                        )
+
+                        # Save each fired signal to SignalLedger
+                        try:
+                            saved = save_signal_ledger(pick_uid, sport.upper(), fired_signals_list)
+                            signals_saved += saved
+                        except Exception as e:
+                            err_msg = f"SignalLedger save failed: {str(e)}"
+                            save_errors.append(err_msg)
+                            logger.warning(f"SignalLedger save failed for {pick_uid}: {e}")
+                except Exception as e:
+                    err_msg = f"PickLedger save failed: {str(e)}"
+                    save_errors.append(err_msg)
+                    logger.warning(f"PickLedger save failed: {e}")
+
+        except Exception as e:
+            db_error = f"Database save error: {str(e)}"
+            logger.error(f"Database persistence failed: {e}")
+    else:
+        # DB not available - log why
+        if not DATABASE_AVAILABLE:
+            db_error = "Database module not imported"
+        elif not DB_ENABLED:
+            db_error = "Database not initialized (DB_ENABLED=False)"
+
+    # v10.33: Update TOP-LEVEL fields with actual counts
+    result["picks_saved"] = picks_saved
+    result["signals_saved"] = signals_saved
+
+    # Add debug-only fields for save operations
+    if debug == 1:
+        result["debug"]["picks_saved_to_ledger"] = picks_saved
+        result["debug"]["signals_saved_to_ledger"] = signals_saved
+        result["debug"]["picks_attempted_save"] = len(all_picks_to_save)
+        result["debug"]["signal_attribution_available"] = SIGNAL_ATTRIBUTION_AVAILABLE
+        result["debug"]["db_error"] = db_error
+        result["debug"]["save_errors"] = save_errors if save_errors else None
+        result["debug"]["counts"] = {
+            "picks_generated": len(all_picks_to_save),
+            "signals_generated": sum(len(_extract_signals_from_reasons(p.get("reasons", []))) for p in all_picks_to_save)
+        }
 
     api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
     return result
