@@ -1,5 +1,5 @@
 """
-JARVIS SAVANT ENGINE v7.4 - The Complete Scoring System
+JARVIS SAVANT ENGINE v7.5 - The Complete Scoring System (v10.20 Ritual Score)
 =========================================================
 Phase 1: Confluence Core (Gematria, JARVIS Triggers, Confluence)
 Phase 2: Vedic/Astro Module (Planetary Hours, Nakshatras, Retrograde)
@@ -243,7 +243,10 @@ class JarvisSavantEngine:
     - Blended Probability: 67/33 formula (67% model, 33% esoteric)
     """
 
-    VERSION = "7.4"
+    VERSION = "7.5"
+
+    # v10.20: Ritual Score base value
+    RITUAL_BASE = 6.0
 
     def __init__(self):
         self.triggers = JARVIS_TRIGGERS
@@ -451,6 +454,117 @@ class JarvisSavantEngine:
             "signal": "STRONG" if signal_strength > 0.7 else "MODERATE" if signal_strength > 0.4 else "WEAK",
             "triggered": triggered,
             "influence": influence
+        }
+
+    # ========================================================================
+    # RITUAL SCORE BACKBONE (v10.20)
+    # ========================================================================
+
+    def calculate_ritual_score(
+        self,
+        player_name: str = "",
+        home_team: str = "",
+        away_team: str = "",
+        game_str: str = "",
+        public_pct: float = 50,
+        spread: float = 0,
+        total: float = 220,
+        astro_score: float = 50,
+        fib_mod: float = 0,
+        vortex_mod: float = 0
+    ) -> Dict[str, Any]:
+        """
+        v10.20: Calculate Ritual Score with backbone base of 6.0.
+
+        The Ritual Score is the ESOTERIC component of the dual-score system.
+        It starts at 6.0 and is modified by:
+        - Gematria influence (52% weight)
+        - JARVIS triggers (20% weight)
+        - Astro score (13% weight)
+        - Fibonacci alignment (5% weight)
+        - Vortex pattern (5% weight)
+        - Daily edge (5% weight)
+
+        Returns:
+            Dict with ritual_score, esoteric_score, jarvis_reasons, ritual_components
+        """
+        # Start with ritual base
+        score = self.RITUAL_BASE  # 6.0
+        reasons = ["ESOTERIC: Ritual Base +6.0"]
+        components = {
+            "ritual_base": self.RITUAL_BASE,
+            "gematria": 0.0,
+            "jarvis": 0.0,
+            "astro": 0.0,
+            "fib": 0.0,
+            "vortex": 0.0,
+            "daily_edge": 0.0
+        }
+
+        # --- JARVIS TRIGGERS ---
+        trigger_result = self.check_jarvis_trigger(game_str)
+        jarvis_boost = 0.0
+        immortal_detected = False
+        triggers_hit = []
+
+        for trig in trigger_result.get("triggers_hit", []):
+            boost_val = trig["boost"] / 20  # Normalize: max 20 boost -> 1.0
+            jarvis_boost += boost_val
+            triggers_hit.append(trig)
+            if trig["number"] == 2178:
+                immortal_detected = True
+                reasons.append(f"ESOTERIC: IMMORTAL 2178 +{round(boost_val, 2)}")
+            else:
+                reasons.append(f"ESOTERIC: Jarvis Trigger {trig['number']} +{round(boost_val, 2)}")
+
+        jarvis_boost = min(1.0, jarvis_boost)  # Cap at 1.0
+        score += jarvis_boost
+        components["jarvis"] = round(jarvis_boost, 3)
+
+        # --- GEMATRIA ---
+        gematria_boost = 0.0
+        if player_name and home_team:
+            gematria = self.calculate_gematria_signal(player_name, home_team, away_team)
+            signal_strength = gematria.get("signal_strength", 0)
+            gematria_boost = signal_strength * 0.52  # 52% weight, max ~0.52
+            if gematria_boost > 0.1:
+                reasons.append(f"ESOTERIC: Gematria +{round(gematria_boost, 2)}")
+        score += gematria_boost
+        components["gematria"] = round(gematria_boost, 3)
+
+        # --- ASTRO (13% weight) ---
+        astro_normalized = (astro_score - 50) / 50  # -1 to +1 scale
+        astro_boost = astro_normalized * 0.5  # Max ±0.5
+        if abs(astro_boost) > 0.1:
+            reasons.append(f"ESOTERIC: Astro {'+'if astro_boost > 0 else ''}{round(astro_boost, 2)}")
+        score += astro_boost
+        components["astro"] = round(astro_boost, 3)
+
+        # --- FIBONACCI (5% weight) ---
+        if fib_mod > 0:
+            fib_boost = fib_mod * 0.3  # Scale down
+            reasons.append(f"ESOTERIC: Fibonacci +{round(fib_boost, 2)}")
+            score += fib_boost
+            components["fib"] = round(fib_boost, 3)
+
+        # --- VORTEX (5% weight) ---
+        if vortex_mod > 0:
+            vortex_boost = vortex_mod * 0.3  # Scale down
+            reasons.append(f"ESOTERIC: Vortex +{round(vortex_boost, 2)}")
+            score += vortex_boost
+            components["vortex"] = round(vortex_boost, 3)
+
+        # Clamp final score 0-10
+        ritual_score = max(0.0, min(10.0, score))
+
+        return {
+            "ritual_score": round(ritual_score, 2),
+            "esoteric_score": round(ritual_score, 2),  # Alias
+            "jarvis_reasons": reasons,
+            "ritual_components": components,
+            "triggers_hit": triggers_hit,
+            "immortal_detected": immortal_detected,
+            "jarvis_triggered": len(triggers_hit) > 0
         }
 
     # ========================================================================

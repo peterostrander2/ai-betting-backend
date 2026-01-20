@@ -1,5 +1,5 @@
-# live_data_router.py v14.6 - TRUE DEEP LINKS
-# Research-Optimized + Esoteric Edge + NOOSPHERE VELOCITY
+# live_data_router.py v14.7 - SCORING v10.20
+# Ritual Score Backbone + NHL ML Dog Weapon + Market Priority + Public Fade + Mid-Spread
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
 from fastapi import APIRouter, HTTPException, Depends, Header
@@ -773,8 +773,9 @@ def implied_prob(odds) -> float:
     return 100.0 / (odds + 100.0)
 
 
-# Market preference order for tiebreaker (lower = preferred)
-MARKET_PREFERENCE = {"spreads": 0, "totals": 1, "h2h": 2}
+# v10.20: Market preference order for tiebreaker (lower = preferred)
+# NEW: totals > spreads > moneyline (except NHL ML Dog)
+MARKET_PREFERENCE = {"totals": 0, "spreads": 1, "h2h": 2}
 
 # v10.10: Prop market labels for clear selection strings
 MARKET_LABELS = {
@@ -849,11 +850,12 @@ def calculate_market_modifier(market: str, odds: int, line: float, active_pillar
     return (delta, reason)
 
 
-# v10.11: RESOLVER MARKET TIEBREAK (sorting only, NOT score inflation)
+# v10.20: RESOLVER MARKET TIEBREAK (sorting only, NOT score inflation)
 # Lower = preferred when scores are tied
+# NEW: totals > spreads > moneyline (except NHL ML Dog overrides via +0.5 boost)
 RESOLVER_MARKET_TIEBREAK = {
-    "spreads": 0,     # Spreads preferred (most actionable)
-    "totals": 1,      # Totals second
+    "totals": 0,      # Totals first (most predictable)
+    "spreads": 1,     # Spreads second (most actionable)
     "h2h": 2,         # ML third (often correlated with spread)
     "sharp_money": 3  # Sharp fallback last
 }
@@ -2841,7 +2843,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
 
     # Helper function to calculate scores with v10.1 dual-score confluence
     # v10.18: Added prop_line, player_team_side, game_total for prop-independent pillars
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.8, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_home=False, team_rest_days=0, opp_rest_days=0, game_hour_et=20, market="", odds=-110, sharp_scope="GAME", direction_mult=1.0, direction_label="N/A", prop_line=None, player_team_side=None, game_total=None):
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.8, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_home=False, team_rest_days=0, opp_rest_days=0, game_hour_et=20, market="", odds=-110, sharp_scope="GAME", direction_mult=1.0, direction_label="N/A", prop_line=None, player_team_side=None, game_total=None, pick_against_public=None, sport="nba"):
         # =====================================================================
         # v10.3 ADDITIVE SCORING SYSTEM (Sharp Quiet Fix)
         # =====================================================================
@@ -2911,10 +2913,15 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                 pillar_boost += boost
                 research_reasons.append(f"RESEARCH: Reverse Line Move (GAME {direction_label} x{scope_mult * direction_mult:.2f}) +{boost:.2f}")
 
-        # Pillar 3: Public Fade
-        if public_pct >= 70:
-            pillar_boost += 0.5
-            research_reasons.append("RESEARCH: Public Fade +0.5")
+        # Pillar 3: Public Fade (v10.20: directional with >= 65 threshold)
+        # +0.5 when fading heavy public, -0.5 when riding with heavy public
+        if public_pct >= 65:
+            if pick_against_public is True:
+                pillar_boost += 0.5
+                research_reasons.append("RESEARCH: Public Fade (against public) +0.5")
+            elif pick_against_public is False:
+                pillar_boost -= 0.5
+                research_reasons.append("RESEARCH: Public Trap (with public) -0.5")
 
         # ========== SHARP-INDEPENDENT PILLARS (v10.3) ==========
         # Pillar 4: Home Court Advantage (game picks only)
@@ -2968,11 +2975,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             pillar_boost += independent_prop_boost
 
         # ========== CONTEXT MODIFIERS ==========
-        # Pillar 7: Goldilocks Spread
+        # Pillar 7: Mid-Spread Boss Zone (v10.20: renamed from Goldilocks)
         abs_spread = abs(spread) if spread else 0
         if 4 <= abs_spread <= 9:
-            pillar_boost += 0.3
-            research_reasons.append("RESEARCH: Goldilocks Spread +0.3")
+            pillar_boost += 0.2
+            research_reasons.append("RESEARCH: Mid-Spread Boss Zone +0.2")
 
         # Pillar 8: Trap Gate (penalty)
         if abs_spread > 15:
@@ -3009,8 +3016,12 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         if market_reason:
             research_reasons.append(market_reason)
 
-        # --- ESOTERIC SCORE CALCULATION (v10.2 Gematria-Dominant) ---
-        esoteric_reasons = []  # Track esoteric scoring reasons
+        # --- ESOTERIC SCORE CALCULATION (v10.20 Ritual Score Backbone) ---
+        # v10.20: Start with Ritual Base 6.0, then add micro-boosts
+        RITUAL_BASE = 6.0
+        esoteric_reasons = ["ESOTERIC: Ritual Base +6.0"]
+        ritual_score = RITUAL_BASE
+
         gematria_score = 0.0       # 0-5.2 pts (52%)
         jarvis_score = 0.0         # 0-2.0 pts (20%)
         astro_score = 0.0          # 0-1.3 pts (13%)
@@ -3125,19 +3136,29 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         elif daily_energy.get("overall_score", 50) >= 70:
             daily_edge_score = 5 * ESOTERIC_WEIGHTS["daily_edge"]   # 0.25 pts
 
-        # --- ESOTERIC SCORE: Sum of weighted components + modifiers ---
+        # --- ESOTERIC SCORE: v10.20 Ritual Score Backbone ---
+        # Start at RITUAL_BASE (6.0) and add micro-boosts + modifiers
+        # Scale weighted components to micro-boosts (0-0.4 max each)
+        micro_boost_gematria = min(0.4, gematria_score / 13.0)     # 5.2 max → 0.4 max
+        micro_boost_jarvis = min(0.4, jarvis_score / 5.0)          # 2.0 max → 0.4 max
+        micro_boost_astro = min(0.2, astro_score / 6.5)            # 1.3 max → 0.2 max
+        micro_boost_fib = min(0.1, fib_score / 5.0)                # 0.5 max → 0.1 max
+        micro_boost_vortex = min(0.1, vortex_score / 5.0)          # 0.5 max → 0.1 max
+        micro_boost_daily = min(0.1, daily_edge_score / 5.0)       # 0.5 max → 0.1 max
+
         esoteric_raw = (
-            gematria_score +      # 52% weight (0-5.2)
-            jarvis_score +        # 20% weight (0-2.0)
-            astro_score +         # 13% weight (0-1.3)
-            fib_score +           # 5% weight (0-0.5)
-            vortex_score +        # 5% weight (0-0.5)
-            daily_edge_score +    # 5% weight (0-0.5)
-            mid_spread_mod +      # Modifier
-            public_fade_mod +     # Modifier (usually negative)
-            trap_mod              # Modifier (negative)
+            RITUAL_BASE +         # 6.0 base (Ritual Score backbone)
+            micro_boost_gematria +  # +0.0 to +0.4
+            micro_boost_jarvis +    # +0.0 to +0.4
+            micro_boost_astro +     # +0.0 to +0.2
+            micro_boost_fib +       # +0.0 to +0.1
+            micro_boost_vortex +    # +0.0 to +0.1
+            micro_boost_daily +     # +0.0 to +0.1
+            mid_spread_mod +        # Modifier
+            public_fade_mod +       # Modifier (usually negative)
+            trap_mod                # Modifier (negative)
         )
-        # esoteric_raw already scaled to 0-10 via weights, just clamp
+        # v10.20: Ritual base ensures esoteric score starts at 6.0 minimum
         esoteric_score = max(0, min(10, esoteric_raw))
 
         # --- v10.9 JARVIS CONFLUENCE DRIVER ---
@@ -3673,8 +3694,28 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                                 is_home=is_home_pick,
                                 game_hour_et=game_hour_et,
                                 market=market_key,  # v10.9: pass market for market-aware scoring
-                                odds=odds           # v10.9: pass odds for market modifier
+                                odds=odds,          # v10.9: pass odds for market modifier
+                                sport=sport_lower   # v10.20: pass sport for NHL ML Dog
                             )
+
+                            # v10.20: NHL ML Dog Weapon
+                            # NHL ML underdogs (+odds) get a +0.5 boost to override market priority disadvantage
+                            nhl_ml_dog_active = False
+                            if sport_lower == "nhl" and market_key == "h2h" and odds > 100:
+                                # This is an NHL moneyline underdog
+                                score_data["total_score"] = min(10.0, score_data.get("total_score", 5.0) + 0.5)
+                                score_data["reasons"] = score_data.get("reasons", []) + ["RESEARCH: NHL ML Dog Weapon +0.5"]
+                                nhl_ml_dog_active = True
+                                # Recalculate tier with boosted score
+                                boosted_score = score_data["total_score"]
+                                if boosted_score >= 7.5:
+                                    score_data["bet_tier"] = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
+                                elif boosted_score >= 6.5:
+                                    score_data["bet_tier"] = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
+                                elif boosted_score >= 5.5:
+                                    score_data["bet_tier"] = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
+                                else:
+                                    score_data["bet_tier"] = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
 
                             # Calculate frontend-expected fields for game picks
                             total_score_game = score_data.get("total_score", 5.0)
@@ -3711,6 +3752,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                                 badges_game.append("SHARP_MONEY")
                             if market_key == "spreads" and abs(point or 0) <= 3:
                                 badges_game.append("TIGHT_SPREAD")
+                            # v10.20: NHL ML Dog badge
+                            if nhl_ml_dog_active:
+                                badges_game.append("NHL_ML_DOG")
 
                             game_picks.append({
                                 "pick_type": pick_type,
@@ -3948,8 +3992,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.19",
-        "scoring_system": "v10.19: Smash Spot logic + Elite tier discipline",
+        "source": "production_v10.20",
+        "scoring_system": "v10.20: Ritual Score backbone + NHL ML Dog Weapon + Market Priority",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
