@@ -1505,7 +1505,7 @@ CLAUDE.md                 (MODIFIED - Session log)
 After merging, run:
 ```bash
 curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" | \
-  jq '.picks[0] | {tier, final_score, reasons}'
+  jq '(.picks // [])[0] | {tier, final_score, reasons}'
 ```
 
 Expected: `tier` = "GOLD_STAR" or "EDGE_LEAN", `reasons[]` populated
@@ -1571,7 +1571,7 @@ CLAUDE.md             (MODIFIED - Session log)
 After deploy, run:
 ```bash
 curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
-  -H "X-API-Key: YOUR_KEY" | jq '.props.picks[] | select(.tier == "GOLD_STAR" or .tier == "EDGE_LEAN") | {player_name, tier, smash_score}'
+  -H "X-API-Key: YOUR_KEY" | jq '(.props.picks // [])[] | select(.tier == "GOLD_STAR" or .tier == "EDGE_LEAN") | {player_name, tier, smash_score}'
 ```
 
 Expected: At least 1-3 EDGE_LEAN or GOLD_STAR props returned.

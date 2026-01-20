@@ -2841,7 +2841,7 @@ async def get_props(sport: str):
 
 
 @router.get("/best-bets/{sport}")
-async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
+async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, min_confidence: str = "C"):
     """
     Get best bets using full 8 AI Models + 8 Pillars + JARVIS + Esoteric scoring.
     Returns TWO categories: props (player props) and game_picks (spreads, totals, ML).
@@ -2849,6 +2849,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     Query Parameters:
     - debug=1: Include diagnostic info (Jarvis calls, correlation counters, enforcement proof)
     - include_conflicts=1: Include filtered CONFLICT and NEUTRAL picks in separate arrays
+    - min_confidence=A|B|C: Filter to only return picks >= this confidence grade (default: C = all picks)
+      A = Top confluence + tight alignment, B = JARVIS_MODERATE + moderate alignment, C = Everything
 
     Scoring Formula (v10.21):
     FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
@@ -2890,6 +2892,40 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # v10.30: Validate and normalize min_confidence parameter
+    min_confidence = min_confidence.upper() if min_confidence else "C"
+    if min_confidence not in ("A", "B", "C"):
+        min_confidence = "C"  # Default to showing all picks
+
+    # v10.30: Confidence grade priority for filtering (A=1, B=2, C=3)
+    CONFIDENCE_PRIORITY = {"A": 1, "B": 2, "C": 3}
+
+    # v10.30: Helper function for recommended units based on confidence grade
+    def get_recommended_units(confidence_grade: str, tier: str) -> float:
+        """
+        Return recommended units based on confidence grade and tier.
+        A = 2.0 units (high conviction)
+        B = 1.0 units (moderate conviction)
+        C = 0.5 units (lower conviction)
+        PASS tier = 0.0 units (no recommendation)
+        """
+        if tier == "PASS":
+            return 0.0
+        units_map = {"A": 2.0, "B": 1.0, "C": 0.5}
+        return units_map.get(confidence_grade, 0.5)
+
+    # v10.30: Helper function for odds implied probability
+    def get_implied_probability(odds: int) -> float:
+        """Convert American odds to implied probability for sorting."""
+        try:
+            odds = int(odds)
+            if odds > 0:
+                return 100 / (odds + 100)
+            else:
+                return abs(odds) / (abs(odds) + 100)
+        except (ValueError, TypeError, ZeroDivisionError):
+            return 0.5  # Default 50% if invalid
 
     # Check cache first
     # v10.16: Skip cache for debug/inspection modes to ensure fresh diagnostic data
@@ -4533,6 +4569,23 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                 pick["confluence_miss_reason_top"] = "MISS: Debug not enabled (use ?debug=1 to inspect confluence ladder)"
             was_missing = True
 
+        # --- v10.30: RECOMMENDED UNITS + CONFIDENCE FILTER FIELDS ---
+        grade = pick.get("confidence_grade", "C")
+        tier = pick.get("tier", "PASS")
+
+        # recommended_units: based on confidence grade (A=2.0, B=1.0, C=0.5, PASS=0.0)
+        if "recommended_units" not in pick:
+            pick["recommended_units"] = get_recommended_units(grade, tier)
+            was_missing = True
+
+        # confidence_filter_min: echo of requested min_confidence for transparency
+        pick["confidence_filter_min"] = min_confidence
+
+        # confidence_filter_passed: whether this pick meets the requested threshold
+        grade_priority = CONFIDENCE_PRIORITY.get(grade, 3)
+        min_priority = CONFIDENCE_PRIORITY.get(min_confidence, 3)
+        pick["confidence_filter_passed"] = grade_priority <= min_priority
+
         # --- REASONS VALIDATION ---
         reasons = pick.get("reasons", [])
 
@@ -4612,10 +4665,82 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             pick.pop("_debug_confluence_repairs", None)
             pick.pop("_debug_alignment_gap", None)
 
+    # ================================================================
+    # v10.30: MULTI-KEY SORTING + CONFIDENCE FILTER
+    # ================================================================
+    # Sort key priority: confidence_grade (A>B>C), final_score (DESC),
+    # confluence_boost (DESC), alignment_gap (ASC), implied_probability (ASC)
+    def v10_30_sort_key(pick):
+        """
+        Returns tuple for multi-key sort:
+        1. confidence_grade priority (A=1, B=2, C=3) - ASCENDING (lower is better)
+        2. final_score - DESCENDING (negate for ascending sort)
+        3. confluence_boost - DESCENDING (negate for ascending sort)
+        4. alignment_gap - ASCENDING (tighter gap is better)
+        5. implied_probability - ASCENDING (lower break-even preferred)
+        """
+        grade = pick.get("confidence_grade", "C")
+        grade_priority = CONFIDENCE_PRIORITY.get(grade, 3)
+        final_score = pick.get("final_score", pick.get("total_score", 0))
+        confluence_boost = pick.get("confluence_boost", 0.0)
+        alignment_gap = pick.get("alignment_gap", 5.0)
+        odds = pick.get("odds", -110)
+        implied_prob = get_implied_probability(odds)
+        return (grade_priority, -final_score, -confluence_boost, alignment_gap, implied_prob)
+
+    # Apply v10.30 multi-key sorting to all pick lists
+    top_props.sort(key=v10_30_sort_key)
+    top_game_picks.sort(key=v10_30_sort_key)
+
+    # v10.30: Apply confidence filter AFTER sorting (filter out picks below min_confidence)
+    # Track how many were filtered out for debug
+    filtered_out_count = 0
+    min_priority = CONFIDENCE_PRIORITY.get(min_confidence, 3)
+
+    def passes_confidence_filter(pick):
+        """Returns True if pick meets the min_confidence threshold."""
+        nonlocal filtered_out_count
+        grade = pick.get("confidence_grade", "C")
+        grade_priority = CONFIDENCE_PRIORITY.get(grade, 3)
+        if grade_priority <= min_priority:
+            return True
+        filtered_out_count += 1
+        return False
+
+    # Filter props and game_picks if min_confidence != "C" (C = show all)
+    if min_confidence != "C":
+        top_props = [p for p in top_props if passes_confidence_filter(p)]
+        top_game_picks = [p for p in top_game_picks if passes_confidence_filter(p)]
+
+    # Rebuild merged_picks after filtering and sorting
+    merged_picks = []
+    merged_picks.extend(top_game_picks[:3])
+    merged_picks.extend(top_props[:7])
+
+    # v10.30: Update props_result with filtered picks
+    props_result["picks"] = top_props
+    props_result["count"] = len(top_props)
+
+    # v10.30: Track units distribution for debug
+    units_distribution = {"2.0": 0, "1.0": 0, "0.5": 0, "0.0": 0}
+    units_sum = 0.0
+    for pick in (top_props + top_game_picks):
+        units = pick.get("recommended_units", 0.0)
+        units_sum += units
+        units_key = str(units)
+        if units_key in units_distribution:
+            units_distribution[units_key] += 1
+
+    # Recalculate confidence grade counts after filtering
+    confidence_grade_counts_returned = {"A": 0, "B": 0, "C": 0}
+    for pick in (top_props + top_game_picks):
+        grade = pick.get("confidence_grade", "C")
+        confidence_grade_counts_returned[grade] = confidence_grade_counts_returned.get(grade, 0) + 1
+
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.29",
-        "scoring_system": "v10.29: Confidence Grade + Alignment Gap + Confluence Miss Reason",
+        "source": "production_v10.30",
+        "scoring_system": "v10.30: Confidence Filter + Recommended Units + Multi-Key Sorting",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
@@ -4676,6 +4801,12 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                 "min": round(alignment_gap_min_returned, 2) if alignment_gap_count_returned > 0 else 0.0,
                 "max": round(alignment_gap_max_returned, 2) if alignment_gap_count_returned > 0 else 0.0
             },
+            # v10.30: Confidence filter + units debug
+            "min_confidence_applied": min_confidence,
+            "filtered_out_count": filtered_out_count,
+            "returned_confidence_grade_counts": confidence_grade_counts_returned,
+            "avg_units_returned": round(units_sum / max(1, len(top_props) + len(top_game_picks)), 2),
+            "units_distribution": units_distribution,
             # v10.22: Sport profile info
             "sport_profile": {
                 "weights": sport_profile["weights"],
