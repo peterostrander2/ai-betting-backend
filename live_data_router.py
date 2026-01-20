@@ -1,4 +1,4 @@
-# live_data_router.py v14.9 - SCORING v10.22
+# live_data_router.py v14.9 - SCORING v10.24
 # Sport Profiles + Per-Sport Calibration + Cross-Sport Jarvis + NFL Conflict Fix
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
@@ -58,6 +58,14 @@ try:
 except ImportError:
     AUTO_GRADER_AVAILABLE = False
     logger.warning("auto_grader module not available")
+
+# Import AI Engine Layer (v10.24: 8 AI Models)
+try:
+    from ai_engine_layer import calculate_ai_engine_score, get_ai_engine_defaults
+    AI_ENGINE_AVAILABLE = True
+except ImportError:
+    AI_ENGINE_AVAILABLE = False
+    logger.warning("ai_engine_layer module not available - using defaults")
 
 # Redis import with fallback
 try:
@@ -132,53 +140,54 @@ SPORT_MAPPINGS = {
 }
 
 # ============================================================================
-# v10.22: SPORT PROFILES - Per-sport calibration (single source of truth)
+# v10.24: SPORT PROFILES - Per-sport calibration (3-engine blend)
+# Weights: ai + research + esoteric = 1.0
 # ============================================================================
 SPORT_PROFILES = {
     "nba": {
-        "weights": {"research": 0.67, "esoteric": 0.33},
+        "weights": {"ai": 0.40, "research": 0.35, "esoteric": 0.25},
         "tiers": {"PASS": 4.75, "MONITOR": 5.75, "EDGE_LEAN": 6.50, "GOLD_STAR": 7.50},
         "limits": {"game_picks": 10, "prop_picks": 10},
         "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
         "market_preference": ["totals", "spreads", "h2h"],
         "boosts": {},
-        "notes": "NBA props are high signal; keep stricter tiers."
+        "notes": "NBA: Balanced 3-engine blend, stricter tiers."
     },
     "nhl": {
-        "weights": {"research": 0.62, "esoteric": 0.38},
+        "weights": {"ai": 0.35, "research": 0.35, "esoteric": 0.30},
         "tiers": {"PASS": 4.50, "MONITOR": 5.50, "EDGE_LEAN": 6.25, "GOLD_STAR": 7.25},
         "limits": {"game_picks": 10, "prop_picks": 10},
         "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
         "market_preference": ["totals", "spreads", "h2h"],
         "boosts": {"nhl_ml_dog": 0.50},
-        "notes": "Higher variance; lower tier thresholds slightly."
+        "notes": "NHL: Higher esoteric weight for variance, lower thresholds."
     },
     "nfl": {
-        "weights": {"research": 0.72, "esoteric": 0.28},
+        "weights": {"ai": 0.45, "research": 0.35, "esoteric": 0.20},
         "tiers": {"PASS": 4.60, "MONITOR": 5.60, "EDGE_LEAN": 6.40, "GOLD_STAR": 7.40},
         "limits": {"game_picks": 6, "prop_picks": 6},
         "conflict_policy": {"exclude_conflicts": False, "neutral_mult_default": 0.5, "conflicts_bucket": True},
         "market_preference": ["spreads", "totals", "h2h"],
         "boosts": {"spreads_bias": 0.10},
-        "notes": "NFL lines are sharper; let some conflicts through but label them."
+        "notes": "NFL: Higher AI weight (sharper lines), conflicts labeled not excluded."
     },
     "mlb": {
-        "weights": {"research": 0.70, "esoteric": 0.30},
+        "weights": {"ai": 0.45, "research": 0.35, "esoteric": 0.20},
         "tiers": {"PASS": 4.60, "MONITOR": 5.60, "EDGE_LEAN": 6.35, "GOLD_STAR": 7.35},
         "limits": {"game_picks": 8, "prop_picks": 0},
         "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
         "market_preference": ["h2h", "totals", "spreads"],
         "boosts": {"ml_bias": 0.05},
-        "notes": "Low scoring sport; rely more on research than esoteric."
+        "notes": "MLB: Higher AI weight, low scoring sport."
     },
     "ncaab": {
-        "weights": {"research": 0.66, "esoteric": 0.34},
+        "weights": {"ai": 0.38, "research": 0.35, "esoteric": 0.27},
         "tiers": {"PASS": 4.50, "MONITOR": 5.50, "EDGE_LEAN": 6.25, "GOLD_STAR": 7.25},
         "limits": {"game_picks": 10, "prop_picks": 0},
         "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
         "market_preference": ["spreads", "totals", "h2h"],
         "boosts": {},
-        "notes": "High variance; slightly easier EDGE_LEAN thresholds."
+        "notes": "NCAAB: Balanced blend, lower thresholds for variance."
     },
 }
 
@@ -2906,12 +2915,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     vedic = get_vedic_astro()
     learning = get_esoteric_loop()
 
-    # v10.21: Jarvis enforcement tracking (debug counters)
+    # v10.24: Scoring enforcement tracking (debug counters for AI + Jarvis)
     jarvis_debug = {
         "calls_total": 0,
         "calls_game": 0,
         "calls_props": 0,
-        "missing_on_returned": 0
+        "missing_on_returned": 0,
+        "ai_engine_available": AI_ENGINE_AVAILABLE,  # v10.24: Track AI engine status
+        "ai_calls_total": 0  # v10.24: AI engine call counter
     }
 
     # Get learned weights for esoteric scoring
@@ -2942,6 +2953,43 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             "vortex": 0.05,      # 5%  - Tesla 3-6-9 patterns
             "daily_edge": 0.05   # 5%  - Daily energy
         }
+
+        # --- AI ENGINE SCORE (v10.24 - 8 AI Models) ---
+        # Build prediction_data dict for AI Engine
+        ai_prediction_data = {
+            "odds": odds,
+            "line": spread if market == "spreads" else prop_line,
+            "market": market,
+            "player_name": player_name,
+            "home_team": home_team,
+            "away_team": away_team,
+            "is_home": is_home
+        }
+        ai_context_data = {
+            "team_rest_days": team_rest_days,
+            "opp_rest_days": opp_rest_days,
+            "key_player_out": False,  # Future: wire from injury data
+            "opp_key_player_out": False,
+            "injury_count": 0,
+            "opp_injury_count": 0
+        }
+
+        # Call AI Engine
+        if AI_ENGINE_AVAILABLE:
+            ai_result = calculate_ai_engine_score(
+                prediction_data=ai_prediction_data,
+                sharp_signal=sharp_signal,
+                context_data=ai_context_data
+            )
+            ai_score = ai_result.get("ai_score", 5.0)
+            ai_breakdown = ai_result.get("ai_breakdown", {})
+            ai_reasons = ai_result.get("ai_reasons", [])
+        else:
+            # Fallback when AI engine not available
+            ai_result = get_ai_engine_defaults()
+            ai_score = ai_result.get("ai_score", 5.0)
+            ai_breakdown = ai_result.get("ai_breakdown", {})
+            ai_reasons = ["AI ENGINE: Module unavailable, using baseline 5.0"]
 
         # --- RESEARCH SCORE CALCULATION (v10.10 Additive + Scoped Sharp) ---
         pillar_boost = 0.0
@@ -3293,14 +3341,15 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             confluence_level = "MODERATE"
             # No boost for moderate alignment without Jarvis
 
-        # --- FINAL SCORE FORMULA (v10.22: Sport Profile Weights) ---
+        # --- FINAL SCORE FORMULA (v10.24: 3-Engine Blend) ---
         # Get sport profile for weight calibration
         profile = get_sport_profile(sport)
+        w_ai = profile["weights"].get("ai", 0.40)  # Default 40% AI
         w_research = profile["weights"]["research"]
         w_esoteric = profile["weights"]["esoteric"]
 
-        # FINAL = (research × w_r) + (esoteric × w_e) + confluence_boost
-        final_score = (research_score * w_research) + (esoteric_score * w_esoteric) + confluence_boost
+        # v10.24: 3-ENGINE BLEND = (ai × w_ai) + (research × w_r) + (esoteric × w_e) + confluence_boost
+        final_score = (ai_score * w_ai) + (research_score * w_research) + (esoteric_score * w_esoteric) + confluence_boost
         final_score = max(0.0, min(10.0, float(final_score)))
 
         # --- SmashSpot FLAG (v10.19 Strict) ---
@@ -3343,8 +3392,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
         # Confidence score synced with final_score (Production v3)
         confidence_score = int(round(final_score * 10))  # 0-100 synced with final
 
-        # Combine all reasons for explainability (v10.19: includes smash_reasons)
-        all_reasons = research_reasons + esoteric_reasons + confluence_reasons + smash_reasons
+        # Combine all reasons for explainability (v10.24: AI ENGINE first, then RESEARCH, ESOTERIC, etc.)
+        all_reasons = ai_reasons + research_reasons + esoteric_reasons + confluence_reasons + smash_reasons
 
         return {
             "total_score": round(final_score, 2),
@@ -3355,7 +3404,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             "smash_spot": smash_spot,  # v10.4: SmashSpot flag
             "bet_tier": bet_tier,
             "reasons": all_reasons,  # Explainability array
+            "ai_score": round(ai_score, 2),  # v10.24: 8 AI Engine score
+            "ai_breakdown": ai_breakdown,  # v10.24: 8 model breakdown
             "scoring_breakdown": {
+                "ai_score": round(ai_score, 2),  # v10.24: 8 AI Engine score
                 "research_score": round(research_score, 2),
                 "esoteric_score": round(esoteric_score, 2),
                 "base_score": base_ai,  # v10.3: 5.8 base
@@ -3494,9 +3546,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                     game_total=None  # v10.18: game total for Pace Proxy (use total param)
                 )
 
-                # v10.21: Track Jarvis call for props
+                # v10.24: Track AI + Jarvis call for props
                 jarvis_debug["calls_total"] += 1
                 jarvis_debug["calls_props"] += 1
+                jarvis_debug["ai_calls_total"] += 1
 
                 # Calculate frontend-expected fields
                 total_score = score_data.get("total_score", 5.0)
@@ -3819,9 +3872,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                                 sport=sport_lower   # v10.20: pass sport for NHL ML Dog
                             )
 
-                            # v10.21: Track Jarvis call for game picks
+                            # v10.24: Track AI + Jarvis call for game picks
                             jarvis_debug["calls_total"] += 1
                             jarvis_debug["calls_game"] += 1
+                            jarvis_debug["ai_calls_total"] += 1
 
                             # v10.20: NHL ML Dog Weapon
                             # NHL ML underdogs (+odds) get a +0.5 boost to override market priority disadvantage
@@ -3935,9 +3989,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
                 odds=-110  # v10.9: default odds for sharp fallback
             )
 
-            # v10.21: Track Jarvis call for sharp fallback (counts as game)
+            # v10.24: Track AI + Jarvis call for sharp fallback (counts as game)
             jarvis_debug["calls_total"] += 1
             jarvis_debug["calls_game"] += 1
+            jarvis_debug["ai_calls_total"] += 1
 
             # Calculate frontend-expected fields for sharp money picks
             total_score_sharp = score_data.get("total_score", 5.0)
@@ -4125,11 +4180,26 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
     # v10.21: JARVIS ENFORCEMENT GUARDRAIL
     # Ensure every returned pick has required esoteric fields
     # ================================================================
-    def enforce_jarvis_fields(pick):
-        """Ensure pick has all required Jarvis fields. Returns True if was missing any."""
+    def enforce_scoring_fields(pick):
+        """
+        v10.24: Ensure pick has all required scoring fields (AI + Jarvis + Research).
+        Returns True if any field was missing and had to be defaulted.
+        """
         was_missing = False
 
-        # Check for required fields
+        # --- AI ENGINE FIELDS (v10.24) ---
+        if "ai_score" not in pick:
+            pick["ai_score"] = 5.0
+            was_missing = True
+
+        if "ai_breakdown" not in pick or not pick.get("ai_breakdown"):
+            pick["ai_breakdown"] = {
+                "ensemble": 5.0, "lstm": 5.0, "monte_carlo": 5.0, "line_movement": 5.0,
+                "rest_fatigue": 5.0, "injury_impact": 5.0, "matchup_model": 5.0, "edge_calculator": 5.0
+            }
+            was_missing = True
+
+        # --- ESOTERIC/JARVIS FIELDS (v10.21) ---
         if "esoteric_breakdown" not in pick or not pick.get("esoteric_breakdown"):
             pick["esoteric_breakdown"] = {"jarvis_triggers": 0.0, "gematria": 0.0}
             was_missing = True
@@ -4138,40 +4208,52 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             pick["jarvis_active"] = False
             was_missing = True
 
-        # Ensure scoring_breakdown has esoteric_score
+        # Ensure scoring_breakdown has all scores
         if "scoring_breakdown" not in pick:
             pick["scoring_breakdown"] = {}
+        if "ai_score" not in pick.get("scoring_breakdown", {}):
+            pick["scoring_breakdown"]["ai_score"] = 5.0
+            was_missing = True
         if "esoteric_score" not in pick.get("scoring_breakdown", {}):
             pick["scoring_breakdown"]["esoteric_score"] = 5.0
             was_missing = True
 
-        # Check reasons for at least one ESOTERIC: entry
+        # --- REASONS VALIDATION ---
+        reasons = pick.get("reasons", [])
+
+        # Check for at least one AI ENGINE: entry
+        has_ai_reason = any(str(r).startswith("AI ENGINE:") for r in reasons)
+        if not has_ai_reason:
+            pick["reasons"] = ["AI ENGINE: Baseline defaults applied (no signals available)"] + reasons
+            was_missing = True
+
+        # Check for at least one ESOTERIC: entry
         reasons = pick.get("reasons", [])
         has_esoteric_reason = any(str(r).startswith("ESOTERIC:") for r in reasons)
         if not has_esoteric_reason:
-            pick["reasons"] = reasons + ["ESOTERIC: Ritual Base +6.0"]
+            pick["reasons"] = pick.get("reasons", []) + ["ESOTERIC: Ritual Base +6.0"]
             was_missing = True
 
         # Add system warning if fields were missing
         if was_missing:
-            pick["reasons"] = pick.get("reasons", []) + ["SYSTEM: Jarvis missing -> forced esoteric defaults"]
+            pick["reasons"] = pick.get("reasons", []) + ["SYSTEM: Scoring fields missing -> forced defaults applied"]
 
         return was_missing
 
-    # Apply guardrail to all returned picks
+    # Apply guardrail to all returned picks (v10.24: validates AI + Jarvis + Research)
     all_returned_picks = top_props + top_game_picks
     for pick in all_returned_picks:
-        if enforce_jarvis_fields(pick):
+        if enforce_scoring_fields(pick):
             jarvis_debug["missing_on_returned"] += 1
 
     # Also enforce on merged_picks (which are references to same objects, but ensure coverage)
     for pick in merged_picks:
-        enforce_jarvis_fields(pick)
+        enforce_scoring_fields(pick)
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.22",
-        "scoring_system": "v10.22: Sport Profiles + Cross-Sport Jarvis Calibration",
+        "source": "production_v10.24",
+        "scoring_system": "v10.24: 8 AI Engine Layer + Sport Profiles + Cross-Sport Jarvis Calibration",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
@@ -4208,7 +4290,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0):
             "conflict_count": correlation_counters["conflict_count"],
             "excluded_conflicts_count": correlation_counters["excluded_conflicts_count"],
             "conflicts_included": correlation_counters.get("conflicts_included", False),
-            # v10.21: Jarvis enforcement counters
+            # v10.24: AI Engine + Jarvis enforcement counters
+            "ai_engine_available": jarvis_debug["ai_engine_available"],
+            "ai_calls_total": jarvis_debug["ai_calls_total"],
             "jarvis_calls_total": jarvis_debug["calls_total"],
             "jarvis_calls_game": jarvis_debug["calls_game"],
             "jarvis_calls_props": jarvis_debug["calls_props"],
