@@ -2132,24 +2132,17 @@ async def get_splits(sport: str):
 
 async def fetch_playbook_rosters(sport: str) -> dict:
     """
-    v10.14: Fetch team rosters from Playbook API for player-team mapping.
+    v10.14: Fetch team rosters for player-team mapping.
 
-    Uses /teams endpoint which returns team metadata including player lists.
+    Primary source: ESPN API (free, complete rosters)
+    Fallback: Playbook /injuries endpoint (injured players only)
 
     Returns:
         Dict mapping player_slug -> team_abbr (e.g., "tyrese_maxey" -> "PHI")
     """
     player_to_team = {}
 
-    if not PLAYBOOK_API_KEY:
-        logger.warning("v10.14: No PLAYBOOK_API_KEY - cannot fetch rosters")
-        return player_to_team
-
     sport_lower = sport.lower()
-    if sport_lower not in SPORT_MAPPINGS:
-        return player_to_team
-
-    sport_config = SPORT_MAPPINGS[sport_lower]
 
     # Check cache first (rosters don't change often)
     cache_key = f"rosters:{sport_lower}"
@@ -2158,108 +2151,132 @@ async def fetch_playbook_rosters(sport: str) -> dict:
         logger.info("v10.14: Using cached roster data with %d players", len(cached))
         return cached
 
+    # ESPN API sport paths
+    espn_sports = {
+        "nba": "basketball/nba",
+        "nfl": "football/nfl",
+        "mlb": "baseball/mlb",
+        "nhl": "hockey/nhl",
+        "ncaab": "basketball/mens-college-basketball"
+    }
+
+    espn_path = espn_sports.get(sport_lower)
+    if not espn_path:
+        logger.warning("v10.14: Unknown sport %s for ESPN roster fetch", sport_lower)
+        return player_to_team
+
     try:
-        # Try /teams endpoint for roster data
-        teams_url = f"{PLAYBOOK_API_BASE}/teams"
-        resp = await fetch_with_retries(
-            "GET", teams_url,
-            params={
-                "league": sport_config["playbook"],
-                "api_key": PLAYBOOK_API_KEY
-            }
-        )
+        # ESPN Teams API - returns all teams with basic info
+        teams_url = f"https://site.api.espn.com/apis/site/v2/sports/{espn_path}/teams"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(teams_url, params={"limit": 50})
 
-        if resp and resp.status_code == 200:
-            teams_data = resp.json()
+            if resp.status_code == 200:
+                teams_data = resp.json()
+                teams_list = teams_data.get("sports", [{}])[0].get("leagues", [{}])[0].get("teams", [])
 
-            # Handle various response formats
-            teams_list = teams_data.get("teams", teams_data.get("data", []))
-            if isinstance(teams_data, list):
-                teams_list = teams_data
+                logger.info("v10.14: ESPN returned %d teams for %s", len(teams_list), sport_lower)
 
-            for team in teams_list:
-                team_abbr = (
-                    team.get("abbreviation")
-                    or team.get("abbr")
-                    or team.get("team_abbr")
-                    or team.get("code")
-                    or ""
-                )
-                team_abbr = normalize_team_abbr(team_abbr) if team_abbr else None
+                # Fetch roster for each team
+                for team_entry in teams_list:
+                    team = team_entry.get("team", {})
+                    team_abbr = team.get("abbreviation", "")
+                    team_id = team.get("id", "")
 
-                if not team_abbr:
-                    continue
-
-                # Get players from various field names
-                players = (
-                    team.get("players", [])
-                    or team.get("roster", [])
-                    or team.get("active_roster", [])
-                    or []
-                )
-
-                for player in players:
-                    if isinstance(player, str):
-                        player_name = player
-                    elif isinstance(player, dict):
-                        player_name = (
-                            player.get("name")
-                            or player.get("player_name")
-                            or player.get("full_name")
-                            or player.get("playerName")
-                            or ""
-                        )
-                    else:
+                    if not team_abbr or not team_id:
                         continue
 
-                    if player_name:
-                        player_to_team[slug_player(player_name)] = team_abbr
-
-            logger.info("v10.14: Fetched %d players from Playbook /teams", len(player_to_team))
-
-        # Also try /injuries endpoint which often includes player names with team info
-        injuries_url = f"{PLAYBOOK_API_BASE}/injuries"
-        injuries_resp = await fetch_with_retries(
-            "GET", injuries_url,
-            params={
-                "league": sport_config["playbook"],
-                "api_key": PLAYBOOK_API_KEY
-            }
-        )
-
-        if injuries_resp and injuries_resp.status_code == 200:
-            injuries_data = injuries_resp.json()
-            injuries_list = injuries_data.get("injuries", injuries_data.get("data", []))
-            if isinstance(injuries_data, list):
-                injuries_list = injuries_data
-
-            for injury in injuries_list:
-                player_name = (
-                    injury.get("player_name")
-                    or injury.get("player")
-                    or injury.get("name")
-                    or ""
-                )
-                team_abbr = (
-                    injury.get("team_abbr")
-                    or injury.get("team")
-                    or injury.get("team_abbreviation")
-                    or ""
-                )
-
-                if player_name and team_abbr:
+                    # Normalize team abbreviation
                     normalized_abbr = normalize_team_abbr(team_abbr)
-                    if normalized_abbr:
-                        player_to_team[slug_player(player_name)] = normalized_abbr
+                    if not normalized_abbr:
+                        continue
 
-            logger.info("v10.14: Added players from injuries, total now %d", len(player_to_team))
+                    # Fetch roster for this team
+                    roster_url = f"https://site.api.espn.com/apis/site/v2/sports/{espn_path}/teams/{team_id}/roster"
+                    try:
+                        roster_resp = await client.get(roster_url)
+                        if roster_resp.status_code == 200:
+                            roster_data = roster_resp.json()
+
+                            # ESPN roster structure varies by sport
+                            athletes = roster_data.get("athletes", [])
+
+                            # Some sports group by position
+                            if athletes and isinstance(athletes[0], dict) and "items" in athletes[0]:
+                                # Grouped format: {"athletes": [{"position": "G", "items": [...]}]}
+                                for group in athletes:
+                                    for player in group.get("items", []):
+                                        player_name = player.get("fullName", "") or player.get("displayName", "")
+                                        if player_name:
+                                            player_to_team[slug_player(player_name)] = normalized_abbr
+                            else:
+                                # Flat format: {"athletes": [{"fullName": "..."}]}
+                                for player in athletes:
+                                    player_name = player.get("fullName", "") or player.get("displayName", "")
+                                    if player_name:
+                                        player_to_team[slug_player(player_name)] = normalized_abbr
+
+                    except Exception as e:
+                        logger.debug("v10.14: Failed to fetch roster for %s: %s", team_abbr, e)
+                        continue
+
+                logger.info("v10.14: ESPN roster fetch complete: %d players", len(player_to_team))
 
     except Exception as e:
-        logger.warning("v10.14: Failed to fetch Playbook rosters: %s", e)
+        logger.warning("v10.14: ESPN roster fetch failed: %s", e)
+
+    # Fallback: Playbook /injuries for additional players
+    if PLAYBOOK_API_KEY and sport_lower in SPORT_MAPPINGS:
+        try:
+            sport_config = SPORT_MAPPINGS[sport_lower]
+            injuries_url = f"{PLAYBOOK_API_BASE}/injuries"
+            injuries_resp = await fetch_with_retries(
+                "GET", injuries_url,
+                params={
+                    "league": sport_config["playbook"],
+                    "api_key": PLAYBOOK_API_KEY
+                }
+            )
+
+            if injuries_resp and injuries_resp.status_code == 200:
+                injuries_data = injuries_resp.json()
+                injuries_list = injuries_data.get("injuries", injuries_data.get("data", []))
+                if isinstance(injuries_data, list):
+                    injuries_list = injuries_data
+
+                added = 0
+                for injury in injuries_list:
+                    player_name = (
+                        injury.get("player_name")
+                        or injury.get("player")
+                        or injury.get("name")
+                        or ""
+                    )
+                    team_abbr = (
+                        injury.get("team_abbr")
+                        or injury.get("team")
+                        or injury.get("team_abbreviation")
+                        or ""
+                    )
+
+                    if player_name and team_abbr:
+                        normalized_abbr = normalize_team_abbr(team_abbr)
+                        if normalized_abbr:
+                            slug = slug_player(player_name)
+                            if slug not in player_to_team:
+                                player_to_team[slug] = normalized_abbr
+                                added += 1
+
+                if added > 0:
+                    logger.info("v10.14: Added %d players from Playbook injuries, total now %d", added, len(player_to_team))
+
+        except Exception as e:
+            logger.warning("v10.14: Playbook injuries fetch failed: %s", e)
 
     # Cache for 1 hour (rosters don't change often)
     if player_to_team:
         api_cache.set(cache_key, player_to_team, ttl=3600)
+        logger.info("v10.14: Cached %d player-team mappings for %s", len(player_to_team), sport_lower)
 
     return player_to_team
 
