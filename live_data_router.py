@@ -5386,6 +5386,64 @@ async def get_v1031_daily_report(sport: str, date_str: str = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/admin/grade-now")
+async def admin_grade_now(
+    date: str = None,
+    sport: str = None,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v10.31: Admin endpoint to manually trigger grading and tuning.
+
+    Query Parameters:
+    - date: YYYY-MM-DD format (default: yesterday)
+    - sport: NBA, NFL, MLB, NHL, NCAAB (default: all sports)
+
+    Requires X-API-Key header.
+
+    Steps:
+    1. Grade picks for the specified date
+    2. Run conservative tuning based on rolling performance
+    """
+    if not DATABASE_AVAILABLE or not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database not available for v10.31 grading")
+
+    try:
+        from datetime import date as date_type
+        from grading_engine import grade_picks_for_date, run_daily_grading
+        from learning_engine import tune_config_conservatively, run_daily_tuning
+
+        # Parse date
+        if date:
+            target_date = date_type.fromisoformat(date)
+        else:
+            target_date = (datetime.now() - timedelta(days=1)).date()
+
+        # Grade picks
+        if sport:
+            sport_upper = sport.upper()
+            grading_result = await grade_picks_for_date(target_date, sport_upper)
+            tuning_result = tune_config_conservatively(sport_upper)
+            grading_summary = {sport_upper: grading_result}
+            tuning_summary = {sport_upper: tuning_result}
+        else:
+            grading_summary = await run_daily_grading(days_back=(datetime.now().date() - target_date).days)
+            tuning_summary = run_daily_tuning()
+
+        return {
+            "success": True,
+            "date": target_date.isoformat(),
+            "sport": sport.upper() if sport else "ALL",
+            "grading": grading_summary,
+            "tuning": tuning_summary,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.exception("Admin grade-now failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/scheduler/status")
 async def scheduler_status():
     """Check daily scheduler status."""
