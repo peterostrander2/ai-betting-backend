@@ -8,7 +8,7 @@ import hashlib
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
 from enum import Enum as PyEnum
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, Index, Enum
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, Index, Enum, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
@@ -1448,13 +1448,13 @@ def get_db_health() -> Dict[str, Any]:
                 return health
 
             # Test connection
-            db.execute("SELECT 1")
+            db.execute(text("SELECT 1"))
             health["db_connect_ok"] = True
 
             # Check tables exist and get counts
             for table in expected_tables:
                 try:
-                    result = db.execute(f"SELECT COUNT(*) FROM {table}")
+                    result = db.execute(text(f"SELECT COUNT(*) FROM {table}"))
                     count = result.scalar()
                     health["tables_found"].append(table)
                     health["table_counts"][table] = count
