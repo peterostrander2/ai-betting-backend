@@ -3,7 +3,11 @@ v10.31 Grading Engine - Daily Settlement for Pick Ledger
 
 Responsibilities:
 1. Fetch pending picks for a date
-2. Fetch results from Odds API (scores) and Playbook API (player stats)
+2. Fetch results from multiple APIs:
+   - Odds API (game scores) - PRIMARY for game picks
+   - ESPN API (box scores) - FREE for player stats
+   - BallDontLie API (NBA stats) - FREE backup for NBA
+   - Playbook API (fallback) - paid API
 3. Grade picks (WIN/LOSS/PUSH/VOID) and calculate profit_units
 4. Update pick ledger with results
 
@@ -33,6 +37,11 @@ ODDS_API_BASE = os.getenv("ODDS_API_BASE", "https://api.the-odds-api.com/v4")
 PLAYBOOK_API_KEY = os.getenv("PLAYBOOK_API_KEY", "")
 PLAYBOOK_API_BASE = os.getenv("PLAYBOOK_API_BASE", "https://api.playbook-api.com/v1")
 
+# FREE APIs
+ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
+BALLDONTLIE_API_BASE = "https://api.balldontlie.io/v1"
+BALLDONTLIE_API_KEY = os.getenv("BALLDONTLIE_API_KEY", "")  # Optional, increases rate limit
+
 # Sport key mapping for Odds API
 ODDS_API_SPORT_KEYS = {
     "NBA": "basketball_nba",
@@ -43,18 +52,28 @@ ODDS_API_SPORT_KEYS = {
     "NCAAF": "americanfootball_ncaaf"
 }
 
+# ESPN sport paths
+ESPN_SPORT_PATHS = {
+    "NBA": "basketball/nba",
+    "NFL": "football/nfl",
+    "MLB": "baseball/mlb",
+    "NHL": "hockey/nhl",
+    "NCAAB": "basketball/mens-college-basketball"
+}
+
 # Playbook API league codes
 PLAYBOOK_LEAGUES = {
     "NBA": "NBA",
     "NFL": "NFL",
     "MLB": "MLB",
     "NHL": "NHL",
-    "NCAAB": "CBB"  # College Basketball
+    "NCAAB": "CBB"
 }
 
 # Cache for API results (cleared per grading run)
 _scores_cache: Dict[str, List[Dict]] = {}
 _player_stats_cache: Dict[str, Dict] = {}
+_espn_box_scores_cache: Dict[str, Dict] = {}
 
 
 # ============================================================================
@@ -106,7 +125,7 @@ async def fetch_odds_api_scores(sport: str, days_from: int = 3) -> List[Dict[str
     Returns:
         List of completed games with scores
     """
-    cache_key = f"{sport}_{days_from}"
+    cache_key = f"odds_{sport}_{days_from}"
     if cache_key in _scores_cache:
         return _scores_cache[cache_key]
 
@@ -122,7 +141,7 @@ async def fetch_odds_api_scores(sport: str, days_from: int = 3) -> List[Dict[str
     url = f"{ODDS_API_BASE}/sports/{sport_key}/scores"
     params = {
         "apiKey": ODDS_API_KEY,
-        "daysFrom": min(days_from, 3)  # API limit is 3 days
+        "daysFrom": min(days_from, 3)
     }
 
     try:
@@ -177,14 +196,7 @@ def match_game_to_pick(
     if pick.event_id:
         for game in games:
             if game.get("id") == pick.event_id:
-                return {
-                    "event_id": game.get("id"),
-                    "home_team": game.get("home_team"),
-                    "away_team": game.get("away_team"),
-                    "home_score": game.get("scores", [{}])[0].get("score") if game.get("scores") else None,
-                    "away_score": game.get("scores", [{}])[1].get("score") if game.get("scores") and len(game.get("scores", [])) > 1 else None,
-                    "completed": game.get("completed", False)
-                }
+                return _parse_odds_api_game(game)
 
     # Fallback to team name matching
     pick_home = (pick.home_team or "").lower().strip()
@@ -219,80 +231,363 @@ def match_game_to_pick(
         )
 
         if home_match and away_match:
-            # Parse scores from Odds API format
-            scores = game.get("scores", [])
-            home_score = None
-            away_score = None
-
-            for score_entry in scores:
-                team_name = (score_entry.get("name") or "").lower()
-                score = score_entry.get("score")
-                if score is not None:
-                    try:
-                        score = int(score)
-                    except (ValueError, TypeError):
-                        continue
-
-                    if team_name in game_home or game_home in team_name:
-                        home_score = score
-                    elif team_name in game_away or game_away in team_name:
-                        away_score = score
-
-            if home_score is not None and away_score is not None:
-                winner = game.get("home_team") if home_score > away_score else game.get("away_team")
-                return {
-                    "event_id": game.get("id"),
-                    "home_team": game.get("home_team"),
-                    "away_team": game.get("away_team"),
-                    "home_score": home_score,
-                    "away_score": away_score,
-                    "winner": winner,
-                    "completed": True
-                }
+            return _parse_odds_api_game(game)
 
     return None
 
 
+def _parse_odds_api_game(game: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse Odds API game response into standardized format."""
+    scores = game.get("scores", [])
+    home_score = None
+    away_score = None
+    game_home = (game.get("home_team") or "").lower()
+    game_away = (game.get("away_team") or "").lower()
+
+    for score_entry in scores:
+        team_name = (score_entry.get("name") or "").lower()
+        score = score_entry.get("score")
+        if score is not None:
+            try:
+                score = int(score)
+            except (ValueError, TypeError):
+                continue
+
+            if team_name in game_home or game_home in team_name:
+                home_score = score
+            elif team_name in game_away or game_away in team_name:
+                away_score = score
+
+    winner = None
+    if home_score is not None and away_score is not None:
+        winner = game.get("home_team") if home_score > away_score else game.get("away_team")
+
+    return {
+        "event_id": game.get("id"),
+        "home_team": game.get("home_team"),
+        "away_team": game.get("away_team"),
+        "home_score": home_score,
+        "away_score": away_score,
+        "winner": winner,
+        "completed": game.get("completed", False)
+    }
+
+
 # ============================================================================
-# PLAYBOOK API - PLAYER STATS
+# ESPN API - BOX SCORES (FREE)
 # ============================================================================
 
-async def fetch_player_game_stats(
-    sport: str,
+async def fetch_espn_box_scores(sport: str, game_date: date) -> Dict[str, Dict]:
+    """
+    Fetch box scores from ESPN API (FREE).
+
+    This gives us player stats for ALL games on a given date.
+
+    Args:
+        sport: Internal sport code
+        game_date: Date to fetch
+
+    Returns:
+        Dict mapping player_name_lower -> stats dict
+    """
+    cache_key = f"espn_{sport}_{game_date.isoformat()}"
+    if cache_key in _espn_box_scores_cache:
+        return _espn_box_scores_cache[cache_key]
+
+    espn_path = ESPN_SPORT_PATHS.get(sport.upper())
+    if not espn_path:
+        logger.warning(f"Unknown sport for ESPN: {sport}")
+        return {}
+
+    # ESPN scoreboard endpoint for a specific date
+    date_str = game_date.strftime("%Y%m%d")
+    url = f"{ESPN_API_BASE}/{espn_path}/scoreboard"
+    params = {"dates": date_str}
+
+    player_stats = {}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url, params=params)
+
+            if resp.status_code != 200:
+                logger.debug(f"ESPN scoreboard error: {resp.status_code}")
+                return {}
+
+            data = resp.json()
+            events = data.get("events", [])
+
+            logger.info(f"ESPN: Found {len(events)} {sport} events on {game_date}")
+
+            # For each game, try to get the box score
+            for event in events:
+                event_id = event.get("id")
+                if not event_id:
+                    continue
+
+                # Only process completed games
+                status = event.get("status", {}).get("type", {}).get("state", "")
+                if status != "post":
+                    continue
+
+                # Fetch detailed box score
+                box_url = f"{ESPN_API_BASE}/{espn_path}/summary"
+                box_params = {"event": event_id}
+
+                try:
+                    box_resp = await client.get(box_url, params=box_params)
+                    if box_resp.status_code == 200:
+                        box_data = box_resp.json()
+                        _extract_player_stats_from_espn(box_data, player_stats, sport)
+                except Exception as e:
+                    logger.debug(f"ESPN box score fetch failed for event {event_id}: {e}")
+
+            logger.info(f"ESPN: Extracted stats for {len(player_stats)} players on {game_date}")
+            _espn_box_scores_cache[cache_key] = player_stats
+            return player_stats
+
+    except httpx.RequestError as e:
+        logger.debug(f"ESPN request failed: {e}")
+        return {}
+    except Exception as e:
+        logger.exception(f"ESPN unexpected error: {e}")
+        return {}
+
+
+def _extract_player_stats_from_espn(box_data: Dict, player_stats: Dict, sport: str):
+    """Extract player stats from ESPN summary response."""
+    # ESPN structure: boxscore.players[].statistics[].athletes[]
+    boxscore = box_data.get("boxscore", {})
+    players_data = boxscore.get("players", [])
+
+    for team_data in players_data:
+        statistics = team_data.get("statistics", [])
+
+        for stat_group in statistics:
+            stat_keys = stat_group.get("keys", [])
+            athletes = stat_group.get("athletes", [])
+
+            for athlete in athletes:
+                player_info = athlete.get("athlete", {})
+                player_name = player_info.get("displayName", "")
+                if not player_name:
+                    continue
+
+                player_name_lower = player_name.lower()
+                stats_values = athlete.get("stats", [])
+
+                # Map stat keys to values
+                if len(stat_keys) == len(stats_values):
+                    parsed_stats = dict(zip(stat_keys, stats_values))
+
+                    # Convert to our standardized format based on sport
+                    normalized = _normalize_espn_stats(parsed_stats, sport)
+                    if normalized:
+                        player_stats[player_name_lower] = normalized
+                        player_stats[player_name_lower]["player_name"] = player_name
+
+
+def _normalize_espn_stats(raw_stats: Dict, sport: str) -> Optional[Dict]:
+    """Normalize ESPN stats to our standard format."""
+    try:
+        if sport.upper() == "NBA":
+            return {
+                "points": _safe_int(raw_stats.get("pts", raw_stats.get("points", 0))),
+                "rebounds": _safe_int(raw_stats.get("reb", raw_stats.get("rebounds", 0))),
+                "assists": _safe_int(raw_stats.get("ast", raw_stats.get("assists", 0))),
+                "steals": _safe_int(raw_stats.get("stl", raw_stats.get("steals", 0))),
+                "blocks": _safe_int(raw_stats.get("blk", raw_stats.get("blocks", 0))),
+                "threes": _safe_int(raw_stats.get("3pm", raw_stats.get("fg3m", 0))),
+                "turnovers": _safe_int(raw_stats.get("to", raw_stats.get("turnovers", 0))),
+                "minutes": _safe_float(raw_stats.get("min", raw_stats.get("minutes", 0))),
+            }
+        elif sport.upper() == "NFL":
+            return {
+                "passing_yards": _safe_int(raw_stats.get("passYds", raw_stats.get("passingYards", 0))),
+                "rushing_yards": _safe_int(raw_stats.get("rushYds", raw_stats.get("rushingYards", 0))),
+                "receiving_yards": _safe_int(raw_stats.get("recYds", raw_stats.get("receivingYards", 0))),
+                "passing_touchdowns": _safe_int(raw_stats.get("passTD", raw_stats.get("passingTouchdowns", 0))),
+                "receptions": _safe_int(raw_stats.get("rec", raw_stats.get("receptions", 0))),
+                "rushing_attempts": _safe_int(raw_stats.get("rushAtt", 0)),
+            }
+        elif sport.upper() == "MLB":
+            return {
+                "hits": _safe_int(raw_stats.get("h", raw_stats.get("hits", 0))),
+                "runs": _safe_int(raw_stats.get("r", raw_stats.get("runs", 0))),
+                "rbis": _safe_int(raw_stats.get("rbi", raw_stats.get("rbis", 0))),
+                "home_runs": _safe_int(raw_stats.get("hr", raw_stats.get("homeRuns", 0))),
+                "strikeouts": _safe_int(raw_stats.get("so", raw_stats.get("strikeouts", 0))),
+                "walks": _safe_int(raw_stats.get("bb", raw_stats.get("walks", 0))),
+            }
+        elif sport.upper() == "NHL":
+            return {
+                "goals": _safe_int(raw_stats.get("g", raw_stats.get("goals", 0))),
+                "assists": _safe_int(raw_stats.get("a", raw_stats.get("assists", 0))),
+                "shots": _safe_int(raw_stats.get("sog", raw_stats.get("shots", 0))),
+                "plus_minus": _safe_int(raw_stats.get("pm", raw_stats.get("plusMinus", 0))),
+                "saves": _safe_int(raw_stats.get("sv", raw_stats.get("saves", 0))),
+            }
+        else:
+            return None
+    except Exception:
+        return None
+
+
+def _safe_int(value) -> int:
+    """Safely convert to int."""
+    try:
+        if isinstance(value, str):
+            value = value.replace("-", "0").split("-")[0]  # Handle "0-0" format
+        return int(float(value)) if value else 0
+    except (ValueError, TypeError):
+        return 0
+
+
+def _safe_float(value) -> float:
+    """Safely convert to float."""
+    try:
+        if isinstance(value, str):
+            # Handle "32:15" minutes format
+            if ":" in value:
+                parts = value.split(":")
+                return float(parts[0]) + float(parts[1]) / 60
+        return float(value) if value else 0.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
+# ============================================================================
+# BALLDONTLIE API - NBA STATS (FREE)
+# ============================================================================
+
+async def fetch_balldontlie_player_stats(
     player_name: str,
     game_date: date
 ) -> Optional[Dict[str, Any]]:
     """
-    Fetch player game stats from Playbook API.
-
-    Endpoint: GET /v1/players/{league}/gamelog
+    Fetch NBA player stats from BallDontLie API (FREE).
 
     Args:
-        sport: Internal sport code
         player_name: Player name
         game_date: Date of the game
 
     Returns:
         Dict with stat values or None
     """
-    cache_key = f"{sport}_{player_name}_{game_date.isoformat()}"
+    cache_key = f"bdl_{player_name}_{game_date.isoformat()}"
     if cache_key in _player_stats_cache:
         return _player_stats_cache[cache_key]
 
+    headers = {}
+    if BALLDONTLIE_API_KEY:
+        headers["Authorization"] = BALLDONTLIE_API_KEY
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # First, search for player ID
+            search_url = f"{BALLDONTLIE_API_BASE}/players"
+            search_params = {"search": player_name.split()[0]}  # Search by first name
+            search_resp = await client.get(search_url, params=search_params, headers=headers)
+
+            if search_resp.status_code != 200:
+                return None
+
+            search_data = search_resp.json()
+            players = search_data.get("data", [])
+
+            # Find matching player
+            player_id = None
+            player_name_lower = player_name.lower()
+            for p in players:
+                full_name = f"{p.get('first_name', '')} {p.get('last_name', '')}".lower()
+                if player_name_lower in full_name or full_name in player_name_lower:
+                    player_id = p.get("id")
+                    break
+
+            if not player_id:
+                return None
+
+            # Fetch stats for the date
+            stats_url = f"{BALLDONTLIE_API_BASE}/stats"
+            stats_params = {
+                "player_ids[]": player_id,
+                "dates[]": game_date.isoformat()
+            }
+            stats_resp = await client.get(stats_url, params=stats_params, headers=headers)
+
+            if stats_resp.status_code != 200:
+                return None
+
+            stats_data = stats_resp.json()
+            game_stats = stats_data.get("data", [])
+
+            if not game_stats:
+                return None
+
+            # Get the first (and should be only) game stats
+            gs = game_stats[0]
+
+            stats = {
+                "points": gs.get("pts", 0),
+                "rebounds": gs.get("reb", 0),
+                "assists": gs.get("ast", 0),
+                "steals": gs.get("stl", 0),
+                "blocks": gs.get("blk", 0),
+                "threes": gs.get("fg3m", 0),
+                "turnovers": gs.get("turnover", 0),
+                "minutes": _safe_float(gs.get("min", "0")),
+            }
+
+            # Calculate combo stats
+            stats["points_rebounds"] = stats["points"] + stats["rebounds"]
+            stats["points_assists"] = stats["points"] + stats["assists"]
+            stats["points_rebounds_assists"] = stats["points"] + stats["rebounds"] + stats["assists"]
+            stats["rebounds_assists"] = stats["rebounds"] + stats["assists"]
+
+            _player_stats_cache[cache_key] = stats
+            logger.info(f"BallDontLie: Got stats for {player_name} on {game_date}")
+            return stats
+
+    except httpx.RequestError as e:
+        logger.debug(f"BallDontLie request failed: {e}")
+        return None
+    except Exception as e:
+        logger.debug(f"BallDontLie error: {e}")
+        return None
+
+
+# ============================================================================
+# PLAYBOOK API - FALLBACK
+# ============================================================================
+
+async def fetch_playbook_player_stats(
+    sport: str,
+    player_name: str,
+    game_date: date
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch player stats from Playbook API (PAID - fallback).
+
+    Args:
+        sport: Sport code
+        player_name: Player name
+        game_date: Game date
+
+    Returns:
+        Dict with stat values or None
+    """
     if not PLAYBOOK_API_KEY:
-        logger.warning("PLAYBOOK_API_KEY not configured - cannot fetch player stats")
         return None
 
     league = PLAYBOOK_LEAGUES.get(sport.upper())
     if not league:
-        logger.warning(f"Unknown sport for Playbook API: {sport}")
         return None
 
-    # Playbook gamelog endpoint
-    url = f"{PLAYBOOK_API_BASE}/players/{league}/gamelog"
+    # Try games endpoint for the date
+    url = f"{PLAYBOOK_API_BASE}/games"
     params = {
         "api_key": PLAYBOOK_API_KEY,
-        "player_name": player_name,
+        "league": league,
         "date": game_date.isoformat()
     }
 
@@ -301,70 +596,135 @@ async def fetch_player_game_stats(
             resp = await client.get(url, params=params)
 
             if resp.status_code != 200:
-                logger.debug(f"Playbook gamelog not found for {player_name}: {resp.status_code}")
                 return None
 
             data = resp.json()
+            # Try to find player in game data
+            # Structure depends on Playbook API response format
+            # This is a fallback, so we'll try common patterns
 
-            # Extract stats from response
-            if isinstance(data, list) and len(data) > 0:
-                game_log = data[0]  # Most recent game
-            elif isinstance(data, dict):
-                game_log = data
-            else:
-                return None
+            games = data if isinstance(data, list) else data.get("games", data.get("data", []))
 
-            # Normalize stat names
-            stats = {
-                "points": game_log.get("points") or game_log.get("pts") or game_log.get("PTS"),
-                "rebounds": game_log.get("rebounds") or game_log.get("reb") or game_log.get("REB"),
-                "assists": game_log.get("assists") or game_log.get("ast") or game_log.get("AST"),
-                "steals": game_log.get("steals") or game_log.get("stl") or game_log.get("STL"),
-                "blocks": game_log.get("blocks") or game_log.get("blk") or game_log.get("BLK"),
-                "threes": game_log.get("three_pointers_made") or game_log.get("fg3m") or game_log.get("3PM"),
-                "turnovers": game_log.get("turnovers") or game_log.get("to") or game_log.get("TOV"),
-                # Combo stats
-                "points_rebounds": None,
-                "points_assists": None,
-                "points_rebounds_assists": None,
-                "rebounds_assists": None,
-                # NFL stats
-                "passing_yards": game_log.get("passing_yards") or game_log.get("pass_yds"),
-                "rushing_yards": game_log.get("rushing_yards") or game_log.get("rush_yds"),
-                "receiving_yards": game_log.get("receiving_yards") or game_log.get("rec_yds"),
-                "passing_touchdowns": game_log.get("passing_tds") or game_log.get("pass_td"),
-                "receptions": game_log.get("receptions") or game_log.get("rec"),
-                # MLB stats
-                "hits": game_log.get("hits") or game_log.get("H"),
-                "runs": game_log.get("runs") or game_log.get("R"),
-                "rbis": game_log.get("rbis") or game_log.get("RBI"),
-                "strikeouts": game_log.get("strikeouts") or game_log.get("SO"),
-                # NHL stats
-                "goals": game_log.get("goals") or game_log.get("G"),
-                "shots": game_log.get("shots") or game_log.get("SOG"),
-                "saves": game_log.get("saves") or game_log.get("SV"),
-            }
+            for game in games:
+                # Check various possible locations for player stats
+                for key in ["players", "boxscore", "stats", "player_stats"]:
+                    players = game.get(key, [])
+                    if isinstance(players, dict):
+                        players = list(players.values())
+                    for p in players:
+                        p_name = p.get("name", p.get("player_name", "")).lower()
+                        if player_name.lower() in p_name or p_name in player_name.lower():
+                            return _normalize_playbook_stats(p, sport)
 
-            # Calculate combo stats for NBA
-            if stats.get("points") is not None:
-                pts = stats["points"] or 0
-                reb = stats.get("rebounds") or 0
-                ast = stats.get("assists") or 0
-                stats["points_rebounds"] = pts + reb
-                stats["points_assists"] = pts + ast
-                stats["points_rebounds_assists"] = pts + reb + ast
-                stats["rebounds_assists"] = reb + ast
+    except Exception as e:
+        logger.debug(f"Playbook stats fetch failed: {e}")
 
-            _player_stats_cache[cache_key] = stats
-            logger.info(f"Playbook: Got stats for {player_name} on {game_date}")
+    return None
+
+
+def _normalize_playbook_stats(raw: Dict, sport: str) -> Dict:
+    """Normalize Playbook stats to our format."""
+    return {
+        "points": raw.get("points", raw.get("pts", 0)),
+        "rebounds": raw.get("rebounds", raw.get("reb", 0)),
+        "assists": raw.get("assists", raw.get("ast", 0)),
+        "steals": raw.get("steals", raw.get("stl", 0)),
+        "blocks": raw.get("blocks", raw.get("blk", 0)),
+        "threes": raw.get("three_pointers_made", raw.get("fg3m", 0)),
+        "turnovers": raw.get("turnovers", raw.get("to", 0)),
+        "passing_yards": raw.get("passing_yards", raw.get("pass_yds", 0)),
+        "rushing_yards": raw.get("rushing_yards", raw.get("rush_yds", 0)),
+        "receiving_yards": raw.get("receiving_yards", raw.get("rec_yds", 0)),
+        "receptions": raw.get("receptions", raw.get("rec", 0)),
+        "goals": raw.get("goals", raw.get("g", 0)),
+        "shots": raw.get("shots", raw.get("sog", 0)),
+        "hits": raw.get("hits", raw.get("h", 0)),
+        "runs": raw.get("runs", raw.get("r", 0)),
+        "rbis": raw.get("rbis", raw.get("rbi", 0)),
+    }
+
+
+# ============================================================================
+# UNIFIED PLAYER STATS FETCHER
+# ============================================================================
+
+async def fetch_player_stats(
+    sport: str,
+    player_name: str,
+    game_date: date
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch player stats using multiple APIs in priority order:
+    1. ESPN API (FREE) - Primary
+    2. BallDontLie (FREE, NBA only) - Backup
+    3. Playbook API (PAID) - Fallback
+
+    Args:
+        sport: Sport code
+        player_name: Player name
+        game_date: Game date
+
+    Returns:
+        Stats dict or None
+    """
+    player_name_lower = player_name.lower()
+
+    # 1. Try ESPN box scores first (FREE, all sports)
+    espn_stats = await fetch_espn_box_scores(sport, game_date)
+    if espn_stats:
+        # Try exact match first
+        if player_name_lower in espn_stats:
+            stats = espn_stats[player_name_lower]
+            _add_combo_stats(stats)
+            logger.info(f"ESPN: Found stats for {player_name}")
             return stats
 
-    except httpx.RequestError as e:
-        logger.debug(f"Playbook request failed for {player_name}: {e}")
-        return None
-    except Exception as e:
-        logger.exception(f"Playbook unexpected error: {e}")
-        return None
+        # Try fuzzy match
+        for key, stats in espn_stats.items():
+            if player_name_lower in key or key in player_name_lower:
+                _add_combo_stats(stats)
+                logger.info(f"ESPN: Found stats for {player_name} (fuzzy)")
+                return stats
+
+            # Try matching by last name
+            last_name = player_name.split()[-1].lower() if " " in player_name else ""
+            if last_name and last_name in key:
+                _add_combo_stats(stats)
+                logger.info(f"ESPN: Found stats for {player_name} (last name)")
+                return stats
+
+    # 2. Try BallDontLie for NBA (FREE)
+    if sport.upper() == "NBA":
+        bdl_stats = await fetch_balldontlie_player_stats(player_name, game_date)
+        if bdl_stats:
+            logger.info(f"BallDontLie: Found stats for {player_name}")
+            return bdl_stats
+
+    # 3. Try Playbook API as fallback (PAID)
+    playbook_stats = await fetch_playbook_player_stats(sport, player_name, game_date)
+    if playbook_stats:
+        _add_combo_stats(playbook_stats)
+        logger.info(f"Playbook: Found stats for {player_name}")
+        return playbook_stats
+
+    logger.debug(f"No stats found for {player_name} ({sport}) on {game_date}")
+    return None
+
+
+def _add_combo_stats(stats: Dict):
+    """Add combo stats if not present."""
+    pts = stats.get("points", 0) or 0
+    reb = stats.get("rebounds", 0) or 0
+    ast = stats.get("assists", 0) or 0
+
+    if "points_rebounds" not in stats:
+        stats["points_rebounds"] = pts + reb
+    if "points_assists" not in stats:
+        stats["points_assists"] = pts + ast
+    if "points_rebounds_assists" not in stats:
+        stats["points_rebounds_assists"] = pts + reb + ast
+    if "rebounds_assists" not in stats:
+        stats["rebounds_assists"] = reb + ast
 
 
 def get_stat_value_from_market(stats: Dict[str, Any], market: str) -> Optional[float]:
@@ -408,6 +768,7 @@ def get_stat_value_from_market(stats: Dict[str, Any], market: str) -> Optional[f
         "hits": "hits",
         "runs": "runs",
         "rbis": "rbis",
+        "homeruns": "home_runs",
         "strikeouts": "strikeouts",
         # NHL
         "goals": "goals",
@@ -478,7 +839,6 @@ def determine_pick_result(
         if market in ["moneyline", "h2h", "ml"]:
             winner = game_result.get("winner")
             if winner:
-                # Check if our selection matches the winner
                 selection_lower = (pick.selection or "").lower()
                 winner_lower = winner.lower()
                 if winner_lower in selection_lower or selection_lower in winner_lower:
@@ -491,7 +851,6 @@ def determine_pick_result(
             if home_score is not None and away_score is not None and pick.line is not None:
                 margin = home_score - away_score
 
-                # Determine if pick was on home or away
                 selection_lower = (pick.selection or "").lower()
                 home_team_lower = (pick.home_team or game_result.get("home_team", "")).lower()
                 away_team_lower = (pick.away_team or game_result.get("away_team", "")).lower()
@@ -500,16 +859,13 @@ def determine_pick_result(
                 is_away_pick = any(word in selection_lower for word in away_team_lower.split() if len(word) > 3)
 
                 if is_home_pick and not is_away_pick:
-                    # Home team spread
                     cover_margin = margin + pick.line
                 elif is_away_pick and not is_home_pick:
-                    # Away team spread
                     cover_margin = -margin + pick.line
                 else:
-                    # Can't determine side
                     return PickResult.MISSING, None
 
-                if abs(cover_margin) < 0.001:  # Push
+                if abs(cover_margin) < 0.001:
                     return PickResult.PUSH, None
                 elif cover_margin > 0:
                     return PickResult.WIN, None
@@ -522,7 +878,7 @@ def determine_pick_result(
                 total = home_score + away_score
                 side = (pick.side or "").upper()
 
-                if abs(total - pick.line) < 0.001:  # Push
+                if abs(total - pick.line) < 0.001:
                     return PickResult.PUSH, total
 
                 if side == "OVER":
@@ -536,7 +892,6 @@ def determine_pick_result(
                     else:
                         return PickResult.LOSS, total
 
-    # Cannot determine result
     return PickResult.MISSING, None
 
 
@@ -553,24 +908,12 @@ async def fetch_game_results(
 ) -> Optional[Dict[str, Any]]:
     """
     Fetch game result from Odds API.
-
-    Args:
-        sport: NBA, NFL, etc.
-        event_id: Odds API event ID if available
-        home_team: Home team name
-        away_team: Away team name
-        game_date: Date of the game
-
-    Returns:
-        Dict with home_score, away_score, winner or None
     """
-    # Fetch scores from Odds API
     games = await fetch_odds_api_scores(sport, days_from=3)
 
     if not games:
         return None
 
-    # Create a temporary pick-like object for matching
     class TempPick:
         pass
 
@@ -590,18 +933,9 @@ async def fetch_prop_results(
     game_date: date
 ) -> Optional[float]:
     """
-    Fetch actual prop result from Playbook API.
-
-    Args:
-        sport: NBA, NFL, etc.
-        player_name: Player name
-        stat_type: points, assists, rebounds, etc.
-        game_date: Date of the game
-
-    Returns:
-        Actual stat value or None if not available
+    Fetch actual prop result using multiple APIs.
     """
-    stats = await fetch_player_game_stats(sport, player_name, game_date)
+    stats = await fetch_player_stats(sport, player_name, game_date)
 
     if not stats:
         return None
@@ -621,7 +955,6 @@ async def grade_pick(pick: PickLedger) -> Tuple[PickResult, float, Optional[floa
 
     # Props grading
     if pick.player_name and pick.line is not None:
-        # Extract stat type from market
         stat_type = pick.market.replace("player_", "") if pick.market else ""
 
         actual_value = await fetch_prop_results(
@@ -658,18 +991,12 @@ async def grade_picks_for_date(
 ) -> Dict[str, Any]:
     """
     Grade all pending picks for a specific date.
-
-    Args:
-        target_date: Date to grade picks for
-        sport: Optional sport filter
-
-    Returns:
-        Summary of grading results
     """
     # Clear caches at start of grading run
-    global _scores_cache, _player_stats_cache
+    global _scores_cache, _player_stats_cache, _espn_box_scores_cache
     _scores_cache = {}
     _player_stats_cache = {}
+    _espn_box_scores_cache = {}
 
     pending_picks = get_pending_picks_for_date(target_date, sport)
 
@@ -690,6 +1017,7 @@ async def grade_picks_for_date(
     pushes = 0
     total_profit = 0.0
     graded_picks = []
+    api_sources = {"espn": 0, "balldontlie": 0, "playbook": 0, "odds_api": 0}
 
     for pick in pending_picks:
         try:
@@ -721,6 +1049,7 @@ async def grade_picks_for_date(
 
                 graded_picks.append({
                     "selection": pick.selection,
+                    "player": pick.player_name,
                     "result": result.value,
                     "profit_units": round(profit, 2),
                     "actual_value": actual_value
@@ -741,20 +1070,15 @@ async def grade_picks_for_date(
         "losses": losses,
         "pushes": pushes,
         "net_units": round(total_profit, 2),
-        "graded_picks": graded_picks[:10],  # Top 10 for brevity
-        "message": f"Graded {graded_count} picks, {missing_count} missing results"
+        "graded_picks": graded_picks[:10],
+        "message": f"Graded {graded_count} picks, {missing_count} missing results",
+        "data_sources": ["ESPN (FREE)", "BallDontLie (FREE)", "Odds API", "Playbook"]
     }
 
 
 async def run_daily_grading(days_back: int = 1) -> Dict[str, Any]:
     """
     Run daily grading for all sports.
-
-    Args:
-        days_back: How many days back to grade (default: yesterday)
-
-    Returns:
-        Combined grading summary for all sports
     """
     target_date = date.today() - timedelta(days=days_back)
 
@@ -794,6 +1118,10 @@ async def run_daily_grading(days_back: int = 1) -> Dict[str, Any]:
             "net_units": round(total_profit, 2),
             "record": f"{total_wins}-{total_losses}-{total_pushes}"
         },
+        "data_sources": {
+            "game_scores": "Odds API",
+            "player_stats": ["ESPN (FREE)", "BallDontLie (FREE/NBA)", "Playbook (PAID)"]
+        },
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -809,18 +1137,9 @@ def grade_pick_manually(
 ) -> Dict[str, Any]:
     """
     Manually grade a pick (for admin use).
-
-    Args:
-        pick_uid: The pick's unique identifier
-        result: WIN, LOSS, PUSH, VOID
-        actual_value: Optional actual stat value
-
-    Returns:
-        Grading result
     """
     result_enum = PickResult[result.upper()]
 
-    # Get pick to calculate profit
     with get_db() as db:
         if db:
             pick = db.query(PickLedger).filter(PickLedger.pick_uid == pick_uid).first()
