@@ -5,6 +5,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import Optional, List, Dict, Any
 import httpx
+import database  # v10.33: Import module for live DB_ENABLED check
 
 # Import Pydantic models for request/response validation
 try:
@@ -4987,7 +4988,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     db_error = None
 
     # Determine database availability (fast check - no DB call needed)
-    database_available = DATABASE_AVAILABLE and DB_ENABLED
+    # v10.33: Use database.DB_ENABLED for live value (not stale import)
+    database_available = DATABASE_AVAILABLE and database.DB_ENABLED
 
     result = {
         "sport": sport.upper(),
