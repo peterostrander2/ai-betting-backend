@@ -9,7 +9,7 @@
 ## Project Overview
 
 **Bookie-o-em** - AI Sports Prop Betting Backend
-**Version:** v14.2 PRODUCTION HARDENED
+**Version:** v10.34 PRODUCTION HARDENED
 **Stack:** Python 3.11+, FastAPI, Railway deployment
 **Frontend:** bookie-member-app (separate repo)
 **Production URL:** https://web-production-7b2a.up.railway.app
@@ -1575,5 +1575,234 @@ curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
 ```
 
 Expected: At least 1-3 EDGE_LEAN or GOLD_STAR props returned.
+
+---
+
+## Session Log: January 21, 2026 - DB_ENABLED Stale Import Fix + Hardening v10.34
+
+### The Problem
+
+`/live/best-bets/{sport}` was returning `database_available: false` even though `/live/db/status` showed `db_enabled: true, db_connect_ok: true`.
+
+### Root Cause
+
+`DB_ENABLED` was imported at module load time (line 66) **before** `init_database()` runs on app startup. This created a stale copy that always showed `False`.
+
+```python
+# BAD: Imported at module load, stays False forever
+from database import DB_ENABLED  # Line 66
+
+# GOOD: Read live value at runtime
+import database
+database.DB_ENABLED  # Live value after init_database() runs
+```
+
+### What Was Fixed
+
+**1. Added module import for live access (line 8):**
+```python
+import database  # v10.33: Import module for live DB_ENABLED check
+```
+
+**2. Replaced ALL 10 usages of stale `DB_ENABLED` with `database.DB_ENABLED`:**
+- Line 4992: database_available check
+- Line 5076: debug database_available field
+- Line 5142: error message condition
+- Lines 5579, 5720, 5788, 5841, 5880: endpoint availability checks
+- Line 6024: db_enabled status field
+- Line 6047: transparency report availability check
+
+**3. Added top-level database health fields (v10.33):**
+```python
+"database_available": database_available,
+"picks_saved": picks_saved,
+"signals_saved": signals_saved
+```
+
+**4. v10.34 Hardening - Three improvements:**
+
+| Feature | Implementation |
+|---------|----------------|
+| Cache Schema Versioning | `CACHE_SCHEMA_VERSION = "best_bets_v2"` in cache key |
+| Debug Visibility | `db_enabled_live` field only appears when `?debug=1` |
+| Persistence Logging | `logger.info(f"best_bets_persist sport=...")` after saves |
+
+**5. Fixed debug field leak:**
+Debug responses were being cached and served to non-debug requests. Fixed by only caching when `debug != 1`.
+
+### Production Test Results
+
+| Sport | Props | Games | Picks Saved | Signals Saved |
+|-------|-------|-------|-------------|---------------|
+| NBA   | 10    | 10    | 9           | 35            |
+| NFL   | 6     | 4     | 10          | 13            |
+| NHL   | 10    | 10    | 20          | 38            |
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - v10.33 + v10.34 fixes)
+```
+
+### Commits
+
+1. `76bab7d` - feat: v10.33 add top-level database_available, picks_saved, signals_saved fields
+2. `c4ccae7` - fix: Use database.DB_ENABLED for live value instead of stale import
+3. `c350ebc` - fix: Replace all stale DB_ENABLED imports with database.DB_ENABLED
+4. `9bf4145` - feat: v10.34 hardening - cache versioning, debug visibility, persistence logging
+5. `6dc3bf0` - fix: Only cache non-debug responses to prevent debug fields leaking
+
+---
+
+# ✅ Verification & Ops (Production)
+
+**Base URL:** `https://web-production-7b2a.up.railway.app`
+**Auth:** `X-API-Key: YOUR_KEY` header required on all `/live/*` endpoints
+
+---
+
+## A) Health Check
+
+```bash
+# Public health (no auth)
+curl -s "https://web-production-7b2a.up.railway.app/health" | jq
+
+# Router health (auth required)
+curl -s "https://web-production-7b2a.up.railway.app/live/health" \
+  -H "X-API-Key: YOUR_KEY" | jq
+```
+
+**Expected:** `{"status": "healthy"}` or `{"status": "ok"}`
+
+---
+
+## B) Best Bets Smoke Tests
+
+```bash
+# NBA
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
+  -H "X-API-Key: YOUR_KEY" | jq '{sport, database_available, picks_saved, signals_saved, props: (.props.picks | length), games: (.game_picks.picks | length)}'
+
+# NFL
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nfl" \
+  -H "X-API-Key: YOUR_KEY" | jq '{sport, database_available, picks_saved, signals_saved, props: (.props.picks | length), games: (.game_picks.picks | length)}'
+
+# NHL
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nhl" \
+  -H "X-API-Key: YOUR_KEY" | jq '{sport, database_available, picks_saved, signals_saved, props: (.props.picks | length), games: (.game_picks.picks | length)}'
+```
+
+**Expected:** `database_available: true`, `picks_saved > 0`, `signals_saved > 0`
+
+---
+
+## C) Database Status Check
+
+```bash
+# Full DB health
+curl -s "https://web-production-7b2a.up.railway.app/live/db/status" \
+  -H "X-API-Key: YOUR_KEY" | jq '{db_enabled, db_connect_ok, tables_found}'
+```
+
+**Expected:**
+```json
+{
+  "db_enabled": true,
+  "db_connect_ok": true,
+  "tables_found": ["pick_ledger", "signal_ledger", "sport_config", ...]
+}
+```
+
+---
+
+## D) Cache Controls
+
+```bash
+# View cache stats
+curl -s "https://web-production-7b2a.up.railway.app/live/cache/stats" \
+  -H "X-API-Key: YOUR_KEY" | jq
+
+# Clear cache (use sparingly)
+curl -s "https://web-production-7b2a.up.railway.app/live/cache/clear" \
+  -H "X-API-Key: YOUR_KEY" | jq
+```
+
+**Cache Schema Versioning:**
+Cache keys include `CACHE_SCHEMA_VERSION` (e.g., `best_bets_v2:best-bets:nba`). Bumping version in code auto-invalidates old cached payloads—no manual clear needed after schema changes.
+
+---
+
+## E) Debug Mode Rules
+
+Debug fields (e.g., `db_enabled_live`) must **only** appear when `?debug=1`.
+
+```bash
+# Verify debug fields PRESENT with debug=1
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" \
+  -H "X-API-Key: YOUR_KEY" | jq '{db_enabled_live: .debug.db_enabled_live}'
+# Expected: {"db_enabled_live": true}
+
+# Verify debug fields ABSENT without debug
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
+  -H "X-API-Key: YOUR_KEY" | jq '{db_enabled_live: .debug.db_enabled_live}'
+# Expected: {"db_enabled_live": null}
+```
+
+**If debug fields leak to non-debug responses:** Redeploy—debug responses should not be cached.
+
+---
+
+## F) Expected Output Patterns
+
+### Quick Health Check
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
+  -H "X-API-Key: YOUR_KEY" | jq '{database_available, picks_saved, signals_saved}'
+```
+
+### What "Good" Looks Like
+| Field | Good Value | Meaning |
+|-------|------------|---------|
+| `database_available` | `true` | Postgres connected, `database.DB_ENABLED` is live |
+| `picks_saved` | `> 0` | Picks persisted to `pick_ledger` table |
+| `signals_saved` | `> 0` | Signals persisted to `signal_ledger` table |
+| `props` | `0-10` | Player prop picks generated |
+| `games` | `0-10` | Game picks generated |
+
+### View Actual Picks
+```bash
+# First 2 prop picks
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
+  -H "X-API-Key: YOUR_KEY" | jq '.props.picks[:2] | .[] | {player: .player_name, line: .line, pick: .over_under, tier: .tier}'
+
+# First 2 game picks
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
+  -H "X-API-Key: YOUR_KEY" | jq '.game_picks.picks[:2] | .[] | {game, pick: .recommendation, tier}'
+```
+
+---
+
+## G) Common Failure Modes + Fixes
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `database_available: false` but `/db/status` shows `db_enabled: true` | Stale `DB_ENABLED` import (module load vs runtime) | Ensure code uses `database.DB_ENABLED`, redeploy |
+| Debug fields appear without `?debug=1` | Cached debug response | Clear cache: `/live/cache/clear`, then verify |
+| `picks_saved: 0` but `database_available: true` | Missing table columns or save error | Check logs, verify `pick_ledger` schema |
+| `{"detail": "Invalid API key"}` | Missing or wrong `X-API-Key` header | Verify key matches `API_AUTH_KEY` env var |
+| `props: 0, games: 0` | Odds API outage or no games today | Check `/live/api-health`, verify sport is in-season |
+| Old response fields after code change | Stale cached payload | Cache auto-invalidates via schema version; if stuck, clear cache |
+
+### Verify API Keys Are Working
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/api-health" \
+  -H "X-API-Key: YOUR_KEY" | jq '{odds_api: .odds_api.status, playbook: .playbook.status}'
+```
+
+### Check Logs for Persistence
+After each `/best-bets` call, logs should show:
+```
+best_bets_persist sport=NBA database_available=true picks_saved=9 signals_saved=35 cache_hit=false
+```
 
 ---
