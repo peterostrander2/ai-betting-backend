@@ -202,6 +202,13 @@ SPORT_MAPPINGS = {
 }
 
 # ============================================================================
+# v10.34: CACHE SCHEMA VERSIONING
+# Changing this version invalidates all cached best-bets responses automatically.
+# Bump this when response schema changes to prevent stale cached payloads.
+# ============================================================================
+CACHE_SCHEMA_VERSION = "best_bets_v2"
+
+# ============================================================================
 # v10.24: SPORT PROFILES - Per-sport calibration (3-engine blend)
 # Weights: ai + research + esoteric = 1.0
 # ============================================================================
@@ -3098,10 +3105,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
     # Check cache first
     # v10.16: Skip cache for debug/inspection modes to ensure fresh diagnostic data
-    cache_key = f"best-bets:{sport_lower}"
+    # v10.34: Include schema version in cache key to auto-invalidate on schema changes
+    cache_key = f"{CACHE_SCHEMA_VERSION}:best-bets:{sport_lower}"
+    cache_hit = False
     if debug != 1 and include_conflicts != 1:
         cached = api_cache.get(cache_key)
         if cached:
+            cache_hit = True
             return cached
 
     # Get MasterPredictionSystem
@@ -5146,6 +5156,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     result["picks_saved"] = picks_saved
     result["signals_saved"] = signals_saved
 
+    # v10.34: Persistence logging - audit that writes happen
+    logger.info(f"best_bets_persist sport={sport.upper()} database_available={database_available} picks_saved={picks_saved} signals_saved={signals_saved} cache_hit={cache_hit}")
+
     # Add debug-only fields for save operations
     if debug == 1:
         result["debug"]["picks_saved_to_ledger"] = picks_saved
@@ -5154,6 +5167,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         result["debug"]["signal_attribution_available"] = SIGNAL_ATTRIBUTION_AVAILABLE
         result["debug"]["db_error"] = db_error
         result["debug"]["save_errors"] = save_errors if save_errors else None
+        # v10.34: Prove DB_ENABLED is truly live at runtime
+        result["debug"]["db_enabled_live"] = bool(database.DB_ENABLED)
         result["debug"]["counts"] = {
             "picks_generated": len(all_picks_to_save),
             "signals_generated": sum(len(_extract_signals_from_reasons(p.get("reasons", []))) for p in all_picks_to_save)
