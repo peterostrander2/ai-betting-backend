@@ -5174,7 +5174,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "signals_generated": sum(len(_extract_signals_from_reasons(p.get("reasons", []))) for p in all_picks_to_save)
         }
 
-    api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
+    # v10.34: Only cache non-debug responses (debug responses have extra fields that shouldn't be cached)
+    if debug != 1:
+        api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
     return result
 
 
