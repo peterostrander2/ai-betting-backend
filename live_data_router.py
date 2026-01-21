@@ -5,6 +5,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import Optional, List, Dict, Any
 import httpx
+import database  # v10.33: Import module for live DB_ENABLED check
 
 # Import Pydantic models for request/response validation
 try:
@@ -4987,7 +4988,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     db_error = None
 
     # Determine database availability (fast check - no DB call needed)
-    database_available = DATABASE_AVAILABLE and DB_ENABLED
+    # v10.33: Use database.DB_ENABLED for live value (not stale import)
+    database_available = DATABASE_AVAILABLE and database.DB_ENABLED
 
     result = {
         "sport": sport.upper(),
@@ -5071,7 +5073,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "conflict_policy": sport_profile["conflict_policy"]
             },
             # v10.31: Database status (kept for backward compatibility)
-            "database_available": DATABASE_AVAILABLE and DB_ENABLED
+            "database_available": DATABASE_AVAILABLE and database.DB_ENABLED
         }
 
     # ================================================================
@@ -5137,7 +5139,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         # DB not available - log why
         if not DATABASE_AVAILABLE:
             db_error = "Database module not imported"
-        elif not DB_ENABLED:
+        elif not database.DB_ENABLED:
             db_error = "Database not initialized (DB_ENABLED=False)"
 
     # v10.33: Update TOP-LEVEL fields with actual counts
@@ -5574,7 +5576,7 @@ async def get_v1031_daily_report(sport: str, date_str: str = None):
     - Breakdown by tier and confidence grade
     - Config changes made that day
     """
-    if not DATABASE_AVAILABLE or not DB_ENABLED:
+    if not DATABASE_AVAILABLE or not database.DB_ENABLED:
         raise HTTPException(status_code=503, detail="Database not available for v10.31 reports")
 
     try:
@@ -5715,7 +5717,7 @@ async def admin_grade_now(
     1. Grade picks for the specified date
     2. Run conservative tuning based on rolling performance
     """
-    if not DATABASE_AVAILABLE or not DB_ENABLED:
+    if not DATABASE_AVAILABLE or not database.DB_ENABLED:
         raise HTTPException(status_code=503, detail="Database not available for v10.31 grading")
 
     try:
@@ -5783,7 +5785,7 @@ async def get_attribution_report(
     if not SIGNAL_ATTRIBUTION_AVAILABLE:
         raise HTTPException(status_code=503, detail="Signal attribution module not available")
 
-    if not DATABASE_AVAILABLE or not DB_ENABLED:
+    if not DATABASE_AVAILABLE or not database.DB_ENABLED:
         raise HTTPException(status_code=503, detail="Database not available for v10.32 attribution")
 
     try:
@@ -5836,7 +5838,7 @@ async def get_signal_uplift(
     if not SIGNAL_ATTRIBUTION_AVAILABLE:
         raise HTTPException(status_code=503, detail="Signal attribution module not available")
 
-    if not DATABASE_AVAILABLE or not DB_ENABLED:
+    if not DATABASE_AVAILABLE or not database.DB_ENABLED:
         raise HTTPException(status_code=503, detail="Database not available")
 
     try:
@@ -5875,7 +5877,7 @@ async def admin_tune_micro_weights(
     if not MICRO_WEIGHT_TUNING_AVAILABLE:
         raise HTTPException(status_code=503, detail="Micro-weight tuning module not available")
 
-    if not DATABASE_AVAILABLE or not DB_ENABLED:
+    if not DATABASE_AVAILABLE or not database.DB_ENABLED:
         raise HTTPException(status_code=503, detail="Database not available")
 
     try:
@@ -6019,7 +6021,7 @@ async def get_signal_report(
     db_status = {
         "db_url_present": bool(os.getenv("DATABASE_URL", "")),
         "db_connect_ok": False,
-        "db_enabled": DATABASE_AVAILABLE and DB_ENABLED,
+        "db_enabled": DATABASE_AVAILABLE and database.DB_ENABLED,
         "tables_found": [],
         "missing_tables": []
     }
@@ -6042,7 +6044,7 @@ async def get_signal_report(
     }
 
     # If DB not available, return empty structure with db_status
-    if not DATABASE_AVAILABLE or not DB_ENABLED or not db_status["db_connect_ok"]:
+    if not DATABASE_AVAILABLE or not database.DB_ENABLED or not db_status["db_connect_ok"]:
         for sport_code in sports_to_check:
             report["sports"][sport_code] = {
                 "totals": {"picks_logged": 0, "wins": 0, "losses": 0, "pushes": 0, "pending": 0, "win_rate": 0, "roi": 0},
