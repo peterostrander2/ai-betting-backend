@@ -1687,6 +1687,127 @@ def resolve_same_direction(picks: list) -> list:
     return resolved
 
 
+def resolve_opposing_sides(picks: list) -> list:
+    """
+    v10.35: Resolve conflicts where picks bet on OPPOSING sides of the same game.
+
+    For example, if we have:
+    - Hawks ML (+106) = betting ATL wins (score 6.88)
+    - Grizzlies -1.5 (-110) = betting MEM wins (score 6.77)
+
+    These are OPPOSING sides of the same game. This confuses the community.
+    Keep only the DIRECTION with the highest-scoring pick.
+
+    This runs AFTER resolve_same_direction, so each direction already has only its best market.
+
+    Groups by: game
+    Then identifies: which side/direction each pick is on
+    Keeps: only the highest-scoring direction's picks
+    """
+    from collections import defaultdict
+
+    # Group all picks by game
+    games = defaultdict(list)
+    for p in picks:
+        game = p.get("game", "") or p.get("matchup", "")
+        if game:
+            games[game].append(p)
+
+    resolved = []
+    for game, game_picks in games.items():
+        if len(game_picks) <= 1:
+            # Only one pick for this game, no conflict
+            resolved.extend(game_picks)
+            continue
+
+        # Identify direction for each pick
+        # Direction groups: (team1, team2, OVER, UNDER)
+        direction_groups = defaultdict(list)
+
+        for p in game_picks:
+            market = p.get("market", "")
+
+            if market == "totals":
+                # Totals don't conflict with team picks - keep them separate
+                # But OVER and UNDER DO conflict with each other
+                pick_text = p.get("pick", "")
+                if "Over" in pick_text or "OVER" in pick_text:
+                    direction = "TOTAL_OVER"
+                elif "Under" in pick_text or "UNDER" in pick_text:
+                    direction = "TOTAL_UNDER"
+                else:
+                    direction = "TOTAL_OTHER"
+            else:
+                # For spreads and ML, direction is the team being bet on
+                team = p.get("team", "")
+                if not team:
+                    # Try to extract from pick text
+                    pick_text = p.get("pick", "")
+                    team = pick_text.split()[0] if pick_text else "UNKNOWN"
+                direction = f"TEAM_{team}"
+
+            direction_groups[direction].append(p)
+
+        # Now check for conflicts
+        # Team picks can conflict with each other (Hawks ML vs Grizzlies spread)
+        # Totals can only conflict with other totals (OVER vs UNDER)
+
+        team_directions = [d for d in direction_groups.keys() if d.startswith("TEAM_")]
+        total_directions = [d for d in direction_groups.keys() if d.startswith("TOTAL_")]
+
+        # Handle team conflicts: keep only the best-scoring team direction
+        if len(team_directions) > 1:
+            # Find the best pick across all team directions
+            best_direction = None
+            best_score = -999
+
+            for direction in team_directions:
+                for p in direction_groups[direction]:
+                    score = p.get("final_score", p.get("total_score", 0))
+                    if score > best_score:
+                        best_score = score
+                        best_direction = direction
+
+            # Keep only picks from the winning direction
+            for direction in team_directions:
+                if direction == best_direction:
+                    for p in direction_groups[direction]:
+                        p["reasons"] = p.get("reasons", []) + [
+                            f"RESOLVER: Best direction for game (beat {len(team_directions)-1} opposing side(s))"
+                        ]
+                    resolved.extend(direction_groups[direction])
+                else:
+                    # Log that we filtered opposing side
+                    for p in direction_groups[direction]:
+                        logger.debug(f"Filtered opposing side: {p.get('pick')} (score {p.get('final_score')}) lost to {best_direction}")
+        else:
+            # No team conflicts, keep all team picks
+            for direction in team_directions:
+                resolved.extend(direction_groups[direction])
+
+        # Handle totals conflicts: keep only OVER or UNDER, not both
+        if len(total_directions) > 1:
+            best_direction = None
+            best_score = -999
+
+            for direction in total_directions:
+                for p in direction_groups[direction]:
+                    score = p.get("final_score", p.get("total_score", 0))
+                    if score > best_score:
+                        best_score = score
+                        best_direction = direction
+
+            for direction in total_directions:
+                if direction == best_direction:
+                    resolved.extend(direction_groups[direction])
+        else:
+            # No totals conflicts, keep all totals
+            for direction in total_directions:
+                resolved.extend(direction_groups[direction])
+
+    return resolved
+
+
 # ============================================================================
 # ROUTER SETUP
 # ============================================================================
@@ -4607,6 +4728,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     # Prevents Lakers -7 AND Lakers ML showing (same direction, pick best market)
     game_picks = resolve_same_direction(game_picks)
 
+    # OPPOSING-SIDES RESOLVER (v10.35): One direction per game
+    # Prevents Hawks ML AND Grizzlies -1.5 showing (opposite sides, confuses community)
+    game_picks = resolve_opposing_sides(game_picks)
+
     # Re-sort after all filtering
     game_picks.sort(key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))), reverse=True)
 
@@ -5003,8 +5128,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.33",
-        "scoring_system": "v10.33: Top-level DB health fields + Auto-grading + Daily Transparency",
+        "source": "production_v10.35",
+        "scoring_system": "v10.35: Opposing-sides resolver + Top-level DB health fields + Auto-grading",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
