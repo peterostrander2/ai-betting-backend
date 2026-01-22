@@ -1689,20 +1689,16 @@ def resolve_same_direction(picks: list) -> list:
 
 def resolve_opposing_sides(picks: list) -> list:
     """
-    v10.35: Resolve conflicts where picks bet on OPPOSING sides of the same game.
+    v10.35: Keep only ONE pick per game - the highest scoring.
 
-    For example, if we have:
-    - Hawks ML (+106) = betting ATL wins (score 6.88)
-    - Grizzlies -1.5 (-110) = betting MEM wins (score 6.77)
+    This ensures the community gets clean, non-conflicting picks:
+    - No Hawks ML + Grizzlies -1.5 (opposing teams)
+    - No Knicks -20.5 + Under 219.5 (spread + total for same game)
 
-    These are OPPOSING sides of the same game. This confuses the community.
-    Keep only the DIRECTION with the highest-scoring pick.
-
-    This runs AFTER resolve_same_direction, so each direction already has only its best market.
+    Just ONE clear pick per game.
 
     Groups by: game
-    Then identifies: which side/direction each pick is on
-    Keeps: only the highest-scoring direction's picks
+    Keeps: only the single highest-scoring pick
     """
     from collections import defaultdict
 
@@ -1715,95 +1711,25 @@ def resolve_opposing_sides(picks: list) -> list:
 
     resolved = []
     for game, game_picks in games.items():
-        if len(game_picks) <= 1:
-            # Only one pick for this game, no conflict
-            resolved.extend(game_picks)
+        if len(game_picks) == 1:
+            resolved.append(game_picks[0])
             continue
 
-        # Identify direction for each pick
-        # Direction groups: (team1, team2, OVER, UNDER)
-        direction_groups = defaultdict(list)
+        # Sort by score descending, keep only the best
+        game_picks.sort(key=lambda x: x.get("final_score", x.get("total_score", 0)), reverse=True)
+        best_pick = game_picks[0]
 
-        for p in game_picks:
-            market = p.get("market", "")
+        # Add transparency
+        filtered_count = len(game_picks) - 1
+        best_pick["reasons"] = best_pick.get("reasons", []) + [
+            f"RESOLVER: Best pick for game (beat {filtered_count} other pick(s))"
+        ]
 
-            if market == "totals":
-                # Totals don't conflict with team picks - keep them separate
-                # But OVER and UNDER DO conflict with each other
-                pick_text = p.get("pick", "")
-                if "Over" in pick_text or "OVER" in pick_text:
-                    direction = "TOTAL_OVER"
-                elif "Under" in pick_text or "UNDER" in pick_text:
-                    direction = "TOTAL_UNDER"
-                else:
-                    direction = "TOTAL_OTHER"
-            else:
-                # For spreads and ML, direction is the team being bet on
-                team = p.get("team", "")
-                if not team:
-                    # Try to extract from pick text
-                    pick_text = p.get("pick", "")
-                    team = pick_text.split()[0] if pick_text else "UNKNOWN"
-                direction = f"TEAM_{team}"
+        # Log what we filtered
+        for p in game_picks[1:]:
+            logger.debug(f"Filtered same-game pick: {p.get('pick')} (score {p.get('final_score')}) - {game}")
 
-            direction_groups[direction].append(p)
-
-        # Now check for conflicts
-        # Team picks can conflict with each other (Hawks ML vs Grizzlies spread)
-        # Totals can only conflict with other totals (OVER vs UNDER)
-
-        team_directions = [d for d in direction_groups.keys() if d.startswith("TEAM_")]
-        total_directions = [d for d in direction_groups.keys() if d.startswith("TOTAL_")]
-
-        # Handle team conflicts: keep only the best-scoring team direction
-        if len(team_directions) > 1:
-            # Find the best pick across all team directions
-            best_direction = None
-            best_score = -999
-
-            for direction in team_directions:
-                for p in direction_groups[direction]:
-                    score = p.get("final_score", p.get("total_score", 0))
-                    if score > best_score:
-                        best_score = score
-                        best_direction = direction
-
-            # Keep only picks from the winning direction
-            for direction in team_directions:
-                if direction == best_direction:
-                    for p in direction_groups[direction]:
-                        p["reasons"] = p.get("reasons", []) + [
-                            f"RESOLVER: Best direction for game (beat {len(team_directions)-1} opposing side(s))"
-                        ]
-                    resolved.extend(direction_groups[direction])
-                else:
-                    # Log that we filtered opposing side
-                    for p in direction_groups[direction]:
-                        logger.debug(f"Filtered opposing side: {p.get('pick')} (score {p.get('final_score')}) lost to {best_direction}")
-        else:
-            # No team conflicts, keep all team picks
-            for direction in team_directions:
-                resolved.extend(direction_groups[direction])
-
-        # Handle totals conflicts: keep only OVER or UNDER, not both
-        if len(total_directions) > 1:
-            best_direction = None
-            best_score = -999
-
-            for direction in total_directions:
-                for p in direction_groups[direction]:
-                    score = p.get("final_score", p.get("total_score", 0))
-                    if score > best_score:
-                        best_score = score
-                        best_direction = direction
-
-            for direction in total_directions:
-                if direction == best_direction:
-                    resolved.extend(direction_groups[direction])
-        else:
-            # No totals conflicts, keep all totals
-            for direction in total_directions:
-                resolved.extend(direction_groups[direction])
+        resolved.append(best_pick)
 
     return resolved
 
