@@ -2161,13 +2161,15 @@ async def get_last_smoke_test():
         }
 
 
-@router.get("/smoke-test/alert-status")
+@router.api_route("/smoke-test/alert-status", methods=["GET", "HEAD"])
 async def get_smoke_test_alert_status():
     """
     v10.36: Simple alert endpoint for external monitoring.
 
     Returns HTTP 200 with status="ok" if last smoke test passed.
     Returns HTTP 503 with status="alert" if last smoke test failed.
+
+    Supports both GET and HEAD methods for UptimeRobot compatibility.
 
     Use with external monitoring services (UptimeRobot, Cronitor, etc.)
     to get alerts when the system has issues.
