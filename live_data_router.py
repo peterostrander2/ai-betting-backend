@@ -3641,6 +3641,215 @@ async def get_props(sport: str):
     return result
 
 
+# ============================================================================
+# v10.43+: ALL-SPORTS COMBINED BOARD
+# ============================================================================
+
+@router.get("/best-bets/all")
+async def get_best_bets_all(debug: int = 0):
+    """
+    Get best bets across ALL in-season sports in ONE response.
+
+    Returns a unified board with:
+    - Props (player props)
+    - Game picks (spreads, totals, ML)
+    - Across NBA, NFL, MLB, NHL, NCAAB (whichever are in-season)
+
+    Query Parameters:
+    - debug=1: Include diagnostic info
+
+    Response Structure:
+    {
+        "all_picks": {
+            "picks": [...],  // Unified list sorted by score
+            "count": N
+        },
+        "by_sport": {
+            "NBA": { "props": [...], "game_picks": [...] },
+            ...
+        },
+        "debug": {
+            "sports_checked": [...],
+            "sports_in_season": [...],
+            "sports_returned_picks": {...},
+            "global_publish_gate": {...}
+        }
+    }
+    """
+    ALL_SPORTS = ["nba", "nfl", "mlb", "nhl", "ncaab"]
+
+    # Track debug info
+    debug_info = {
+        "sports_checked": [],
+        "sports_in_season": [],
+        "sports_returned_picks": {},
+        "sports_errors": {},
+        "global_publish_gate": {}
+    }
+
+    # Determine which sports are in-season
+    in_season_sports = []
+    for sport in ALL_SPORTS:
+        debug_info["sports_checked"].append(sport.upper())
+        if SEASON_GATING_AVAILABLE:
+            if is_in_season(sport.upper()):
+                in_season_sports.append(sport)
+                debug_info["sports_in_season"].append(sport.upper())
+        else:
+            # If season gating not available, include all
+            in_season_sports.append(sport)
+            debug_info["sports_in_season"].append(sport.upper())
+
+    # Collect picks from each sport
+    by_sport = {}
+    all_picks_raw = []
+
+    for sport in in_season_sports:
+        try:
+            # Call the existing best-bets endpoint internally
+            sport_result = await get_best_bets(sport, debug=0, include_conflicts=0, min_confidence="C")
+
+            # Extract props picks
+            props_picks = []
+            if sport_result.get("props") and sport_result["props"].get("picks"):
+                props_picks = sport_result["props"]["picks"]
+                # Tag each pick with sport and pick_type
+                for pick in props_picks:
+                    pick["sport"] = sport.upper()
+                    pick["pick_type"] = "prop"
+
+            # Extract game picks
+            game_picks = []
+            if sport_result.get("game_picks") and sport_result["game_picks"].get("picks"):
+                game_picks = sport_result["game_picks"]["picks"]
+                # Tag each pick with sport and pick_type
+                for pick in game_picks:
+                    pick["sport"] = sport.upper()
+                    pick["pick_type"] = "game"
+
+            # Store by sport
+            by_sport[sport.upper()] = {
+                "props": {
+                    "count": len(props_picks),
+                    "picks": props_picks
+                },
+                "game_picks": {
+                    "count": len(game_picks),
+                    "picks": game_picks
+                },
+                "total_picks": len(props_picks) + len(game_picks)
+            }
+
+            # Add to raw pool
+            all_picks_raw.extend(props_picks)
+            all_picks_raw.extend(game_picks)
+
+            debug_info["sports_returned_picks"][sport.upper()] = {
+                "props": len(props_picks),
+                "games": len(game_picks),
+                "total": len(props_picks) + len(game_picks)
+            }
+
+        except Exception as e:
+            logger.warning(f"Error fetching best-bets for {sport}: {e}")
+            debug_info["sports_errors"][sport.upper()] = str(e)
+            by_sport[sport.upper()] = {
+                "props": {"count": 0, "picks": []},
+                "game_picks": {"count": 0, "picks": []},
+                "total_picks": 0,
+                "error": str(e)
+            }
+
+    # Apply GLOBAL publish gate to merged picks
+    global_gate_debug = {
+        "input_picks": len(all_picks_raw),
+        "after_dedup": 0,
+        "after_corr_penalty": 0,
+        "published_total": 0,
+        "fallback_used": False
+    }
+
+    if PUBLISH_GATE_AVAILABLE and all_picks_raw:
+        # Apply publish gate to ALL picks combined
+        all_picks_gated, gate_stats = apply_publish_gate(
+            picks=all_picks_raw,
+            target_max=25,  # Slightly higher target for multi-sport
+            apply_dedup=True,
+            apply_penalty=True,
+            apply_gate=True
+        )
+        global_gate_debug["after_dedup"] = gate_stats.get("after_dedup", 0)
+        global_gate_debug["after_corr_penalty"] = gate_stats.get("after_corr_penalty", 0)
+        global_gate_debug["published_total"] = gate_stats.get("published_total", 0)
+        global_gate_debug["publish_threshold_edge_lean"] = gate_stats.get("publish_threshold_edge_lean", 7.05)
+        global_gate_debug["publish_threshold_gold_star"] = gate_stats.get("publish_threshold_gold_star", 7.50)
+        global_gate_debug["dedup_stats"] = gate_stats.get("dedup_stats", {})
+        global_gate_debug["penalty_stats"] = gate_stats.get("penalty_stats", {})
+        global_gate_debug["gate_stats"] = gate_stats.get("gate_stats", {})
+
+        all_picks_final = all_picks_gated
+    else:
+        # No publish gate - just sort by score
+        all_picks_final = sorted(
+            all_picks_raw,
+            key=lambda x: float(x.get("smash_score", x.get("total_score", 0))),
+            reverse=True
+        )
+        global_gate_debug["after_dedup"] = len(all_picks_final)
+        global_gate_debug["after_corr_penalty"] = len(all_picks_final)
+        global_gate_debug["published_total"] = len(all_picks_final)
+
+    # UNIVERSAL FALLBACK: Never return 0 picks
+    if len(all_picks_final) == 0:
+        logger.warning("ALL-SPORTS: Zero picks after gate - activating GLOBAL FALLBACK")
+        global_gate_debug["fallback_used"] = True
+
+        # Collect top 3 MONITOR picks from raw pool
+        fallback_pool = sorted(
+            all_picks_raw,
+            key=lambda x: float(x.get("smash_score", x.get("total_score", 0))),
+            reverse=True
+        )[:3]
+
+        for pick in fallback_pool:
+            pick["tier"] = "MONITOR"
+            pick["badge"] = "FALLBACK"
+            pick["fallback"] = True
+            pick["reasons"] = pick.get("reasons", []) + [
+                "SYSTEM: GLOBAL_FALLBACK_TOP3 (no EDGE_LEAN/GOLD_STAR qualified across all sports)"
+            ]
+
+        all_picks_final = fallback_pool
+        global_gate_debug["published_total"] = len(fallback_pool)
+
+    debug_info["global_publish_gate"] = global_gate_debug
+
+    # Build response
+    result = {
+        "source": "production_v10.43+_all_sports",
+        "scoring_system": "v10.43: Multi-sport unified board with global publish gate",
+        "all_picks": {
+            "count": len(all_picks_final),
+            "picks": all_picks_final
+        },
+        "by_sport": by_sport,
+        "summary": {
+            "total_picks": len(all_picks_final),
+            "sports_with_picks": len([s for s in by_sport if by_sport[s]["total_picks"] > 0]),
+            "gold_star_count": len([p for p in all_picks_final if p.get("tier") == "GOLD_STAR"]),
+            "edge_lean_count": len([p for p in all_picks_final if p.get("tier") == "EDGE_LEAN"]),
+            "props_count": len([p for p in all_picks_final if p.get("pick_type") == "prop"]),
+            "games_count": len([p for p in all_picks_final if p.get("pick_type") == "game"])
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+    if debug == 1:
+        result["debug"] = debug_info
+
+    return result
+
+
 @router.get("/best-bets/{sport}")
 async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, min_confidence: str = "C"):
     """
