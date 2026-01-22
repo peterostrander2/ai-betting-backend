@@ -4124,7 +4124,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         # v10.36 Context Layer: Defensive Matchup + Pace Adjustments
         # These use context_layer.py data that was previously disconnected
         context_adjustment = 0.0
-        if CONTEXT_LAYER_AVAILABLE and not is_game_pick and player_name and away_team:
+        if CONTEXT_LAYER_AVAILABLE and sport and not is_game_pick and player_name and away_team:
             # For props: check defensive matchup
             # Infer position from stat_type (simple heuristic)
             position = "Guard"  # default
@@ -4160,7 +4160,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     research_reasons.append(f"CONTEXT: Tough Matchup vs {opponent_team[:3]} {context_penalty:.2f}")
 
         # v10.36 Context Layer: Pace adjustment for game totals and props
-        if CONTEXT_LAYER_AVAILABLE and home_team and away_team:
+        if CONTEXT_LAYER_AVAILABLE and sport and home_team and away_team:
             pace_adj = PaceVectorService.get_pace_adjustment(
                 sport=sport.upper(),
                 team1=home_team,
@@ -4606,7 +4606,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     direction_label=direction_label,  # v10.11: for reasons tracking
                     prop_line=line,  # v10.18: prop line for Prop Stability pillar
                     player_team_side=player_team_side,  # v10.18: for Home Micro pillar
-                    game_total=None  # v10.18: game total for Pace Proxy (use total param)
+                    game_total=None,  # v10.18: game total for Pace Proxy (use total param)
+                    sport=sport_lower  # v10.36: pass sport for Context Layer
                 )
 
                 # v10.24: Track AI + Jarvis call for props
@@ -5049,7 +5050,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 public_pct=50,
                 is_home=is_home_sharp,
                 market="sharp_money",  # v10.9: sharp fallback market
-                odds=-110  # v10.9: default odds for sharp fallback
+                odds=-110,  # v10.9: default odds for sharp fallback
+                sport=sport_lower  # v10.36: pass sport for Context Layer
             )
 
             # v10.24: Track AI + Jarvis call for sharp fallback (counts as game)
