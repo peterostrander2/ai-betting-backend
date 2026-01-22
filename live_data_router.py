@@ -137,6 +137,12 @@ except ImportError:
     logger.warning("context_layer module not available - matchup adjustments disabled")
     logger.warning("ai_engine_layer module not available - using defaults")
 
+# v10.36: Import APScheduler availability for system-health
+try:
+    from daily_scheduler import SCHEDULER_AVAILABLE as APSCHEDULER_AVAILABLE
+except ImportError:
+    APSCHEDULER_AVAILABLE = False
+
 # Redis import with fallback
 try:
     import redis
