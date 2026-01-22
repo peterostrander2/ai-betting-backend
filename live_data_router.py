@@ -1,4 +1,5 @@
-# live_data_router.py v15.0 - SCORING v10.40
+# live_data_router.py v15.0 - SCORING v10.41
+# v10.41: Jason Sim 2.0 Post-Pick Confluence Layer (BOOST/DOWNGRADE/BLOCK)
 # v10.40: 4-Engine Separation (AI + Research + Esoteric + Jarvis RS) + Jarvis Turbo safeguard
 # v10.39: Jarvis Turbo Band scoring upgrade
 # v10.37: Prop Correlation Stacking + Jason Sim 2.0 Ready + Quality over Quantity
@@ -146,6 +147,17 @@ try:
     from daily_scheduler import SCHEDULER_AVAILABLE as APSCHEDULER_AVAILABLE
 except ImportError:
     APSCHEDULER_AVAILABLE = False
+
+# v10.41: Import Jason Sim 2.0 confluence layer
+try:
+    from jason_sim_confluence import (
+        normalize_jason_sim, apply_jason_sim_to_pick, apply_jason_sim_layer,
+        build_jason_payloads_lookup, compute_variance_flag
+    )
+    JASON_SIM_AVAILABLE = True
+except ImportError:
+    JASON_SIM_AVAILABLE = False
+    logger.warning("jason_sim_confluence module not available - Jason Sim disabled")
 
 # Redis import with fallback
 try:
@@ -588,6 +600,31 @@ class HybridCache:
 
 # Global cache instance - 5 minute TTL for API responses
 api_cache = HybridCache(default_ttl=600, prefix="bookie")
+
+# ============================================================================
+# v10.41: JASON SIM 2.0 PAYLOAD STORAGE
+# ============================================================================
+# In-memory storage for Jason Sim payloads (keyed by sport -> game_id)
+# These are posted via /live/jason-sim/upload and used in best-bets scoring
+JASON_SIM_PAYLOADS: Dict[str, Dict[str, Dict[str, Any]]] = {
+    "nba": {},
+    "nfl": {},
+    "mlb": {},
+    "nhl": {},
+    "ncaab": {}
+}
+
+# Track when payloads were last updated (for staleness detection)
+JASON_SIM_LAST_UPDATE: Dict[str, Optional[datetime]] = {
+    "nba": None,
+    "nfl": None,
+    "mlb": None,
+    "nhl": None,
+    "ncaab": None
+}
+
+# Staleness threshold (payloads older than this are considered stale)
+JASON_SIM_STALE_HOURS = 6
 
 
 # ============================================================================
@@ -5905,6 +5942,68 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
         return was_missing
 
+    # =========================================================================
+    # v10.41: JASON SIM 2.0 POST-PICK CONFLUENCE LAYER
+    # =========================================================================
+    # Jason Sim is applied AFTER base scoring, tier, and correlation stacking.
+    # It can BOOST / DOWNGRADE / BLOCK existing picks, but cannot generate new picks.
+    # =========================================================================
+    jason_sim_debug = {
+        "available": JASON_SIM_AVAILABLE,
+        "games_checked": 0,
+        "games_matched": 0,
+        "boosted": 0,
+        "downgraded": 0,
+        "blocked": 0,
+        "missing_payload": 0,
+        "props_processed": 0,
+        "game_picks_processed": 0
+    }
+
+    if JASON_SIM_AVAILABLE:
+        sport_lower = sport.lower()
+        jason_payloads = JASON_SIM_PAYLOADS.get(sport_lower, {})
+
+        if jason_payloads:
+            logger.info(f"Jason Sim: Applying layer to {len(top_props)} props and {len(top_game_picks)} game picks")
+
+            # Apply to props
+            if top_props:
+                top_props, props_stats = apply_jason_sim_layer(
+                    picks=top_props,
+                    jason_payloads_by_game=jason_payloads,
+                    pick_type="prop"
+                )
+                jason_sim_debug["props_processed"] = props_stats.get("games_checked", 0)
+                jason_sim_debug["games_checked"] += props_stats.get("games_checked", 0)
+                jason_sim_debug["games_matched"] += props_stats.get("games_matched", 0)
+                jason_sim_debug["boosted"] += props_stats.get("boosted", 0)
+                jason_sim_debug["downgraded"] += props_stats.get("downgraded", 0)
+                jason_sim_debug["blocked"] += props_stats.get("blocked", 0)
+                jason_sim_debug["missing_payload"] += props_stats.get("missing_payload", 0)
+
+            # Apply to game picks
+            if top_game_picks:
+                top_game_picks, game_stats = apply_jason_sim_layer(
+                    picks=top_game_picks,
+                    jason_payloads_by_game=jason_payloads,
+                    pick_type="game"
+                )
+                jason_sim_debug["game_picks_processed"] = game_stats.get("games_checked", 0)
+                jason_sim_debug["games_checked"] += game_stats.get("games_checked", 0)
+                jason_sim_debug["games_matched"] += game_stats.get("games_matched", 0)
+                jason_sim_debug["boosted"] += game_stats.get("boosted", 0)
+                jason_sim_debug["downgraded"] += game_stats.get("downgraded", 0)
+                jason_sim_debug["blocked"] += game_stats.get("blocked", 0)
+                jason_sim_debug["missing_payload"] += game_stats.get("missing_payload", 0)
+
+            logger.info(f"Jason Sim: Complete - boosted={jason_sim_debug['boosted']}, downgraded={jason_sim_debug['downgraded']}, blocked={jason_sim_debug['blocked']}")
+        else:
+            logger.info(f"Jason Sim: No payloads available for {sport}")
+            jason_sim_debug["missing_payload"] = len(top_props) + len(top_game_picks)
+    else:
+        logger.debug("Jason Sim: Module not available")
+
     # Apply guardrail to all returned picks (v10.26: validates AI + Jarvis + Research + Confluence)
     all_returned_picks = top_props + top_game_picks
     for pick in all_returned_picks:
@@ -6169,7 +6268,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "games_reason": games_reason,
             "events_count": raw_events_count,
             "games_candidates_count": games_candidates_count,
-            "games_picks_count": games_picks_count
+            "games_picks_count": games_picks_count,
+            # v10.41: Jason Sim 2.0 debug
+            "jason_sim": jason_sim_debug
         }
 
     # ================================================================
@@ -10891,6 +10992,175 @@ async def predict_live(
             "esoteric_signals": prediction.get("esoteric_signals", [])
         },
         "source": best_bets.get("source", "ai_engine"),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# ============================================================================
+# v10.41: JASON SIM 2.0 ENDPOINTS
+# ============================================================================
+
+@router.post("/jason-sim/upload/{sport}")
+async def upload_jason_sim_payloads(
+    sport: str,
+    payloads: List[Dict[str, Any]],
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    Upload Jason Sim 2.0 payloads for a sport.
+
+    Jason Sim is a POST-PICK confluence layer that can BOOST / DOWNGRADE / BLOCK
+    existing picks. It cannot generate picks by itself.
+
+    Request Body:
+    - List of Jason Sim payload dicts, each with:
+      - game_id: Unique game identifier
+      - home_team: Home team name/abbr
+      - away_team: Away team name/abbr
+      - sim_runs_per_game: Number of simulations (default 10000)
+      - results: { win_pct_injury_adj, score_projection, confidence }
+
+    Returns:
+    - games_uploaded: Number of payloads stored
+    - games_normalized: Number successfully normalized
+    - timestamp: When uploaded
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in JASON_SIM_PAYLOADS:
+        raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
+
+    if not JASON_SIM_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Jason Sim module not available")
+
+    # Clear existing payloads for this sport
+    JASON_SIM_PAYLOADS[sport_lower] = {}
+
+    normalized_count = 0
+
+    for payload in payloads:
+        game_id = payload.get("game_id")
+        home_team = payload.get("home_team", "")
+        away_team = payload.get("away_team", "")
+
+        # Construct game_id if missing
+        if not game_id and home_team and away_team:
+            game_id = f"{away_team}@{home_team}"
+
+        if not game_id:
+            logger.warning("Jason Sim payload missing game_id, skipping")
+            continue
+
+        # Normalize the payload
+        normalized = normalize_jason_sim(
+            game_id=game_id,
+            home_team=home_team,
+            away_team=away_team,
+            payload=payload
+        )
+
+        if normalized.get("valid"):
+            normalized_count += 1
+
+        # Store under multiple keys for flexible lookup
+        JASON_SIM_PAYLOADS[sport_lower][game_id] = normalized
+        if home_team and away_team:
+            JASON_SIM_PAYLOADS[sport_lower][f"{away_team}@{home_team}"] = normalized
+
+    # Update timestamp
+    JASON_SIM_LAST_UPDATE[sport_lower] = datetime.now()
+
+    logger.info(f"Jason Sim: Uploaded {len(payloads)} payloads for {sport}, {normalized_count} valid")
+
+    return {
+        "sport": sport.upper(),
+        "games_uploaded": len(payloads),
+        "games_normalized": normalized_count,
+        "games_stored": len(JASON_SIM_PAYLOADS[sport_lower]),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/jason-sim/status/{sport}")
+async def get_jason_sim_status(sport: str, auth: bool = Depends(verify_api_key)):
+    """
+    Get Jason Sim status for a sport.
+
+    Returns:
+    - payloads_count: Number of payloads stored
+    - last_update: When payloads were last uploaded
+    - is_stale: Whether payloads are older than JASON_SIM_STALE_HOURS
+    - available: Whether Jason Sim module is available
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in JASON_SIM_PAYLOADS:
+        raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
+
+    last_update = JASON_SIM_LAST_UPDATE.get(sport_lower)
+    is_stale = True
+    if last_update:
+        hours_since_update = (datetime.now() - last_update).total_seconds() / 3600
+        is_stale = hours_since_update > JASON_SIM_STALE_HOURS
+
+    # Count unique games (excluding alternate key formats)
+    unique_games = set()
+    for key, payload in JASON_SIM_PAYLOADS[sport_lower].items():
+        if payload.get("game_id"):
+            unique_games.add(payload["game_id"])
+
+    return {
+        "sport": sport.upper(),
+        "available": JASON_SIM_AVAILABLE,
+        "payloads_count": len(unique_games),
+        "total_keys": len(JASON_SIM_PAYLOADS[sport_lower]),
+        "last_update": last_update.isoformat() if last_update else None,
+        "is_stale": is_stale,
+        "stale_threshold_hours": JASON_SIM_STALE_HOURS,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.delete("/jason-sim/clear/{sport}")
+async def clear_jason_sim_payloads(sport: str, auth: bool = Depends(verify_api_key)):
+    """Clear Jason Sim payloads for a sport."""
+    sport_lower = sport.lower()
+    if sport_lower not in JASON_SIM_PAYLOADS:
+        raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
+
+    count = len(JASON_SIM_PAYLOADS[sport_lower])
+    JASON_SIM_PAYLOADS[sport_lower] = {}
+    JASON_SIM_LAST_UPDATE[sport_lower] = None
+
+    return {
+        "sport": sport.upper(),
+        "cleared": count,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/jason-sim/payloads/{sport}")
+async def get_jason_sim_payloads(sport: str, auth: bool = Depends(verify_api_key)):
+    """
+    Get all Jason Sim payloads for a sport (for debugging).
+
+    Returns:
+    - payloads: Dict of game_id -> normalized payload
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in JASON_SIM_PAYLOADS:
+        raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
+
+    # Return unique payloads only (dedupe by game_id)
+    unique_payloads = {}
+    for key, payload in JASON_SIM_PAYLOADS[sport_lower].items():
+        game_id = payload.get("game_id")
+        if game_id and game_id not in unique_payloads:
+            unique_payloads[game_id] = payload
+
+    return {
+        "sport": sport.upper(),
+        "count": len(unique_payloads),
+        "payloads": unique_payloads,
+        "last_update": JASON_SIM_LAST_UPDATE[sport_lower].isoformat() if JASON_SIM_LAST_UPDATE[sport_lower] else None,
         "timestamp": datetime.now().isoformat()
     }
 
