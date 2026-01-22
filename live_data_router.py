@@ -3722,13 +3722,10 @@ async def get_odds(sport: str, debug: int = 0, auth: bool = Depends(verify_api_k
         "events": len(data),
         "markets": market_counts,
         "data": data,
+        "diagnostics": diagnostics,  # v10.45: Always include diagnostics for visibility
         "metrics": metrics,
         "timestamp": datetime.now().isoformat()
     }
-
-    # Include diagnostics only in debug mode
-    if debug == 1:
-        result["diagnostics"] = diagnostics
 
     # Cache for 5 minutes
     api_cache.set(cache_key, result, ttl=300)
