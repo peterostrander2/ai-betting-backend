@@ -4851,9 +4851,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             pick["badge"] = "TOP VALUE"
             pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Filled slot for minimum volume (tier preserved)"]
 
-    # v10.22: Use sport profile limits
-    max_prop_picks = sport_profile["limits"].get("prop_picks", 10)
-    top_props = governed_props[:max_prop_picks]
+    # v10.36: Quality over quantity - return ALL actionable picks, no arbitrary limits
+    # Only GOLD_STAR and EDGE_LEAN picks are truly actionable
+    # If there are none, return top 3 MONITOR picks as fallback
+    actionable_props = [p for p in governed_props if p.get("tier") in ["GOLD_STAR", "EDGE_LEAN"]]
+    if len(actionable_props) == 0:
+        # Fallback: return top 3 MONITOR picks if no actionable picks
+        actionable_props = [p for p in governed_props if p.get("tier") == "MONITOR"][:3]
+    top_props = actionable_props
 
     # ============================================
     # CATEGORY 2: GAME PICKS (Spreads, Totals, ML)
@@ -5185,9 +5190,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             pick["badge"] = "TOP VALUE"
             pick["reasons"] = pick.get("reasons", []) + ["GOVERNOR: Filled slot for minimum volume (tier preserved)"]
 
-    # v10.22: Use sport profile limits
-    max_game_picks = sport_profile["limits"].get("game_picks", 10)
-    top_game_picks = governed_games[:max_game_picks]
+    # v10.36: Quality over quantity - return ALL actionable picks, no arbitrary limits
+    # Only GOLD_STAR and EDGE_LEAN picks are truly actionable
+    # If there are none, return top 3 MONITOR picks as fallback
+    actionable_game_picks = [p for p in governed_games if p.get("tier") in ["GOLD_STAR", "EDGE_LEAN"]]
+    if len(actionable_game_picks) == 0:
+        # Fallback: return top 3 MONITOR picks if no actionable picks
+        actionable_game_picks = [p for p in governed_games if p.get("tier") == "MONITOR"][:3]
+    top_game_picks = actionable_game_picks
 
     # ============================================
     # BUILD FINAL RESPONSE
