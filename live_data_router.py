@@ -6324,6 +6324,78 @@ async def get_grader_performance(sport: str, days_back: int = 7):
     }
 
 
+@router.post("/grader/grade/{sport}")
+async def grade_predictions_manually(
+    sport: str,
+    date: Optional[str] = None,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v10.38: Manually grade predictions for a specific sport and date.
+
+    This endpoint fetches actual results and grades the predictions that were
+    logged via the best-bets endpoint.
+
+    Query Parameters:
+        date: Date to grade in YYYY-MM-DD format (default: yesterday)
+
+    Returns:
+        {graded, wins, losses, pushes, no_action, hit_rate}
+
+    Example:
+        POST /live/grader/grade/nba?date=2026-01-21
+    """
+    if not AUTO_GRADER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+    # Import JSONLGradingJob
+    try:
+        from daily_scheduler import JSONLGradingJob
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Grading job not available")
+
+    grader = get_grader()
+    sport_upper = sport.upper()
+
+    # Parse date or use yesterday
+    from datetime import date as date_type
+    if date:
+        try:
+            target_date = date_type.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid date format: {date}. Use YYYY-MM-DD")
+    else:
+        target_date = date_type.today() - timedelta(days=1)
+
+    # Create grading job and run for this sport
+    grading_job = JSONLGradingJob(auto_grader=grader)
+    date_et = target_date.isoformat()
+
+    try:
+        result = await grading_job._grade_sport(sport_upper, date_et=date_et)
+
+        # Calculate hit rate
+        total_decided = result.get("wins", 0) + result.get("losses", 0)
+        hit_rate = round((result.get("wins", 0) / total_decided) * 100, 1) if total_decided > 0 else 0.0
+
+        return {
+            "status": "success",
+            "sport": sport_upper,
+            "date": target_date.isoformat(),
+            "graded": result.get("graded", 0),
+            "wins": result.get("wins", 0),
+            "losses": result.get("losses", 0),
+            "pushes": result.get("pushes", 0),
+            "no_action": result.get("no_action", 0),
+            "hit_rate": hit_rate,
+            "weights_adjusted": result.get("weights_adjusted", False),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception(f"Manual grading failed for {sport_upper}: {e}")
+        raise HTTPException(status_code=500, detail=f"Grading failed: {str(e)}")
+
+
 @router.get("/grader/daily-report")
 async def get_daily_community_report(days_back: int = 1):
     """
