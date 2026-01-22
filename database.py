@@ -558,6 +558,7 @@ class TuningAuditLog(Base):
 # ============================================================================
 
 # v10.32: Default micro-weights for all signals (1.0 = no change)
+# v10.35: Added SIGNAL_GOLDILOCKS, SIGNAL_TRAP_GATE, SIGNAL_HIGH_TOTAL, SIGNAL_MULTI_PILLAR
 DEFAULT_MICRO_WEIGHTS = {
     "PILLAR_SHARP_SPLIT": 1.00,
     "PILLAR_RLM": 1.00,
@@ -568,6 +569,10 @@ DEFAULT_MICRO_WEIGHTS = {
     "PILLAR_PROP_CORRELATION": 1.00,
     "SIGNAL_PUBLIC_FADE": 1.00,
     "SIGNAL_LINE_VALUE": 1.00,
+    "SIGNAL_GOLDILOCKS": 1.00,
+    "SIGNAL_TRAP_GATE": 1.00,
+    "SIGNAL_HIGH_TOTAL": 1.00,
+    "SIGNAL_MULTI_PILLAR": 1.00,
     "ESOTERIC_GEMATRIA": 1.00,
     "ESOTERIC_JARVIS_TRIGGER": 1.00,
     "ESOTERIC_ASTRO": 1.00,
