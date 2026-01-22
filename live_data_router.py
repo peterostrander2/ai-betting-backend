@@ -5093,6 +5093,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     game_picks = []
     sport_config = SPORT_MAPPINGS[sport_lower]
 
+    # v10.38: Track raw events count for debug visibility
+    raw_events_count = 0
+
     try:
         # Fetch game odds (spreads, totals, moneylines)
         odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
@@ -5108,6 +5111,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
         if resp and resp.status_code == 200:
             games = resp.json()
+            raw_events_count = len(games)  # v10.38: Track raw events from Odds API
             for game in games:
                 home_team = game.get("home_team", "")
                 away_team = game.get("away_team", "")
@@ -5425,6 +5429,31 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         # Fallback: return top 3 MONITOR picks if no actionable picks
         actionable_game_picks = [p for p in governed_games if p.get("tier") == "MONITOR"][:3]
     top_game_picks = actionable_game_picks
+
+    # v10.38: Compute games_reason for debug visibility
+    # Track: raw events from API, candidates after scoring, final picks after filtering
+    games_candidates_count = len(game_picks)
+    games_picks_count = len(top_game_picks)
+
+    # Determine games_reason with priority order
+    if raw_events_count == 0:
+        # Check if late-night ET (23:00-04:00) for more specific message
+        try:
+            from zoneinfo import ZoneInfo
+            et_now = datetime.now(ZoneInfo("America/New_York"))
+            et_hour = et_now.hour
+            if et_hour >= 23 or et_hour <= 4:
+                games_reason = "NO_EVENTS_LATE_NIGHT_ET"
+            else:
+                games_reason = "NO_EVENTS_FROM_ODDS_API"
+        except Exception:
+            games_reason = "NO_EVENTS_FROM_ODDS_API"
+    elif games_candidates_count == 0:
+        games_reason = "NO_GAME_CANDIDATES_AFTER_FILTERS"
+    elif games_picks_count == 0:
+        games_reason = "NO_GAMES_QUALIFIED_MIN_SCORE"
+    else:
+        games_reason = "OK"
 
     # ============================================
     # BUILD FINAL RESPONSE
@@ -5797,8 +5826,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.37",
-        "scoring_system": "v10.37: Prop correlation stacking + Jason Sim 2.0 ready + Quality over quantity",
+        "source": "production_v10.38",
+        "scoring_system": "v10.38: Games debug visibility + Late-night ET detection",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
@@ -5887,7 +5916,12 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "stacked_groups_count": len(stacked_groups),
                 "stacked_groups": list(stacked_groups.keys()),
                 "confluence_reasons_count": len(confluence_reasons)
-            }
+            },
+            # v10.38: Games debug visibility (why are game picks empty?)
+            "games_reason": games_reason,
+            "events_count": raw_events_count,
+            "games_candidates_count": games_candidates_count,
+            "games_picks_count": games_picks_count
         }
 
     # ================================================================
