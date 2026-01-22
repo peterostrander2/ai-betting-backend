@@ -1,4 +1,6 @@
-# live_data_router.py v15.0 - SCORING v10.32
+# live_data_router.py v15.0 - SCORING v10.37
+# v10.37: Prop Correlation Stacking + Jason Sim 2.0 Ready + Quality over Quantity
+# v10.36: Quality over quantity - remove arbitrary pick limits
 # v10.32: Signal Attribution + Micro-Weight Tuning + Self-Learning System
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 
@@ -1542,6 +1544,217 @@ def get_directional_mult(prediction_data: dict) -> tuple:
 
     # Rule 3: Cannot determine correlation → NEUTRAL
     return (0.5, "NEUTRAL")
+
+
+# =============================================================================
+# v10.37: PROP CORRELATION LOGIC - Allow aligned props to stack
+# =============================================================================
+# MASTER PROMPT REQUIREMENTS:
+# 1. Do NOT auto-block correlated props (Points Over + 3PT Over should both be allowed)
+# 2. Allow stacking when both independently qualify as EDGE_LEAN or better
+# 3. Add correlation_group_id to identify related props
+# 4. Prepare Jason Sim 2.0 structure (fields ready, not active yet)
+# =============================================================================
+
+# Correlation clusters - props that share the same underlying edge
+SCORING_CLUSTER_MARKETS = {
+    "player_points", "player_points_alternate",
+    "player_threes", "player_threes_alternate",
+    "player_assists", "player_assists_alternate"
+}
+
+VOLUME_CLUSTER_MARKETS = {
+    "player_rebounds", "player_rebounds_alternate",
+    "player_blocks", "player_blocks_alternate",
+    "player_steals", "player_steals_alternate"
+}
+
+USAGE_CLUSTER_MARKETS = {
+    "player_points_rebounds_assists", "player_points_rebounds",
+    "player_points_assists", "player_rebounds_assists"
+}
+
+def get_correlation_cluster(market: str) -> str:
+    """
+    v10.37: Identify which correlation cluster a market belongs to.
+
+    Clusters:
+    - SCORING_CLUSTER: Points, 3PT, Assists (all benefit from offensive usage)
+    - VOLUME_CLUSTER: Rebounds, Blocks, Steals (all benefit from minutes/activity)
+    - USAGE_CLUSTER: Combo markets like PRA
+    - NONE: Not in a cluster
+    """
+    market_lower = market.lower() if market else ""
+
+    if market_lower in SCORING_CLUSTER_MARKETS:
+        return "SCORING_CLUSTER"
+    elif market_lower in VOLUME_CLUSTER_MARKETS:
+        return "VOLUME_CLUSTER"
+    elif market_lower in USAGE_CLUSTER_MARKETS:
+        return "USAGE_CLUSTER"
+    else:
+        return "NONE"
+
+
+def generate_correlation_group_id(player_name: str, cluster: str, side: str) -> str:
+    """
+    v10.37: Generate a unique correlation group ID for a prop.
+
+    Format: "PLAYER:{normalized_name}:{cluster}:{side}"
+    Example: "PLAYER:IsaiahJoe:SCORING_CLUSTER:OVER"
+
+    This allows us to identify props that share the same underlying edge.
+    """
+    if not player_name or cluster == "NONE":
+        return ""
+
+    # Normalize player name (remove spaces, title case)
+    normalized = player_name.replace(" ", "").replace(".", "").replace("'", "")
+
+    return f"PLAYER:{normalized}:{cluster}:{side.upper()}"
+
+
+def get_correlation_type(market1: str, market2: str) -> str:
+    """
+    v10.37: Determine the correlation type between two markets.
+
+    Types:
+    - STRONGLY_CORRELATED: Same cluster (Points + 3PT = both scoring)
+    - MODERATELY_CORRELATED: Different clusters but related (Points + Rebounds)
+    - INDEPENDENT: No meaningful correlation
+    """
+    cluster1 = get_correlation_cluster(market1)
+    cluster2 = get_correlation_cluster(market2)
+
+    if cluster1 == "NONE" or cluster2 == "NONE":
+        return "INDEPENDENT"
+
+    if cluster1 == cluster2:
+        return "STRONGLY_CORRELATED"
+
+    # Cross-cluster correlations (e.g., SCORING + VOLUME are moderately related)
+    return "MODERATELY_CORRELATED"
+
+
+def enrich_prop_with_correlation(prop: dict) -> dict:
+    """
+    v10.37: Add correlation fields to a prop pick.
+
+    Adds:
+    - correlation_cluster: Which cluster this prop belongs to
+    - correlation_group_id: Unique ID for correlated prop groups
+    - correlation_type: Type of correlation (for display)
+
+    This enables:
+    1. Frontend to show "stacked" props together
+    2. Backend to allow both props when they independently qualify
+    3. Future Jason Sim 2.0 integration
+    """
+    player_name = prop.get("player", prop.get("player_name", ""))
+    market = prop.get("market", "")
+    side = prop.get("over_under", prop.get("side", "")).upper()
+
+    # Identify correlation cluster
+    cluster = get_correlation_cluster(market)
+
+    # Generate correlation group ID
+    group_id = generate_correlation_group_id(player_name, cluster, side)
+
+    # Add correlation fields
+    prop["correlation_cluster"] = cluster
+    prop["correlation_group_id"] = group_id
+    prop["correlation_type"] = "CLUSTERED" if cluster != "NONE" else "INDEPENDENT"
+
+    # v10.37: Jason Sim 2.0 placeholder fields (ready, not active yet)
+    # These will be populated by Jason Sim 2.0 when implemented
+    prop["jason_sim_2"] = {
+        "ready": True,
+        "active": False,
+        "win_pct_home": None,
+        "projected_total": None,
+        "variance_flag": None,
+        "confluence_level": None
+    }
+
+    return prop
+
+
+def allow_correlated_stacking(props: list, tier_threshold: list = None) -> list:
+    """
+    v10.37: Allow correlated props to stack when both independently qualify.
+
+    MASTER PROMPT REQUIREMENT:
+    "You MUST NOT auto-block 'aligned props' just because they're correlated.
+    If two props are logically aligned AND BOTH qualify as EDGE_LEAN or better,
+    BOTH may be included as separate picks."
+
+    This function:
+    1. Groups props by correlation_group_id
+    2. For each group, checks if props independently qualify (GOLD_STAR or EDGE_LEAN)
+    3. If both qualify, BOTH are returned (no blocking)
+    4. If only one qualifies, only that one is returned
+    5. Adds "STACKED" badge to correlated picks that are both returned
+
+    Args:
+        props: List of prop picks with correlation fields
+        tier_threshold: List of acceptable tiers (default: GOLD_STAR, EDGE_LEAN)
+
+    Returns:
+        List of props with stacking applied
+    """
+    if tier_threshold is None:
+        tier_threshold = ["GOLD_STAR", "EDGE_LEAN"]
+
+    from collections import defaultdict
+
+    # Group by correlation_group_id
+    correlated_groups = defaultdict(list)
+    independent_props = []
+
+    for prop in props:
+        group_id = prop.get("correlation_group_id", "")
+        if group_id:
+            correlated_groups[group_id].append(prop)
+        else:
+            independent_props.append(prop)
+
+    result = []
+
+    # Process correlated groups
+    for group_id, group in correlated_groups.items():
+        # Check how many qualify independently
+        qualifying = [p for p in group if p.get("tier") in tier_threshold]
+
+        if len(qualifying) >= 2:
+            # BOTH qualify - allow stacking!
+            for prop in qualifying:
+                prop["stacked"] = True
+                prop["stacking_info"] = {
+                    "group_id": group_id,
+                    "group_size": len(qualifying),
+                    "reason": "Both props independently qualify - stacked for confluence"
+                }
+                if "badges" not in prop:
+                    prop["badges"] = []
+                if "STACKED" not in prop["badges"]:
+                    prop["badges"].append("STACKED")
+                prop["reasons"] = prop.get("reasons", []) + [
+                    f"CORRELATION: STACKED ({len(qualifying)} props in {group_id.split(':')[2]} cluster)"
+                ]
+                result.append(prop)
+        elif len(qualifying) == 1:
+            # Only one qualifies - include it alone
+            result.append(qualifying[0])
+        else:
+            # None qualify - include best one (if any meet MONITOR threshold)
+            if group:
+                best = max(group, key=lambda x: x.get("final_score", 0))
+                result.append(best)
+
+    # Add independent props
+    result.extend(independent_props)
+
+    return result
 
 
 def resolve_prop_conflicts(prop_picks: list) -> tuple:
@@ -4748,6 +4961,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     prop_pick["directional_label"] = direction_label
                     prop_pick["team_resolver_source"] = team_resolver_source
 
+                # v10.37: Enrich prop with correlation cluster and group ID
+                # This enables stacking of aligned correlated props (e.g., Points Over + 3PT Over)
+                prop_pick = enrich_prop_with_correlation(prop_pick)
+
                 props_picks.append(prop_pick)
     except HTTPException:
         logger.warning("Props fetch failed for %s", sport)
@@ -4858,6 +5075,16 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     if len(actionable_props) == 0:
         # Fallback: return top 3 MONITOR picks if no actionable picks
         actionable_props = [p for p in governed_props if p.get("tier") == "MONITOR"][:3]
+
+    # v10.37: Allow correlated props to stack when both independently qualify
+    # MASTER PROMPT: "You MUST NOT auto-block aligned props just because they're correlated.
+    # If two props are logically aligned AND BOTH qualify as EDGE_LEAN or better,
+    # BOTH may be included as separate picks."
+    actionable_props = allow_correlated_stacking(
+        actionable_props,
+        tier_threshold=["GOLD_STAR", "EDGE_LEAN"]
+    )
+
     top_props = actionable_props
 
     # ============================================
@@ -5542,10 +5769,36 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     # v10.33: Use database.DB_ENABLED for live value (not stale import)
     database_available = DATABASE_AVAILABLE and database.DB_ENABLED
 
+    # v10.37: Build confluence_reasons for stacked props
+    stacked_props = [p for p in top_props if p.get("stacked", False)]
+    stacked_groups = {}
+    for p in stacked_props:
+        group_id = p.get("correlation_group_id", "")
+        if group_id:
+            if group_id not in stacked_groups:
+                stacked_groups[group_id] = []
+            stacked_groups[group_id].append(p.get("player", "") + " " + p.get("stat_label", ""))
+
+    confluence_reasons = []
+    for group_id, picks in stacked_groups.items():
+        parts = group_id.split(":")
+        player_name = parts[1] if len(parts) > 1 else "Unknown"
+        cluster = parts[2] if len(parts) > 2 else "UNKNOWN"
+        direction = parts[3] if len(parts) > 3 else ""
+        confluence_reasons.append({
+            "type": "STACKED_CORRELATION",
+            "group_id": group_id,
+            "player": player_name,
+            "cluster": cluster,
+            "direction": direction,
+            "picks": picks,
+            "reason": f"{player_name} has {len(picks)} props stacked in {cluster} - both independently qualify"
+        })
+
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.35",
-        "scoring_system": "v10.35: Opposing-sides resolver + Top-level DB health fields + Auto-grading",
+        "source": "production_v10.37",
+        "scoring_system": "v10.37: Prop correlation stacking + Jason Sim 2.0 ready + Quality over quantity",
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {
@@ -5559,6 +5812,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "learned_weights": esoteric_weights,
             "learning_active": learning is not None
         },
+        # v10.37: Confluence reasons for stacked correlations
+        "confluence_reasons": confluence_reasons,
+        "stacked_count": len(stacked_props),
         "api_status": api_status,
         "data_message": data_message,
         "timestamp": datetime.now().isoformat(),
@@ -5624,7 +5880,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "conflict_policy": sport_profile["conflict_policy"]
             },
             # v10.31: Database status (kept for backward compatibility)
-            "database_available": DATABASE_AVAILABLE and database.DB_ENABLED
+            "database_available": DATABASE_AVAILABLE and database.DB_ENABLED,
+            # v10.37: Correlation stacking debug
+            "correlation_stacking": {
+                "stacked_props_count": len(stacked_props),
+                "stacked_groups_count": len(stacked_groups),
+                "stacked_groups": list(stacked_groups.keys()),
+                "confluence_reasons_count": len(confluence_reasons)
+            }
         }
 
     # ================================================================
