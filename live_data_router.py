@@ -1,4 +1,6 @@
-# live_data_router.py v15.0 - SCORING v10.37
+# live_data_router.py v15.0 - SCORING v10.40
+# v10.40: 4-Engine Separation (AI + Research + Esoteric + Jarvis RS) + Jarvis Turbo safeguard
+# v10.39: Jarvis Turbo Band scoring upgrade
 # v10.37: Prop Correlation Stacking + Jason Sim 2.0 Ready + Quality over Quantity
 # v10.36: Quality over quantity - remove arbitrary pick limits
 # v10.32: Signal Attribution + Micro-Weight Tuning + Self-Learning System
@@ -225,54 +227,55 @@ SPORT_MAPPINGS = {
 CACHE_SCHEMA_VERSION = "best_bets_v2"
 
 # ============================================================================
-# v10.24: SPORT PROFILES - Per-sport calibration (3-engine blend)
-# Weights: ai + research + esoteric = 1.0
+# v10.40: SPORT PROFILES - Per-sport calibration (4-engine blend)
+# Weights: ai + research + esoteric + jarvis = 1.0
+# Jarvis is now a STANDALONE engine separate from Esoteric
 # ============================================================================
 SPORT_PROFILES = {
     "nba": {
-        "weights": {"ai": 0.40, "research": 0.35, "esoteric": 0.25},
+        "weights": {"ai": 0.35, "research": 0.35, "esoteric": 0.10, "jarvis": 0.20},
         "tiers": {"PASS": 4.75, "MONITOR": 5.75, "EDGE_LEAN": 6.50, "GOLD_STAR": 7.50},
         "limits": {"game_picks": 10, "prop_picks": 10},
         "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
         "market_preference": ["totals", "spreads", "h2h"],
         "boosts": {},
-        "notes": "NBA: Balanced 3-engine blend, stricter tiers."
+        "notes": "NBA: 4-engine blend, Jarvis 20%, esoteric 10% (environment only)."
     },
     "nhl": {
-        "weights": {"ai": 0.35, "research": 0.35, "esoteric": 0.30},
+        "weights": {"ai": 0.33, "research": 0.35, "esoteric": 0.10, "jarvis": 0.22},
         "tiers": {"PASS": 4.50, "MONITOR": 5.50, "EDGE_LEAN": 6.25, "GOLD_STAR": 7.25},
         "limits": {"game_picks": 10, "prop_picks": 10},
         "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
         "market_preference": ["totals", "spreads", "h2h"],
         "boosts": {"nhl_ml_dog": 0.50},
-        "notes": "NHL: Higher esoteric weight for variance, lower thresholds."
+        "notes": "NHL: Highest Jarvis weight (22%) for variance sport."
     },
     "nfl": {
-        "weights": {"ai": 0.45, "research": 0.35, "esoteric": 0.20},
+        "weights": {"ai": 0.40, "research": 0.35, "esoteric": 0.08, "jarvis": 0.17},
         "tiers": {"PASS": 4.60, "MONITOR": 5.60, "EDGE_LEAN": 6.40, "GOLD_STAR": 7.40},
         "limits": {"game_picks": 6, "prop_picks": 6},
         "conflict_policy": {"exclude_conflicts": False, "neutral_mult_default": 0.5, "conflicts_bucket": True},
         "market_preference": ["spreads", "totals", "h2h"],
         "boosts": {"spreads_bias": 0.10},
-        "notes": "NFL: Higher AI weight (sharper lines), conflicts labeled not excluded."
+        "notes": "NFL: Higher AI weight (sharper lines), Jarvis 17%."
     },
     "mlb": {
-        "weights": {"ai": 0.45, "research": 0.35, "esoteric": 0.20},
+        "weights": {"ai": 0.42, "research": 0.35, "esoteric": 0.08, "jarvis": 0.15},
         "tiers": {"PASS": 4.60, "MONITOR": 5.60, "EDGE_LEAN": 6.35, "GOLD_STAR": 7.35},
         "limits": {"game_picks": 8, "prop_picks": 0},
         "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
         "market_preference": ["h2h", "totals", "spreads"],
         "boosts": {"ml_bias": 0.05},
-        "notes": "MLB: Higher AI weight, low scoring sport."
+        "notes": "MLB: Highest AI weight (42%), lowest Jarvis (15%)."
     },
     "ncaab": {
-        "weights": {"ai": 0.38, "research": 0.35, "esoteric": 0.27},
+        "weights": {"ai": 0.34, "research": 0.35, "esoteric": 0.09, "jarvis": 0.22},
         "tiers": {"PASS": 4.50, "MONITOR": 5.50, "EDGE_LEAN": 6.25, "GOLD_STAR": 7.25},
         "limits": {"game_picks": 10, "prop_picks": 0},
         "conflict_policy": {"exclude_conflicts": True, "neutral_mult_default": 0.5},
         "market_preference": ["spreads", "totals", "h2h"],
         "boosts": {},
-        "notes": "NCAAB: Balanced blend, lower thresholds for variance."
+        "notes": "NCAAB: High Jarvis weight (22%) for college variance."
     },
 }
 
@@ -874,15 +877,18 @@ def order_reasons(reasons: list) -> list:
         return []
 
     # v10.19: Define category order with SMASH after CONFLUENCE
+    # v10.39: Added JARVIS TURBO after CONFLUENCE (upgrade layer before SMASH)
     category_order = {
-        "RESEARCH:": 0,
-        "MAPPING:": 1,
-        "CORRELATION:": 2,
-        "ESOTERIC:": 3,
-        "CONFLUENCE:": 4,
-        "SMASH:": 5,
-        "RESOLVER:": 6,
-        "GOVERNOR:": 7,
+        "AI ENGINE:": 0,
+        "RESEARCH:": 1,
+        "MAPPING:": 2,
+        "CORRELATION:": 3,
+        "ESOTERIC:": 4,
+        "CONFLUENCE:": 5,
+        "JARVIS TURBO:": 6,
+        "SMASH:": 7,
+        "RESOLVER:": 8,
+        "GOVERNOR:": 9,
     }
 
     def get_order(reason: str) -> int:
@@ -3929,6 +3935,148 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         evaluated.append({"rule": "NONE", "passed": True})
         return (0.0, "NONE", "NONE", [], fail_reasons, rule_trace, repair_hints, alignment_gap)
 
+    # ========================================================================
+    # v10.40: CONFLUENCE LADDER (4-Engine, 2-Alignment Method)
+    # ========================================================================
+    def compute_confluence_ladder_v1040(ai_score, research_score, jarvis_rs, alignment_pct,
+                                         jarvis_active, jarvis_hits_count, immortal_active=False):
+        """
+        v10.40: Compute confluence boost using 4-engine system.
+
+        Alignment is now computed from:
+        - AI ↔ Research alignment
+        - Research ↔ Jarvis alignment
+
+        Returns: (boost, label, level, applied_reasons, fail_reasons, rule_trace, repair_hints, alignment_gap)
+        """
+        def fmt(x, nd=2):
+            try:
+                return f"{float(x):.{nd}f}"
+            except Exception:
+                return str(x)
+
+        # Alignment gap diagnostic (using Research as anchor)
+        alignment_gap = round((abs(ai_score - research_score) + abs(research_score - jarvis_rs)) / 2, 2)
+
+        fail_reasons = []
+        repair_hints = []
+        evaluated = []
+
+        # v10.40: Updated rules with jarvis_rs requirements
+        RULES = [
+            {
+                "name": "IMMORTAL",
+                "jarvis_hits_min": 4, "jarvis_rs_min": 8.0, "r_min": 7.5, "align_min": 90.0,
+                "requires_jarvis": True, "requires_immortal": False,
+                "boost": 0.75, "level": "IMMORTAL"
+            },
+            {
+                "name": "JARVIS_PERFECT",
+                "jarvis_hits_min": 0, "jarvis_rs_min": 7.5, "r_min": 7.0, "align_min": 85.0,
+                "requires_jarvis": True, "requires_immortal": False,
+                "boost": 0.60, "level": "PERFECT"
+            },
+            {
+                "name": "PERFECT",
+                "jarvis_hits_min": 0, "jarvis_rs_min": 6.8, "r_min": 6.5, "align_min": 80.0,
+                "requires_jarvis": False, "requires_immortal": False,
+                "boost": 0.45, "level": "PERFECT"
+            },
+            {
+                "name": "STRONG",
+                "jarvis_hits_min": 0, "jarvis_rs_min": 0.0, "r_min": 6.0, "align_min": 75.0,
+                "requires_jarvis": True, "requires_immortal": False,
+                "boost": 0.30, "level": "STRONG"
+            },
+            {
+                "name": "MODERATE",
+                "jarvis_hits_min": 0, "jarvis_rs_min": 0.0, "r_min": 5.5, "align_min": 70.0,
+                "requires_jarvis": False, "requires_immortal": False,
+                "boost": 0.15, "level": "MODERATE"
+            },
+        ]
+
+        applied_rule = None
+
+        for rule in RULES:
+            rule_name = rule["name"]
+            checks_failed = []
+
+            if rule["requires_jarvis"] and not jarvis_active:
+                checks_failed.append(("jarvis_active", False, True))
+            if rule["jarvis_hits_min"] > 0 and jarvis_hits_count < rule["jarvis_hits_min"]:
+                checks_failed.append(("jarvis_hits_count", jarvis_hits_count, rule["jarvis_hits_min"]))
+            if rule["jarvis_rs_min"] > 0 and jarvis_rs < rule["jarvis_rs_min"]:
+                checks_failed.append(("jarvis_rs", jarvis_rs, rule["jarvis_rs_min"]))
+            if rule["r_min"] > 0 and research_score < rule["r_min"]:
+                checks_failed.append(("research_score", research_score, rule["r_min"]))
+            if alignment_pct < rule["align_min"]:
+                checks_failed.append(("alignment_pct", alignment_pct, rule["align_min"]))
+
+            rule_passed = len(checks_failed) == 0
+            evaluated.append({"rule": rule_name, "passed": rule_passed})
+
+            if rule_passed and applied_rule is None:
+                applied_rule = rule
+            elif not rule_passed and applied_rule is None:
+                for field, actual_val, required_val in checks_failed:
+                    if field == "jarvis_active":
+                        fail_reasons.append(f"FAIL: {rule_name} jarvis_active=False (required=True)")
+                    elif field == "jarvis_hits_count":
+                        fail_reasons.append(f"FAIL: {rule_name} jarvis_hits_count {actual_val} < {required_val}")
+                    elif field == "jarvis_rs":
+                        fail_reasons.append(f"FAIL: {rule_name} jarvis_rs {fmt(actual_val)} < {fmt(required_val)}")
+                    elif field == "research_score":
+                        fail_reasons.append(f"FAIL: {rule_name} research_score {fmt(actual_val)} < {fmt(required_val)}")
+                    elif field == "alignment_pct":
+                        fail_reasons.append(f"FAIL: {rule_name} alignment_pct {fmt(actual_val, 1)} < {fmt(required_val, 1)}")
+
+        # Generate repair hints
+        for rule in RULES:
+            if applied_rule and rule["name"] == applied_rule["name"]:
+                break
+            rule_name = rule["name"]
+
+            if rule["requires_jarvis"] and not jarvis_active:
+                repair_hints.append(f"REPAIR: Need jarvis_active=True to reach {rule_name}")
+            if rule["jarvis_hits_min"] > 0:
+                need = max(0, rule["jarvis_hits_min"] - jarvis_hits_count)
+                if need > 0:
+                    repair_hints.append(f"REPAIR: Need {need} more jarvis_hits to reach {rule_name}")
+            if rule["jarvis_rs_min"] > 0:
+                need = max(0, rule["jarvis_rs_min"] - jarvis_rs)
+                if need > 0:
+                    repair_hints.append(f"REPAIR: Need jarvis_rs +{fmt(need)} to reach {rule_name}")
+            if rule["r_min"] > 0:
+                need = max(0, rule["r_min"] - research_score)
+                if need > 0:
+                    repair_hints.append(f"REPAIR: Need research_score +{fmt(need)} to reach {rule_name}")
+
+        rule_trace = {
+            "ai_score": float(fmt(ai_score)),
+            "research_score": float(fmt(research_score)),
+            "jarvis_rs": float(fmt(jarvis_rs)),
+            "alignment_pct": float(fmt(alignment_pct, 1)),
+            "alignment_gap": alignment_gap,
+            "evaluated": evaluated
+        }
+
+        if applied_rule:
+            applied_reasons = [f"CONFLUENCE: {applied_rule['name']} (+{fmt(applied_rule['boost'])})"]
+            return (
+                applied_rule["boost"],
+                applied_rule["name"],
+                applied_rule["level"],
+                applied_reasons,
+                fail_reasons,
+                rule_trace,
+                repair_hints,
+                alignment_gap
+            )
+
+        evaluated.append({"rule": "NONE", "passed": True})
+        return (0.0, "NONE", "NONE", [], fail_reasons, rule_trace, repair_hints, alignment_gap)
+
     # v10.26: Confluence counters for debug output (candidates = all scored picks)
     confluence_counts_candidates = {
         "IMMORTAL_CONFLUENCE": 0,
@@ -4474,8 +4622,20 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             # Scale to 20% weight (max 2.0 pts)
             jarvis_score = min(1.0, raw_jarvis) * 10 * ESOTERIC_WEIGHTS["jarvis"]
 
-            # --- GEMATRIA (52% weight, max 5.2 pts) - DOMINANT SIGNAL ---
-            # v10.5: Uses RAW player gematria for differentiation, not just triggers
+            # =================================================================
+            # v10.40: 4-ENGINE SEPARATION
+            # =================================================================
+            # 1. AI ENGINE (0-10): 8-model ensemble (already calculated above)
+            # 2. RESEARCH ENGINE (0-10): Pillars + market edges (already calculated above)
+            # 3. ESOTERIC ENGINE (0-10): Environment only (NO Jarvis, NO gematria)
+            # 4. JARVIS ENGINE (0-10): Standalone ritual score (gematria + triggers)
+            # =================================================================
+
+            # --- JARVIS RS CALCULATION (STANDALONE ENGINE) ---
+            # Contains: Gematria (dominant), JARVIS triggers, mid-spread amplifier
+            jarvis_rs = 5.0  # Base Jarvis RS (neutral)
+            jarvis_reasons = []
+
             if player_name and home_team:
                 gematria = jarvis.calculate_gematria_signal(player_name, home_team, away_team)
 
@@ -4485,141 +4645,223 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 # Normalize player gematria to 0-1 scale (mod 100 gives 0-99, then /100)
                 player_gem_normalized = (player_gem_raw % 100) / 100.0
 
-                # Base gematria from player name (0-0.5 pts contribution)
-                gematria_base = player_gem_normalized * 0.5
+                # Base gematria from player name (0-2.0 pts contribution to Jarvis RS)
+                gematria_base = player_gem_normalized * 2.0
 
-                # Trigger bonus from JARVIS hits (0-0.5 pts contribution)
+                # Trigger bonus from gematria signals (0-1.0 pts)
                 trigger_strength = gematria.get("signal_strength", 0)
                 if gematria.get("triggered"):
                     trigger_strength = min(1.0, trigger_strength * 1.5)
-                trigger_bonus = trigger_strength * 0.5
+                gematria_trigger_bonus = trigger_strength * 1.0
 
-                # Combined gematria strength (0-1 scale, player-specific)
-                gematria_strength = min(1.0, gematria_base + trigger_bonus)
+                # Combined gematria contribution to Jarvis RS
+                gematria_score = gematria_base + gematria_trigger_bonus  # 0-3.0 range
 
-                # Scale to 52% weight (max 5.2 pts)
-                gematria_score = gematria_strength * 10 * ESOTERIC_WEIGHTS["gematria"]
+                # Add gematria to Jarvis RS
+                jarvis_rs += gematria_score
 
-                # Add reason if significant
-                if gematria_strength >= 0.5:
-                    esoteric_reasons.append(f"ESOTERIC: Gematria {player_gem_raw} +{round(gematria_score/10, 2)}")
+                if gematria_score >= 1.0:
+                    jarvis_reasons.append(f"JARVIS: Gematria {player_gem_raw} +{round(gematria_score, 2)}")
 
-                # --- PUBLIC FADE (modifier, can be negative) ---
-                public_fade = jarvis.calculate_public_fade_signal(public_pct)
-                public_fade_mod = public_fade.get("influence", 0)  # -0.95 to +0.2
-
-                # --- MID-SPREAD (modifier) ---
+                # --- MID-SPREAD RITUAL AMPLIFIER (Jarvis-specific) ---
                 mid_spread = jarvis.calculate_mid_spread_signal(spread)
-                mid_spread_mod = mid_spread.get("modifier", 0)
+                if mid_spread.get("signal") == "GOLDILOCKS":
+                    # v10.40: True amplifier (20% boost to current Jarvis RS)
+                    mid_spread_amplifier = jarvis_rs * 0.20
+                    jarvis_rs += mid_spread_amplifier
+                    jarvis_reasons.append(f"JARVIS: Goldilocks Zone +{round(mid_spread_amplifier, 2)} (20% amplifier)")
+                mid_spread_mod = 0  # No longer affects esoteric
 
-                # --- TRAP DEDUCTION (negative modifier) ---
+                # --- TRAP MODIFIER (Jarvis penalty) ---
                 trap = jarvis.calculate_large_spread_trap(spread, total)
-                trap_mod = trap.get("modifier", 0)  # Usually negative
+                trap_mod = trap.get("modifier", 0)
+                if trap_mod < 0:
+                    jarvis_rs += trap_mod  # Apply trap penalty to Jarvis RS
+                    jarvis_reasons.append(f"JARVIS: Trap Gate {round(trap_mod, 2)}")
 
-                # --- FIBONACCI (5% weight, max 0.5 pts) ---
+                # --- FIBONACCI for Jarvis (if aligned) ---
                 fib_alignment = jarvis.calculate_fibonacci_alignment(float(spread) if spread else 0)
                 fib_raw = fib_alignment.get("modifier", 0)
-                fib_score = max(0, fib_raw) * 10 * ESOTERIC_WEIGHTS["fib"]
+                if fib_raw > 0:
+                    fib_jarvis_boost = fib_raw * 0.5  # Small Jarvis boost
+                    jarvis_rs += fib_jarvis_boost
+                fib_score = max(0, fib_raw) * 0.5  # Reduced for esoteric (environment only)
 
-                # --- VORTEX (5% weight, max 0.5 pts) ---
+                # --- VORTEX for Jarvis (if pattern detected) ---
                 vortex_value = int(abs(spread * 10)) if spread else 0
                 vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
                 vortex_raw = vortex_pattern.get("modifier", 0)
-                vortex_score = max(0, vortex_raw) * 10 * ESOTERIC_WEIGHTS["vortex"]
+                if vortex_raw > 0:
+                    vortex_jarvis_boost = vortex_raw * 0.5  # Small Jarvis boost
+                    jarvis_rs += vortex_jarvis_boost
+                vortex_score = max(0, vortex_raw) * 0.5  # Reduced for esoteric (environment only)
 
-            # --- ASTRO (13% weight, max 1.3 pts) ---
+            # Add JARVIS sacred trigger boosts to Jarvis RS
+            for trigger in jarvis_triggers_hit:
+                trigger_boost = trigger.get("boost", 0) * 2.5  # Scale up for Jarvis RS
+                jarvis_rs += trigger_boost
+                jarvis_reasons.append(f"JARVIS: Trigger {trigger['number']} +{round(trigger_boost, 2)}")
+
+            # Clamp Jarvis RS to 0-10
+            jarvis_rs = max(0, min(10, jarvis_rs))
+
+            # --- ESOTERIC SCORE (v10.40: NON-JARVIS ONLY) ---
+            # Contains ONLY: Vedic astro, Fibonacci, Vortex, Daily edge, External signals
+            # Does NOT contain: Gematria, Jarvis triggers, Public Fade, Mid-spread
+            gematria_score = 0  # Reset - gematria is now in Jarvis RS only
+            public_fade_mod = 0  # Public fade is now in Research only
+
+            # --- ASTRO (environment signal) ---
             astro = vedic.calculate_astro_score() if vedic else {"overall_score": 50}
             astro_normalized = (astro["overall_score"] - 50) / 50  # -1 to +1
-            astro_score = max(0, astro_normalized) * 10 * ESOTERIC_WEIGHTS["astro"]
+            astro_score = max(0, astro_normalized) * 2.0  # Max 2.0 pts
+
+            if astro_score > 0.5:
+                esoteric_reasons.append(f"ESOTERIC: Astro favorable +{round(astro_score, 2)}")
 
         else:
-            # Fallback to simple trigger check
+            # Fallback to simple trigger check for Jarvis RS
+            jarvis_rs = 5.0
             for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
                 if str(trigger_num) in game_str:
-                    jarvis_score += trigger_data["boost"] / 50  # Scaled down
+                    trigger_boost = trigger_data["boost"] / 20  # Scaled for Jarvis RS
+                    jarvis_rs += trigger_boost
                     jarvis_triggers_hit.append({
                         "number": trigger_num,
                         "name": trigger_data["name"],
-                        "boost": round(trigger_data["boost"] / 50, 2)
+                        "boost": round(trigger_boost, 2)
                     })
+                    jarvis_reasons.append(f"JARVIS: Trigger {trigger_num} +{round(trigger_boost, 2)}")
                     if trigger_num == 2178:
                         immortal_detected = True
             jarvis_triggered = len(jarvis_triggers_hit) > 0
-            jarvis_score = min(2.0, jarvis_score)  # Cap at 20%
+            jarvis_rs = max(0, min(10, jarvis_rs))
 
-        # --- DAILY EDGE (5% weight, max 0.5 pts) ---
+            # Fallback esoteric components
+            fib_score = 0
+            vortex_score = 0
+            astro_score = 0
+
+        # --- DAILY EDGE (esoteric environment) ---
         if daily_energy.get("overall_score", 50) >= 85:
-            daily_edge_score = 10 * ESOTERIC_WEIGHTS["daily_edge"]  # 0.5 pts
+            daily_edge_score = 1.0  # Max 1.0 pts
         elif daily_energy.get("overall_score", 50) >= 70:
-            daily_edge_score = 5 * ESOTERIC_WEIGHTS["daily_edge"]   # 0.25 pts
-
-        # --- ESOTERIC SCORE: v10.20 Ritual Score Backbone ---
-        # Start at RITUAL_BASE (6.0) and add micro-boosts + modifiers
-        # Scale weighted components to micro-boosts (0-0.4 max each)
-        micro_boost_gematria = min(0.4, gematria_score / 13.0)     # 5.2 max → 0.4 max
-        micro_boost_jarvis = min(0.4, jarvis_score / 5.0)          # 2.0 max → 0.4 max
-        micro_boost_astro = min(0.2, astro_score / 6.5)            # 1.3 max → 0.2 max
-        micro_boost_fib = min(0.1, fib_score / 5.0)                # 0.5 max → 0.1 max
-        micro_boost_vortex = min(0.1, vortex_score / 5.0)          # 0.5 max → 0.1 max
-        micro_boost_daily = min(0.1, daily_edge_score / 5.0)       # 0.5 max → 0.1 max
+            daily_edge_score = 0.5
 
         # v10.31: External signals micro-boost (Weather/Astronomy/NOAA/Planetary)
-        # Capped at ±0.25 total, never dominates picks
         micro_boost_external = external_micro_boost_data.get("total_boost", 0)
         external_reasons = external_micro_boost_data.get("reasons", [])
         for ext_reason in external_reasons:
             esoteric_reasons.append(ext_reason)
 
+        # --- ESOTERIC SCORE (v10.40: Environment Only) ---
+        # Base 5.0 + astro + fib + vortex + daily + external (NO gematria, NO jarvis, NO public fade)
         esoteric_raw = (
-            RITUAL_BASE +         # 6.0 base (Ritual Score backbone)
-            micro_boost_gematria +  # +0.0 to +0.4
-            micro_boost_jarvis +    # +0.0 to +0.4
-            micro_boost_astro +     # +0.0 to +0.2
-            micro_boost_fib +       # +0.0 to +0.1
-            micro_boost_vortex +    # +0.0 to +0.1
-            micro_boost_daily +     # +0.0 to +0.1
-            micro_boost_external +  # +/-0.0 to +/-0.25 (v10.31 external signals)
-            mid_spread_mod +        # Modifier
-            public_fade_mod +       # Modifier (usually negative)
-            trap_mod                # Modifier (negative)
+            5.0 +                    # Neutral base
+            astro_score +            # 0-2.0 pts
+            fib_score +              # 0-0.5 pts
+            vortex_score +           # 0-0.5 pts
+            daily_edge_score +       # 0-1.0 pts
+            micro_boost_external     # +/-0.25 pts
         )
-        # v10.20: Ritual base ensures esoteric score starts at 6.0 minimum
         esoteric_score = max(0, min(10, esoteric_raw))
 
-        # --- v10.27 CONFLUENCE LADDER ---
-        # Jarvis affects picks through confluence boosts and SmashSpot tagging
-        # Uses compute_confluence_ladder() for tier-safe, capped boosts
-        alignment = 1 - abs(research_score - esoteric_score) / 10
-        alignment_pct = alignment * 100
+        # --- v10.40: CONFLUENCE LADDER (2-Alignment Method) ---
+        # Alignment computed from: AI↔Research AND Research↔Jarvis
+        alignment_ar = 1 - abs(ai_score - research_score) / 10  # AI to Research
+        alignment_rj = 1 - abs(research_score - jarvis_rs) / 10  # Research to Jarvis
+        alignment_avg = (alignment_ar + alignment_rj) / 2
+        alignment_pct = alignment_avg * 100
 
-        # v10.28: Returns 8-tuple with repair_hints and alignment_gap
+        # v10.40: Updated confluence ladder with Jarvis RS requirements
         (confluence_boost, confluence_label, confluence_level, confluence_reasons,
          confluence_fail_reasons, confluence_rule_trace, confluence_repair_hints,
-         confluence_alignment_gap) = compute_confluence_ladder(
+         confluence_alignment_gap) = compute_confluence_ladder_v1040(
+            ai_score=ai_score,
             research_score=research_score,
-            esoteric_score=esoteric_score,
+            jarvis_rs=jarvis_rs,
             alignment_pct=alignment_pct,
             jarvis_active=jarvis_triggered,
+            jarvis_hits_count=len(jarvis_triggers_hit),
             immortal_active=immortal_detected
         )
 
         # v10.26: Track confluence stats for ALL candidates (debug output)
         nonlocal confluence_counts_candidates, alignment_pct_sum_candidates, alignment_pct_count_candidates
-        # confluence_label is always a string now ("NONE" when no boost)
         confluence_counts_candidates[confluence_label] = confluence_counts_candidates.get(confluence_label, 0) + 1
         alignment_pct_sum_candidates += alignment_pct
         alignment_pct_count_candidates += 1
 
-        # --- FINAL SCORE FORMULA (v10.24: 3-Engine Blend) ---
-        # Get sport profile for weight calibration
+        # --- FINAL SCORE FORMULA (v10.40: 4-Engine Blend) ---
+        # FINAL = (AI × w_ai) + (Research × w_res) + (Esoteric × w_eso) + (Jarvis × w_jar) + Confluence
         profile = get_sport_profile(sport)
-        w_ai = profile["weights"].get("ai", 0.40)  # Default 40% AI
-        w_research = profile["weights"]["research"]
-        w_esoteric = profile["weights"]["esoteric"]
+        w_ai = profile["weights"].get("ai", 0.35)
+        w_research = profile["weights"].get("research", 0.35)
+        w_esoteric = profile["weights"].get("esoteric", 0.10)
+        w_jarvis = profile["weights"].get("jarvis", 0.20)
 
-        # v10.24: 3-ENGINE BLEND = (ai × w_ai) + (research × w_r) + (esoteric × w_e) + confluence_boost
-        final_score = (ai_score * w_ai) + (research_score * w_research) + (esoteric_score * w_esoteric) + confluence_boost
+        # v10.40: 4-ENGINE BLEND
+        final_score = (
+            (ai_score * w_ai) +
+            (research_score * w_research) +
+            (esoteric_score * w_esoteric) +
+            (jarvis_rs * w_jarvis) +
+            confluence_boost
+        )
         final_score = max(0.0, min(10.0, float(final_score)))
+
+        # =====================================================================
+        # v10.39: JARVIS TURBO BAND
+        # =====================================================================
+        # Jarvis Turbo is an UPGRADE layer that can promote picks from EDGE_LEAN
+        # to GOLD_STAR, but NEVER creates picks from nothing.
+        #
+        # Gate conditions (BOTH required):
+        #   - final_score >= 6.50 (already EDGE_LEAN quality)
+        #   - jarvis_active == True (at least one trigger fired)
+        #
+        # Turbo ladder (based on jarvis hits count):
+        #   - 4+ hits: +0.55 (capped)
+        #   - 3 hits:  +0.40
+        #   - 2 hits:  +0.25
+        #   - 1 hit:   +0.15
+        #
+        # Applied BEFORE tier assignment so Jarvis can decisively impact tiers.
+        # =====================================================================
+        jarvis_hits_count = len(jarvis_triggers_hit)
+        jarvis_turbo_boost = 0.0
+        jarvis_turbo_reasons = []
+
+        # Gate: Only apply turbo to already-valid picks (EDGE_LEAN+ threshold)
+        # v10.40: Added jarvis_rs >= 6.8 safeguard (prevents low-quality Jarvis from boosting)
+        JARVIS_TURBO_GATE = 6.50
+        JARVIS_RS_MIN = 6.8  # v10.40: Minimum Jarvis RS required for turbo
+        JARVIS_TURBO_CAP = 0.55
+        FINAL_SCORE_CAP = 9.99
+
+        if final_score >= JARVIS_TURBO_GATE and jarvis_triggered and jarvis_rs >= JARVIS_RS_MIN:
+            # Turbo ladder based on number of Jarvis hits
+            if jarvis_hits_count >= 4:
+                jarvis_turbo_boost = 0.55
+            elif jarvis_hits_count >= 3:
+                jarvis_turbo_boost = 0.40
+            elif jarvis_hits_count >= 2:
+                jarvis_turbo_boost = 0.25
+            elif jarvis_hits_count >= 1:
+                jarvis_turbo_boost = 0.15
+
+            # Cap the turbo boost
+            jarvis_turbo_boost = min(jarvis_turbo_boost, JARVIS_TURBO_CAP)
+
+            # Apply turbo boost
+            if jarvis_turbo_boost > 0:
+                final_score += jarvis_turbo_boost
+                jarvis_turbo_reasons.append(
+                    f"JARVIS TURBO: +{jarvis_turbo_boost:.2f} (hits={jarvis_hits_count}, rs={jarvis_rs:.2f}, gate=EDGE_LEAN+)"
+                )
+
+        # Cap final score at 9.99 (never exceed)
+        final_score = min(final_score, FINAL_SCORE_CAP)
 
         # --- SmashSpot FLAG (v10.19 Strict) ---
         # Smash Spot is a TRUTH FLAG, not a score boost.
@@ -4662,7 +4904,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         confidence_score = int(round(final_score * 10))  # 0-100 synced with final
 
         # Combine all reasons for explainability (v10.24: AI ENGINE first, then RESEARCH, ESOTERIC, etc.)
-        all_reasons = ai_reasons + research_reasons + esoteric_reasons + confluence_reasons + smash_reasons
+        # v10.39: Add JARVIS TURBO reasons after confluence (upgrade layer)
+        all_reasons = ai_reasons + research_reasons + esoteric_reasons + confluence_reasons + jarvis_turbo_reasons + smash_reasons
 
         return {
             "total_score": round(final_score, 2),
@@ -4684,8 +4927,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "base_score": base_ai,  # v10.3: 5.8 base
                 "pillar_boost": round(pillar_boost, 2),  # v10.3: additive pillars
                 "confluence_boost": round(confluence_boost, 2),  # v10.4: jarvis confluence
+                "jarvis_turbo_boost": round(jarvis_turbo_boost, 2),  # v10.39: Jarvis turbo upgrade
                 "alignment_pct": round(alignment_pct, 1)
             },
+            "jarvis_hits_count": jarvis_hits_count,  # v10.39: Count of Jarvis triggers hit
+            "jarvis_turbo_boost": round(jarvis_turbo_boost, 2),  # v10.39: Turbo boost applied
             "esoteric_breakdown": {
                 "gematria": round(gematria_score, 2),       # 52% weight
                 "jarvis_triggers": round(jarvis_score, 2),  # 20% weight
@@ -4698,6 +4944,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             },
             "jarvis_triggers": jarvis_triggers_hit,
             "jarvis_active": jarvis_triggered,  # v10.4: for SmashSpot check
+            "jarvis_rs": round(jarvis_rs, 2),  # v10.40: Standalone Jarvis Ritual Score (0-10)
+            "jarvis_reasons": jarvis_reasons,  # v10.40: Jarvis explainability reasons
             "immortal_detected": immortal_detected,
             # v10.28: Debug-only confluence diagnostics (stripped unless debug=1)
             "_debug_confluence_failures": confluence_fail_reasons,
@@ -6322,6 +6570,78 @@ async def get_grader_performance(sport: str, days_back: int = 7):
         "by_stat_type": stat_breakdown,
         "timestamp": datetime.now().isoformat()
     }
+
+
+@router.post("/grader/grade/{sport}")
+async def grade_predictions_manually(
+    sport: str,
+    date: Optional[str] = None,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v10.38: Manually grade predictions for a specific sport and date.
+
+    This endpoint fetches actual results and grades the predictions that were
+    logged via the best-bets endpoint.
+
+    Query Parameters:
+        date: Date to grade in YYYY-MM-DD format (default: yesterday)
+
+    Returns:
+        {graded, wins, losses, pushes, no_action, hit_rate}
+
+    Example:
+        POST /live/grader/grade/nba?date=2026-01-21
+    """
+    if not AUTO_GRADER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+    # Import JSONLGradingJob
+    try:
+        from daily_scheduler import JSONLGradingJob
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Grading job not available")
+
+    grader = get_grader()
+    sport_upper = sport.upper()
+
+    # Parse date or use yesterday
+    from datetime import date as date_type
+    if date:
+        try:
+            target_date = date_type.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid date format: {date}. Use YYYY-MM-DD")
+    else:
+        target_date = date_type.today() - timedelta(days=1)
+
+    # Create grading job and run for this sport
+    grading_job = JSONLGradingJob(auto_grader=grader)
+    date_et = target_date.isoformat()
+
+    try:
+        result = await grading_job._grade_sport(sport_upper, date_et=date_et)
+
+        # Calculate hit rate
+        total_decided = result.get("wins", 0) + result.get("losses", 0)
+        hit_rate = round((result.get("wins", 0) / total_decided) * 100, 1) if total_decided > 0 else 0.0
+
+        return {
+            "status": "success",
+            "sport": sport_upper,
+            "date": target_date.isoformat(),
+            "graded": result.get("graded", 0),
+            "wins": result.get("wins", 0),
+            "losses": result.get("losses", 0),
+            "pushes": result.get("pushes", 0),
+            "no_action": result.get("no_action", 0),
+            "hit_rate": hit_rate,
+            "weights_adjusted": result.get("weights_adjusted", False),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception(f"Manual grading failed for {sport_upper}: {e}")
+        raise HTTPException(status_code=500, detail=f"Grading failed: {str(e)}")
 
 
 @router.get("/grader/daily-report")

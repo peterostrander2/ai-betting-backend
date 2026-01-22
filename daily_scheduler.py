@@ -549,17 +549,69 @@ class JSONLGradingJob:
 
     Workflow:
     1. Load ungraded predictions from ./grader_data/{sport}/predictions/{date}.jsonl
-    2. Fetch actual results (player stats) from APIs
-    3. Grade each prediction (WIN/LOSS/PUSH)
+    2. Fetch actual results (player stats) from APIs (ESPN FREE, BallDontLie FREE)
+    3. Grade each prediction (WIN/LOSS/PUSH/NO_ACTION)
     4. Update prediction logs with results
     5. Append graded records to ./grader_data/{sport}/graded/{date}.jsonl
     6. Adjust weights if graded_count >= 30
     """
 
+    # Stat type mapping: market -> stat key in API response
+    STAT_TYPE_MAP = {
+        "player_points": "points",
+        "player_rebounds": "rebounds",
+        "player_assists": "assists",
+        "player_threes": "threes",
+        "player_steals": "steals",
+        "player_blocks": "blocks",
+        "player_turnovers": "turnovers",
+        "player_pra": "points_rebounds_assists",
+        "player_points_rebounds_assists": "points_rebounds_assists",
+        "player_points_rebounds": "points_rebounds",
+        "player_points_assists": "points_assists",
+        "player_rebounds_assists": "rebounds_assists",
+        # Direct mappings
+        "points": "points",
+        "rebounds": "rebounds",
+        "assists": "assists",
+        "threes": "threes",
+        "steals": "steals",
+        "blocks": "blocks",
+    }
+
     def __init__(self, auto_grader=None):
         self.auto_grader = auto_grader
         self.last_run = None
         self.last_results = {}
+
+    @staticmethod
+    def normalize_player_name(name: str) -> str:
+        """
+        Normalize player name for matching.
+        - Strip punctuation
+        - Lowercase
+        - Handle suffixes (Jr., Sr., III, II, IV)
+        """
+        import re
+        if not name:
+            return ""
+
+        # Lowercase
+        name = name.lower().strip()
+
+        # Remove common suffixes
+        suffixes = [" jr.", " jr", " sr.", " sr", " iii", " ii", " iv", " v"]
+        for suffix in suffixes:
+            if name.endswith(suffix):
+                name = name[:-len(suffix)]
+
+        # Remove punctuation except spaces and hyphens
+        name = re.sub(r"[^\w\s\-]", "", name)
+
+        # Normalize whitespace
+        name = " ".join(name.split())
+
+        return name
 
     async def run_async(self):
         """Execute JSONL grading for all in-season sports."""
@@ -574,7 +626,8 @@ class JSONLGradingJob:
             "sports": {},
             "total_graded": 0,
             "total_wins": 0,
-            "total_losses": 0
+            "total_losses": 0,
+            "total_no_action": 0
         }
 
         if not self.auto_grader:
@@ -594,6 +647,7 @@ class JSONLGradingJob:
                 results["total_graded"] += sport_result.get("graded", 0)
                 results["total_wins"] += sport_result.get("wins", 0)
                 results["total_losses"] += sport_result.get("losses", 0)
+                results["total_no_action"] += sport_result.get("no_action", 0)
                 logger.info(f"[{sport}] Graded {sport_result.get('graded', 0)} predictions")
             except Exception as e:
                 logger.error(f"[{sport}] Grading failed: {e}")
@@ -614,37 +668,49 @@ class JSONLGradingJob:
 
         return results
 
-    async def _grade_sport(self, sport: str) -> dict:
-        """Grade predictions for a single sport."""
+    async def _grade_sport(self, sport: str, date_et: str = None) -> dict:
+        """Grade predictions for a single sport.
+
+        Args:
+            sport: Sport code (NBA, NFL, etc.)
+            date_et: Optional date in YYYY-MM-DD format (defaults to yesterday)
+        """
         sport = sport.upper()
         result = {
             "sport": sport,
+            "date": date_et,
             "ungraded_count": 0,
             "graded": 0,
             "wins": 0,
             "losses": 0,
             "pushes": 0,
+            "no_action": 0,
             "weights_adjusted": False
         }
 
-        # Get yesterday's ungraded predictions
-        ungraded = self.auto_grader.get_ungraded_predictions(sport)
+        # Get ungraded predictions for the specified date (or yesterday)
+        ungraded = self.auto_grader.get_ungraded_predictions(sport, date_et=date_et)
         result["ungraded_count"] = len(ungraded)
 
         if not ungraded:
             logger.info(f"[{sport}] No ungraded predictions found")
             return result
 
-        # Fetch actual results from APIs
-        try:
-            actual_results = await self._fetch_actual_results(sport, ungraded)
-        except Exception as e:
-            logger.warning(f"[{sport}] Failed to fetch actual results: {e}")
-            return result
+        logger.info(f"[{sport}] Found {len(ungraded)} ungraded predictions")
 
-        if actual_results:
-            # Grade predictions
-            grade_result = self.auto_grader.grade_predictions_batch(sport, actual_results)
+        # Fetch actual results and grade each prediction
+        graded_results = []
+        for pred in ungraded:
+            try:
+                grade_info = await self._grade_single_prediction(sport, pred)
+                if grade_info:
+                    graded_results.append(grade_info)
+            except Exception as e:
+                logger.warning(f"[{sport}] Failed to grade prediction: {e}")
+
+        if graded_results:
+            # Update JSONL files with graded results
+            grade_result = self.auto_grader.grade_predictions_batch(sport, graded_results, date_et=date_et)
             result["graded"] = grade_result.get("graded", 0)
             result["wins"] = grade_result.get("wins", 0)
             result["losses"] = grade_result.get("losses", 0)
@@ -654,46 +720,177 @@ class JSONLGradingJob:
             grading_stats = self.auto_grader.get_grading_stats(sport, days_back=7)
             if grading_stats.get("total_graded", 0) >= 30:
                 logger.info(f"[{sport}] Enough data for weight adjustment ({grading_stats['total_graded']} graded)")
-                # Weight adjustment would go here
-                result["weights_adjusted"] = True
+                # Trigger weight adjustment
+                try:
+                    for stat_type in ["points", "rebounds", "assists"]:
+                        self.auto_grader.adjust_weights(sport, stat_type, days_back=7, apply_changes=True)
+                    result["weights_adjusted"] = True
+                except Exception as e:
+                    logger.warning(f"[{sport}] Weight adjustment failed: {e}")
 
         return result
 
-    async def _fetch_actual_results(self, sport: str, predictions: list) -> list:
+    async def _grade_single_prediction(self, sport: str, pred: dict) -> Optional[dict]:
         """
-        Fetch actual results for predictions.
+        Grade a single prediction by fetching actual stats.
 
-        This is a placeholder - actual implementation would call appropriate
-        APIs to get final player stats and game results.
+        Returns dict with event_id, player_name, stat_type, actual for grading.
         """
-        # Import httpx for API calls
-        import httpx
+        pick_type = pred.get("pick_type", "prop")
+        player_name = pred.get("player_name", "")
+        stat_type = pred.get("stat_type", "") or pred.get("market", "")
+        event_id = pred.get("event_id", "")
+        game = pred.get("game", "")
 
-        results = []
+        # Skip if already graded
+        if pred.get("graded", False):
+            return None
 
-        # Group predictions by event_id for efficient fetching
-        by_event = {}
-        for pred in predictions:
-            event_id = pred.get("event_id", "")
-            if event_id:
-                if event_id not in by_event:
-                    by_event[event_id] = []
-                by_event[event_id].append(pred)
+        # Import grading engine functions
+        try:
+            from grading_engine import (
+                fetch_espn_box_scores,
+                fetch_balldontlie_player_stats,
+                fetch_odds_api_scores,
+                get_stat_value_from_market
+            )
+        except ImportError:
+            logger.warning("grading_engine not available - using placeholder")
+            return None
 
-        # For now, return empty - actual implementation would:
-        # 1. Fetch completed game data from Odds API or sports stats API
-        # 2. Extract player stats
-        # 3. Match to predictions and return actual values
+        # Determine game date from prediction
+        date_et = pred.get("date_et", "")
+        if date_et:
+            from datetime import date as date_type
+            try:
+                game_date = date_type.fromisoformat(date_et)
+            except ValueError:
+                game_date = date_type.today() - timedelta(days=1)
+        else:
+            game_date = date_type.today() - timedelta(days=1)
 
-        logger.info(f"[{sport}] Would fetch results for {len(by_event)} events, {len(predictions)} predictions")
+        # Props grading
+        if pick_type == "prop" and player_name:
+            actual_value = await self._fetch_player_stat(
+                sport, player_name, stat_type, game_date
+            )
 
-        # TODO: Implement actual result fetching from:
-        # - Odds API historical results
-        # - ESPN API
-        # - Sports Reference
-        # - etc.
+            if actual_value is not None:
+                return {
+                    "event_id": event_id,
+                    "player_name": player_name,
+                    "stat_type": stat_type,
+                    "actual": actual_value
+                }
+            else:
+                logger.debug(f"[{sport}] No stats found for {player_name}")
+                return None
 
-        return results
+        # Game picks grading (spreads, totals, ML)
+        elif pick_type == "game":
+            # For game picks, we need game scores
+            actual_value = await self._fetch_game_result(sport, pred, game_date)
+            if actual_value is not None:
+                return {
+                    "event_id": event_id,
+                    "player_name": "",
+                    "stat_type": pred.get("market", ""),
+                    "actual": actual_value
+                }
+
+        return None
+
+    async def _fetch_player_stat(
+        self,
+        sport: str,
+        player_name: str,
+        stat_type: str,
+        game_date
+    ) -> Optional[float]:
+        """Fetch actual player stat from APIs."""
+        try:
+            from grading_engine import (
+                fetch_espn_box_scores,
+                fetch_balldontlie_player_stats,
+                get_stat_value_from_market,
+                _add_combo_stats
+            )
+        except ImportError:
+            return None
+
+        player_name_normalized = self.normalize_player_name(player_name)
+
+        # Try ESPN first (FREE)
+        espn_stats = await fetch_espn_box_scores(sport, game_date)
+        if espn_stats:
+            # Try exact match
+            for key, stats in espn_stats.items():
+                key_normalized = self.normalize_player_name(key)
+                if player_name_normalized == key_normalized:
+                    _add_combo_stats(stats)
+                    return get_stat_value_from_market(stats, stat_type)
+
+            # Try fuzzy match (last name)
+            last_name = player_name_normalized.split()[-1] if " " in player_name_normalized else player_name_normalized
+            for key, stats in espn_stats.items():
+                key_normalized = self.normalize_player_name(key)
+                if last_name in key_normalized or key_normalized.endswith(last_name):
+                    _add_combo_stats(stats)
+                    return get_stat_value_from_market(stats, stat_type)
+
+        # Try BallDontLie for NBA (FREE)
+        if sport.upper() == "NBA":
+            bdl_stats = await fetch_balldontlie_player_stats(player_name, game_date)
+            if bdl_stats:
+                return get_stat_value_from_market(bdl_stats, stat_type)
+
+        return None
+
+    async def _fetch_game_result(self, sport: str, pred: dict, game_date) -> Optional[float]:
+        """Fetch game result for game picks (spreads, totals, ML)."""
+        try:
+            from grading_engine import fetch_odds_api_scores, _parse_odds_api_game
+        except ImportError:
+            return None
+
+        market = pred.get("market", "")
+        selection = pred.get("selection", "") or pred.get("pick", "")
+        line = pred.get("line", 0)
+
+        games = await fetch_odds_api_scores(sport, days_from=3)
+        if not games:
+            return None
+
+        # Find matching game
+        game_str = pred.get("game", "")
+        home_team = pred.get("home_team", "")
+        away_team = pred.get("away_team", "")
+
+        for game in games:
+            if not game.get("completed"):
+                continue
+
+            game_home = (game.get("home_team") or "").lower()
+            game_away = (game.get("away_team") or "").lower()
+
+            # Match by team names
+            home_match = home_team.lower() in game_home or game_home in home_team.lower()
+            away_match = away_team.lower() in game_away or game_away in away_team.lower()
+
+            if home_match and away_match:
+                parsed = _parse_odds_api_game(game)
+                home_score = parsed.get("home_score")
+                away_score = parsed.get("away_score")
+
+                if home_score is not None and away_score is not None:
+                    # For totals, return total points
+                    if "total" in market.lower():
+                        return home_score + away_score
+                    # For spreads/ML, return margin (positive = home won)
+                    else:
+                        return home_score - away_score
+
+        return None
 
     def run(self):
         """Sync wrapper for scheduled execution."""
