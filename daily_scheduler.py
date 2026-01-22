@@ -690,10 +690,10 @@ class SmokeTestJob:
         test = {"name": "API Connectivity", "critical": True, "passed": False}
 
         try:
-            from live_data_router import get_sharp, get_props
+            from live_data_router import get_sharp_money, get_props
 
             # Test Playbook API (sharp money)
-            sharp_result = await get_sharp("nba")
+            sharp_result = await get_sharp_money("nba")
             playbook_ok = sharp_result.get("count", 0) > 0 or sharp_result.get("source") != "error"
 
             # Test Odds API (props)
