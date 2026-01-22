@@ -1999,12 +1999,14 @@ async def system_health():
 
     # 6. Pillars Status (which have data sources)
     # v10.35: Hospital Fade and Hook Discipline now active
+    # v10.36: Expert Consensus derived from Sharp Split (sharp money = expert money)
     pillars = {
         "active": [
             {"name": "Sharp Split", "data_source": "Playbook API splits", "status": "ACTIVE"},
             {"name": "Reverse Line Movement", "data_source": "Playbook API line_variance", "status": "ACTIVE"},
             {"name": "Public Fade", "data_source": "Playbook API public%", "status": "ACTIVE"},
             {"name": "Hospital Fade", "data_source": "Injuries API (v10.35)", "status": "ACTIVE"},
+            {"name": "Expert Consensus", "data_source": "Derived from Sharp Split (65%+ sharp = consensus)", "status": "ACTIVE"},
             {"name": "Home Court", "data_source": "Game data", "status": "ACTIVE"},
             {"name": "Rest Advantage", "data_source": "Schedule data", "status": "ACTIVE"},
             {"name": "Prime Time", "data_source": "Game time", "status": "ACTIVE"},
@@ -2012,10 +2014,8 @@ async def system_health():
             {"name": "Mid-Spread Boss Zone", "data_source": "Spread value", "status": "ACTIVE"},
             {"name": "Multi-Pillar Confluence", "data_source": "Calculated", "status": "ACTIVE"}
         ],
-        "inactive": [
-            {"name": "Expert Consensus", "reason": "No expert picks API", "fix": "Add consensus data source"}
-        ],
-        "active_count": 10,
+        "inactive": [],
+        "active_count": 11,
         "total_defined": 11
     }
     health["components"]["pillars"] = pillars
@@ -3790,6 +3790,29 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 boost = -0.5 * mw_public
                 pillar_boost += boost
                 research_reasons.append(f"RESEARCH: Public Trap (with public) {boost:.2f}")
+
+        # v10.36 Pillar: Expert Consensus - fires when 65%+ of sharp money agrees
+        # Sharp money IS expert money - professional bettors are the "experts"
+        # Different from Sharp Split which fires at lower thresholds (10%+ diff)
+        money_pct = sharp_signal.get("money_pct", 50) or 50
+        sharp_side = sharp_signal.get("sharp_side", "").upper()  # "HOME" or "AWAY"
+        if money_pct >= 65:
+            mw_consensus = get_mw("PILLAR_EXPERT_CONSENSUS")
+            # Check if our pick aligns with sharp consensus
+            pick_with_consensus = False
+            if is_game_pick:
+                # For game picks, check if is_home aligns with sharp_side
+                if (is_home and sharp_side == "HOME") or (not is_home and sharp_side == "AWAY"):
+                    pick_with_consensus = True
+            else:
+                # For props, use direction_label
+                if direction_label == "ALIGNED":
+                    pick_with_consensus = True
+
+            if pick_with_consensus:
+                boost = 0.5 * mw_consensus
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Expert Consensus ({money_pct:.0f}% sharp money agrees) +{boost:.2f}")
 
         # v10.35 Pillar: Hospital Fade - boost when opponent has significant injuries
         # Determine which team we're betting on and check opponent injuries
