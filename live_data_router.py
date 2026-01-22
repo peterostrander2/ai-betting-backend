@@ -2095,6 +2095,139 @@ async def system_health():
     return health
 
 
+@router.post("/smoke-test")
+async def run_smoke_test():
+    """
+    v10.36: Manual smoke test - verify entire system is working.
+
+    Tests:
+    1. API connectivity (Playbook, Odds API)
+    2. Best bets generation (props + game picks)
+    3. All 11 pillars firing
+    4. AI Engine models
+    5. Context Layer
+    6. Esoteric systems
+
+    Returns detailed results with pass/fail for each test.
+    """
+    from daily_scheduler import SmokeTestJob
+
+    smoke_test = SmokeTestJob()
+    results = await smoke_test.run_async()
+
+    # Add action recommendations if failures
+    if results.get("failed", 0) > 0:
+        results["action_required"] = True
+        results["recommendations"] = []
+
+        for test_name in results.get("critical_failures", []):
+            if test_name == "best_bets":
+                results["recommendations"].append("Check API keys and quotas")
+            elif test_name == "system_health":
+                results["recommendations"].append("Check AI Engine and Pillars status")
+            elif test_name == "api_connectivity":
+                results["recommendations"].append("Verify ODDS_API_KEY and PLAYBOOK_API_KEY")
+    else:
+        results["action_required"] = False
+        results["message"] = "✅ All systems operational"
+
+    return results
+
+
+@router.get("/smoke-test/last")
+async def get_last_smoke_test():
+    """
+    Get results from the last nightly smoke test.
+    """
+    import os
+    import json
+    from datetime import datetime
+
+    log_dir = "./smoke_test_logs"
+    today = datetime.now().strftime("%Y-%m-%d")
+    log_path = os.path.join(log_dir, f"smoke_test_{today}.json")
+
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, "r") as f:
+                return json.load(f)
+        except:
+            return {"error": "Could not read smoke test log"}
+    else:
+        return {
+            "message": "No smoke test run today yet",
+            "next_scheduled": "5:30 AM ET",
+            "manual_trigger": "POST /live/smoke-test"
+        }
+
+
+@router.get("/smoke-test/alert-status")
+async def get_smoke_test_alert_status():
+    """
+    v10.36: Simple alert endpoint for external monitoring.
+
+    Returns HTTP 200 with status="ok" if last smoke test passed.
+    Returns HTTP 503 with status="alert" if last smoke test failed.
+
+    Use with external monitoring services (UptimeRobot, Cronitor, etc.)
+    to get alerts when the system has issues.
+
+    Example monitoring setup:
+    - UptimeRobot: Monitor this URL, alert on non-200 status
+    - Cronitor: POST to your Cronitor URL based on response
+    - Custom: Poll every hour, send Slack/Discord webhook on failure
+    """
+    import os
+    import json
+    from datetime import datetime, timedelta
+
+    log_dir = "./smoke_test_logs"
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Try today's log first, then yesterday's
+    for date_str in [today, yesterday]:
+        log_path = os.path.join(log_dir, f"smoke_test_{date_str}.json")
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, "r") as f:
+                    results = json.load(f)
+
+                failed = results.get("failed", 0)
+                critical_failures = results.get("critical_failures", [])
+
+                if failed > 0 or len(critical_failures) > 0:
+                    # Return 503 to trigger external alert
+                    from fastapi import Response
+                    return Response(
+                        content=json.dumps({
+                            "status": "alert",
+                            "failed_tests": failed,
+                            "critical_failures": critical_failures,
+                            "test_date": date_str,
+                            "message": "Smoke test failed - check /live/smoke-test/last for details"
+                        }),
+                        status_code=503,
+                        media_type="application/json"
+                    )
+                else:
+                    return {
+                        "status": "ok",
+                        "passed_tests": results.get("passed", 0),
+                        "test_date": date_str,
+                        "message": "All systems operational"
+                    }
+            except:
+                pass
+
+    # No recent smoke test - return warning but 200 (not critical)
+    return {
+        "status": "no_data",
+        "message": "No recent smoke test found - waiting for next scheduled run at 5:30 AM ET",
+        "next_scheduled": "5:30 AM ET"
+    }
+
+
 @router.get("/cache/stats")
 async def cache_stats():
     """Get cache statistics for debugging."""

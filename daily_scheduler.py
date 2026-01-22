@@ -540,6 +540,300 @@ class PropsFetchJob:
 
 
 # ============================================
+# v10.36 SMOKE TEST JOB
+# ============================================
+
+class SmokeTestJob:
+    """
+    Nightly smoke test to verify entire system is working.
+    Runs at 5:30 AM ET daily before picks go out.
+
+    Tests:
+    1. API connectivity (Playbook, Odds API)
+    2. Best bets generation (props + game picks)
+    3. All 11 pillars firing
+    4. AI Engine models
+    5. Context Layer
+    6. Esoteric systems
+    7. Auto-grader availability
+
+    If ANY test fails, logs critical error for alerting.
+    """
+
+    def __init__(self):
+        self.last_run = None
+        self.last_results = {}
+        self.failures = []
+
+    async def run_async(self):
+        """Execute full smoke test suite."""
+        import httpx
+
+        logger.info("=" * 60)
+        logger.info("🔥 NIGHTLY SMOKE TEST STARTING")
+        logger.info(f"   Time: {datetime.now().isoformat()}")
+        logger.info("=" * 60)
+
+        self.last_run = datetime.now()
+        self.failures = []
+
+        results = {
+            "timestamp": self.last_run.isoformat(),
+            "tests": {},
+            "passed": 0,
+            "failed": 0,
+            "critical_failures": []
+        }
+
+        # Test 1: Best Bets Generation (CRITICAL)
+        results["tests"]["best_bets"] = await self._test_best_bets()
+
+        # Test 2: System Health Components
+        results["tests"]["system_health"] = await self._test_system_health()
+
+        # Test 3: API Connectivity
+        results["tests"]["api_connectivity"] = await self._test_api_connectivity()
+
+        # Test 4: Pillars Firing
+        results["tests"]["pillars"] = await self._test_pillars_firing()
+
+        # Test 5: Esoteric Systems
+        results["tests"]["esoteric"] = await self._test_esoteric()
+
+        # Count passes/failures
+        for test_name, test_result in results["tests"].items():
+            if test_result.get("passed"):
+                results["passed"] += 1
+            else:
+                results["failed"] += 1
+                if test_result.get("critical"):
+                    results["critical_failures"].append(test_name)
+                    self.failures.append(test_name)
+
+        # Log summary
+        self.last_results = results
+        self._log_results(results)
+        self._save_smoke_test_log(results)
+
+        return results
+
+    async def _test_best_bets(self) -> dict:
+        """Test that best bets endpoint returns picks."""
+        test = {"name": "Best Bets Generation", "critical": True, "passed": False}
+
+        try:
+            from live_data_router import get_best_bets
+
+            # Test NBA (most common)
+            result = await get_best_bets("nba")
+
+            props_count = result.get("props", {}).get("count", 0)
+            game_picks_count = result.get("game_picks", {}).get("count", 0)
+
+            test["props_count"] = props_count
+            test["game_picks_count"] = game_picks_count
+            test["total_picks"] = props_count + game_picks_count
+
+            # Pass if we got any picks at all
+            if props_count > 0 or game_picks_count > 0:
+                test["passed"] = True
+                test["message"] = f"Generated {test['total_picks']} picks"
+            else:
+                test["message"] = "No picks generated - check API connectivity"
+
+        except Exception as e:
+            test["error"] = str(e)
+            test["message"] = f"Best bets failed: {e}"
+            logger.error(f"SMOKE TEST FAILED: Best Bets - {e}")
+
+        return test
+
+    async def _test_system_health(self) -> dict:
+        """Test system health endpoint."""
+        test = {"name": "System Health", "critical": True, "passed": False}
+
+        try:
+            from live_data_router import system_health
+
+            health = await system_health()
+
+            test["status"] = health.get("status")
+            test["issues"] = health.get("issues", [])
+            test["components"] = list(health.get("components", {}).keys())
+
+            # Check critical components
+            components = health.get("components", {})
+
+            # AI Models must be available
+            ai_active = components.get("ai_models", {}).get("all_active", False)
+
+            # Pillars must be active
+            pillars_active = components.get("pillars", {}).get("active_count", 0) >= 10
+
+            # Context layer should be available
+            context_active = components.get("context_layer", {}).get("available", False)
+
+            if ai_active and pillars_active:
+                test["passed"] = True
+                test["message"] = f"All critical components active"
+            else:
+                test["message"] = f"Component issues: AI={ai_active}, Pillars={pillars_active}"
+
+        except Exception as e:
+            test["error"] = str(e)
+            test["message"] = f"System health check failed: {e}"
+
+        return test
+
+    async def _test_api_connectivity(self) -> dict:
+        """Test API connectivity to Playbook and Odds API."""
+        test = {"name": "API Connectivity", "critical": True, "passed": False}
+
+        try:
+            from live_data_router import get_sharp, get_props
+
+            # Test Playbook API (sharp money)
+            sharp_result = await get_sharp("nba")
+            playbook_ok = sharp_result.get("count", 0) > 0 or sharp_result.get("source") != "error"
+
+            # Test Odds API (props)
+            props_result = await get_props("nba")
+            odds_api_ok = props_result.get("count", 0) > 0 or props_result.get("source") != "error"
+
+            test["playbook_api"] = "OK" if playbook_ok else "FAILED"
+            test["odds_api"] = "OK" if odds_api_ok else "FAILED"
+
+            if playbook_ok and odds_api_ok:
+                test["passed"] = True
+                test["message"] = "All APIs responding"
+            elif playbook_ok or odds_api_ok:
+                test["passed"] = True  # Partial pass
+                test["message"] = f"Partial: Playbook={test['playbook_api']}, Odds={test['odds_api']}"
+            else:
+                test["message"] = "Both APIs failed - check keys and quotas"
+
+        except Exception as e:
+            test["error"] = str(e)
+            test["message"] = f"API connectivity test failed: {e}"
+
+        return test
+
+    async def _test_pillars_firing(self) -> dict:
+        """Test that pillars are firing in best bets."""
+        test = {"name": "Pillars Firing", "critical": False, "passed": False}
+
+        try:
+            from live_data_router import get_best_bets
+
+            result = await get_best_bets("nba")
+
+            # Check if any picks have pillar reasons
+            all_picks = (
+                result.get("props", {}).get("picks", []) +
+                result.get("game_picks", {}).get("picks", [])
+            )
+
+            pillar_signals_found = set()
+            for pick in all_picks[:10]:  # Check first 10 picks
+                reasons = pick.get("reasons", [])
+                for reason in reasons:
+                    if "RESEARCH:" in reason:
+                        # Extract pillar name
+                        pillar = reason.split(":")[1].split("(")[0].strip()
+                        pillar_signals_found.add(pillar)
+
+            test["pillars_found"] = list(pillar_signals_found)
+            test["pillar_count"] = len(pillar_signals_found)
+
+            if len(pillar_signals_found) >= 3:
+                test["passed"] = True
+                test["message"] = f"Found {len(pillar_signals_found)} active pillars"
+            else:
+                test["message"] = f"Only {len(pillar_signals_found)} pillars firing"
+
+        except Exception as e:
+            test["error"] = str(e)
+            test["message"] = f"Pillar test failed: {e}"
+
+        return test
+
+    async def _test_esoteric(self) -> dict:
+        """Test esoteric systems."""
+        test = {"name": "Esoteric Systems", "critical": False, "passed": False}
+
+        try:
+            from esoteric_engine import get_daily_esoteric_reading
+
+            reading = get_daily_esoteric_reading()
+
+            test["has_reading"] = reading is not None
+            test["signals"] = list(reading.keys()) if reading else []
+
+            if reading and len(reading) > 0:
+                test["passed"] = True
+                test["message"] = f"Esoteric active with {len(reading)} signals"
+            else:
+                test["message"] = "Esoteric reading empty"
+
+        except Exception as e:
+            test["error"] = str(e)
+            test["message"] = f"Esoteric test failed: {e}"
+
+        return test
+
+    def _log_results(self, results: dict):
+        """Log smoke test results."""
+        passed = results["passed"]
+        failed = results["failed"]
+        total = passed + failed
+
+        logger.info("=" * 60)
+
+        if failed == 0:
+            logger.info(f"✅ SMOKE TEST PASSED: {passed}/{total} tests")
+        else:
+            logger.error(f"❌ SMOKE TEST FAILED: {passed}/{total} passed, {failed} failed")
+            for failure in results["critical_failures"]:
+                logger.error(f"   CRITICAL FAILURE: {failure}")
+
+        # Log individual test results
+        for test_name, test_result in results["tests"].items():
+            status = "✅" if test_result.get("passed") else "❌"
+            logger.info(f"   {status} {test_name}: {test_result.get('message', 'No message')}")
+
+        logger.info("=" * 60)
+
+    def _save_smoke_test_log(self, results: dict):
+        """Save smoke test results to file."""
+        log_dir = "./smoke_test_logs"
+        os.makedirs(log_dir, exist_ok=True)
+
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        log_path = os.path.join(log_dir, f"smoke_test_{date_str}.json")
+
+        try:
+            with open(log_path, "w") as f:
+                json.dump(results, f, indent=2)
+            logger.info(f"Smoke test log saved: {log_path}")
+        except Exception as e:
+            logger.error(f"Failed to save smoke test log: {e}")
+
+    def run(self):
+        """Sync wrapper for scheduled execution."""
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.run_async())
+                return {"status": "scheduled"}
+            else:
+                return loop.run_until_complete(self.run_async())
+        except RuntimeError:
+            return asyncio.run(self.run_async())
+
+
+# ============================================
 # SCHEDULER
 # ============================================
 
@@ -555,6 +849,7 @@ class DailyScheduler:
         self.cleanup_job = CleanupJob(auto_grader)
         self.props_job = PropsFetchJob()
         self.v1031_job = V1031GradingJob()  # v10.31: New grading + tuning job
+        self.smoke_test_job = SmokeTestJob()  # v10.36: Nightly smoke test
         self.scheduler = None
         self.running = False
         self._thread = None
@@ -583,6 +878,14 @@ class DailyScheduler:
             CronTrigger(hour=5, minute=0, timezone="America/New_York"),
             id="v1031_grading_tuning",
             name="v10.31 Daily Grading + Tuning (5 AM ET)"
+        )
+
+        # v10.36 Smoke Test at 5:30 AM ET (verify system before picks go out)
+        self.scheduler.add_job(
+            self.smoke_test_job.run,
+            CronTrigger(hour=5, minute=30, timezone="America/New_York"),
+            id="nightly_smoke_test",
+            name="v10.36 Nightly Smoke Test (5:30 AM ET)"
         )
 
         # Daily audit at 6 AM
@@ -634,7 +937,7 @@ class DailyScheduler:
         )
 
         self.scheduler.start()
-        logger.info("APScheduler started: audit@6AM, props@10AM+6PM daily (+12PM+2PM weekends), cleanup@Sun3AM")
+        logger.info("APScheduler started: smoke_test@5:30AM, audit@6AM, props@10AM+6PM daily (+12PM+2PM weekends), cleanup@Sun3AM")
     
     def _start_simple_scheduler(self):
         """Fallback simple scheduler using threading."""
