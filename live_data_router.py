@@ -1,4 +1,5 @@
-# live_data_router.py v15.0 - SCORING v10.42
+# live_data_router.py v15.0 - SCORING v10.43
+# v10.43: Publish Gate (dominance dedup + quality gate + correlation penalty)
 # v10.42: Universal fallback guarantee + debug counters + games_reason fix
 # v10.41: Jason Sim 2.0 Post-Pick Confluence Layer (BOOST/DOWNGRADE/BLOCK)
 # v10.40: 4-Engine Separation (AI + Research + Esoteric + Jarvis RS) + Jarvis Turbo safeguard
@@ -159,6 +160,18 @@ try:
 except ImportError:
     JASON_SIM_AVAILABLE = False
     logger.warning("jason_sim_confluence module not available - Jason Sim disabled")
+
+# v10.43: Import Publish Gate (dominance dedup + quality gate)
+try:
+    from publish_gate import (
+        apply_publish_gate, apply_dominance_dedup,
+        apply_correlation_penalty, apply_quality_gate,
+        get_cluster, TARGET_MAX_PICKS
+    )
+    PUBLISH_GATE_AVAILABLE = True
+except ImportError:
+    PUBLISH_GATE_AVAILABLE = False
+    logger.warning("publish_gate module not available - using legacy filtering")
 
 # Redis import with fallback
 try:
@@ -6116,6 +6129,60 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         top_props = [p for p in top_props if passes_confidence_filter(p)]
         top_game_picks = [p for p in top_game_picks if passes_confidence_filter(p)]
 
+    # =========================================================================
+    # v10.43: PUBLISH GATE (Dominance Dedup + Quality Gate + Correlation Penalty)
+    # =========================================================================
+    # Applies:
+    # A) Dominance dedup: Keep only best pick per player per cluster
+    # B) Correlation penalty: Penalize crowded games
+    # C) Quality gate: Escalate thresholds instead of capping
+    # =========================================================================
+    publish_gate_debug = {
+        "available": PUBLISH_GATE_AVAILABLE,
+        "input_picks": 0,
+        "after_dedup": 0,
+        "after_corr_penalty": 0,
+        "publish_threshold_edge_lean": 7.05,
+        "publish_threshold_gold_star": 7.50,
+        "published_total": 0
+    }
+
+    if PUBLISH_GATE_AVAILABLE:
+        # Apply to props
+        if top_props:
+            top_props, props_gate_debug = apply_publish_gate(
+                picks=top_props,
+                target_max=TARGET_MAX_PICKS,
+                apply_dedup=True,
+                apply_penalty=True,
+                apply_gate=True
+            )
+            publish_gate_debug["input_picks"] = props_gate_debug.get("input_picks", 0)
+            publish_gate_debug["after_dedup"] = props_gate_debug.get("after_dedup", 0)
+            publish_gate_debug["after_corr_penalty"] = props_gate_debug.get("after_corr_penalty", 0)
+            publish_gate_debug["publish_threshold_edge_lean"] = props_gate_debug.get("publish_threshold_edge_lean", 7.05)
+            publish_gate_debug["publish_threshold_gold_star"] = props_gate_debug.get("publish_threshold_gold_star", 7.50)
+            publish_gate_debug["published_total"] = props_gate_debug.get("published_total", 0)
+            publish_gate_debug["dedup_stats"] = props_gate_debug.get("dedup_stats", {})
+            publish_gate_debug["penalty_stats"] = props_gate_debug.get("penalty_stats", {})
+            publish_gate_debug["gate_stats"] = props_gate_debug.get("gate_stats", {})
+
+            logger.info(f"Publish Gate: {publish_gate_debug['input_picks']} -> {publish_gate_debug['after_dedup']} (dedup) -> {publish_gate_debug['published_total']} (final)")
+
+        # Apply to game picks (lighter - just dedup, no correlation penalty for games)
+        if top_game_picks:
+            top_game_picks, games_gate_debug = apply_publish_gate(
+                picks=top_game_picks,
+                target_max=10,  # Lower target for games
+                apply_dedup=True,
+                apply_penalty=False,  # No correlation penalty for game picks
+                apply_gate=True
+            )
+            publish_gate_debug["games_input"] = games_gate_debug.get("input_picks", 0)
+            publish_gate_debug["games_published"] = games_gate_debug.get("published_total", 0)
+    else:
+        logger.debug("Publish Gate: Module not available, using legacy filtering")
+
     # Rebuild merged_picks after filtering and sorting
     merged_picks = []
     merged_picks.extend(top_game_picks[:3])
@@ -6377,7 +6444,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "fallback_count": fallback_count,
             "fallback_source": fallback_source,
             # v10.41: Jason Sim 2.0 debug
-            "jason_sim": jason_sim_debug
+            "jason_sim": jason_sim_debug,
+            # v10.43: Publish Gate debug (dominance dedup + quality gate)
+            "publish_gate": publish_gate_debug
         }
 
     # ================================================================
