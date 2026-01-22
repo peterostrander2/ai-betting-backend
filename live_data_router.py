@@ -874,15 +874,18 @@ def order_reasons(reasons: list) -> list:
         return []
 
     # v10.19: Define category order with SMASH after CONFLUENCE
+    # v10.39: Added JARVIS TURBO after CONFLUENCE (upgrade layer before SMASH)
     category_order = {
-        "RESEARCH:": 0,
-        "MAPPING:": 1,
-        "CORRELATION:": 2,
-        "ESOTERIC:": 3,
-        "CONFLUENCE:": 4,
-        "SMASH:": 5,
-        "RESOLVER:": 6,
-        "GOVERNOR:": 7,
+        "AI ENGINE:": 0,
+        "RESEARCH:": 1,
+        "MAPPING:": 2,
+        "CORRELATION:": 3,
+        "ESOTERIC:": 4,
+        "CONFLUENCE:": 5,
+        "JARVIS TURBO:": 6,
+        "SMASH:": 7,
+        "RESOLVER:": 8,
+        "GOVERNOR:": 9,
     }
 
     def get_order(reason: str) -> int:
@@ -4621,6 +4624,57 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         final_score = (ai_score * w_ai) + (research_score * w_research) + (esoteric_score * w_esoteric) + confluence_boost
         final_score = max(0.0, min(10.0, float(final_score)))
 
+        # =====================================================================
+        # v10.39: JARVIS TURBO BAND
+        # =====================================================================
+        # Jarvis Turbo is an UPGRADE layer that can promote picks from EDGE_LEAN
+        # to GOLD_STAR, but NEVER creates picks from nothing.
+        #
+        # Gate conditions (BOTH required):
+        #   - final_score >= 6.50 (already EDGE_LEAN quality)
+        #   - jarvis_active == True (at least one trigger fired)
+        #
+        # Turbo ladder (based on jarvis hits count):
+        #   - 4+ hits: +0.55 (capped)
+        #   - 3 hits:  +0.40
+        #   - 2 hits:  +0.25
+        #   - 1 hit:   +0.15
+        #
+        # Applied BEFORE tier assignment so Jarvis can decisively impact tiers.
+        # =====================================================================
+        jarvis_hits_count = len(jarvis_triggers_hit)
+        jarvis_turbo_boost = 0.0
+        jarvis_turbo_reasons = []
+
+        # Gate: Only apply turbo to already-valid picks (EDGE_LEAN+ threshold)
+        JARVIS_TURBO_GATE = 6.50
+        JARVIS_TURBO_CAP = 0.55
+        FINAL_SCORE_CAP = 9.99
+
+        if final_score >= JARVIS_TURBO_GATE and jarvis_triggered:
+            # Turbo ladder based on number of Jarvis hits
+            if jarvis_hits_count >= 4:
+                jarvis_turbo_boost = 0.55
+            elif jarvis_hits_count >= 3:
+                jarvis_turbo_boost = 0.40
+            elif jarvis_hits_count >= 2:
+                jarvis_turbo_boost = 0.25
+            elif jarvis_hits_count >= 1:
+                jarvis_turbo_boost = 0.15
+
+            # Cap the turbo boost
+            jarvis_turbo_boost = min(jarvis_turbo_boost, JARVIS_TURBO_CAP)
+
+            # Apply turbo boost
+            if jarvis_turbo_boost > 0:
+                final_score += jarvis_turbo_boost
+                jarvis_turbo_reasons.append(
+                    f"JARVIS TURBO: +{jarvis_turbo_boost:.2f} (hits={jarvis_hits_count}, gate=EDGE_LEAN+)"
+                )
+
+        # Cap final score at 9.99 (never exceed)
+        final_score = min(final_score, FINAL_SCORE_CAP)
+
         # --- SmashSpot FLAG (v10.19 Strict) ---
         # Smash Spot is a TRUTH FLAG, not a score boost.
         # Requires: score >= 8.0, alignment >= 85%, jarvis active, BOTH Sharp Split AND RLM
@@ -4662,7 +4716,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         confidence_score = int(round(final_score * 10))  # 0-100 synced with final
 
         # Combine all reasons for explainability (v10.24: AI ENGINE first, then RESEARCH, ESOTERIC, etc.)
-        all_reasons = ai_reasons + research_reasons + esoteric_reasons + confluence_reasons + smash_reasons
+        # v10.39: Add JARVIS TURBO reasons after confluence (upgrade layer)
+        all_reasons = ai_reasons + research_reasons + esoteric_reasons + confluence_reasons + jarvis_turbo_reasons + smash_reasons
 
         return {
             "total_score": round(final_score, 2),
@@ -4684,8 +4739,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "base_score": base_ai,  # v10.3: 5.8 base
                 "pillar_boost": round(pillar_boost, 2),  # v10.3: additive pillars
                 "confluence_boost": round(confluence_boost, 2),  # v10.4: jarvis confluence
+                "jarvis_turbo_boost": round(jarvis_turbo_boost, 2),  # v10.39: Jarvis turbo upgrade
                 "alignment_pct": round(alignment_pct, 1)
             },
+            "jarvis_hits_count": jarvis_hits_count,  # v10.39: Count of Jarvis triggers hit
+            "jarvis_turbo_boost": round(jarvis_turbo_boost, 2),  # v10.39: Turbo boost applied
             "esoteric_breakdown": {
                 "gematria": round(gematria_score, 2),       # 52% weight
                 "jarvis_triggers": round(jarvis_score, 2),  # 20% weight
