@@ -3472,6 +3472,293 @@ async def get_lines(sport: str):
     return result
 
 
+# ============================================================================
+# v10.45: ODDS DIAGNOSTIC ENDPOINT
+# Deep debug output for game odds fetching with fallback cache
+# ============================================================================
+
+# Global odds metrics tracking (per-sport)
+ODDS_METRICS: Dict[str, Dict[str, Any]] = {}
+
+# Odds fallback cache (persists last successful snapshot per sport)
+ODDS_FALLBACK_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def get_et_hour() -> int:
+    """Get current hour in Eastern Time (0-23)."""
+    from datetime import timezone, timedelta
+    try:
+        now_utc = datetime.now(timezone.utc)
+        et_offset = timedelta(hours=-5)  # ET is UTC-5 (ignoring DST for simplicity)
+        now_et = now_utc + et_offset
+        return now_et.hour
+    except Exception:
+        return 12  # Default to noon if calculation fails
+
+
+def is_daytime_et() -> bool:
+    """Check if current time is daytime ET (08:00-23:00)."""
+    hour = get_et_hour()
+    return 8 <= hour <= 23
+
+
+@router.get("/odds/{sport}")
+async def get_odds(sport: str, debug: int = 0, auth: bool = Depends(verify_api_key)):
+    """
+    Get game odds (spreads, totals, moneylines) with deep diagnostic output.
+
+    v10.45: This endpoint provides comprehensive debugging for odds ingestion.
+
+    Query Parameters:
+    - debug=1: Include full diagnostic info
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "source": "odds_api" | "fallback_cache" | "none",
+        "events": N,
+        "markets": { "spreads": N, "totals": N, "h2h": N },
+        "data": [...],
+        "diagnostics": {
+            "provider_url_called": "...",
+            "provider_sport_key": "basketball_nba",
+            "http_status_code": 200,
+            "response_length_bytes": 12345,
+            "provider_error_message": null,
+            "markets_requested": ["spreads", "totals", "h2h"],
+            "timestamp": "...",
+            "et_hour": 14,
+            "is_daytime_et": true,
+            "fallback_cache_used": false,
+            "fallback_cache_age_minutes": null
+        },
+        "metrics": {
+            "odds_provider_status": "OK" | "EMPTY" | "ERROR" | "FALLBACK",
+            "odds_events_count": N,
+            "odds_markets_count": M,
+            "odds_cache_age_minutes": null
+        }
+    }
+    """
+    global ODDS_METRICS, ODDS_FALLBACK_CACHE
+
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+    sport_key = sport_config["odds"]
+
+    # Initialize diagnostics
+    diagnostics = {
+        "provider_url_called": None,
+        "provider_sport_key": sport_key,
+        "http_status_code": None,
+        "response_length_bytes": None,
+        "provider_error_message": None,
+        "markets_requested": ["spreads", "totals", "h2h"],
+        "timestamp": datetime.now().isoformat(),
+        "et_hour": get_et_hour(),
+        "is_daytime_et": is_daytime_et(),
+        "fallback_cache_used": False,
+        "fallback_cache_age_minutes": None,
+        "api_key_configured": bool(ODDS_API_KEY)
+    }
+
+    # Initialize metrics
+    metrics = {
+        "odds_provider_status": "UNKNOWN",
+        "odds_events_count": 0,
+        "odds_markets_count": 0,
+        "odds_cache_age_minutes": None
+    }
+
+    # Check cache first (short TTL for live odds)
+    cache_key = f"odds:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        # Update metrics from cached data
+        metrics["odds_provider_status"] = cached.get("metrics", {}).get("odds_provider_status", "CACHED")
+        metrics["odds_events_count"] = cached.get("events", 0)
+        metrics["odds_markets_count"] = sum(cached.get("markets", {}).values())
+        cached["cache_hit"] = True
+        ODDS_METRICS[sport_lower] = metrics
+        return cached
+
+    data = []
+    market_counts = {"spreads": 0, "totals": 0, "h2h": 0}
+
+    # Try Odds API
+    try:
+        if not ODDS_API_KEY:
+            diagnostics["provider_error_message"] = "ODDS_API_KEY not configured"
+            metrics["odds_provider_status"] = "ERROR_NO_KEY"
+            logger.warning("Odds API key not configured for /odds/%s", sport)
+        else:
+            odds_url = f"{ODDS_API_BASE}/sports/{sport_key}/odds"
+            diagnostics["provider_url_called"] = odds_url
+
+            resp = await fetch_with_retries(
+                "GET", odds_url,
+                params={
+                    "apiKey": ODDS_API_KEY,
+                    "regions": "us",
+                    "markets": "spreads,totals,h2h",
+                    "oddsFormat": "american"
+                }
+            )
+
+            if resp:
+                diagnostics["http_status_code"] = resp.status_code
+                diagnostics["response_length_bytes"] = len(resp.content) if resp.content else 0
+
+                if resp.status_code == 200:
+                    games = resp.json()
+                    diagnostics["response_length_bytes"] = len(resp.text) if resp.text else 0
+
+                    for game in games:
+                        game_data = {
+                            "id": game.get("id"),
+                            "home_team": game.get("home_team"),
+                            "away_team": game.get("away_team"),
+                            "commence_time": game.get("commence_time"),
+                            "spreads": [],
+                            "totals": [],
+                            "h2h": []
+                        }
+
+                        for bm in game.get("bookmakers", []):
+                            book = bm.get("key")
+                            for market in bm.get("markets", []):
+                                market_key = market.get("key")
+                                if market_key in ("spreads", "totals", "h2h"):
+                                    for outcome in market.get("outcomes", []):
+                                        entry = {
+                                            "book": book,
+                                            "team": outcome.get("name"),
+                                            "price": outcome.get("price"),
+                                            "point": outcome.get("point")
+                                        }
+                                        game_data[market_key].append(entry)
+                                        market_counts[market_key] += 1
+
+                        data.append(game_data)
+
+                    metrics["odds_provider_status"] = "OK" if len(data) > 0 else "EMPTY"
+                    metrics["odds_events_count"] = len(data)
+                    metrics["odds_markets_count"] = sum(market_counts.values())
+
+                    # Store in fallback cache if successful
+                    if len(data) > 0:
+                        ODDS_FALLBACK_CACHE[sport_lower] = {
+                            "data": data,
+                            "timestamp": datetime.now(),
+                            "events": len(data),
+                            "markets": market_counts.copy()
+                        }
+                        logger.info("Odds fallback cache updated for %s: %d events", sport, len(data))
+
+                elif resp.status_code == 429:
+                    diagnostics["provider_error_message"] = "Rate limited (429)"
+                    metrics["odds_provider_status"] = "RATE_LIMITED"
+                else:
+                    diagnostics["provider_error_message"] = f"HTTP {resp.status_code}"
+                    metrics["odds_provider_status"] = f"ERROR_{resp.status_code}"
+            else:
+                diagnostics["provider_error_message"] = "No response from provider (all retries exhausted)"
+                metrics["odds_provider_status"] = "ERROR_NO_RESPONSE"
+
+    except Exception as e:
+        logger.exception("Odds fetch failed for %s: %s", sport, e)
+        diagnostics["provider_error_message"] = str(e)
+        metrics["odds_provider_status"] = "ERROR_EXCEPTION"
+
+    # Hard error handling for daytime ET with empty results
+    if len(data) == 0 and is_daytime_et():
+        diagnostics["daytime_empty_warning"] = "ODDS_API_EMPTY_OR_FAILED_DAYTIME"
+        logger.warning(
+            "DAYTIME ODDS EMPTY: %s - provider_status=%s, et_hour=%d, error=%s",
+            sport, metrics["odds_provider_status"], get_et_hour(), diagnostics.get("provider_error_message")
+        )
+
+    # Fallback to cached snapshot if empty and cache is valid (<= 12 hours old)
+    if len(data) == 0 and sport_lower in ODDS_FALLBACK_CACHE:
+        fallback = ODDS_FALLBACK_CACHE[sport_lower]
+        cache_age_minutes = (datetime.now() - fallback["timestamp"]).total_seconds() / 60
+
+        if cache_age_minutes <= 720:  # 12 hours = 720 minutes
+            data = fallback["data"]
+            market_counts = fallback["markets"]
+            diagnostics["fallback_cache_used"] = True
+            diagnostics["fallback_cache_age_minutes"] = round(cache_age_minutes, 1)
+            metrics["odds_provider_status"] = "FALLBACK"
+            metrics["odds_events_count"] = len(data)
+            metrics["odds_markets_count"] = sum(market_counts.values())
+            metrics["odds_cache_age_minutes"] = round(cache_age_minutes, 1)
+            logger.info(
+                "Using fallback cache for %s: %d events, age=%.1f minutes",
+                sport, len(data), cache_age_minutes
+            )
+        else:
+            logger.warning(
+                "Fallback cache too old for %s: age=%.1f minutes (max 720)",
+                sport, cache_age_minutes
+            )
+
+    # Store metrics globally for access by other endpoints
+    ODDS_METRICS[sport_lower] = metrics
+
+    # Determine source
+    if diagnostics["fallback_cache_used"]:
+        source = "fallback_cache"
+    elif len(data) > 0:
+        source = "odds_api"
+    else:
+        source = "none"
+
+    result = {
+        "sport": sport.upper(),
+        "source": source,
+        "events": len(data),
+        "markets": market_counts,
+        "data": data,
+        "metrics": metrics,
+        "timestamp": datetime.now().isoformat()
+    }
+
+    # Include diagnostics only in debug mode
+    if debug == 1:
+        result["diagnostics"] = diagnostics
+
+    # Cache for 5 minutes
+    api_cache.set(cache_key, result, ttl=300)
+
+    return result
+
+
+@router.get("/odds-metrics")
+async def get_odds_metrics(auth: bool = Depends(verify_api_key)):
+    """
+    Get current odds metrics for all sports.
+
+    Returns per-sport metrics for monitoring odds ingestion health.
+    """
+    global ODDS_METRICS
+
+    return {
+        "metrics": ODDS_METRICS,
+        "fallback_cache_status": {
+            sport: {
+                "has_cache": True,
+                "cache_age_minutes": round((datetime.now() - cache["timestamp"]).total_seconds() / 60, 1),
+                "events_cached": cache["events"]
+            }
+            for sport, cache in ODDS_FALLBACK_CACHE.items()
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
 @router.get("/props/{sport}")
 async def get_props(sport: str):
     """
@@ -3744,10 +4031,25 @@ async def get_best_bets_all(debug: int = 0):
             all_picks_raw.extend(props_picks)
             all_picks_raw.extend(game_picks)
 
+            # v10.45: Include odds metrics in per-sport debug
+            sport_odds_metrics = ODDS_METRICS.get(sport, {})
+            games_reason = "OK" if len(game_picks) > 0 else (
+                sport_odds_metrics.get("odds_provider_status", "NO_METRICS")
+            )
+
             debug_info["sports_returned_picks"][sport.upper()] = {
                 "props": len(props_picks),
                 "games": len(game_picks),
-                "total": len(props_picks) + len(game_picks)
+                "total": len(props_picks) + len(game_picks),
+                # v10.45: Odds pipeline visibility
+                "games_reason": games_reason,
+                "events_count_raw": sport_odds_metrics.get("odds_events_count", 0),
+                "games_candidates_count": sport_result.get("debug", {}).get("game_candidates_before_filter", 0),
+                "games_picks_count": len(game_picks),
+                "odds_provider_status": sport_odds_metrics.get("odds_provider_status", "UNKNOWN"),
+                "odds_events_count": sport_odds_metrics.get("odds_events_count", 0),
+                "odds_markets_count": sport_odds_metrics.get("odds_markets_count", 0),
+                "odds_cache_age_minutes": sport_odds_metrics.get("odds_cache_age_minutes")
             }
 
         except Exception as e:
@@ -5604,6 +5906,12 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     # v10.38: Track raw events count for debug visibility
     raw_events_count = 0
 
+    # v10.45: Track odds metrics for diagnostics
+    odds_provider_status = "UNKNOWN"
+    odds_markets_count = 0
+    odds_http_status = None
+    odds_fallback_used = False
+
     try:
         # Fetch game odds (spreads, totals, moneylines)
         odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
@@ -5617,9 +5925,61 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             }
         )
 
+        odds_http_status = resp.status_code if resp else None
+
         if resp and resp.status_code == 200:
             games = resp.json()
             raw_events_count = len(games)  # v10.38: Track raw events from Odds API
+            odds_provider_status = "OK" if len(games) > 0 else "EMPTY"
+
+            # v10.45: Store successful odds snapshot in fallback cache
+            if len(games) > 0:
+                market_counts = {"spreads": 0, "totals": 0, "h2h": 0}
+                for g in games:
+                    for bm in g.get("bookmakers", []):
+                        for m in bm.get("markets", []):
+                            mk = m.get("key", "")
+                            if mk in market_counts:
+                                market_counts[mk] += len(m.get("outcomes", []))
+                odds_markets_count = sum(market_counts.values())
+
+                ODDS_FALLBACK_CACHE[sport_lower] = {
+                    "data": games,
+                    "timestamp": datetime.now(),
+                    "events": len(games),
+                    "markets": market_counts
+                }
+        elif resp and resp.status_code == 429:
+            odds_provider_status = "RATE_LIMITED"
+        else:
+            odds_provider_status = f"ERROR_{resp.status_code}" if resp else "ERROR_NO_RESPONSE"
+
+        # v10.45: Fallback to cached odds if empty and daytime ET
+        if raw_events_count == 0 and is_daytime_et() and sport_lower in ODDS_FALLBACK_CACHE:
+            fallback = ODDS_FALLBACK_CACHE[sport_lower]
+            cache_age_minutes = (datetime.now() - fallback["timestamp"]).total_seconds() / 60
+
+            if cache_age_minutes <= 720:  # 12 hours
+                games = fallback["data"]
+                raw_events_count = len(games)
+                odds_provider_status = "FALLBACK"
+                odds_fallback_used = True
+                odds_markets_count = sum(fallback.get("markets", {}).values())
+                logger.info("Using fallback cache for %s game picks: %d events, age=%.1f min",
+                           sport, len(games), cache_age_minutes)
+
+        # v10.45: Update global odds metrics
+        ODDS_METRICS[sport_lower] = {
+            "odds_provider_status": odds_provider_status,
+            "odds_events_count": raw_events_count,
+            "odds_markets_count": odds_markets_count,
+            "odds_http_status": odds_http_status,
+            "odds_fallback_used": odds_fallback_used,
+            "odds_cache_age_minutes": None
+        }
+
+        # v10.45: Process games if we have data (from API or fallback)
+        if raw_events_count > 0:
             for game in games:
                 home_team = game.get("home_team", "")
                 away_team = game.get("away_team", "")
@@ -6655,7 +7015,17 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             # v10.41: Jason Sim 2.0 debug
             "jason_sim": jason_sim_debug,
             # v10.43: Publish Gate debug (dominance dedup + quality gate)
-            "publish_gate": publish_gate_debug
+            "publish_gate": publish_gate_debug,
+            # v10.45: Odds diagnostic metrics
+            "odds_metrics": {
+                "provider_status": odds_provider_status,
+                "events_count": raw_events_count,
+                "markets_count": odds_markets_count,
+                "http_status": odds_http_status,
+                "fallback_used": odds_fallback_used
+            },
+            # v10.45: Include game_candidates_before_filter for /best-bets/all debug
+            "game_candidates_before_filter": games_candidates_count
         }
 
     # ================================================================
