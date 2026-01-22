@@ -1973,45 +1973,59 @@ def resolve_same_direction(picks: list) -> list:
 
 def resolve_opposing_sides(picks: list) -> list:
     """
-    v10.35: Keep only ONE pick per game - the highest scoring.
+    v10.44: Allow up to 2 picks per game: 1 spread/ML + 1 total.
+
+    Previous v10.35 was too aggressive (only 1 pick per game).
 
     This ensures the community gets clean, non-conflicting picks:
-    - No Hawks ML + Grizzlies -1.5 (opposing teams)
-    - No Knicks -20.5 + Under 219.5 (spread + total for same game)
+    - No Hawks ML + Grizzlies -1.5 (opposing teams on same market type)
+    - But CAN have: Lakers -7 AND Under 224.5 (different market categories)
 
-    Just ONE clear pick per game.
+    Rules:
+    - Max 1 spread/ML pick per game (best scoring)
+    - Max 1 total pick per game (best scoring)
+    - Total picks per game: max 2
 
-    Groups by: game
-    Keeps: only the single highest-scoring pick
+    Groups by: (game, market_category)
+    - SIDE = spreads, h2h (spread/ML bets - same direction concept)
+    - TOTAL = totals (over/under bets - independent of side)
     """
     from collections import defaultdict
 
-    # Group all picks by game
-    games = defaultdict(list)
+    # Group by (game, market_category)
+    game_markets = defaultdict(list)
     for p in picks:
         game = p.get("game", "") or p.get("matchup", "")
+        market = p.get("market", "")
+
+        # Categorize: SIDE (spread/ML) vs TOTAL
+        if market == "totals":
+            category = "TOTAL"
+        else:
+            category = "SIDE"  # spreads, h2h, sharp_money
+
         if game:
-            games[game].append(p)
+            game_markets[(game, category)].append(p)
 
     resolved = []
-    for game, game_picks in games.items():
-        if len(game_picks) == 1:
-            resolved.append(game_picks[0])
+    for (game, category), group in game_markets.items():
+        if len(group) == 1:
+            resolved.append(group[0])
             continue
 
-        # Sort by score descending, keep only the best
-        game_picks.sort(key=lambda x: x.get("final_score", x.get("total_score", 0)), reverse=True)
-        best_pick = game_picks[0]
+        # Sort by score descending, keep only the best for this category
+        group.sort(key=lambda x: x.get("final_score", x.get("total_score", 0)), reverse=True)
+        best_pick = group[0]
 
         # Add transparency
-        filtered_count = len(game_picks) - 1
+        filtered_count = len(group) - 1
         best_pick["reasons"] = best_pick.get("reasons", []) + [
-            f"RESOLVER: Best pick for game (beat {filtered_count} other pick(s))"
+            f"RESOLVER: Best {category} pick for game (beat {filtered_count} other {category} pick(s))"
         ]
 
         # Log what we filtered
-        for p in game_picks[1:]:
-            logger.debug(f"Filtered same-game pick: {p.get('pick')} (score {p.get('final_score')}) - {game}")
+        for p in group[1:]:
+            logger.debug(f"Filtered same-game {category}: {p.get('pick')} (score {p.get('final_score')}) - {game}")
 
         resolved.append(best_pick)
 
@@ -3706,8 +3720,8 @@ async def get_best_bets_all(debug: int = 0):
 
     for sport in in_season_sports:
         try:
-            # Call the existing best-bets endpoint internally
-            sport_result = await get_best_bets(sport, debug=0, include_conflicts=0, min_confidence="C")
+            # Call the existing best-bets endpoint internally WITH debug=1 for game visibility
+            sport_result = await get_best_bets(sport, debug=1, include_conflicts=0, min_confidence="C")
 
             # Extract props picks
             props_picks = []
@@ -3727,6 +3741,9 @@ async def get_best_bets_all(debug: int = 0):
                     pick["sport"] = sport.upper()
                     pick["pick_type"] = "game"
 
+            # Extract debug info from sport result (v10.44: per-sport game debug)
+            sport_debug = sport_result.get("debug", {})
+
             # Store by sport
             by_sport[sport.upper()] = {
                 "props": {
@@ -3744,10 +3761,24 @@ async def get_best_bets_all(debug: int = 0):
             all_picks_raw.extend(props_picks)
             all_picks_raw.extend(game_picks)
 
+            # v10.44: Enhanced per-sport debug with game pipeline visibility
             debug_info["sports_returned_picks"][sport.upper()] = {
                 "props": len(props_picks),
                 "games": len(game_picks),
-                "total": len(props_picks) + len(game_picks)
+                "total": len(props_picks) + len(game_picks),
+                # Game pipeline debug fields
+                "games_reason": sport_debug.get("games_reason", "UNKNOWN"),
+                "events_count_raw": sport_debug.get("events_count", 0),
+                "games_candidates_count": sport_debug.get("games_candidates_count", 0),
+                "games_after_filter_count": sport_debug.get("games_after_filter_count", 0),
+                "games_picks_count": sport_debug.get("games_picks_count", 0),
+                # Props pipeline debug fields
+                "props_reason": sport_debug.get("props_reason", "UNKNOWN"),
+                "props_candidates_count": sport_debug.get("props_candidates_count", 0),
+                "props_after_filter_count": sport_debug.get("props_after_filter_count", 0),
+                "props_picks_count": sport_debug.get("props_picks_count", 0),
+                # Fallback info
+                "fallback_used": sport_debug.get("fallback_used", False)
             }
 
         except Exception as e:
@@ -3757,6 +3788,13 @@ async def get_best_bets_all(debug: int = 0):
                 "props": {"count": 0, "picks": []},
                 "game_picks": {"count": 0, "picks": []},
                 "total_picks": 0,
+                "error": str(e)
+            }
+            debug_info["sports_returned_picks"][sport.upper()] = {
+                "props": 0,
+                "games": 0,
+                "total": 0,
+                "games_reason": f"ERROR: {str(e)}",
                 "error": str(e)
             }
 
@@ -5931,11 +5969,25 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
     # v10.36: Quality over quantity - return ALL actionable picks, no arbitrary limits
     # Only GOLD_STAR and EDGE_LEAN picks are truly actionable
-    # If there are none, return top 3 MONITOR picks as fallback
+    # If there are none, return top 1-2 MONITOR picks as fallback
     actionable_game_picks = [p for p in governed_games if p.get("tier") in ["GOLD_STAR", "EDGE_LEAN"]]
-    if len(actionable_game_picks) == 0:
-        # Fallback: return top 3 MONITOR picks if no actionable picks
-        actionable_game_picks = [p for p in governed_games if p.get("tier") == "MONITOR"][:3]
+    game_fallback_used = False
+    game_fallback_count = 0
+
+    if len(actionable_game_picks) == 0 and len(governed_games) > 0:
+        # v10.44: Game Fallback - return top 1-2 MONITOR picks with explicit tagging
+        # This prevents "0 game picks" on normal slates while being transparent
+        fallback_games = [p for p in governed_games if p.get("tier") == "MONITOR"][:2]
+        for pick in fallback_games:
+            pick["badge"] = "FALLBACK_GAME"
+            pick["fallback"] = True
+            pick["reasons"] = pick.get("reasons", []) + [
+                "SYSTEM: FALLBACK_GAME_TOP2 (no game picks qualified EDGE_LEAN or better)"
+            ]
+        actionable_game_picks = fallback_games
+        game_fallback_used = True
+        game_fallback_count = len(fallback_games)
+
     top_game_picks = actionable_game_picks
 
     # v10.38: Compute games_reason for debug visibility
@@ -5958,6 +6010,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             games_reason = "NO_EVENTS_FROM_ODDS_API"
     elif games_candidates_count == 0:
         games_reason = "NO_GAME_CANDIDATES_AFTER_FILTERS"
+    elif game_fallback_used:
+        # v10.44: Game fallback was triggered (candidates existed but none qualified)
+        games_reason = "FALLBACK_GAME_MONITOR_USED"
     elif games_picks_count == 0:
         games_reason = "NO_GAMES_QUALIFIED_MIN_SCORE"
     else:
@@ -6648,7 +6703,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "props_picks_count": props_picks_count,
             # v10.42: Games after filter count
             "games_after_filter_count": games_after_filter_count,
-            # v10.42: Fallback debug
+            # v10.44: Game-specific fallback debug
+            "game_fallback_used": game_fallback_used,
+            "game_fallback_count": game_fallback_count,
+            # v10.42: Universal fallback debug (props + games combined)
             "fallback_used": fallback_used,
             "fallback_count": fallback_count,
             "fallback_source": fallback_source,
