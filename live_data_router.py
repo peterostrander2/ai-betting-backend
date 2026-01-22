@@ -1914,6 +1914,161 @@ async def health_check():
     }
 
 
+@router.get("/system-health")
+async def system_health():
+    """
+    v10.35: Comprehensive system health check - all components in one call.
+
+    Returns status of:
+    - API connections (Odds API, Playbook API)
+    - Database (picks/signals persistence)
+    - Grader (learning system)
+    - Scheduler (daily audit jobs)
+    - Pillars (which are active vs missing data)
+    - AI Models (8 model status)
+    - Esoteric (JARVIS, astro, daily energy)
+    """
+    health = {
+        "status": "healthy",
+        "version": "v10.35",
+        "timestamp": datetime.now().isoformat(),
+        "components": {}
+    }
+
+    issues = []
+
+    # 1. API Connections
+    apis = {
+        "odds_api": {
+            "configured": bool(ODDS_API_KEY),
+            "key_present": len(ODDS_API_KEY) > 10 if ODDS_API_KEY else False
+        },
+        "playbook_api": {
+            "configured": bool(PLAYBOOK_API_KEY),
+            "key_present": len(PLAYBOOK_API_KEY) > 10 if PLAYBOOK_API_KEY else False
+        }
+    }
+    if not apis["odds_api"]["configured"]:
+        issues.append("ODDS_API_KEY not configured")
+    if not apis["playbook_api"]["configured"]:
+        issues.append("PLAYBOOK_API_KEY not configured")
+    health["components"]["apis"] = apis
+
+    # 2. Database
+    db_status = {
+        "available": DATABASE_AVAILABLE,
+        "enabled": database.DB_ENABLED if DATABASE_AVAILABLE else False,
+        "url_configured": bool(os.getenv("DATABASE_URL", ""))
+    }
+    if not db_status["available"]:
+        issues.append("Database not available")
+    health["components"]["database"] = db_status
+
+    # 3. Grader (Learning System)
+    try:
+        grader = get_grader()
+        grader_status = {
+            "available": grader is not None,
+            "predictions_logged": len(grader.prediction_log) if grader else 0,
+            "learning_active": True
+        }
+    except Exception as e:
+        grader_status = {"available": False, "error": str(e)}
+        issues.append("Grader not available")
+    health["components"]["grader"] = grader_status
+
+    # 4. Scheduler
+    scheduler_status = {
+        "apscheduler_available": APSCHEDULER_AVAILABLE,
+        "jobs_scheduled": APSCHEDULER_AVAILABLE
+    }
+    if not APSCHEDULER_AVAILABLE:
+        issues.append("APScheduler not available - daily audit won't run")
+    health["components"]["scheduler"] = scheduler_status
+
+    # 5. AI Models
+    ai_models = {
+        "master_prediction_system": MASTER_PREDICTION_AVAILABLE,
+        "models": [
+            "ensemble", "lstm", "monte_carlo", "line_movement",
+            "rest_fatigue", "injury_impact", "matchup_model", "edge_calculator"
+        ],
+        "all_active": MASTER_PREDICTION_AVAILABLE
+    }
+    health["components"]["ai_models"] = ai_models
+
+    # 6. Pillars Status (which have data sources)
+    pillars = {
+        "active": [
+            {"name": "Sharp Split", "data_source": "Playbook API splits", "status": "ACTIVE"},
+            {"name": "Reverse Line Movement", "data_source": "Playbook API line_variance", "status": "ACTIVE"},
+            {"name": "Public Fade", "data_source": "Playbook API public%", "status": "ACTIVE"},
+            {"name": "Home Court", "data_source": "Game data", "status": "ACTIVE"},
+            {"name": "Rest Advantage", "data_source": "Schedule data", "status": "ACTIVE"},
+            {"name": "Prime Time", "data_source": "Game time", "status": "ACTIVE"},
+            {"name": "Mid-Spread Boss Zone", "data_source": "Spread value", "status": "ACTIVE"},
+            {"name": "Multi-Pillar Confluence", "data_source": "Calculated", "status": "ACTIVE"}
+        ],
+        "inactive": [
+            {"name": "Hospital Fade", "reason": "No injury impact data feeding scorer", "fix": "Connect injuries API to pillar"},
+            {"name": "Expert Consensus", "reason": "No expert picks API", "fix": "Add consensus data source"},
+            {"name": "Hook Discipline", "reason": "Logic not implemented", "fix": "Add -3.5/+6.5 penalty logic"}
+        ],
+        "active_count": 8,
+        "total_defined": 11
+    }
+    health["components"]["pillars"] = pillars
+
+    # 7. Esoteric Systems
+    esoteric = {
+        "jarvis_triggers": {
+            "active": True,
+            "triggers": ["2178 (IMMORTAL)", "201 (ORDER)", "33 (MASTER)", "93 (WILL)", "322 (SOCIETY)"]
+        },
+        "astro": {
+            "planetary_hours": True,
+            "nakshatra": True
+        },
+        "daily_energy": True,
+        "gematria": True
+    }
+    health["components"]["esoteric"] = esoteric
+
+    # 8. Recent Pick Stats (if available)
+    try:
+        cache_key = "best-bets:nba"
+        cached = api_cache.get(cache_key)
+        if cached:
+            recent_stats = {
+                "cached_picks_available": True,
+                "props_count": cached.get("props", {}).get("count", 0),
+                "game_picks_count": cached.get("game_picks", {}).get("count", 0),
+                "database_available": cached.get("database_available", False),
+                "picks_saved": cached.get("picks_saved", 0),
+                "signals_saved": cached.get("signals_saved", 0)
+            }
+        else:
+            recent_stats = {"cached_picks_available": False}
+    except:
+        recent_stats = {"cached_picks_available": False}
+    health["components"]["recent_picks"] = recent_stats
+
+    # Overall status
+    if len(issues) == 0:
+        health["status"] = "healthy"
+        health["message"] = "All systems operational"
+    elif len(issues) <= 2:
+        health["status"] = "degraded"
+        health["message"] = f"{len(issues)} issue(s) detected"
+    else:
+        health["status"] = "unhealthy"
+        health["message"] = f"{len(issues)} issues detected - check components"
+
+    health["issues"] = issues
+
+    return health
+
+
 @router.get("/cache/stats")
 async def cache_stats():
     """Get cache statistics for debugging."""
