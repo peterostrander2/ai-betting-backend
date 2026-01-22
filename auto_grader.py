@@ -39,11 +39,19 @@ INTERPRETING BIAS RESULTS:
 
 import json
 import os
+import hashlib
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from collections import defaultdict
 import numpy as np
+
+# v10.38: Timezone support for ET date calculations
+try:
+    from zoneinfo import ZoneInfo
+    ET_TIMEZONE = ZoneInfo("America/New_York")
+except ImportError:
+    ET_TIMEZONE = None
 
 # ============================================
 # DATA STRUCTURES
@@ -648,6 +656,350 @@ class AutoGrader:
             "profitable": hit_rate > 0.52,
             "timestamp": datetime.now().isoformat()
         }
+
+    # ============================================
+    # v10.38: JSONL PREDICTION LOGGING (Idempotent)
+    # ============================================
+
+    def _get_et_date(self) -> str:
+        """Get current date in ET timezone as YYYY-MM-DD."""
+        if ET_TIMEZONE:
+            return datetime.now(ET_TIMEZONE).strftime("%Y-%m-%d")
+        else:
+            # Fallback: assume UTC-5
+            return (datetime.utcnow() - timedelta(hours=5)).strftime("%Y-%m-%d")
+
+    def _generate_prediction_id(self, sport: str, date_et: str, event_id: str,
+                                 market: str, selection: str, line: float, odds: int) -> str:
+        """Generate stable SHA256 hash for deduplication."""
+        raw = f"{sport}|{date_et}|{event_id}|{market}|{selection}|{line}|{odds}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    def _get_prediction_log_path(self, sport: str, date_et: str) -> str:
+        """Get path to JSONL prediction log file."""
+        dir_path = os.path.join(self.storage_path, sport.upper(), "predictions")
+        os.makedirs(dir_path, exist_ok=True)
+        return os.path.join(dir_path, f"{date_et}.jsonl")
+
+    def _get_graded_log_path(self, sport: str, date_et: str) -> str:
+        """Get path to JSONL graded log file."""
+        dir_path = os.path.join(self.storage_path, sport.upper(), "graded")
+        os.makedirs(dir_path, exist_ok=True)
+        return os.path.join(dir_path, f"{date_et}.jsonl")
+
+    def _load_today_prediction_ids(self, sport: str, date_et: str) -> set:
+        """Load existing prediction IDs for today to check duplicates."""
+        log_path = self._get_prediction_log_path(sport, date_et)
+        existing_ids = set()
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, 'r') as f:
+                    for line in f:
+                        if line.strip():
+                            record = json.loads(line)
+                            existing_ids.add(record.get("prediction_id", ""))
+            except Exception as e:
+                print(f"⚠️ Error loading prediction log: {e}")
+        return existing_ids
+
+    def log_pick_jsonl(self, pick: Dict, sport: str, pick_type: str = "prop") -> Optional[str]:
+        """
+        Log a pick to JSONL file with deduplication.
+
+        Args:
+            pick: The pick dict from best-bets
+            sport: Sport code (NBA, NFL, etc.)
+            pick_type: "prop" or "game"
+
+        Returns:
+            prediction_id if logged, None if duplicate
+        """
+        sport = sport.upper()
+        date_et = self._get_et_date()
+
+        # Extract fields from pick
+        event_id = pick.get("event_id") or pick.get("game", "")
+        market = pick.get("stat_type") or pick.get("market", "")
+        selection = pick.get("player_name") or pick.get("selection") or pick.get("pick", "")
+        line = pick.get("line") or 0
+        odds = pick.get("odds") or -110
+
+        # Generate stable prediction ID
+        prediction_id = self._generate_prediction_id(
+            sport, date_et, event_id, market, selection, line, odds
+        )
+
+        # Check for duplicate
+        existing_ids = self._load_today_prediction_ids(sport, date_et)
+        if prediction_id in existing_ids:
+            return None  # Already logged
+
+        # Build prediction record
+        record = {
+            "prediction_id": prediction_id,
+            "sport": sport,
+            "date_et": date_et,
+            "event_id": event_id,
+            "pick_type": pick_type,
+            "market": market,
+            "stat_type": pick.get("stat_type", ""),
+            "selection": selection,
+            "player_name": pick.get("player_name", ""),
+            "line": line,
+            "odds": odds,
+            "over_under": pick.get("over_under", ""),
+            "tier": pick.get("tier", ""),
+            "model_score": pick.get("smash_score") or pick.get("final_score") or 0,
+            "confidence_grade": pick.get("confidence_grade", ""),
+            "game": pick.get("game", ""),
+            "game_time": pick.get("game_time", ""),
+            "generated_at": datetime.now().isoformat(),
+            # Grading fields (populated later)
+            "graded": False,
+            "result": None,  # WIN/LOSS/PUSH/VOID
+            "actual_value": None,
+            "graded_at": None
+        }
+
+        # Append to JSONL file
+        log_path = self._get_prediction_log_path(sport, date_et)
+        try:
+            with open(log_path, 'a') as f:
+                f.write(json.dumps(record) + "\n")
+            return prediction_id
+        except Exception as e:
+            print(f"⚠️ Error writing prediction log: {e}")
+            return None
+
+    def log_picks_batch(self, picks: List[Dict], sport: str, pick_type: str = "prop") -> Dict:
+        """
+        Log multiple picks with deduplication.
+
+        Returns:
+            {"logged": N, "duplicates": N, "errors": N}
+        """
+        logged = 0
+        duplicates = 0
+        errors = 0
+
+        for pick in picks:
+            try:
+                result = self.log_pick_jsonl(pick, sport, pick_type)
+                if result:
+                    logged += 1
+                else:
+                    duplicates += 1
+            except Exception as e:
+                print(f"⚠️ Error logging pick: {e}")
+                errors += 1
+
+        return {"logged": logged, "duplicates": duplicates, "errors": errors}
+
+    def get_predictions_logged_count(self, sport: str = None, date_et: str = None) -> int:
+        """Get total count of logged predictions."""
+        if date_et is None:
+            date_et = self._get_et_date()
+
+        total = 0
+        sports = [sport.upper()] if sport else self.SUPPORTED_SPORTS
+
+        for s in sports:
+            log_path = self._get_prediction_log_path(s, date_et)
+            if os.path.exists(log_path):
+                try:
+                    with open(log_path, 'r') as f:
+                        total += sum(1 for line in f if line.strip())
+                except Exception:
+                    pass
+
+        return total
+
+    def get_ungraded_predictions(self, sport: str, date_et: str = None) -> List[Dict]:
+        """Load ungraded predictions for a sport/date."""
+        if date_et is None:
+            # Default to yesterday for grading
+            if ET_TIMEZONE:
+                yesterday = datetime.now(ET_TIMEZONE) - timedelta(days=1)
+                date_et = yesterday.strftime("%Y-%m-%d")
+            else:
+                date_et = (datetime.utcnow() - timedelta(hours=5) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        log_path = self._get_prediction_log_path(sport.upper(), date_et)
+        ungraded = []
+
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, 'r') as f:
+                    for line in f:
+                        if line.strip():
+                            record = json.loads(line)
+                            if not record.get("graded", False):
+                                ungraded.append(record)
+            except Exception as e:
+                print(f"⚠️ Error loading predictions: {e}")
+
+        return ungraded
+
+    def grade_predictions_batch(self, sport: str, results: List[Dict], date_et: str = None) -> Dict:
+        """
+        Grade predictions with actual results.
+
+        Args:
+            sport: Sport code
+            results: List of {"event_id": str, "player_name": str, "stat_type": str, "actual": float}
+            date_et: Date to grade (default: yesterday)
+
+        Returns:
+            {"graded": N, "wins": N, "losses": N, "pushes": N}
+        """
+        sport = sport.upper()
+        if date_et is None:
+            if ET_TIMEZONE:
+                yesterday = datetime.now(ET_TIMEZONE) - timedelta(days=1)
+                date_et = yesterday.strftime("%Y-%m-%d")
+            else:
+                date_et = (datetime.utcnow() - timedelta(hours=5) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        log_path = self._get_prediction_log_path(sport, date_et)
+        graded_path = self._get_graded_log_path(sport, date_et)
+
+        if not os.path.exists(log_path):
+            return {"graded": 0, "wins": 0, "losses": 0, "pushes": 0, "error": "No predictions found"}
+
+        # Build results lookup
+        results_lookup = {}
+        for r in results:
+            key = f"{r.get('event_id', '')}|{r.get('player_name', '')}|{r.get('stat_type', '')}"
+            results_lookup[key] = r.get("actual")
+
+        # Load and grade predictions
+        graded_records = []
+        wins = 0
+        losses = 0
+        pushes = 0
+
+        try:
+            with open(log_path, 'r') as f:
+                lines = f.readlines()
+
+            updated_lines = []
+            for line in lines:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+
+                # Build lookup key
+                key = f"{record.get('event_id', '')}|{record.get('player_name', '')}|{record.get('stat_type', '')}"
+
+                if key in results_lookup and not record.get("graded"):
+                    actual = results_lookup[key]
+                    line_val = record.get("line", 0)
+                    over_under = record.get("over_under", "over").lower()
+
+                    # Determine result
+                    if actual == line_val:
+                        result = "PUSH"
+                        pushes += 1
+                    elif over_under == "over":
+                        result = "WIN" if actual > line_val else "LOSS"
+                    else:  # under
+                        result = "WIN" if actual < line_val else "LOSS"
+
+                    if result == "WIN":
+                        wins += 1
+                    elif result == "LOSS":
+                        losses += 1
+
+                    # Update record
+                    record["graded"] = True
+                    record["result"] = result
+                    record["actual_value"] = actual
+                    record["graded_at"] = datetime.now().isoformat()
+
+                    graded_records.append(record)
+
+                updated_lines.append(json.dumps(record) + "\n")
+
+            # Write back updated predictions
+            with open(log_path, 'w') as f:
+                f.writelines(updated_lines)
+
+            # Append to graded log
+            if graded_records:
+                with open(graded_path, 'a') as f:
+                    for record in graded_records:
+                        f.write(json.dumps(record) + "\n")
+
+        except Exception as e:
+            return {"graded": 0, "wins": 0, "losses": 0, "pushes": 0, "error": str(e)}
+
+        return {
+            "graded": len(graded_records),
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "date_et": date_et
+        }
+
+    def get_grading_stats(self, sport: str = None, days_back: int = 7) -> Dict:
+        """Get grading statistics across multiple days."""
+        stats = {
+            "total_predictions": 0,
+            "total_graded": 0,
+            "total_ungraded": 0,
+            "wins": 0,
+            "losses": 0,
+            "pushes": 0,
+            "hit_rate": 0.0,
+            "by_sport": {}
+        }
+
+        sports = [sport.upper()] if sport else self.SUPPORTED_SPORTS
+
+        for s in sports:
+            sport_stats = {"predictions": 0, "graded": 0, "wins": 0, "losses": 0, "pushes": 0}
+
+            for i in range(days_back):
+                if ET_TIMEZONE:
+                    day = datetime.now(ET_TIMEZONE) - timedelta(days=i)
+                    date_et = day.strftime("%Y-%m-%d")
+                else:
+                    date_et = (datetime.utcnow() - timedelta(hours=5) - timedelta(days=i)).strftime("%Y-%m-%d")
+
+                log_path = self._get_prediction_log_path(s, date_et)
+                if os.path.exists(log_path):
+                    try:
+                        with open(log_path, 'r') as f:
+                            for line in f:
+                                if line.strip():
+                                    record = json.loads(line)
+                                    sport_stats["predictions"] += 1
+                                    if record.get("graded"):
+                                        sport_stats["graded"] += 1
+                                        result = record.get("result", "")
+                                        if result == "WIN":
+                                            sport_stats["wins"] += 1
+                                        elif result == "LOSS":
+                                            sport_stats["losses"] += 1
+                                        elif result == "PUSH":
+                                            sport_stats["pushes"] += 1
+                    except Exception:
+                        pass
+
+            stats["by_sport"][s] = sport_stats
+            stats["total_predictions"] += sport_stats["predictions"]
+            stats["total_graded"] += sport_stats["graded"]
+            stats["total_ungraded"] += sport_stats["predictions"] - sport_stats["graded"]
+            stats["wins"] += sport_stats["wins"]
+            stats["losses"] += sport_stats["losses"]
+            stats["pushes"] += sport_stats["pushes"]
+
+        # Calculate hit rate
+        total_decided = stats["wins"] + stats["losses"]
+        if total_decided > 0:
+            stats["hit_rate"] = round((stats["wins"] / total_decided) * 100, 1)
+
+        return stats
 
 
 # ============================================
