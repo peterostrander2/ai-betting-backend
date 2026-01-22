@@ -1,4 +1,5 @@
-# live_data_router.py v15.0 - SCORING v10.41
+# live_data_router.py v15.0 - SCORING v10.42
+# v10.42: Universal fallback guarantee + debug counters + games_reason fix
 # v10.41: Jason Sim 2.0 Post-Pick Confluence Layer (BOOST/DOWNGRADE/BLOCK)
 # v10.40: 4-Engine Separation (AI + Research + Esoteric + Jarvis RS) + Jarvis Turbo safeguard
 # v10.39: Jarvis Turbo Band scoring upgrade
@@ -5998,9 +5999,15 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 jason_sim_debug["missing_payload"] += game_stats.get("missing_payload", 0)
 
             logger.info(f"Jason Sim: Complete - boosted={jason_sim_debug['boosted']}, downgraded={jason_sim_debug['downgraded']}, blocked={jason_sim_debug['blocked']}")
+
+            # v10.42: Fix missing_payload to be (games_checked - games_matched)
+            jason_sim_debug["missing_payload"] = jason_sim_debug["games_checked"] - jason_sim_debug["games_matched"]
         else:
             logger.info(f"Jason Sim: No payloads available for {sport}")
-            jason_sim_debug["missing_payload"] = len(top_props) + len(top_game_picks)
+            # v10.42: When no payloads uploaded, missing_payload = 0 (not slate size)
+            # missing_payload only counts picks that COULD have matched but didn't
+            jason_sim_debug["missing_payload"] = 0
+            jason_sim_debug["no_payloads_uploaded"] = True
     else:
         logger.debug("Jason Sim: Module not available")
 
@@ -6171,6 +6178,95 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "reason": f"{player_name} has {len(picks)} props stacked in {cluster} - both independently qualify"
         })
 
+    # =========================================================================
+    # v10.42: UNIVERSAL FINAL FALLBACK - GUARANTEE AT LEAST 1 PICK RETURNED
+    # =========================================================================
+    # If after ALL scoring + filters + confluence layers, we have 0 picks total,
+    # pull top 3 MONITOR picks from the broadest candidate pools.
+    # =========================================================================
+    fallback_used = False
+    fallback_count = 0
+    fallback_source = "none"
+
+    # Calculate pre-fallback counts for debug
+    props_after_filter_count = len(top_props)
+    games_after_filter_count = len(top_game_picks)
+
+    if len(top_props) == 0 and len(top_game_picks) == 0:
+        logger.warning("v10.42: Zero picks after all filters - activating UNIVERSAL FALLBACK")
+
+        # Fallback source: all scored candidates (governed_props + governed_games)
+        # These are already sorted by score, so just take top 3
+        fallback_candidates = []
+
+        # Collect from props candidates
+        if governed_props:
+            for p in governed_props[:10]:  # Consider top 10 props
+                p_copy = p.copy()
+                p_copy["_source"] = "props"
+                fallback_candidates.append(p_copy)
+
+        # Collect from games candidates
+        if governed_games:
+            for g in governed_games[:10]:  # Consider top 10 games
+                g_copy = g.copy()
+                g_copy["_source"] = "games"
+                fallback_candidates.append(g_copy)
+
+        # Sort by score and take top 3
+        fallback_candidates.sort(
+            key=lambda x: clamp_score(x.get("final_score", x.get("total_score", 0))),
+            reverse=True
+        )
+        fallback_picks = fallback_candidates[:3]
+
+        if fallback_picks:
+            fallback_used = True
+            fallback_count = len(fallback_picks)
+            fallback_source = "candidates"
+
+            # Mark each fallback pick
+            for pick in fallback_picks:
+                # Force tier to MONITOR for fallback picks
+                pick["tier"] = "MONITOR"
+                pick["badge"] = "FALLBACK"
+                pick["fallback"] = True
+                pick["reasons"] = pick.get("reasons", []) + [
+                    "SYSTEM: FALLBACK_MONITOR_TOP3 (no EDGE_LEAN/GOLD_STAR qualified)"
+                ]
+
+                # Distribute to appropriate list based on source
+                source = pick.pop("_source", "props")
+                if source == "games":
+                    top_game_picks.append(pick)
+                else:
+                    top_props.append(pick)
+
+            logger.info(f"v10.42: Fallback activated - returned {fallback_count} MONITOR picks")
+
+            # Update props_result with fallback picks
+            props_result["picks"] = top_props
+            props_result["count"] = len(top_props)
+
+    # =========================================================================
+    # v10.42: FIX props_reason LOGIC (similar to games_reason)
+    # =========================================================================
+    props_candidates_count = len(props_picks)
+    props_picks_count = len(top_props)
+
+    if props_candidates_count == 0:
+        props_reason = "NO_PROP_CANDIDATES_AFTER_SCORING"
+    elif props_picks_count == 0 and not fallback_used:
+        props_reason = "NO_PROPS_QUALIFIED_MIN_SCORE"
+    elif fallback_used:
+        props_reason = "FALLBACK_MONITOR_USED"
+    else:
+        props_reason = "OK"
+
+    # v10.42: Update games_reason if fallback was used
+    if fallback_used and games_picks_count == 0:
+        games_reason = "FALLBACK_MONITOR_USED"
+
     result = {
         "sport": sport.upper(),
         "source": "production_v10.38",
@@ -6269,6 +6365,17 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "events_count": raw_events_count,
             "games_candidates_count": games_candidates_count,
             "games_picks_count": games_picks_count,
+            # v10.42: Props debug visibility (matching games pattern)
+            "props_reason": props_reason,
+            "props_candidates_count": props_candidates_count,
+            "props_after_filter_count": props_after_filter_count,
+            "props_picks_count": props_picks_count,
+            # v10.42: Games after filter count
+            "games_after_filter_count": games_after_filter_count,
+            # v10.42: Fallback debug
+            "fallback_used": fallback_used,
+            "fallback_count": fallback_count,
+            "fallback_source": fallback_source,
             # v10.41: Jason Sim 2.0 debug
             "jason_sim": jason_sim_debug
         }
