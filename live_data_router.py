@@ -6012,6 +6012,48 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "signals_generated": sum(len(_extract_signals_from_reasons(p.get("reasons", []))) for p in all_picks_to_save)
         }
 
+    # ================================================================
+    # v10.38: LOG PICKS TO AUTO-GRADER (JSONL format with deduplication)
+    # This enables the feedback loop - grader can grade picks and adjust weights
+    # ================================================================
+    grader_logged = 0
+    grader_duplicates = 0
+    grader_errors = 0
+
+    if AUTO_GRADER_AVAILABLE:
+        try:
+            grader = get_grader()
+
+            # Log prop picks
+            if top_props:
+                props_result_log = grader.log_picks_batch(top_props, sport, pick_type="prop")
+                grader_logged += props_result_log.get("logged", 0)
+                grader_duplicates += props_result_log.get("duplicates", 0)
+                grader_errors += props_result_log.get("errors", 0)
+
+            # Log game picks
+            if top_game_picks:
+                games_result_log = grader.log_picks_batch(top_game_picks, sport, pick_type="game")
+                grader_logged += games_result_log.get("logged", 0)
+                grader_duplicates += games_result_log.get("duplicates", 0)
+                grader_errors += games_result_log.get("errors", 0)
+
+            logger.info(f"grader_log sport={sport.upper()} logged={grader_logged} duplicates={grader_duplicates} errors={grader_errors}")
+
+        except Exception as e:
+            logger.warning(f"Grader logging failed: {e}")
+            grader_errors += 1
+
+    # Add grader logging info to debug output
+    if debug == 1:
+        result["debug"]["grader_logged"] = grader_logged
+        result["debug"]["grader_duplicates"] = grader_duplicates
+        result["debug"]["grader_errors"] = grader_errors
+        result["debug"]["grader_available"] = AUTO_GRADER_AVAILABLE
+
+    # Update top-level field for visibility
+    result["predictions_logged"] = grader_logged
+
     api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
     return result
 
@@ -6049,13 +6091,29 @@ async def grader_status():
         }
 
     grader = get_grader()  # Use singleton - CRITICAL for data persistence!
+
+    # v10.38: Get predictions logged from JSONL files (today)
+    predictions_logged_today = grader.get_predictions_logged_count()
+
+    # v10.38: Get grading stats for last 7 days
+    grading_stats = grader.get_grading_stats(days_back=7)
+
     return {
         "available": True,
         "supported_sports": grader.SUPPORTED_SPORTS,
-        "predictions_logged": sum(len(p) for p in grader.predictions.values()),
+        "predictions_logged_today": predictions_logged_today,
+        "predictions_logged_legacy": sum(len(p) for p in grader.predictions.values()),
+        "grading_stats_7d": {
+            "total_predictions": grading_stats.get("total_predictions", 0),
+            "total_graded": grading_stats.get("total_graded", 0),
+            "total_ungraded": grading_stats.get("total_ungraded", 0),
+            "wins": grading_stats.get("wins", 0),
+            "losses": grading_stats.get("losses", 0),
+            "hit_rate": grading_stats.get("hit_rate", 0.0)
+        },
         "weights_loaded": bool(grader.weights),
         "storage_path": grader.storage_path,
-        "note": "Use /grader/weights/{sport} to see current weights",
+        "note": "Use /grader/weights/{sport} to see current weights. v10.38: Now using JSONL logging.",
         "timestamp": datetime.now().isoformat()
     }
 

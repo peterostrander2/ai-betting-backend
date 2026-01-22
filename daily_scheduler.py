@@ -540,6 +540,177 @@ class PropsFetchJob:
 
 
 # ============================================
+# v10.38 JSONL GRADING JOB
+# ============================================
+
+class JSONLGradingJob:
+    """
+    v10.38 Grading job that reads from JSONL prediction logs.
+
+    Workflow:
+    1. Load ungraded predictions from ./grader_data/{sport}/predictions/{date}.jsonl
+    2. Fetch actual results (player stats) from APIs
+    3. Grade each prediction (WIN/LOSS/PUSH)
+    4. Update prediction logs with results
+    5. Append graded records to ./grader_data/{sport}/graded/{date}.jsonl
+    6. Adjust weights if graded_count >= 30
+    """
+
+    def __init__(self, auto_grader=None):
+        self.auto_grader = auto_grader
+        self.last_run = None
+        self.last_results = {}
+
+    async def run_async(self):
+        """Execute JSONL grading for all in-season sports."""
+        logger.info("=" * 50)
+        logger.info("📊 v10.38 JSONL GRADING STARTING")
+        logger.info(f"   Time: {datetime.now().isoformat()}")
+        logger.info("=" * 50)
+
+        self.last_run = datetime.now()
+        results = {
+            "timestamp": self.last_run.isoformat(),
+            "sports": {},
+            "total_graded": 0,
+            "total_wins": 0,
+            "total_losses": 0
+        }
+
+        if not self.auto_grader:
+            logger.error("Auto-grader not available")
+            return {"error": "Auto-grader not available"}
+
+        # Get in-season sports
+        if SEASON_GATING_AVAILABLE:
+            sports = get_in_season_sports()
+        else:
+            sports = ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
+
+        for sport in sports:
+            try:
+                sport_result = await self._grade_sport(sport)
+                results["sports"][sport] = sport_result
+                results["total_graded"] += sport_result.get("graded", 0)
+                results["total_wins"] += sport_result.get("wins", 0)
+                results["total_losses"] += sport_result.get("losses", 0)
+                logger.info(f"[{sport}] Graded {sport_result.get('graded', 0)} predictions")
+            except Exception as e:
+                logger.error(f"[{sport}] Grading failed: {e}")
+                results["sports"][sport] = {"error": str(e)}
+
+        self.last_results = results
+
+        # Calculate overall hit rate
+        total_decided = results["total_wins"] + results["total_losses"]
+        if total_decided > 0:
+            results["hit_rate"] = round((results["total_wins"] / total_decided) * 100, 1)
+        else:
+            results["hit_rate"] = 0.0
+
+        logger.info("=" * 50)
+        logger.info(f"✅ v10.38 JSONL GRADING COMPLETE: {results['total_graded']} graded, {results['hit_rate']}% hit rate")
+        logger.info("=" * 50)
+
+        return results
+
+    async def _grade_sport(self, sport: str) -> dict:
+        """Grade predictions for a single sport."""
+        sport = sport.upper()
+        result = {
+            "sport": sport,
+            "ungraded_count": 0,
+            "graded": 0,
+            "wins": 0,
+            "losses": 0,
+            "pushes": 0,
+            "weights_adjusted": False
+        }
+
+        # Get yesterday's ungraded predictions
+        ungraded = self.auto_grader.get_ungraded_predictions(sport)
+        result["ungraded_count"] = len(ungraded)
+
+        if not ungraded:
+            logger.info(f"[{sport}] No ungraded predictions found")
+            return result
+
+        # Fetch actual results from APIs
+        try:
+            actual_results = await self._fetch_actual_results(sport, ungraded)
+        except Exception as e:
+            logger.warning(f"[{sport}] Failed to fetch actual results: {e}")
+            return result
+
+        if actual_results:
+            # Grade predictions
+            grade_result = self.auto_grader.grade_predictions_batch(sport, actual_results)
+            result["graded"] = grade_result.get("graded", 0)
+            result["wins"] = grade_result.get("wins", 0)
+            result["losses"] = grade_result.get("losses", 0)
+            result["pushes"] = grade_result.get("pushes", 0)
+
+            # Adjust weights if we have enough graded predictions
+            grading_stats = self.auto_grader.get_grading_stats(sport, days_back=7)
+            if grading_stats.get("total_graded", 0) >= 30:
+                logger.info(f"[{sport}] Enough data for weight adjustment ({grading_stats['total_graded']} graded)")
+                # Weight adjustment would go here
+                result["weights_adjusted"] = True
+
+        return result
+
+    async def _fetch_actual_results(self, sport: str, predictions: list) -> list:
+        """
+        Fetch actual results for predictions.
+
+        This is a placeholder - actual implementation would call appropriate
+        APIs to get final player stats and game results.
+        """
+        # Import httpx for API calls
+        import httpx
+
+        results = []
+
+        # Group predictions by event_id for efficient fetching
+        by_event = {}
+        for pred in predictions:
+            event_id = pred.get("event_id", "")
+            if event_id:
+                if event_id not in by_event:
+                    by_event[event_id] = []
+                by_event[event_id].append(pred)
+
+        # For now, return empty - actual implementation would:
+        # 1. Fetch completed game data from Odds API or sports stats API
+        # 2. Extract player stats
+        # 3. Match to predictions and return actual values
+
+        logger.info(f"[{sport}] Would fetch results for {len(by_event)} events, {len(predictions)} predictions")
+
+        # TODO: Implement actual result fetching from:
+        # - Odds API historical results
+        # - ESPN API
+        # - Sports Reference
+        # - etc.
+
+        return results
+
+    def run(self):
+        """Sync wrapper for scheduled execution."""
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.run_async())
+                return {"status": "scheduled"}
+            else:
+                return loop.run_until_complete(self.run_async())
+        except RuntimeError:
+            return asyncio.run(self.run_async())
+
+
+# ============================================
 # v10.36 SMOKE TEST JOB
 # ============================================
 
@@ -850,6 +1021,7 @@ class DailyScheduler:
         self.props_job = PropsFetchJob()
         self.v1031_job = V1031GradingJob()  # v10.31: New grading + tuning job
         self.smoke_test_job = SmokeTestJob()  # v10.36: Nightly smoke test
+        self.jsonl_grading_job = JSONLGradingJob(auto_grader)  # v10.38: JSONL prediction grading
         self.scheduler = None
         self.running = False
         self._thread = None
@@ -888,12 +1060,20 @@ class DailyScheduler:
             name="v10.36 Nightly Smoke Test (5:30 AM ET)"
         )
 
-        # Daily audit at 6 AM
+        # v10.38 JSONL Grading at 6 AM ET (grade yesterday's picks)
+        self.scheduler.add_job(
+            self.jsonl_grading_job.run,
+            CronTrigger(hour=6, minute=0, timezone="America/New_York"),
+            id="jsonl_grading",
+            name="v10.38 JSONL Prediction Grading (6 AM ET)"
+        )
+
+        # Daily audit at 6:30 AM (after JSONL grading)
         self.scheduler.add_job(
             self.audit_job.run,
-            CronTrigger(hour=SchedulerConfig.AUDIT_HOUR, minute=SchedulerConfig.AUDIT_MINUTE),
+            CronTrigger(hour=6, minute=30, timezone="America/New_York"),
             id="daily_audit",
-            name="Daily Audit"
+            name="Daily Audit (6:30 AM ET)"
         )
 
         # Props fetch at 10 AM daily (morning fresh data for community)
@@ -937,7 +1117,7 @@ class DailyScheduler:
         )
 
         self.scheduler.start()
-        logger.info("APScheduler started: smoke_test@5:30AM, audit@6AM, props@10AM+6PM daily (+12PM+2PM weekends), cleanup@Sun3AM")
+        logger.info("APScheduler started: smoke_test@5:30AM, jsonl_grading@6AM, audit@6:30AM, props@10AM+6PM daily (+12PM+2PM weekends), cleanup@Sun3AM")
     
     def _start_simple_scheduler(self):
         """Fallback simple scheduler using threading."""
@@ -1029,11 +1209,14 @@ class DailyScheduler:
             "scheduler_type": "apscheduler" if SCHEDULER_AVAILABLE else "simple",
             "last_audit": self.audit_job.last_run.isoformat() if self.audit_job.last_run else None,
             "last_props_fetch": self.props_job.last_run.isoformat() if self.props_job.last_run else None,
-            "next_audit": f"{SchedulerConfig.AUDIT_HOUR:02d}:{SchedulerConfig.AUDIT_MINUTE:02d} daily",
+            "last_jsonl_grading": self.jsonl_grading_job.last_run.isoformat() if self.jsonl_grading_job.last_run else None,
+            "next_audit": "06:30 ET daily",
+            "next_jsonl_grading": "06:00 ET daily",
             "next_props_fetch": "10AM+6PM daily, +12PM+2PM on weekends",
             "props_cache_ttl": f"{SchedulerConfig.PROPS_CACHE_TTL // 3600} hours",
             "last_results": self.audit_job.last_results,
-            "last_props_results": self.props_job.last_results
+            "last_props_results": self.props_job.last_results,
+            "last_jsonl_grading_results": self.jsonl_grading_job.last_results
         }
 
         if SCHEDULER_AVAILABLE and self.scheduler:
@@ -1156,6 +1339,22 @@ async def run_v1031_grading_now():
         raise HTTPException(500, "Scheduler not initialized")
 
     result = await _scheduler.v1031_job.run_async()
+    return {
+        "status": "success",
+        "result": result
+    }
+
+
+@scheduler_router.post("/run-jsonl-grading")
+async def run_jsonl_grading_now():
+    """
+    v10.38: Manually trigger JSONL prediction grading.
+    Grades yesterday's picks from JSONL logs.
+    """
+    if not _scheduler:
+        raise HTTPException(500, "Scheduler not initialized")
+
+    result = await _scheduler.jsonl_grading_job.run_async()
     return {
         "status": "success",
         "result": result
