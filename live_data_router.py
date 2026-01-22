@@ -1998,23 +1998,24 @@ async def system_health():
     health["components"]["ai_models"] = ai_models
 
     # 6. Pillars Status (which have data sources)
+    # v10.35: Hospital Fade and Hook Discipline now active
     pillars = {
         "active": [
             {"name": "Sharp Split", "data_source": "Playbook API splits", "status": "ACTIVE"},
             {"name": "Reverse Line Movement", "data_source": "Playbook API line_variance", "status": "ACTIVE"},
             {"name": "Public Fade", "data_source": "Playbook API public%", "status": "ACTIVE"},
+            {"name": "Hospital Fade", "data_source": "Injuries API (v10.35)", "status": "ACTIVE"},
             {"name": "Home Court", "data_source": "Game data", "status": "ACTIVE"},
             {"name": "Rest Advantage", "data_source": "Schedule data", "status": "ACTIVE"},
             {"name": "Prime Time", "data_source": "Game time", "status": "ACTIVE"},
+            {"name": "Hook Discipline", "data_source": "Spread value (v10.35)", "status": "ACTIVE"},
             {"name": "Mid-Spread Boss Zone", "data_source": "Spread value", "status": "ACTIVE"},
             {"name": "Multi-Pillar Confluence", "data_source": "Calculated", "status": "ACTIVE"}
         ],
         "inactive": [
-            {"name": "Hospital Fade", "reason": "No injury impact data feeding scorer", "fix": "Connect injuries API to pillar"},
-            {"name": "Expert Consensus", "reason": "No expert picks API", "fix": "Add consensus data source"},
-            {"name": "Hook Discipline", "reason": "Logic not implemented", "fix": "Add -3.5/+6.5 penalty logic"}
+            {"name": "Expert Consensus", "reason": "No expert picks API", "fix": "Add consensus data source"}
         ],
-        "active_count": 8,
+        "active_count": 10,
         "total_defined": 11
     }
     health["components"]["pillars"] = pillars
@@ -3358,6 +3359,25 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         game_key = f"{signal.get('away_team')}@{signal.get('home_team')}"
         sharp_lookup[game_key] = signal
 
+    # v10.35: Fetch injuries for Hospital Fade pillar
+    injuries_data = await get_injuries(sport)
+    injuries_by_team = {}  # team_name -> {"count": N, "key_players": [...], "severity_score": N}
+    for injury in injuries_data.get("data", []):
+        team = injury.get("team", "")
+        if not team:
+            continue
+        if team not in injuries_by_team:
+            injuries_by_team[team] = {"count": 0, "key_players": [], "severity_score": 0}
+        injuries_by_team[team]["count"] += 1
+        # Track key players (starters, high-impact)
+        status = injury.get("status", "").lower()
+        player_name = injury.get("player", "") or injury.get("name", "")
+        if status in ("out", "doubtful"):
+            injuries_by_team[team]["key_players"].append(player_name)
+            injuries_by_team[team]["severity_score"] += 2 if status == "out" else 1
+        elif status in ("questionable", "probable"):
+            injuries_by_team[team]["severity_score"] += 0.5
+
     # Get esoteric engines for enhanced scoring
     jarvis = get_jarvis_savant()
     vedic = get_vedic_astro()
@@ -3771,6 +3791,37 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 pillar_boost += boost
                 research_reasons.append(f"RESEARCH: Public Trap (with public) {boost:.2f}")
 
+        # v10.35 Pillar: Hospital Fade - boost when opponent has significant injuries
+        # Determine which team we're betting on and check opponent injuries
+        if is_game_pick and home_team and away_team:
+            mw_hospital = get_mw("PILLAR_HOSPITAL_FADE")
+            # For game picks, determine our team based on is_home or pick direction
+            our_team = home_team if is_home else away_team
+            opp_team = away_team if is_home else home_team
+
+            opp_injuries = injuries_by_team.get(opp_team, {})
+            our_injuries = injuries_by_team.get(our_team, {})
+            opp_severity = opp_injuries.get("severity_score", 0)
+            our_severity = our_injuries.get("severity_score", 0)
+            opp_key_out = len(opp_injuries.get("key_players", []))
+            our_key_out = len(our_injuries.get("key_players", []))
+
+            # Boost if opponent has significant injuries (fading the hospital)
+            if opp_severity >= 3 or opp_key_out >= 2:
+                boost = 0.5 * mw_hospital
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Hospital Fade ({opp_team} {opp_key_out} key out) +{boost:.2f}")
+            elif opp_severity >= 1.5 or opp_key_out >= 1:
+                boost = 0.25 * mw_hospital
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Hospital Fade ({opp_team} banged up) +{boost:.2f}")
+
+            # Penalty if our team has significant injuries
+            if our_severity >= 3 or our_key_out >= 2:
+                penalty = -0.4 * mw_hospital
+                pillar_boost += penalty
+                research_reasons.append(f"RESEARCH: Injury Concern ({our_team} {our_key_out} key out) {penalty:.2f}")
+
         # ========== SHARP-INDEPENDENT PILLARS (v10.3) ==========
         # Pillar 4: Home Court Advantage (game picks only)
         if is_game_pick and is_home:
@@ -3836,6 +3887,22 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             boost = 0.2 * mw_goldilocks
             pillar_boost += boost
             research_reasons.append(f"RESEARCH: Mid-Spread Boss Zone +{boost:.2f}")
+
+        # v10.35 Pillar: Hook Discipline - penalty for key numbers (high push/bad value zones)
+        # Key numbers in NFL/NBA: 3, 7 (and their hooks -3.5, +3.5, -7.5, +7.5)
+        # Also -6.5, +6.5 (dead zone)
+        if is_game_pick and spread is not None:
+            mw_hook = get_mw("PILLAR_HOOK_DISCIPLINE")
+            hook_numbers = [3.5, -3.5, 6.5, -6.5, 7.5, -7.5, 10.5, -10.5, 13.5, -13.5, 14.5, -14.5]
+            if spread in hook_numbers:
+                penalty = -0.3 * mw_hook
+                pillar_boost += penalty
+                research_reasons.append(f"RESEARCH: Hook Penalty ({spread} = dead zone) {penalty:.2f}")
+            # Clean key numbers get a small boost
+            elif spread in [3.0, -3.0, 7.0, -7.0, 10.0, -10.0, 14.0, -14.0]:
+                boost = 0.15 * mw_hook
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: Key Number ({spread} = clean) +{boost:.2f}")
 
         # Pillar 8: Trap Gate (penalty)
         if abs_spread > 15:
