@@ -127,6 +127,14 @@ try:
     AI_ENGINE_AVAILABLE = True
 except ImportError:
     AI_ENGINE_AVAILABLE = False
+
+# v10.36: Import Context Layer for defensive rankings + pace adjustments
+try:
+    from context_layer import DefensiveRankService, PaceVectorService
+    CONTEXT_LAYER_AVAILABLE = True
+except ImportError:
+    CONTEXT_LAYER_AVAILABLE = False
+    logger.warning("context_layer module not available - matchup adjustments disabled")
     logger.warning("ai_engine_layer module not available - using defaults")
 
 # Redis import with fallback
@@ -1989,13 +1997,30 @@ async def system_health():
     # 5. AI Models
     ai_models = {
         "master_prediction_system": MASTER_PREDICTION_AVAILABLE,
+        "ai_engine_layer": AI_ENGINE_AVAILABLE,
         "models": [
             "ensemble", "lstm", "monte_carlo", "line_movement",
             "rest_fatigue", "injury_impact", "matchup_model", "edge_calculator"
         ],
-        "all_active": MASTER_PREDICTION_AVAILABLE
+        "all_active": AI_ENGINE_AVAILABLE,
+        "injury_context_wired": True  # v10.36: Now using real injury data
     }
     health["components"]["ai_models"] = ai_models
+
+    # 5b. Context Layer (v10.36: Now connected!)
+    context_layer = {
+        "available": CONTEXT_LAYER_AVAILABLE,
+        "features": [
+            "Defensive Rankings (5 sports × positions)",
+            "Pace/Tempo Metrics (all sports)",
+            "Matchup Adjustments (props)",
+            "Pace Adjustments (totals/props)"
+        ],
+        "status": "ACTIVE" if CONTEXT_LAYER_AVAILABLE else "UNAVAILABLE"
+    }
+    health["components"]["context_layer"] = context_layer
+    if not CONTEXT_LAYER_AVAILABLE:
+        issues.append("Context layer unavailable - matchup adjustments disabled")
 
     # 6. Pillars Status (which have data sources)
     # v10.35: Hospital Fade and Hook Discipline now active
@@ -3689,13 +3714,19 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "away_team": away_team,
             "is_home": is_home
         }
+        # v10.36: Wire real injury data to AI Engine (was hardcoded False)
+        our_team_ctx = home_team if is_home else away_team
+        opp_team_ctx = away_team if is_home else home_team
+        our_injuries_ctx = injuries_by_team.get(our_team_ctx, {})
+        opp_injuries_ctx = injuries_by_team.get(opp_team_ctx, {})
+
         ai_context_data = {
             "team_rest_days": team_rest_days,
             "opp_rest_days": opp_rest_days,
-            "key_player_out": False,  # Future: wire from injury data
-            "opp_key_player_out": False,
-            "injury_count": 0,
-            "opp_injury_count": 0
+            "key_player_out": len(our_injuries_ctx.get("key_players", [])) >= 1,
+            "opp_key_player_out": len(opp_injuries_ctx.get("key_players", [])) >= 1,
+            "injury_count": our_injuries_ctx.get("count", 0),
+            "opp_injury_count": opp_injuries_ctx.get("count", 0)
         }
 
         # Call AI Engine
@@ -3948,6 +3979,67 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             boost = 0.3 * mw_multi
             pillar_boost += boost
             research_reasons.append(f"RESEARCH: Multi-Pillar Confluence +{boost:.2f}")
+
+        # v10.36 Context Layer: Defensive Matchup + Pace Adjustments
+        # These use context_layer.py data that was previously disconnected
+        context_adjustment = 0.0
+        if CONTEXT_LAYER_AVAILABLE and not is_game_pick and player_name and away_team:
+            # For props: check defensive matchup
+            # Infer position from stat_type (simple heuristic)
+            position = "Guard"  # default
+            if market and "rebound" in market.lower():
+                position = "Big"
+            elif market and ("assist" in market.lower() or "point" in market.lower()):
+                position = "Guard"
+            elif market and "three" in market.lower():
+                position = "Wing"
+
+            # Determine opponent team (player is on one team, facing the other)
+            opponent_team = away_team if player_team_side == "HOME" else home_team
+
+            # Get defensive rank adjustment
+            matchup_adj = DefensiveRankService.get_matchup_adjustment(
+                sport=sport.upper(),
+                team=opponent_team,
+                position=position,
+                player_avg=prop_line or 15.0  # Use prop line as proxy for player average
+            )
+            if matchup_adj:
+                # Convert matchup adjustment to score modifier (capped at ±0.3)
+                adj_value = matchup_adj.get("value", 0)
+                if adj_value > 0:
+                    # Soft matchup = boost
+                    context_boost = min(0.3, adj_value / 10)
+                    context_adjustment += context_boost
+                    research_reasons.append(f"CONTEXT: Soft Matchup vs {opponent_team[:3]} +{context_boost:.2f}")
+                elif adj_value < 0:
+                    # Tough matchup = penalty
+                    context_penalty = max(-0.3, adj_value / 10)
+                    context_adjustment += context_penalty
+                    research_reasons.append(f"CONTEXT: Tough Matchup vs {opponent_team[:3]} {context_penalty:.2f}")
+
+        # v10.36 Context Layer: Pace adjustment for game totals and props
+        if CONTEXT_LAYER_AVAILABLE and home_team and away_team:
+            pace_adj = PaceVectorService.get_pace_adjustment(
+                sport=sport.upper(),
+                team1=home_team,
+                team2=away_team
+            )
+            if pace_adj:
+                pace_value = pace_adj.get("value", 0)
+                # Fast pace = slight boost for OVER/high stat props
+                # Slow pace = slight boost for UNDER/low stat props
+                if pace_value > 0:
+                    pace_boost = min(0.2, pace_value / 20)
+                    context_adjustment += pace_boost
+                    research_reasons.append(f"CONTEXT: Fast Pace +{pace_boost:.2f}")
+                elif pace_value < 0:
+                    pace_penalty = max(-0.2, pace_value / 20)
+                    context_adjustment += pace_penalty
+                    research_reasons.append(f"CONTEXT: Slow Pace {pace_penalty:.2f}")
+
+        # Apply context adjustment to pillar_boost
+        pillar_boost += context_adjustment
 
         # Cap pillar_boost at 3.0 to prevent inflation
         pillar_boost = max(-1.0, min(3.0, float(pillar_boost)))
