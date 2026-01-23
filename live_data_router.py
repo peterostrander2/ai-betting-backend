@@ -1,4 +1,5 @@
-# live_data_router.py v15.0 - SCORING v10.43
+# live_data_router.py v15.0 - SCORING v10.52
+# v10.52: Time Gate (Same Day ET + Not Started) + team/opponent/game_time_et labels
 # v10.43: Publish Gate (dominance dedup + quality gate + correlation penalty)
 # v10.42: Universal fallback guarantee + debug counters + games_reason fix
 # v10.41: Jason Sim 2.0 Post-Pick Confluence Layer (BOOST/DOWNGRADE/BLOCK)
@@ -3554,6 +3555,187 @@ def is_daytime_et() -> bool:
     return 8 <= hour <= 23
 
 
+# ============================================================================
+# v10.52: TIME GATE - Same Day ET + Not Started
+# Filters out picks for games that are:
+# - NOT on the same America/New_York (ET) calendar day as now
+# - Already started (with 180s grace for clock drift)
+# ============================================================================
+
+try:
+    from zoneinfo import ZoneInfo
+    ET_TIMEZONE = ZoneInfo("America/New_York")
+    ZONEINFO_AVAILABLE = True
+except ImportError:
+    ET_TIMEZONE = None
+    ZONEINFO_AVAILABLE = False
+    logger.warning("zoneinfo not available - time gate will use fallback")
+
+
+def parse_utc_iso(iso: str) -> Optional[datetime]:
+    """Parse a UTC ISO timestamp string to datetime. Returns None on failure."""
+    if not iso:
+        return None
+    try:
+        # Handle various ISO formats
+        cleaned = iso.replace("Z", "+00:00")
+        return datetime.fromisoformat(cleaned)
+    except Exception:
+        return None
+
+
+def get_now_et() -> datetime:
+    """Get current datetime in Eastern Time."""
+    if ZONEINFO_AVAILABLE and ET_TIMEZONE:
+        return datetime.now(ET_TIMEZONE)
+    else:
+        # Fallback: UTC-5 (doesn't handle DST but better than nothing)
+        from datetime import timezone
+        now_utc = datetime.now(timezone.utc)
+        return now_utc.replace(tzinfo=None) - timedelta(hours=5)
+
+
+def convert_to_et(dt_utc: datetime) -> datetime:
+    """Convert a UTC datetime to Eastern Time."""
+    if ZONEINFO_AVAILABLE and ET_TIMEZONE:
+        if dt_utc.tzinfo is None:
+            # Assume UTC if no timezone
+            from datetime import timezone
+            dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+        return dt_utc.astimezone(ET_TIMEZONE)
+    else:
+        # Fallback: subtract 5 hours
+        return dt_utc.replace(tzinfo=None) - timedelta(hours=5)
+
+
+def format_et_display(dt_et: datetime) -> str:
+    """Format ET datetime for display (e.g., '2026-01-23 7:30 PM ET')."""
+    return dt_et.strftime("%Y-%m-%d %-I:%M %p ET")
+
+
+def is_today_and_not_started(game_time_iso: str, grace_seconds: int = 180) -> tuple:
+    """
+    Check if a game is on today's ET calendar day and hasn't started yet.
+
+    Args:
+        game_time_iso: ISO timestamp of game start (UTC)
+        grace_seconds: Grace period for clock drift (default 180s = 3 min)
+
+    Returns:
+        tuple: (is_valid: bool, reason: str, game_time_et: datetime|None)
+        Reasons: "ok", "missing_time", "not_today", "already_started"
+    """
+    dt_utc = parse_utc_iso(game_time_iso)
+    if not dt_utc:
+        return False, "missing_time", None
+
+    now_et = get_now_et()
+    dt_et = convert_to_et(dt_utc)
+
+    # Check same calendar day in ET
+    if dt_et.date() != now_et.date():
+        return False, "not_today", dt_et
+
+    # Check not already started (with grace window)
+    grace_cutoff = now_et - timedelta(seconds=grace_seconds)
+    if dt_et <= grace_cutoff:
+        return False, "already_started", dt_et
+
+    return True, "ok", dt_et
+
+
+def apply_time_gate(picks: List[Dict[str, Any]], grace_seconds: int = 180) -> tuple:
+    """
+    Filter picks to only include games that are today (ET) and not started.
+
+    Args:
+        picks: List of pick dictionaries (must have game_time field)
+        grace_seconds: Grace period for clock drift
+
+    Returns:
+        tuple: (filtered_picks, time_gate_debug)
+    """
+    now_et = get_now_et()
+
+    debug = {
+        "now_et": now_et.isoformat() if hasattr(now_et, 'isoformat') else str(now_et),
+        "grace_seconds": grace_seconds,
+        "candidates_before_time_gate": len(picks),
+        "candidates_after_time_gate": 0,
+        "removed_not_today": 0,
+        "removed_already_started": 0,
+        "removed_missing_time": 0
+    }
+
+    filtered = []
+    for pick in picks:
+        # Get game time from various possible fields
+        game_time_iso = (
+            pick.get("game_time") or
+            pick.get("commence_time") or
+            pick.get("start_time") or
+            ""
+        )
+
+        is_valid, reason, dt_et = is_today_and_not_started(game_time_iso, grace_seconds)
+
+        if is_valid:
+            # Enrich pick with ET time for display
+            if dt_et:
+                pick["game_time_et"] = format_et_display(dt_et)
+            filtered.append(pick)
+        else:
+            # Track removal reason
+            if reason == "not_today":
+                debug["removed_not_today"] += 1
+            elif reason == "already_started":
+                debug["removed_already_started"] += 1
+            elif reason == "missing_time":
+                debug["removed_missing_time"] += 1
+
+    debug["candidates_after_time_gate"] = len(filtered)
+
+    return filtered, debug
+
+
+def ensure_pick_labels(pick: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensure pick has team and opponent labels for display.
+    Extracts from available fields if not already present.
+    """
+    # Ensure team label
+    if not pick.get("team"):
+        pick["team"] = (
+            pick.get("player_team") or
+            pick.get("team_abbr") or
+            pick.get("home_team") or
+            pick.get("away_team") or
+            "TBD"
+        )
+
+    # Ensure opponent label
+    if not pick.get("opponent"):
+        home = pick.get("home_team", "")
+        away = pick.get("away_team", "")
+        team = pick.get("team", "")
+
+        # If we know team, opponent is the other
+        if team and home and away:
+            pick["opponent"] = away if team.upper() == home.upper() else home
+        else:
+            pick["opponent"] = home or away or "TBD"
+
+    # Ensure game_time_et if we have game_time
+    if not pick.get("game_time_et"):
+        game_time_iso = pick.get("game_time") or pick.get("commence_time", "")
+        dt_utc = parse_utc_iso(game_time_iso)
+        if dt_utc:
+            dt_et = convert_to_et(dt_utc)
+            pick["game_time_et"] = format_et_display(dt_et)
+
+    return pick
+
+
 @router.get("/odds/{sport}")
 async def get_odds(sport: str, debug: int = 0, auth: bool = Depends(verify_api_key)):
     """
@@ -4173,6 +4355,27 @@ async def get_best_bets_all(debug: int = 0):
             debug_info["jason_sim"]["by_sport"][sport.upper()]["error"] = str(e)
 
     # =========================================================================
+    # v10.52: TIME GATE - Same Day ET + Not Started
+    # Filter out picks for games NOT on today's ET calendar day or already started
+    # Apply EARLY to avoid wasting compute on expired/future picks
+    # =========================================================================
+
+    GRACE_SECONDS = 180  # 3 minute grace window for clock drift
+
+    # Apply time gate to all collected picks
+    all_picks_time_gated, time_gate_debug = apply_time_gate(all_picks_raw, GRACE_SECONDS)
+
+    # Ensure all picks have team/opponent labels and game_time_et
+    for pick in all_picks_time_gated:
+        ensure_pick_labels(pick)
+
+    # Update all_picks_raw to use the time-gated list
+    all_picks_raw = all_picks_time_gated
+
+    # Store time gate debug
+    debug_info["time_gate"] = time_gate_debug
+
+    # =========================================================================
     # v10.51: 2-TIER PUBLISHING SYSTEM
     # TIER A: OFFICIAL CARD (GOLD_STAR + EDGE_LEAN, score >= 7.05)
     # TIER B: ACTION LEANS (6.70 <= score < 7.05, max 10 picks)
@@ -4306,6 +4509,8 @@ async def get_best_bets_all(debug: int = 0):
             pick["reasons"] = pick.get("reasons", []) + [
                 "SYSTEM: GLOBAL_FALLBACK_TOP3 (no EDGE_LEAN/GOLD_STAR qualified across all sports)"
             ]
+            # v10.52: Ensure labels on fallback picks too
+            ensure_pick_labels(pick)
 
         all_picks_final = fallback_pool
         global_gate_debug["published_total"] = len(fallback_pool)
@@ -4315,8 +4520,8 @@ async def get_best_bets_all(debug: int = 0):
 
     # Build response
     result = {
-        "source": "production_v10.51_all_sports",
-        "scoring_system": "v10.51: 2-tier publishing (Official Card + Action Leans)",
+        "source": "production_v10.52_all_sports",
+        "scoring_system": "v10.52: Time-gated 2-tier publishing (Same Day ET + Not Started)",
         "all_picks": {
             "count": len(all_picks_final),
             "picks": all_picks_final
