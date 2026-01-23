@@ -6438,6 +6438,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
                 # Build the prop pick object
                 prop_pick = {
+                    "sport": sport.upper(),  # v10.57: Required for validators
                     "player": player,
                     "player_name": player,  # Alias for frontend compatibility
                     "market": market,
@@ -6852,6 +6853,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                                 badges_game.append("NHL_ML_DOG")
 
                             game_picks.append({
+                                "sport": sport.upper(),  # v10.57: For consistency with props
                                 "pick_type": pick_type,
                                 "pick": display,
                                 "team": pick_name if market_key != "totals" else None,
@@ -6944,6 +6946,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 badges.append("GOLD_STAR")
 
             game_picks.append({
+                "sport": sport.upper(),  # v10.57: For consistency with props
                 "pick_type": "SHARP",
                 "pick": f"Sharp on {signal.get('side', 'HOME')}",
                 "team": side_team,
@@ -7472,17 +7475,15 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         # -----------------------------------------------------------------
         # Step 1: Prop Integrity Validation (required fields, team checks)
         # -----------------------------------------------------------------
+        # Note: Only run on props - game picks have different structure
+        # (bet_type instead of market, no player_name)
         valid_props, dropped_props, integrity_drops = validate_props_batch(
             top_props, log_drops=True, max_log_drops=10
         )
-        valid_games, dropped_games, games_integrity_drops = validate_props_batch(
-            top_game_picks, log_drops=True, max_log_drops=10
-        )
+        valid_games = top_game_picks  # Game picks skip prop integrity check
 
         # Aggregate drop reasons
         for reason, count in integrity_drops.items():
-            all_drop_reasons[reason] = all_drop_reasons.get(reason, 0) + count
-        for reason, count in games_integrity_drops.items():
             all_drop_reasons[reason] = all_drop_reasons.get(reason, 0) + count
 
         # -----------------------------------------------------------------
