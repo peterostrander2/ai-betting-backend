@@ -6249,8 +6249,27 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     # ============================================
     props_picks = []
     props_data = {"data": [], "source": "none"}  # Default fallback
+    dk_market_index = {}  # v10.57: Initialize before try block for scope
     try:
         props_data = await get_props(sport)
+
+        # v10.57: Build DK market index from raw props feed for market_availability validation
+        # This ensures we only publish props that are actually available on DraftKings
+        if VALIDATORS_AVAILABLE:
+            raw_props_for_index = []
+            for game in props_data.get("data", []):
+                game_id = game.get("game_id", "")
+                for prop in game.get("props", []):
+                    raw_props_for_index.append({
+                        "sport": sport_lower.upper(),
+                        "game_id": game_id,
+                        "player_name": prop.get("player", ""),
+                        "market": prop.get("market", ""),
+                        "line": prop.get("line", 0),
+                        "side": prop.get("side", "Over")
+                    })
+            dk_market_index = build_dk_market_index(raw_props_for_index)
+            logger.debug(f"v10.57: Built DK market index with {len(dk_market_index)} entries")
 
         # v10.14: Fetch Playbook rosters for player-team mapping
         playbook_roster = await fetch_playbook_rosters(sport)
@@ -7487,6 +7506,24 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 all_drop_reasons[reason] = all_drop_reasons.get(reason, 0) + count
             for reason, count in games_inj_drops.items():
                 all_drop_reasons[reason] = all_drop_reasons.get(reason, 0) + count
+
+        # -----------------------------------------------------------------
+        # Step 3: Market Availability Validation (DK market listing check)
+        # -----------------------------------------------------------------
+        # CRITICAL: Ensures we don't publish props that aren't listed on DK
+        # Example: Deni Avdija has no props listed -> should be blocked
+        if dk_market_index:
+            valid_props, mkt_dropped_props, mkt_drops = validate_props_batch_market(
+                valid_props, dk_market_index, log_drops=True, max_log_drops=10
+            )
+            # Note: Game picks don't need market validation (spreads/totals always available)
+
+            # Aggregate market drop reasons
+            for reason, count in mkt_drops.items():
+                all_drop_reasons[reason] = all_drop_reasons.get(reason, 0) + count
+
+            validator_debug["dk_market_index_size"] = len(dk_market_index)
+            validator_debug["market_drops"] = sum(mkt_drops.values())
 
         # Update top_props and top_game_picks with validated picks
         top_props = valid_props
