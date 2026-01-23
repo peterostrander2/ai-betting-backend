@@ -179,6 +179,14 @@ except ImportError:
     PUBLISH_GATE_AVAILABLE = False
     logger.warning("publish_gate module not available - using legacy filtering")
 
+# v10.56: Import Pick Filter (caps + correlation + UNDER penalty)
+try:
+    from pick_filter import filter_best_bets, get_filter_stats
+    PICK_FILTER_AVAILABLE = True
+except ImportError:
+    PICK_FILTER_AVAILABLE = False
+    logger.warning("pick_filter module not available - skipping final filter")
+
 # Redis import with fallback
 try:
     import redis
@@ -7458,6 +7466,42 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     else:
         logger.debug("Publish Gate: Module not available, using legacy filtering")
 
+    # =========================================================================
+    # v10.56: PICK FILTER (Final caps + correlation + UNDER penalty)
+    # =========================================================================
+    # Applies AFTER publish_gate:
+    # - UNDER penalty (-0.15) with re-tier
+    # - Daily caps: GOLD_STAR=5, EDGE_LEAN=8, Total=13
+    # - Correlation limits: 1 GOLD_STAR/player, 2 total/player, 3/game
+    # =========================================================================
+    pick_filter_debug = {
+        "available": PICK_FILTER_AVAILABLE,
+        "props_before": len(top_props),
+        "props_after": 0,
+        "games_before": len(top_game_picks),
+        "games_after": 0
+    }
+
+    if PICK_FILTER_AVAILABLE:
+        # Combine props and game_picks for unified filtering
+        all_picks_before = top_props + top_game_picks
+        all_picks_filtered = filter_best_bets(all_picks_before, sport_lower.upper())
+
+        # Split back into props and game_picks
+        top_props = [p for p in all_picks_filtered if p.get("stat_type") or p.get("player_name")]
+        top_game_picks = [p for p in all_picks_filtered if not p.get("stat_type") and not p.get("player_name")]
+
+        # If game picks got mixed in with props (no player_name), use market field
+        if not top_game_picks:
+            top_game_picks = [p for p in all_picks_filtered if p.get("market") in ("spreads", "totals", "h2h")]
+            top_props = [p for p in all_picks_filtered if p not in top_game_picks]
+
+        pick_filter_debug["props_after"] = len(top_props)
+        pick_filter_debug["games_after"] = len(top_game_picks)
+        pick_filter_debug["total_after"] = len(all_picks_filtered)
+
+        logger.info(f"Pick Filter: {len(all_picks_before)} -> {len(all_picks_filtered)} picks (props: {pick_filter_debug['props_before']}->{pick_filter_debug['props_after']}, games: {pick_filter_debug['games_before']}->{pick_filter_debug['games_after']})")
+
     # Rebuild merged_picks after filtering and sorting
     merged_picks = []
     merged_picks.extend(top_game_picks[:3])
@@ -7724,6 +7768,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "jason_sim": jason_sim_debug,
             # v10.43: Publish Gate debug (dominance dedup + quality gate)
             "publish_gate": publish_gate_debug,
+            # v10.56: Pick Filter debug (caps + correlation + UNDER penalty)
+            "pick_filter": pick_filter_debug,
             # v10.45: Odds diagnostic metrics
             "odds_metrics": {
                 "provider_status": odds_provider_status,
