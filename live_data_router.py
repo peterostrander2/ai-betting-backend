@@ -1668,7 +1668,7 @@ def generate_correlation_group_id(player_name: str, cluster: str, side: str) -> 
     # Normalize player name (remove spaces, title case)
     normalized = player_name.replace(" ", "").replace(".", "").replace("'", "")
 
-    return f"PLAYER:{normalized}:{cluster}:{side.upper()}"
+    return f"PLAYER:{normalized}:{cluster}:{(side or '').upper()}"  # v10.47: defensive None
 
 
 def get_correlation_type(market1: str, market2: str) -> str:
@@ -1709,7 +1709,7 @@ def enrich_prop_with_correlation(prop: dict) -> dict:
     """
     player_name = prop.get("player", prop.get("player_name", ""))
     market = prop.get("market", "")
-    side = prop.get("over_under", prop.get("side", "")).upper()
+    side = (prop.get("over_under") or prop.get("side") or "").upper()  # v10.47: defensive None
 
     # Identify correlation cluster
     cluster = get_correlation_cluster(market)
@@ -3996,6 +3996,18 @@ async def get_best_bets_all(debug: int = 0):
             in_season_sports.append(sport)
             debug_info["sports_in_season"].append(sport.upper())
 
+    # v10.47: Pre-initialize jason_sim.by_sport for all in-season sports
+    for sport in in_season_sports:
+        debug_info["jason_sim"]["by_sport"][sport.upper()] = {
+            "status": "PENDING",
+            "games_checked": 0,
+            "games_matched": 0,
+            "boosted": 0,
+            "downgraded": 0,
+            "blocked": 0,
+            "missing_payload": 0
+        }
+
     # Collect picks from each sport
     by_sport = {}
     all_picks_raw = []
@@ -4057,7 +4069,12 @@ async def get_best_bets_all(debug: int = 0):
                 debug_info["jason_sim"]["missing_payload"] += sport_jason_sim.get("missing_payload", 0)
                 if sport_jason_sim.get("no_payloads_uploaded"):
                     debug_info["jason_sim"]["no_payloads_uploaded"] = True
+                # v10.47: Mark status OK and merge jason_sim data
+                sport_jason_sim["status"] = "OK"
                 debug_info["jason_sim"]["by_sport"][sport.upper()] = sport_jason_sim
+            else:
+                # v10.47: No jason_sim data but no error - mark as OK with empty metrics
+                debug_info["jason_sim"]["by_sport"][sport.upper()]["status"] = "OK"
 
             debug_info["sports_returned_picks"][sport.upper()] = {
                 "props": len(props_picks),
@@ -4075,14 +4092,28 @@ async def get_best_bets_all(debug: int = 0):
             }
 
         except Exception as e:
-            logger.warning(f"Error fetching best-bets for {sport}: {e}")
-            debug_info["sports_errors"][sport.upper()] = str(e)
+            # v10.47: Structured error object for actionable debugging
+            import traceback
+            tb = traceback.extract_tb(e.__traceback__)
+            last_frame = tb[-1] if tb else None
+            error_location = f"{last_frame.filename}:{last_frame.lineno}" if last_frame else "unknown"
+            logger.warning(f"Error fetching best-bets for {sport}: {e} at {error_location}")
+            debug_info["sports_errors"][sport.upper()] = {
+                "message": str(e),
+                "type": type(e).__name__,
+                "error_at": error_location,
+                "function": last_frame.name if last_frame else "unknown"
+            }
             by_sport[sport.upper()] = {
                 "props": {"count": 0, "picks": []},
                 "game_picks": {"count": 0, "picks": []},
                 "total_picks": 0,
-                "error": str(e)
+                "error": str(e),
+                "error_at": error_location
             }
+            # v10.47: Mark jason_sim status as ERROR for this sport
+            debug_info["jason_sim"]["by_sport"][sport.upper()]["status"] = "ERROR"
+            debug_info["jason_sim"]["by_sport"][sport.upper()]["error"] = str(e)
 
     # Apply GLOBAL publish gate to merged picks
     global_gate_debug = {
@@ -5573,7 +5604,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 market = prop.get("market", "")
                 line = prop.get("line", 0)
                 odds = prop.get("odds", -110)
-                side = prop.get("side", "Over")
+                # v10.47: Handle None values from Odds API (key exists but value is null)
+                side = prop.get("side") or "Over"
 
                 if side not in ["Over", "Under"]:
                     continue
@@ -5724,7 +5756,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     "stat_label": stat_label,  # v10.10: Human-readable stat label
                     "line": line_val,
                     "side": side,
-                    "over_under": side.lower(),  # Frontend expected field
+                    "over_under": (side or "over").lower(),  # Frontend expected field (v10.47: defensive None)
                     "odds": odds,
                     "game": f"{away_team} @ {home_team}",
                     "matchup": f"{away_team} vs {home_team}",  # Production v3 schema
@@ -5734,7 +5766,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     "team": home_team,  # Frontend expected field
                     "opponent": away_team,  # Frontend expected field
                     "game_time": game.get("commence_time", datetime.now().isoformat()),
-                    "recommendation": f"{side.upper()} {line_val} {stat_label}",  # v10.10: include stat label
+                    "recommendation": f"{(side or 'Over').upper()} {line_val} {stat_label}",  # v10.10: include stat label (v10.47: defensive None)
                     "smash_score": total_score,
                     "final_score": total_score,  # Production v3 schema
                     "predicted_value": round(predicted_value, 1),
