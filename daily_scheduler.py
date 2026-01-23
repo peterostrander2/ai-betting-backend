@@ -1673,6 +1673,60 @@ async def run_jsonl_grading_now():
     }
 
 
+@scheduler_router.post("/run-daily-cycle")
+async def run_daily_cycle():
+    """
+    v10.55: Run the complete daily cycle manually.
+
+    Executes in order:
+    1. Props fetch (refresh all sports)
+    2. v10.31 grading + tuning
+    3. JSONL grading
+    4. Daily audit
+
+    Use this to manually trigger all daily jobs at once.
+    """
+    if not _scheduler:
+        raise HTTPException(500, "Scheduler not initialized")
+
+    results = {
+        "props_fetch": None,
+        "v1031_grading": None,
+        "jsonl_grading": None,
+        "audit": None,
+        "errors": []
+    }
+
+    # 1. Props fetch
+    try:
+        results["props_fetch"] = await _scheduler.props_job.run_async()
+    except Exception as e:
+        results["errors"].append(f"props_fetch: {str(e)}")
+
+    # 2. v10.31 grading + tuning
+    try:
+        results["v1031_grading"] = await _scheduler.v1031_job.run_async()
+    except Exception as e:
+        results["errors"].append(f"v1031_grading: {str(e)}")
+
+    # 3. JSONL grading
+    try:
+        results["jsonl_grading"] = await _scheduler.jsonl_grading_job.run_async()
+    except Exception as e:
+        results["errors"].append(f"jsonl_grading: {str(e)}")
+
+    # 4. Daily audit
+    try:
+        results["audit"] = _scheduler.run_audit_now()
+    except Exception as e:
+        results["errors"].append(f"audit: {str(e)}")
+
+    return {
+        "status": "success" if not results["errors"] else "partial",
+        "results": results
+    }
+
+
 # ============================================
 # STANDALONE TEST
 # ============================================

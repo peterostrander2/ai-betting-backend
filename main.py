@@ -14,16 +14,19 @@ Features:
 Total: 18 esoteric modules
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from fastapi.responses import Response
 from live_data_router import router as live_router, close_shared_client
 import database
-from daily_scheduler import scheduler_router, init_scheduler, get_scheduler
+from daily_scheduler import scheduler_router, init_scheduler, get_scheduler, run_daily_cycle
 from auto_grader import get_grader
 from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILABLE
+
+# v10.55: Jobs router - aliases for scheduler endpoints
+jobs_router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 app = FastAPI(
     title="Bookie-o-em API",
@@ -40,9 +43,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# v10.55: Jobs router endpoint
+@jobs_router.post("/run_daily_cycle")
+async def jobs_run_daily_cycle():
+    """Alias for /scheduler/run-daily-cycle"""
+    return await run_daily_cycle()
+
 # Include routers
 app.include_router(live_router)
 app.include_router(scheduler_router)
+app.include_router(jobs_router)
 
 # Startup event - initialize database and scheduler
 @app.on_event("startup")
