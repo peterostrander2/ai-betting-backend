@@ -110,6 +110,9 @@ def init_database():
         # Create all tables
         Base.metadata.create_all(bind=engine)
 
+        # Run migrations for existing tables
+        _run_migrations()
+
         DB_ENABLED = True
         logger.info("Database initialized successfully")
         return True
@@ -117,6 +120,58 @@ def init_database():
         logger.error("Database initialization failed: %s", e)
         DB_ENABLED = False
         return False
+
+
+def _run_migrations():
+    """
+    Run database migrations to add missing columns to existing tables.
+    This handles the case where SQLAlchemy's create_all() created the table
+    but new columns were added to the model later.
+    """
+    if engine is None:
+        return
+
+    try:
+        with engine.connect() as conn:
+            # Check if created_date_et column exists in pick_ledger
+            if DB_TYPE == "postgresql":
+                result = conn.execute(text("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'pick_ledger' AND column_name = 'created_date_et'
+                """))
+                has_created_date_et = result.fetchone() is not None
+
+                result = conn.execute(text("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'pick_ledger' AND column_name = 'game_date_et'
+                """))
+                has_game_date_et = result.fetchone() is not None
+            else:
+                # SQLite
+                result = conn.execute(text("PRAGMA table_info(pick_ledger)"))
+                columns = [row[1] for row in result.fetchall()]
+                has_created_date_et = 'created_date_et' in columns
+                has_game_date_et = 'game_date_et' in columns
+
+            # Add missing columns
+            if not has_created_date_et:
+                logger.info("Migration: Adding created_date_et column to pick_ledger")
+                conn.execute(text("ALTER TABLE pick_ledger ADD COLUMN created_date_et VARCHAR(10)"))
+                if DB_TYPE == "postgresql":
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pick_ledger_sport_created_et ON pick_ledger(sport, created_date_et)"))
+                conn.commit()
+                logger.info("Migration: created_date_et column added successfully")
+
+            if not has_game_date_et:
+                logger.info("Migration: Adding game_date_et column to pick_ledger")
+                conn.execute(text("ALTER TABLE pick_ledger ADD COLUMN game_date_et VARCHAR(10)"))
+                if DB_TYPE == "postgresql":
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pick_ledger_sport_game_et ON pick_ledger(sport, game_date_et)"))
+                conn.commit()
+                logger.info("Migration: game_date_et column added successfully")
+
+    except Exception as e:
+        logger.exception(f"Migration failed: {e}")
 
 
 @contextmanager
