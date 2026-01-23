@@ -246,6 +246,19 @@ SPORT_MAPPINGS = {
 }
 
 # ============================================================================
+# v10.49: SAFE STRING HELPERS
+# These handle None values and non-string types from external API data
+# ============================================================================
+
+def safe_upper(x) -> str:
+    """Safely convert any value to uppercase string. Handles None and non-string types."""
+    return str(x or "").upper()
+
+def safe_lower(x) -> str:
+    """Safely convert any value to lowercase string. Handles None and non-string types."""
+    return str(x or "").lower()
+
+# ============================================================================
 # v10.34: CACHE SCHEMA VERSIONING
 # Changing this version invalidates all cached best-bets responses automatically.
 # Bump this when response schema changes to prevent stale cached payloads.
@@ -1668,7 +1681,7 @@ def generate_correlation_group_id(player_name: str, cluster: str, side: str) -> 
     # Normalize player name (remove spaces, title case)
     normalized = player_name.replace(" ", "").replace(".", "").replace("'", "")
 
-    return f"PLAYER:{normalized}:{cluster}:{(side or '').upper()}"  # v10.47: defensive None
+    return f"PLAYER:{normalized}:{cluster}:{safe_upper(side)}"  # v10.49: use helper
 
 
 def get_correlation_type(market1: str, market2: str) -> str:
@@ -1709,7 +1722,7 @@ def enrich_prop_with_correlation(prop: dict) -> dict:
     """
     player_name = prop.get("player", prop.get("player_name", ""))
     market = prop.get("market", "")
-    side = (prop.get("over_under") or prop.get("side") or "").upper()  # v10.47: defensive None
+    side = safe_upper(prop.get("over_under") or prop.get("side"))  # v10.49: use helper
 
     # Identify correlation cluster
     cluster = get_correlation_cluster(market)
@@ -4370,7 +4383,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             injuries_by_team[team] = {"count": 0, "key_players": [], "severity_score": 0}
         injuries_by_team[team]["count"] += 1
         # Track key players (starters, high-impact)
-        status = (injury.get("status") or "").lower()
+        status = safe_lower(injury.get("status"))
         player_name = injury.get("player", "") or injury.get("name", "")
         if status in ("out", "doubtful"):
             injuries_by_team[team]["key_players"].append(player_name)
@@ -4943,7 +4956,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         # Sharp money IS expert money - professional bettors are the "experts"
         # Different from Sharp Split which fires at lower thresholds (10%+ diff)
         money_pct = sharp_signal.get("money_pct", 50) or 50
-        sharp_side = (sharp_signal.get("sharp_side") or "").upper()  # "HOME" or "AWAY"
+        sharp_side = safe_upper(sharp_signal.get("sharp_side"))  # "HOME" or "AWAY"
         if money_pct >= 65:
             mw_consensus = get_mw("PILLAR_EXPERT_CONSENSUS")
             # Check if our pick aligns with sharp consensus
@@ -9179,10 +9192,10 @@ async def parlay_architect(leg1: Dict[str, Any], leg2: Dict[str, Any]):
         "edge_explanation": "If Mahomes hits 275+ yards, Kelce MUST have yards. Books price independently."
     }
     """
-    pos1 = (leg1.get("position") or "").upper()
-    pos2 = (leg2.get("position") or "").upper()
-    team1 = (leg1.get("team") or "").upper()
-    team2 = (leg2.get("team") or "").upper()
+    pos1 = safe_upper(leg1.get("position"))
+    pos2 = safe_upper(leg2.get("position"))
+    team1 = safe_upper(leg1.get("team"))
+    team2 = safe_upper(leg2.get("team"))
 
     correlation = 0.0
     stack_type = "INDEPENDENT"
@@ -10072,7 +10085,7 @@ async def track_bet(
         # Validate odds format
         if data.get("odds") and (data["odds"] == 0 or (-100 < data["odds"] < 100)):
             raise HTTPException(status_code=400, detail="Invalid odds. American odds must be <= -100 or >= 100")
-        data["sport"] = (data.get("sport") or "").upper()
+        data["sport"] = safe_upper(data.get("sport"))
 
     bet_id = f"BET_{data['sport']}_{data['game_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
@@ -10124,7 +10137,7 @@ async def grade_bet(
         result = result_data.result.value if hasattr(result_data.result, 'value') else str(result_data.result)
         actual_score = result_data.actual_score
     else:
-        result = (result_data.get("result") or "").upper()
+        result = safe_upper(result_data.get("result"))
         actual_score = result_data.get("actual_score")
         if result not in ["WIN", "LOSS", "PUSH"]:
             raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
@@ -10383,7 +10396,7 @@ async def add_parlay_leg(
         # Validate odds
         if data.get("odds") and (data["odds"] == 0 or (-100 < data["odds"] < 100)):
             raise HTTPException(status_code=400, detail="Invalid odds format")
-        data["sport"] = (data.get("sport") or "").upper()
+        data["sport"] = safe_upper(data.get("sport"))
 
     user_id = data["user_id"]
 
@@ -10575,7 +10588,7 @@ async def grade_parlay(
     if PYDANTIC_MODELS_AVAILABLE and hasattr(grade_data, 'result'):
         result = grade_data.result.value if hasattr(grade_data.result, 'value') else str(grade_data.result)
     else:
-        result = (grade_data.get("result") or "").upper()
+        result = safe_upper(grade_data.get("result"))
         if result not in ["WIN", "LOSS", "PUSH"]:
             raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
 
@@ -10840,7 +10853,7 @@ async def submit_community_vote(
     Users can vote whether they agree with the AI or fade it.
     """
     game_id = vote_data.get("game_id")
-    side = (vote_data.get("side") or "").lower()
+    side = safe_lower(vote_data.get("side"))
 
     if not game_id:
         raise HTTPException(status_code=400, detail="game_id required")
@@ -10960,7 +10973,7 @@ async def configure_affiliate_link(
         "custom_url": "https://optional.custom.tracking.url"
     }
     """
-    book = (config_data.get("book") or "").lower()
+    book = safe_lower(config_data.get("book"))
     affiliate_id = config_data.get("affiliate_id", "")
     custom_url = config_data.get("custom_url", "")
 
@@ -11587,7 +11600,7 @@ async def get_roster(sport: str, team: str, auth: bool = Depends(verify_api_key)
     # Filter injuries for this team
     team_injuries = []
     for inj in all_injuries:
-        inj_team = (inj.get("team", "") or "").lower()
+        inj_team = safe_lower(inj.get("team"))
         if team_normalized in inj_team or inj_team in team_normalized:
             team_injuries.append({
                 "player": inj.get("player") or inj.get("athlete", {}).get("displayName"),
@@ -11669,7 +11682,7 @@ async def get_player_stats(player_name: str, sport: str = "nba", auth: bool = De
 
     if not isinstance(props_data, Exception):
         for prop in props_data.get("data", []):
-            prop_player = (prop.get("player") or prop.get("description") or "").lower()
+            prop_player = safe_lower(prop.get("player") or prop.get("description"))
             if player_normalized in prop_player or prop_player in player_normalized:
                 player_props.append({
                     "market": prop.get("market"),
@@ -11685,7 +11698,7 @@ async def get_player_stats(player_name: str, sport: str = "nba", auth: bool = De
     injury_status = None
     if not isinstance(injuries_data, Exception):
         for inj in injuries_data.get("data", []):
-            inj_player = (inj.get("player") or inj.get("athlete", {}).get("displayName", "") or "").lower()
+            inj_player = safe_lower(inj.get("player") or inj.get("athlete", {}).get("displayName"))
             if player_normalized in inj_player or inj_player in player_normalized:
                 injury_status = {
                     "status": inj.get("status", "Unknown"),
@@ -11741,8 +11754,8 @@ async def predict_live(
     """
     sport = (prediction_request.get("sport") or "nba").lower()
     game_id = prediction_request.get("game_id")
-    player = (prediction_request.get("player") or "").lower()
-    market = (prediction_request.get("market") or "").lower()
+    player = safe_lower(prediction_request.get("player"))
+    market = safe_lower(prediction_request.get("market"))
 
     if sport not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
@@ -11759,8 +11772,8 @@ async def predict_live(
     if player:
         # Look for player prop
         for prop in props:
-            prop_player = (prop.get("player") or "").lower()
-            prop_market = (prop.get("market") or "").lower()
+            prop_player = safe_lower(prop.get("player"))
+            prop_market = safe_lower(prop.get("market"))
             if player in prop_player:
                 if not market or market in prop_market:
                     prediction = prop
