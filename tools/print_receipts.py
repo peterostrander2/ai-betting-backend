@@ -25,28 +25,24 @@ from receipt_schema import (
 
 async def fetch_live_picks(sport: str = "nba", limit: int = 10):
     """
-    Fetch live picks from the API or local scoring.
+    Fetch live picks from the local router.
+    Raises an error if the router is unavailable.
     """
-    try:
-        # Try to import and use the local router
-        from live_data_router import get_best_bets
-        result = await get_best_bets(sport, debug=1)
+    # Import and use the local router
+    from live_data_router import get_best_bets
+    result = await get_best_bets(sport, debug=1)
 
-        picks = []
-        # Extract props
-        props = result.get("props", {}).get("picks", [])
-        picks.extend(props[:limit])
+    picks = []
+    # Extract props
+    props = result.get("props", {}).get("picks", [])
+    picks.extend(props[:limit])
 
-        # Extract game picks
-        game_picks = result.get("game_picks", {}).get("picks", [])
-        picks.extend(game_picks[:max(0, limit - len(picks))])
+    # Extract game picks
+    game_picks = result.get("game_picks", {}).get("picks", [])
+    picks.extend(game_picks[:max(0, limit - len(picks))])
 
-        debug_data = result.get("debug", {})
-        return picks[:limit], debug_data
-
-    except Exception as e:
-        print(f"Error fetching picks: {e}")
-        return [], {}
+    debug_data = result.get("debug", {})
+    return picks[:limit], debug_data
 
 
 def print_receipt(receipt: PickReceipt, verbose: bool = False):

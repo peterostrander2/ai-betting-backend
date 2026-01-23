@@ -41,6 +41,16 @@ import json
 import re
 import numpy as np
 
+# Initialize logger early (before imports that may use it)
+logger = logging.getLogger("live_data")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    ))
+    logger.addHandler(handler)
+
 # v10.55: Import tiering module - single source of truth for tier assignment
 from tiering import tier_from_score as tiering_tier_from_score, DEFAULT_TIERS as TIERING_DEFAULT_TIERS
 
@@ -207,21 +217,6 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
-
-# ============================================================================
-# LOGGING SETUP
-# ============================================================================
-
-logger = logging.getLogger("live_data")
-logger.setLevel(logging.INFO)
-
-# Add handler if none exists
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    ))
-    logger.addHandler(handler)
 
 # ============================================================================
 # CONFIGURATION (Environment Variables)
