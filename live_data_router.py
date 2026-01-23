@@ -4370,7 +4370,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             injuries_by_team[team] = {"count": 0, "key_players": [], "severity_score": 0}
         injuries_by_team[team]["count"] += 1
         # Track key players (starters, high-impact)
-        status = injury.get("status", "").lower()
+        status = (injury.get("status") or "").lower()
         player_name = injury.get("player", "") or injury.get("name", "")
         if status in ("out", "doubtful"):
             injuries_by_team[team]["key_players"].append(player_name)
@@ -4943,7 +4943,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         # Sharp money IS expert money - professional bettors are the "experts"
         # Different from Sharp Split which fires at lower thresholds (10%+ diff)
         money_pct = sharp_signal.get("money_pct", 50) or 50
-        sharp_side = sharp_signal.get("sharp_side", "").upper()  # "HOME" or "AWAY"
+        sharp_side = (sharp_signal.get("sharp_side") or "").upper()  # "HOME" or "AWAY"
         if money_pct >= 65:
             mw_consensus = get_mw("PILLAR_EXPERT_CONSENSUS")
             # Check if our pick aligns with sharp consensus
@@ -6261,7 +6261,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "home_team": home_team,
                 "away_team": away_team,
                 "market": "sharp_money",
-                "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
+                "recommendation": f"SHARP ON {(signal.get('side') or 'HOME').upper()}",
                 "game_time": datetime.now().isoformat(),
                 "smash_score": total_score_sharp,
                 "final_score": total_score_sharp,  # Production v3
@@ -9179,10 +9179,10 @@ async def parlay_architect(leg1: Dict[str, Any], leg2: Dict[str, Any]):
         "edge_explanation": "If Mahomes hits 275+ yards, Kelce MUST have yards. Books price independently."
     }
     """
-    pos1 = leg1.get("position", "").upper()
-    pos2 = leg2.get("position", "").upper()
-    team1 = leg1.get("team", "").upper()
-    team2 = leg2.get("team", "").upper()
+    pos1 = (leg1.get("position") or "").upper()
+    pos2 = (leg2.get("position") or "").upper()
+    team1 = (leg1.get("team") or "").upper()
+    team2 = (leg2.get("team") or "").upper()
 
     correlation = 0.0
     stack_type = "INDEPENDENT"
@@ -9382,7 +9382,7 @@ async def generate_smash_card(bet_data: Dict[str, Any], book: Optional[str] = "d
     player = bet_data.get("player", "Player")
     prop = bet_data.get("prop", "points")
     line = bet_data.get("line", 0)
-    pick = bet_data.get("pick", "over").upper()
+    pick = (bet_data.get("pick") or "over").upper()
     odds = bet_data.get("odds", -110)
     hit_rate = bet_data.get("hit_rate", "7/10")
     reasoning = bet_data.get("reasoning", "AI Analysis")
@@ -9410,7 +9410,7 @@ async def generate_smash_card(bet_data: Dict[str, Any], book: Optional[str] = "d
         confidence = "LOW"
 
     # Generate deep links
-    sport = bet_data.get("sport", "nba").upper()
+    sport = (bet_data.get("sport") or "nba").upper()
     sport_path = {"NBA": "basketball/nba", "NFL": "football/nfl", "MLB": "baseball/mlb", "NHL": "hockey/nhl"}.get(sport, "basketball/nba")
 
     deep_links = {
@@ -10072,7 +10072,7 @@ async def track_bet(
         # Validate odds format
         if data.get("odds") and (data["odds"] == 0 or (-100 < data["odds"] < 100)):
             raise HTTPException(status_code=400, detail="Invalid odds. American odds must be <= -100 or >= 100")
-        data["sport"] = data.get("sport", "").upper()
+        data["sport"] = (data.get("sport") or "").upper()
 
     bet_id = f"BET_{data['sport']}_{data['game_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
@@ -10124,7 +10124,7 @@ async def grade_bet(
         result = result_data.result.value if hasattr(result_data.result, 'value') else str(result_data.result)
         actual_score = result_data.actual_score
     else:
-        result = result_data.get("result", "").upper()
+        result = (result_data.get("result") or "").upper()
         actual_score = result_data.get("actual_score")
         if result not in ["WIN", "LOSS", "PUSH"]:
             raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
@@ -10383,7 +10383,7 @@ async def add_parlay_leg(
         # Validate odds
         if data.get("odds") and (data["odds"] == 0 or (-100 < data["odds"] < 100)):
             raise HTTPException(status_code=400, detail="Invalid odds format")
-        data["sport"] = data.get("sport", "").upper()
+        data["sport"] = (data.get("sport") or "").upper()
 
     user_id = data["user_id"]
 
@@ -10575,7 +10575,7 @@ async def grade_parlay(
     if PYDANTIC_MODELS_AVAILABLE and hasattr(grade_data, 'result'):
         result = grade_data.result.value if hasattr(grade_data.result, 'value') else str(grade_data.result)
     else:
-        result = grade_data.get("result", "").upper()
+        result = (grade_data.get("result") or "").upper()
         if result not in ["WIN", "LOSS", "PUSH"]:
             raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
 
@@ -10840,7 +10840,7 @@ async def submit_community_vote(
     Users can vote whether they agree with the AI or fade it.
     """
     game_id = vote_data.get("game_id")
-    side = vote_data.get("side", "").lower()
+    side = (vote_data.get("side") or "").lower()
 
     if not game_id:
         raise HTTPException(status_code=400, detail="game_id required")
@@ -10960,7 +10960,7 @@ async def configure_affiliate_link(
         "custom_url": "https://optional.custom.tracking.url"
     }
     """
-    book = config_data.get("book", "").lower()
+    book = (config_data.get("book") or "").lower()
     affiliate_id = config_data.get("affiliate_id", "")
     custom_url = config_data.get("custom_url", "")
 
@@ -11739,10 +11739,10 @@ async def predict_live(
         "analysis": {...}
     }
     """
-    sport = prediction_request.get("sport", "nba").lower()
+    sport = (prediction_request.get("sport") or "nba").lower()
     game_id = prediction_request.get("game_id")
-    player = prediction_request.get("player", "").lower()
-    market = prediction_request.get("market", "").lower()
+    player = (prediction_request.get("player") or "").lower()
+    market = (prediction_request.get("market") or "").lower()
 
     if sport not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
