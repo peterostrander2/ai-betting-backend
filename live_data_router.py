@@ -258,6 +258,45 @@ def safe_lower(x) -> str:
     """Safely convert any value to lowercase string. Handles None and non-string types."""
     return str(x or "").lower()
 
+def is_game_today(commence_time: str) -> bool:
+    """
+    Check if a game's commence_time is TODAY in ET timezone.
+
+    v10.50: Date filter to only show today's games in best-bets.
+    The next day starts at 12:01 AM ET (midnight).
+
+    Args:
+        commence_time: ISO format timestamp (e.g., "2026-01-23T01:08:46Z")
+
+    Returns:
+        True if game is today, False otherwise
+    """
+    if not commence_time:
+        return False
+
+    try:
+        from datetime import datetime, timezone, timedelta
+
+        # Parse the commence time (handle Z suffix)
+        if commence_time.endswith("Z"):
+            game_dt = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+        else:
+            game_dt = datetime.fromisoformat(commence_time)
+
+        # Convert to ET (UTC-5, ignoring DST for simplicity)
+        et_offset = timezone(timedelta(hours=-5))
+        game_dt_et = game_dt.astimezone(et_offset)
+
+        # Get current time in ET
+        now_utc = datetime.now(timezone.utc)
+        now_et = now_utc.astimezone(et_offset)
+
+        # Compare dates (year, month, day)
+        return game_dt_et.date() == now_et.date()
+    except Exception:
+        # If parsing fails, include the game (fail open)
+        return True
+
 # ============================================================================
 # v10.34: CACHE SCHEMA VERSIONING
 # Changing this version invalidates all cached best-bets responses automatically.
@@ -3822,6 +3861,11 @@ async def get_props(sport: str):
                 if not event_id:
                     continue
 
+                # v10.50: Only process TODAY's games (skip future dates)
+                event_commence = event.get("commence_time", "")
+                if not is_game_today(event_commence):
+                    continue
+
                 # Fetch props for this specific event
                 event_odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/events/{event_id}/odds"
                 event_resp = await fetch_with_retries(
@@ -6048,6 +6092,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         # v10.45: Process games if we have data (from API or fallback)
         if raw_events_count > 0:
             for game in games:
+                # v10.50: Only process TODAY's games (skip future dates)
+                game_commence = game.get("commence_time", "")
+                if not is_game_today(game_commence):
+                    continue
+
                 home_team = game.get("home_team", "")
                 away_team = game.get("away_team", "")
                 game_key = f"{away_team}@{home_team}"
