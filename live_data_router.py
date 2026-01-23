@@ -1,4 +1,5 @@
-# live_data_router.py v15.0 - SCORING v10.54
+# live_data_router.py v15.0 - SCORING v10.57
+# v10.57: Data Integrity Validators (prop_integrity + injury_guard before publish_gate)
 # v10.54: Production V3 Contract Compliance (deterministic id, int confidence, ordered reasons)
 # v10.53: Soft Stacking Governor (prevent same-team spam, allow SMASH stacks)
 # v10.52: Time Gate (Same Day ET + Not Started) + team/opponent/game_time_et labels
@@ -186,6 +187,19 @@ try:
 except ImportError:
     PICK_FILTER_AVAILABLE = False
     logger.warning("pick_filter module not available - skipping final filter")
+
+# v10.57: Import Data Integrity Validators (BEFORE tiering/caps/correlation)
+try:
+    from validators import (
+        validate_prop_integrity, validate_props_batch,
+        validate_injury_status, validate_props_batch_injury, build_injury_index,
+        validate_market_available, validate_props_batch_market, build_dk_market_index,
+        BLOCK_DOUBTFUL, BLOCK_GTD
+    )
+    VALIDATORS_AVAILABLE = True
+except ImportError:
+    VALIDATORS_AVAILABLE = False
+    logger.warning("validators module not available - skipping data integrity checks")
 
 # Redis import with fallback
 try:
@@ -5033,6 +5047,12 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         elif status in ("questionable", "probable"):
             injuries_by_team[team]["severity_score"] += 0.5
 
+    # v10.57: Build injury index for validators (OUT/SUSPENDED/DOUBTFUL checks)
+    injury_index = {}
+    if VALIDATORS_AVAILABLE:
+        injury_index = build_injury_index(injuries_data.get("data", []))
+        logger.debug(f"v10.57: Built injury index with {len(injury_index)} players")
+
     # Get esoteric engines for enhanced scoring
     jarvis = get_jarvis_savant()
     vedic = get_vedic_astro()
@@ -7413,6 +7433,83 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         top_game_picks = [p for p in top_game_picks if passes_confidence_filter(p)]
 
     # =========================================================================
+    # v10.57: DATA INTEGRITY VALIDATORS (BEFORE publish_gate + pick_filter)
+    # =========================================================================
+    # Runs EARLY to drop invalid props before tiering caps/correlation:
+    # 1) prop_integrity - required fields, team membership
+    # 2) injury_guard - OUT, SUSPENDED, DOUBTFUL, GTD checks
+    # 3) market_availability - (skipped - props come from Odds API feed)
+    # =========================================================================
+    validator_debug = {
+        "available": VALIDATORS_AVAILABLE,
+        "props_before": len(top_props),
+        "games_before": len(top_game_picks),
+        "props_after": 0,
+        "games_after": 0,
+        "dropped_props": 0,
+        "dropped_games": 0,
+        "drop_reasons": {}
+    }
+
+    if VALIDATORS_AVAILABLE and (top_props or top_game_picks):
+        # Track drop reasons across all validators
+        all_drop_reasons = {}
+
+        # -----------------------------------------------------------------
+        # Step 1: Prop Integrity Validation (required fields, team checks)
+        # -----------------------------------------------------------------
+        valid_props, dropped_props, integrity_drops = validate_props_batch(
+            top_props, log_drops=True, max_log_drops=10
+        )
+        valid_games, dropped_games, games_integrity_drops = validate_props_batch(
+            top_game_picks, log_drops=True, max_log_drops=10
+        )
+
+        # Aggregate drop reasons
+        for reason, count in integrity_drops.items():
+            all_drop_reasons[reason] = all_drop_reasons.get(reason, 0) + count
+        for reason, count in games_integrity_drops.items():
+            all_drop_reasons[reason] = all_drop_reasons.get(reason, 0) + count
+
+        # -----------------------------------------------------------------
+        # Step 2: Injury Guard Validation (OUT, SUSPENDED, DOUBTFUL)
+        # -----------------------------------------------------------------
+        if injury_index:
+            valid_props, inj_dropped_props, inj_drops = validate_props_batch_injury(
+                valid_props, injury_index, log_drops=True, max_log_drops=10
+            )
+            valid_games, inj_dropped_games, games_inj_drops = validate_props_batch_injury(
+                valid_games, injury_index, log_drops=True, max_log_drops=10
+            )
+
+            # Aggregate injury drop reasons
+            for reason, count in inj_drops.items():
+                all_drop_reasons[reason] = all_drop_reasons.get(reason, 0) + count
+            for reason, count in games_inj_drops.items():
+                all_drop_reasons[reason] = all_drop_reasons.get(reason, 0) + count
+
+        # Update top_props and top_game_picks with validated picks
+        top_props = valid_props
+        top_game_picks = valid_games
+
+        # Update debug info
+        validator_debug["props_after"] = len(top_props)
+        validator_debug["games_after"] = len(top_game_picks)
+        validator_debug["dropped_props"] = validator_debug["props_before"] - len(top_props)
+        validator_debug["dropped_games"] = validator_debug["games_before"] - len(top_game_picks)
+        validator_debug["drop_reasons"] = all_drop_reasons
+
+        # Log summary
+        total_dropped = validator_debug["dropped_props"] + validator_debug["dropped_games"]
+        if total_dropped > 0:
+            logger.info(
+                f"v10.57 Validators: Dropped {total_dropped} picks "
+                f"(props: {validator_debug['props_before']}->{validator_debug['props_after']}, "
+                f"games: {validator_debug['games_before']}->{validator_debug['games_after']}) "
+                f"Reasons: {all_drop_reasons}"
+            )
+
+    # =========================================================================
     # v10.43: PUBLISH GATE (Dominance Dedup + Quality Gate + Correlation Penalty)
     # =========================================================================
     # Applies:
@@ -7766,6 +7863,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "fallback_source": fallback_source,
             # v10.41: Jason Sim 2.0 debug
             "jason_sim": jason_sim_debug,
+            # v10.57: Data Integrity Validators debug (prop_integrity + injury_guard)
+            "validators": validator_debug,
             # v10.43: Publish Gate debug (dominance dedup + quality gate)
             "publish_gate": publish_gate_debug,
             # v10.56: Pick Filter debug (caps + correlation + UNDER penalty)
