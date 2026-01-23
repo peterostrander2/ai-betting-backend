@@ -376,6 +376,154 @@ def test_performance():
     log("Performance test passed!", "✅")
     return True
 
+def test_tier_b_score_range():
+    """
+    SAFETY TEST 1: Tier B (action_leans) picks MUST have scores in range 6.70 <= score < 7.05
+
+    This test ensures the hard guarantee that Tier B picks cannot escape their score boundaries.
+    If this test fails, the publish gate has a bug that could leak high-confidence picks into
+    the lower-confidence tier, misleading users about pick quality.
+    """
+    log("Testing Tier B score range constraints...", "🔍")
+
+    TIER_B_MIN = 6.70
+    TIER_B_MAX = 7.05
+
+    response = requests.get(f"{BASE_URL}/live/best-bets/all?debug=1")
+
+    if response.status_code != 200:
+        log(f"Skipping - endpoint returned {response.status_code}", "⚠️")
+        return True
+
+    data = response.json()
+    action_leans = data.get("action_leans", {}).get("picks", [])
+
+    if len(action_leans) == 0:
+        log("No action_leans picks to validate (OK - may be no games)", "⚠️")
+        return True
+
+    violations = []
+    for pick in action_leans:
+        score = float(pick.get("smash_score", pick.get("final_score", pick.get("total_score", 0))))
+        if not (TIER_B_MIN <= score < TIER_B_MAX):
+            violations.append({
+                "player": pick.get("player", pick.get("player_name", "unknown")),
+                "score": score,
+                "expected_range": f"{TIER_B_MIN} <= score < {TIER_B_MAX}"
+            })
+
+    if violations:
+        for v in violations:
+            log(f"  VIOLATION: {v['player']} has score {v['score']} outside {v['expected_range']}", "❌")
+        raise AssertionError(f"Tier B score range violated: {len(violations)} picks outside 6.70-7.05 range")
+
+    log(f"  Validated {len(action_leans)} Tier B picks - all in range {TIER_B_MIN} <= score < {TIER_B_MAX}", "✅")
+    log("Tier B score range test passed!", "✅")
+    return True
+
+
+def test_tier_b_no_gold_star_badges():
+    """
+    SAFETY TEST 2: Tier B (action_leans) picks CANNOT have GOLD_STAR or EDGE_LEAN badges
+
+    This test ensures that high-confidence badges are never applied to lower-tier picks.
+    If this test fails, users could be misled into thinking a Tier B pick is actually
+    a high-confidence GOLD_STAR or EDGE_LEAN pick.
+    """
+    log("Testing Tier B badge constraints...", "🔍")
+
+    FORBIDDEN_BADGES = ["GOLD_STAR", "EDGE_LEAN"]
+    FORBIDDEN_TIERS = ["GOLD_STAR", "EDGE_LEAN"]
+
+    response = requests.get(f"{BASE_URL}/live/best-bets/all?debug=1")
+
+    if response.status_code != 200:
+        log(f"Skipping - endpoint returned {response.status_code}", "⚠️")
+        return True
+
+    data = response.json()
+    action_leans = data.get("action_leans", {}).get("picks", [])
+
+    if len(action_leans) == 0:
+        log("No action_leans picks to validate (OK - may be no games)", "⚠️")
+        return True
+
+    violations = []
+    for pick in action_leans:
+        player = pick.get("player", pick.get("player_name", "unknown"))
+        badges = pick.get("badges", [])
+        tier = pick.get("tier", "")
+
+        # Check for forbidden badges
+        for badge in badges:
+            if badge in FORBIDDEN_BADGES:
+                violations.append({
+                    "player": player,
+                    "issue": f"has forbidden badge: {badge}"
+                })
+
+        # Check for forbidden tier
+        if tier in FORBIDDEN_TIERS:
+            violations.append({
+                "player": player,
+                "issue": f"has forbidden tier: {tier}"
+            })
+
+    if violations:
+        for v in violations:
+            log(f"  VIOLATION: {v['player']} {v['issue']}", "❌")
+        raise AssertionError(f"Tier B badge constraints violated: {len(violations)} picks have GOLD_STAR or EDGE_LEAN")
+
+    log(f"  Validated {len(action_leans)} Tier B picks - no forbidden badges/tiers", "✅")
+    log("Tier B badge constraint test passed!", "✅")
+    return True
+
+
+def test_tier_b_max_units():
+    """
+    SAFETY TEST 3: Tier B picks MUST have recommended_units <= 1.0
+
+    This test ensures lower-confidence picks don't recommend large bet sizes.
+    """
+    log("Testing Tier B max units constraint...", "🔍")
+
+    MAX_UNITS = 1.0
+
+    response = requests.get(f"{BASE_URL}/live/best-bets/all?debug=1")
+
+    if response.status_code != 200:
+        log(f"Skipping - endpoint returned {response.status_code}", "⚠️")
+        return True
+
+    data = response.json()
+    action_leans = data.get("action_leans", {}).get("picks", [])
+
+    if len(action_leans) == 0:
+        log("No action_leans picks to validate (OK - may be no games)", "⚠️")
+        return True
+
+    violations = []
+    for pick in action_leans:
+        player = pick.get("player", pick.get("player_name", "unknown"))
+        units = float(pick.get("recommended_units", 0))
+
+        if units > MAX_UNITS:
+            violations.append({
+                "player": player,
+                "units": units,
+                "max": MAX_UNITS
+            })
+
+    if violations:
+        for v in violations:
+            log(f"  VIOLATION: {v['player']} has {v['units']} units (max {v['max']})", "❌")
+        raise AssertionError(f"Tier B units constraint violated: {len(violations)} picks have units > 1.0")
+
+    log(f"  Validated {len(action_leans)} Tier B picks - all units <= {MAX_UNITS}", "✅")
+    log("Tier B max units test passed!", "✅")
+    return True
+
+
 def run_all_tests():
     """Run complete test suite"""
     print("=" * 60)
@@ -396,6 +544,10 @@ def run_all_tests():
         ("Documentation", test_docs_endpoint),
         ("Error Handling", test_error_handling),
         ("Performance", test_performance),
+        # v10.48: Tier B Safety Tests
+        ("Tier B Score Range (6.70-7.05)", test_tier_b_score_range),
+        ("Tier B No GOLD_STAR/EDGE_LEAN Badges", test_tier_b_no_gold_star_badges),
+        ("Tier B Max Units (<=1.0)", test_tier_b_max_units),
     ]
     
     passed = 0
