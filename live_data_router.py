@@ -3968,7 +3968,19 @@ async def get_best_bets_all(debug: int = 0):
         "sports_in_season": [],
         "sports_returned_picks": {},
         "sports_errors": {},
-        "global_publish_gate": {}
+        "global_publish_gate": {},
+        # v10.46: Aggregated Jason Sim debug across all sports
+        "jason_sim": {
+            "available": JASON_SIM_AVAILABLE,
+            "games_checked": 0,
+            "games_matched": 0,
+            "boosted": 0,
+            "downgraded": 0,
+            "blocked": 0,
+            "missing_payload": 0,
+            "no_payloads_uploaded": False,
+            "by_sport": {}
+        }
     }
 
     # Determine which sports are in-season
@@ -3990,8 +4002,8 @@ async def get_best_bets_all(debug: int = 0):
 
     for sport in in_season_sports:
         try:
-            # Call the existing best-bets endpoint internally
-            sport_result = await get_best_bets(sport, debug=0, include_conflicts=0, min_confidence="C")
+            # v10.46: Call with debug=1 to get Jason Sim stats
+            sport_result = await get_best_bets(sport, debug=1, include_conflicts=0, min_confidence="C")
 
             # Extract props picks
             props_picks = []
@@ -4033,6 +4045,19 @@ async def get_best_bets_all(debug: int = 0):
             games_reason = "OK" if len(game_picks) > 0 else (
                 sport_odds_metrics.get("odds_provider_status", "NO_METRICS")
             )
+
+            # v10.46: Extract and aggregate Jason Sim debug from sport result
+            sport_jason_sim = sport_result.get("debug", {}).get("jason_sim", {})
+            if sport_jason_sim:
+                debug_info["jason_sim"]["games_checked"] += sport_jason_sim.get("games_checked", 0)
+                debug_info["jason_sim"]["games_matched"] += sport_jason_sim.get("games_matched", 0)
+                debug_info["jason_sim"]["boosted"] += sport_jason_sim.get("boosted", 0)
+                debug_info["jason_sim"]["downgraded"] += sport_jason_sim.get("downgraded", 0)
+                debug_info["jason_sim"]["blocked"] += sport_jason_sim.get("blocked", 0)
+                debug_info["jason_sim"]["missing_payload"] += sport_jason_sim.get("missing_payload", 0)
+                if sport_jason_sim.get("no_payloads_uploaded"):
+                    debug_info["jason_sim"]["no_payloads_uploaded"] = True
+                debug_info["jason_sim"]["by_sport"][sport.upper()] = sport_jason_sim
 
             debug_info["sports_returned_picks"][sport.upper()] = {
                 "props": len(props_picks),
@@ -4125,8 +4150,8 @@ async def get_best_bets_all(debug: int = 0):
 
     # Build response
     result = {
-        "source": "production_v10.43+_all_sports",
-        "scoring_system": "v10.43: Multi-sport unified board with global publish gate",
+        "source": "production_v10.46_all_sports",
+        "scoring_system": "v10.46: Multi-sport unified board with aggregated Jason Sim debug",
         "all_picks": {
             "count": len(all_picks_final),
             "picks": all_picks_final
