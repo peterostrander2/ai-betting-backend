@@ -4172,6 +4172,18 @@ async def get_best_bets_all(debug: int = 0):
             debug_info["jason_sim"]["by_sport"][sport.upper()]["status"] = "ERROR"
             debug_info["jason_sim"]["by_sport"][sport.upper()]["error"] = str(e)
 
+    # =========================================================================
+    # v10.51: 2-TIER PUBLISHING SYSTEM
+    # TIER A: OFFICIAL CARD (GOLD_STAR + EDGE_LEAN, score >= 7.05)
+    # TIER B: ACTION LEANS (6.70 <= score < 7.05, max 10 picks)
+    # =========================================================================
+
+    # Configuration
+    OFFICIAL_MAX = 14
+    LEANS_MAX = 10
+    LEANS_MIN_SCORE = 6.70
+    LEANS_MAX_SCORE = 7.05  # Below EDGE_LEAN threshold
+
     # Apply GLOBAL publish gate to merged picks
     global_gate_debug = {
         "input_picks": len(all_picks_raw),
@@ -4181,11 +4193,23 @@ async def get_best_bets_all(debug: int = 0):
         "fallback_used": False
     }
 
+    # v10.51: Action leans debug
+    action_leans_debug = {
+        "count": 0,
+        "threshold_min": LEANS_MIN_SCORE,
+        "threshold_max": LEANS_MAX_SCORE,
+        "max_published": LEANS_MAX,
+        "candidates_before_filter": 0,
+        "candidates_after_dedup": 0
+    }
+
+    action_leans_picks = []
+
     if PUBLISH_GATE_AVAILABLE and all_picks_raw:
-        # Apply publish gate to ALL picks combined
+        # TIER A: Apply publish gate for OFFICIAL CARD
         all_picks_gated, gate_stats = apply_publish_gate(
             picks=all_picks_raw,
-            target_max=25,  # Slightly higher target for multi-sport
+            target_max=OFFICIAL_MAX,
             apply_dedup=True,
             apply_penalty=True,
             apply_gate=True
@@ -4200,6 +4224,58 @@ async def get_best_bets_all(debug: int = 0):
         global_gate_debug["gate_stats"] = gate_stats.get("gate_stats", {})
 
         all_picks_final = all_picks_gated
+
+        # TIER B: ACTION LEANS - picks below EDGE_LEAN threshold but still decent
+        # Get the actual edge_lean threshold used (may have been escalated)
+        edge_lean_threshold = gate_stats.get("publish_threshold_edge_lean", 7.05)
+
+        # Filter for action leans candidates: score in [LEANS_MIN, edge_lean_threshold)
+        # Also exclude picks already in OFFICIAL card
+        official_pick_ids = set()
+        for p in all_picks_final:
+            # Create unique identifier for pick
+            pid = f"{p.get('player_name', '')}-{p.get('stat_type', '')}-{p.get('game_id', '')}"
+            official_pick_ids.add(pid)
+
+        leans_candidates = []
+        for pick in all_picks_raw:
+            score = float(pick.get("smash_score", pick.get("total_score", pick.get("final_score", 0))))
+            pid = f"{pick.get('player_name', '')}-{pick.get('stat_type', '')}-{pick.get('game_id', '')}"
+
+            # Must be in lean range and not already official
+            if LEANS_MIN_SCORE <= score < edge_lean_threshold and pid not in official_pick_ids:
+                # Exclude blocked/trap/high-variance picks if those fields exist
+                if pick.get("blocked") or pick.get("trap") or pick.get("variance_high"):
+                    continue
+                leans_candidates.append(pick)
+
+        action_leans_debug["candidates_before_filter"] = len(leans_candidates)
+
+        # Apply dedup and correlation penalty to leans (same quality control)
+        if leans_candidates:
+            leans_deduped, _ = apply_dominance_dedup(leans_candidates)
+            leans_penalized, _ = apply_correlation_penalty(leans_deduped)
+            action_leans_debug["candidates_after_dedup"] = len(leans_penalized)
+
+            # Sort by score and cap at LEANS_MAX
+            leans_penalized.sort(
+                key=lambda x: float(x.get("smash_score", x.get("total_score", 0))),
+                reverse=True
+            )
+            action_leans_picks = leans_penalized[:LEANS_MAX]
+
+            # Tag each lean pick
+            for pick in action_leans_picks:
+                pick["tier"] = "ACTION_LEAN"
+                pick["badge"] = "1U LEAN"
+                pick["units"] = 1.0  # Cap at 1u
+                pick["is_action_lean"] = True
+                reasons = pick.get("reasons", [])
+                reasons.append(f"ACTION_LEAN: Score {float(pick.get('smash_score', pick.get('total_score', 0))):.2f} (below {edge_lean_threshold}, above {LEANS_MIN_SCORE})")
+                pick["reasons"] = reasons
+
+        action_leans_debug["count"] = len(action_leans_picks)
+
     else:
         # No publish gate - just sort by score
         all_picks_final = sorted(
@@ -4235,19 +4311,33 @@ async def get_best_bets_all(debug: int = 0):
         global_gate_debug["published_total"] = len(fallback_pool)
 
     debug_info["global_publish_gate"] = global_gate_debug
+    debug_info["action_leans"] = action_leans_debug  # v10.51
 
     # Build response
     result = {
-        "source": "production_v10.46_all_sports",
-        "scoring_system": "v10.46: Multi-sport unified board with aggregated Jason Sim debug",
+        "source": "production_v10.51_all_sports",
+        "scoring_system": "v10.51: 2-tier publishing (Official Card + Action Leans)",
         "all_picks": {
             "count": len(all_picks_final),
             "picks": all_picks_final
         },
+        # v10.51: Action Leans (Tier B)
+        "action_leans": {
+            "count": len(action_leans_picks),
+            "picks": action_leans_picks,
+            "description": "Optional 1u gamble feelers below official threshold"
+        },
         "by_sport": by_sport,
         "summary": {
-            "total_picks": len(all_picks_final),
+            # v10.51: Renamed for clarity
+            "official_count": len(all_picks_final),
+            "action_leans_count": len(action_leans_picks),
+            "total_picks": len(all_picks_final) + len(action_leans_picks),
             "sports_with_picks": len([s for s in by_sport if by_sport[s]["total_picks"] > 0]),
+            # Official card breakdown
+            "official_gold_star_count": len([p for p in all_picks_final if p.get("tier") == "GOLD_STAR"]),
+            "official_edge_lean_count": len([p for p in all_picks_final if p.get("tier") == "EDGE_LEAN"]),
+            # Legacy fields (keep for backwards compatibility)
             "gold_star_count": len([p for p in all_picks_final if p.get("tier") == "GOLD_STAR"]),
             "edge_lean_count": len([p for p in all_picks_final if p.get("tier") == "EDGE_LEAN"]),
             "props_count": len([p for p in all_picks_final if p.get("pick_type") == "prop"]),
