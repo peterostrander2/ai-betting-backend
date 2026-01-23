@@ -1,4 +1,5 @@
-# live_data_router.py v15.0 - SCORING v10.53
+# live_data_router.py v15.0 - SCORING v10.54
+# v10.54: Production V3 Contract Compliance (deterministic id, int confidence, ordered reasons)
 # v10.53: Soft Stacking Governor (prevent same-team spam, allow SMASH stacks)
 # v10.52: Time Gate (Same Day ET + Not Started) + team/opponent/game_time_et labels
 # v10.43: Publish Gate (dominance dedup + quality gate + correlation penalty)
@@ -3846,6 +3847,132 @@ def apply_stacking_limits(
     return out, removed
 
 
+# ============================================================================
+# v10.54: PRODUCTION V3 CONTRACT COMPLIANCE
+# Ensures every pick has: deterministic id, int confidence, ordered reasons
+# ============================================================================
+
+def clamp_0_10(x) -> float:
+    """Clamp a value to the 0.0-10.0 range for score normalization."""
+    try:
+        return max(0.0, min(10.0, float(x)))
+    except Exception:
+        return 0.0
+
+
+def slugify(raw: str) -> str:
+    """Convert a string to a URL-safe slug (lowercase, no special chars)."""
+    raw = (raw or "").lower()
+    raw = raw.replace(" @ ", "_vs_").replace("@", "_vs_").replace("vs.", "vs")
+    raw = raw.replace(" ", "_")
+    raw = re.sub(r"[^a-z0-9_]", "", raw)
+    raw = re.sub(r"_+", "_", raw).strip("_")
+    return raw
+
+
+def canonical_matchup(matchup: str) -> str:
+    """Normalize matchup format to 'Team A vs Team B'."""
+    s = (matchup or "").strip()
+    s = s.replace(" @ ", " vs ").replace("@", " vs ")
+    s = s.replace("VS", "vs").replace("Vs", "vs").replace("vs.", "vs")
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def build_pick_id(sport: str, game_time: str, matchup: str, market: str, selection: str, line) -> str:
+    """
+    Build a deterministic, sanitized ID for a pick.
+    Format: sport_date_matchup_market_selection_line
+    """
+    try:
+        dt = datetime.fromisoformat((game_time or "").replace("Z", "+00:00"))
+        date = dt.date().isoformat()
+    except Exception:
+        date = datetime.utcnow().date().isoformat()
+
+    matchup_slug = slugify(canonical_matchup(matchup))
+    market_slug = slugify(market or "")
+    selection_slug = slugify(selection or "")
+    line_str = str(line) if line is not None else ""
+
+    raw = f"{(sport or '').lower()}_{date}_{matchup_slug}_{market_slug}_{selection_slug}_{line_str}"
+    return slugify(raw)
+
+
+# Allowed reason prefixes for Production v3 contract
+V3_REASON_PREFIXES = ["RESEARCH:", "ESOTERIC:", "CONFLUENCE:", "GOVERNOR:"]
+
+
+def normalize_reasons(reasons: List) -> tuple:
+    """
+    Normalize reasons to Production v3 contract.
+    - Keep only RESEARCH/ESOTERIC/CONFLUENCE/GOVERNOR prefixed reasons
+    - Order them in the correct sequence
+    - Move all other reasons to debug_reasons
+
+    Returns: (ordered_reasons, debug_reasons)
+    """
+    reasons = reasons or []
+    kept = []
+    debug = []
+
+    for r in reasons:
+        if not isinstance(r, str):
+            continue
+        rr = r.strip()
+        if any(rr.startswith(prefix) for prefix in V3_REASON_PREFIXES):
+            kept.append(rr)
+        else:
+            debug.append(rr)
+
+    # Order by prefix sequence
+    ordered = []
+    for prefix in V3_REASON_PREFIXES:
+        ordered.extend([x for x in kept if x.startswith(prefix)])
+
+    return ordered, debug
+
+
+def normalize_pick_for_v3(pick: Dict[str, Any], sport: str = "") -> Dict[str, Any]:
+    """
+    Normalize a pick to Production v3 contract compliance.
+    - Add deterministic id
+    - Convert confidence to int 0-100
+    - Order and filter reasons
+    - Clamp scores to 0-10
+    """
+    # 1. Build deterministic ID if not present
+    if not pick.get("id"):
+        pick["id"] = build_pick_id(
+            sport=sport or pick.get("sport", ""),
+            game_time=pick.get("game_time") or pick.get("commence_time") or "",
+            matchup=pick.get("matchup") or pick.get("game") or "",
+            market=pick.get("market") or pick.get("stat_type") or pick.get("pick_type") or "",
+            selection=pick.get("selection") or pick.get("player_name") or pick.get("player") or "",
+            line=pick.get("line")
+        )
+
+    # 2. Normalize confidence to int 0-100
+    old_conf = pick.get("confidence")
+    if isinstance(old_conf, str):
+        pick["confidence_label"] = old_conf  # Preserve string label
+
+    # Derive confidence from final_score
+    final_score = clamp_0_10(pick.get("final_score") or pick.get("smash_score") or pick.get("total_score") or 0)
+    pick["final_score"] = round(final_score, 2)
+    pick["confidence"] = max(0, min(100, int(round(final_score * 10))))
+
+    # 3. Clamp other scores
+    for score_field in ["research_score", "esoteric_score", "ai_score"]:
+        if pick.get(score_field) is not None:
+            pick[score_field] = round(clamp_0_10(pick[score_field]), 2)
+
+    # 4. Normalize reasons
+    pick["reasons"], pick["debug_reasons"] = normalize_reasons(pick.get("reasons", []))
+
+    return pick
+
+
 @router.get("/odds/{sport}")
 async def get_odds(sport: str, debug: int = 0, auth: bool = Depends(verify_api_key)):
     """
@@ -4667,7 +4794,7 @@ async def get_best_bets_all(debug: int = 0):
             pick["badge"] = "FALLBACK"
             pick["fallback"] = True
             pick["reasons"] = pick.get("reasons", []) + [
-                "SYSTEM: GLOBAL_FALLBACK_TOP3 (no EDGE_LEAN/GOLD_STAR qualified across all sports)"
+                "GOVERNOR: GLOBAL_FALLBACK_TOP3 (no EDGE_LEAN/GOLD_STAR qualified across all sports)"
             ]
             # v10.52: Ensure labels on fallback picks too
             ensure_pick_labels(pick)
@@ -4679,10 +4806,21 @@ async def get_best_bets_all(debug: int = 0):
     debug_info["action_leans"] = action_leans_debug  # v10.51
     debug_info["stacking"] = stacking_debug  # v10.53
 
+    # =========================================================================
+    # v10.54: PRODUCTION V3 CONTRACT COMPLIANCE
+    # Apply normalization to all picks: deterministic id, int confidence, ordered reasons
+    # =========================================================================
+
+    for pick in all_picks_final:
+        normalize_pick_for_v3(pick, pick.get("sport", ""))
+
+    for pick in action_leans_picks:
+        normalize_pick_for_v3(pick, pick.get("sport", ""))
+
     # Build response
     result = {
-        "source": "production_v10.53_all_sports",
-        "scoring_system": "v10.53: Time-gated + Soft Stacking Governor (SMASH stacks allowed)",
+        "source": "production_v10.54_all_sports",
+        "scoring_system": "v10.54: V3 Contract Compliant (id, int confidence, ordered reasons)",
         "all_picks": {
             "count": len(all_picks_final),
             "picks": all_picks_final
