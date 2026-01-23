@@ -1,5 +1,6 @@
 # database.py - PostgreSQL Database Models
 # For auto-grader prediction storage, weight persistence, and v10.31 pick ledger
+# v10.54: Added ET timezone support for date bucketing
 
 import os
 import logging
@@ -13,7 +14,64 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 
+# v10.54: Timezone support for ET date calculations
+try:
+    from zoneinfo import ZoneInfo
+    ET_TZ = ZoneInfo("America/New_York")
+    UTC_TZ = ZoneInfo("UTC")
+except ImportError:
+    ET_TZ = None
+    UTC_TZ = None
+
 logger = logging.getLogger("database")
+
+
+# ============================================================================
+# v10.54 ET DATE HELPERS
+# ============================================================================
+
+def get_et_now() -> datetime:
+    """Get current datetime in America/New_York timezone."""
+    if ET_TZ:
+        return datetime.now(ET_TZ)
+    else:
+        # Fallback: assume UTC-5 (EST, ignoring DST)
+        return datetime.utcnow() - timedelta(hours=5)
+
+
+def get_et_date_str(dt: datetime = None) -> str:
+    """Get date string in ET timezone as YYYY-MM-DD."""
+    if dt is None:
+        dt = get_et_now()
+    elif ET_TZ and dt.tzinfo is None:
+        # Naive datetime, assume UTC
+        dt = dt.replace(tzinfo=UTC_TZ).astimezone(ET_TZ)
+    elif ET_TZ:
+        dt = dt.astimezone(ET_TZ)
+    return dt.strftime("%Y-%m-%d")
+
+
+def get_game_date_et(game_time: datetime) -> str:
+    """
+    Get the ET date for a game.
+    Games before 5 AM ET are bucketed to the previous day.
+    """
+    if game_time is None:
+        return get_et_date_str()
+
+    if ET_TZ:
+        if game_time.tzinfo is None:
+            game_time = game_time.replace(tzinfo=UTC_TZ)
+        et_time = game_time.astimezone(ET_TZ)
+    else:
+        # Fallback: assume UTC-5
+        et_time = game_time - timedelta(hours=5)
+
+    # If game is before 5 AM ET, bucket to previous day
+    if et_time.hour < 5:
+        et_time = et_time - timedelta(days=1)
+
+    return et_time.strftime("%Y-%m-%d")
 
 # Database URL - Railway provides this when PostgreSQL service is attached
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -281,6 +339,7 @@ class PickLedger(Base):
     """
     v10.31: Store every pick returned to the community.
     Uses pick_uid for deduplication (prevents duplicate inserts on repeated API calls).
+    v10.54: Added created_date_et and game_date_et for ET timezone bucketing.
     """
     __tablename__ = "pick_ledger"
 
@@ -292,7 +351,7 @@ class PickLedger(Base):
     # Core pick data
     sport = Column(String(10), nullable=False, index=True)
     event_id = Column(String(100), nullable=True, index=True)
-    start_time = Column(DateTime, nullable=True)
+    start_time = Column(DateTime, nullable=True)  # Game time in UTC
     matchup = Column(String(200), nullable=False)
     home_team = Column(String(100), nullable=True)
     away_team = Column(String(100), nullable=True)
@@ -303,6 +362,10 @@ class PickLedger(Base):
     line = Column(Float, nullable=True)
     odds = Column(Integer, nullable=False)
     implied_prob = Column(Float, nullable=True)
+
+    # v10.54: ET date columns for correct timezone bucketing
+    created_date_et = Column(String(10), nullable=True, index=True)  # YYYY-MM-DD in ET
+    game_date_et = Column(String(10), nullable=True, index=True)  # YYYY-MM-DD in ET (games <5AM bucket to prev day)
 
     # Scoring data
     tier = Column(String(20), nullable=False)
@@ -337,6 +400,8 @@ class PickLedger(Base):
     __table_args__ = (
         Index("ix_pick_ledger_sport_date", "sport", "created_at"),
         Index("ix_pick_ledger_result_date", "result", "created_at"),
+        Index("ix_pick_ledger_sport_created_et", "sport", "created_date_et"),  # v10.54
+        Index("ix_pick_ledger_sport_game_et", "sport", "game_date_et"),  # v10.54
     )
 
     @staticmethod
@@ -382,7 +447,10 @@ class PickLedger(Base):
             "result": self.result.value if self.result else "PENDING",
             "profit_units": self.profit_units,
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "settled_at": self.settled_at.isoformat() if self.settled_at else None
+            "settled_at": self.settled_at.isoformat() if self.settled_at else None,
+            "created_date_et": self.created_date_et,
+            "game_date_et": self.game_date_et,
+            "actual_value": self.actual_value
         }
 
 
@@ -863,6 +931,9 @@ def upsert_pick(pick_data: Dict[str, Any], db: Session = None) -> bool:
 def _upsert_pick_impl(pick_data: Dict[str, Any], db: Session) -> bool:
     """Internal implementation of upsert_pick."""
     try:
+        # v10.54: Use ET date for pick_uid generation (ensures correct day bucketing)
+        et_date = get_et_date_str()
+
         # Generate pick_uid
         pick_uid = PickLedger.generate_pick_uid(
             sport=pick_data.get("sport", "NBA"),
@@ -871,8 +942,8 @@ def _upsert_pick_impl(pick_data: Dict[str, Any], db: Session) -> bool:
             selection=pick_data.get("selection", ""),
             line=pick_data.get("line"),
             odds=pick_data.get("odds", -110),
-            version=pick_data.get("version", "production_v10.31"),
-            pick_date=datetime.utcnow().date()
+            version=pick_data.get("version", "production_v10.54"),
+            pick_date=date.fromisoformat(et_date)
         )
 
         # Check if exists
@@ -887,6 +958,10 @@ def _upsert_pick_impl(pick_data: Dict[str, Any], db: Session) -> bool:
                 start_time = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
             except (ValueError, AttributeError):
                 start_time = None
+
+        # v10.54: Calculate ET dates for bucketing
+        created_date_et = et_date
+        game_date_et = get_game_date_et(start_time) if start_time else et_date
 
         # Get scoring breakdown
         scoring_breakdown = pick_data.get("scoring_breakdown", {})
@@ -907,6 +982,9 @@ def _upsert_pick_impl(pick_data: Dict[str, Any], db: Session) -> bool:
             line=pick_data.get("line"),
             odds=pick_data.get("odds", -110),
             implied_prob=pick_data.get("implied_prob"),
+            # v10.54: ET date columns
+            created_date_et=created_date_et,
+            game_date_et=game_date_et,
             tier=pick_data.get("tier", "MONITOR"),
             confidence_grade=pick_data.get("confidence_grade", "C"),
             recommended_units=pick_data.get("recommended_units", 0.5),
@@ -919,7 +997,7 @@ def _upsert_pick_impl(pick_data: Dict[str, Any], db: Session) -> bool:
             confluence_level=pick_data.get("confluence_level"),
             confluence_boost=pick_data.get("confluence_boost", 0.0),
             reasons=json.dumps(pick_data.get("reasons", [])),
-            version=pick_data.get("version", pick_data.get("source", "production_v10.32")),
+            version=pick_data.get("version", pick_data.get("source", "production_v10.54")),
             # v10.32 signal attribution
             fired_signals=json.dumps(pick_data.get("fired_signals", [])),
             fired_signal_count=pick_data.get("fired_signal_count", 0),
@@ -951,11 +1029,13 @@ def get_pending_picks_for_date(
 
 
 def _get_pending_picks_impl(target_date: date, sport: Optional[str], db: Session) -> List[PickLedger]:
-    """Internal implementation."""
+    """Internal implementation. v10.54: Uses created_date_et for correct ET bucketing."""
+    # Convert target_date to ET date string
+    target_date_str = target_date.strftime("%Y-%m-%d")
+
     query = db.query(PickLedger).filter(
         PickLedger.result == PickResult.PENDING,
-        PickLedger.created_at >= datetime.combine(target_date, datetime.min.time()),
-        PickLedger.created_at < datetime.combine(target_date + timedelta(days=1), datetime.min.time())
+        PickLedger.created_date_et == target_date_str
     )
 
     if sport:
@@ -1006,16 +1086,133 @@ def get_picks_for_date(
 
 
 def _get_picks_for_date_impl(target_date: date, sport: Optional[str], db: Session) -> List[PickLedger]:
-    """Internal implementation."""
+    """Internal implementation. v10.54: Uses created_date_et for correct ET bucketing."""
+    # Convert target_date to ET date string
+    target_date_str = target_date.strftime("%Y-%m-%d")
+
     query = db.query(PickLedger).filter(
-        PickLedger.created_at >= datetime.combine(target_date, datetime.min.time()),
-        PickLedger.created_at < datetime.combine(target_date + timedelta(days=1), datetime.min.time())
+        PickLedger.created_date_et == target_date_str
     )
 
     if sport:
         query = query.filter(PickLedger.sport == sport.upper())
 
     return query.all()
+
+
+# ============================================================================
+# v10.54 GRADER STATUS HELPERS
+# ============================================================================
+
+def get_pick_counts_for_date(
+    target_date: date,
+    sport: Optional[str] = None,
+    db: Session = None
+) -> Dict[str, int]:
+    """
+    v10.54: Get pick counts by result for a specific ET date.
+    Returns: {pending: N, win: N, loss: N, push: N, total: N}
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return {"pending": 0, "win": 0, "loss": 0, "push": 0, "total": 0}
+            return _get_pick_counts_impl(target_date, sport, db)
+    else:
+        return _get_pick_counts_impl(target_date, sport, db)
+
+
+def _get_pick_counts_impl(target_date: date, sport: Optional[str], db: Session) -> Dict[str, int]:
+    """Internal implementation."""
+    from sqlalchemy import func
+
+    target_date_str = target_date.strftime("%Y-%m-%d")
+
+    base_query = db.query(PickLedger.result, func.count(PickLedger.id)).filter(
+        PickLedger.created_date_et == target_date_str
+    )
+
+    if sport:
+        base_query = base_query.filter(PickLedger.sport == sport.upper())
+
+    results = base_query.group_by(PickLedger.result).all()
+
+    counts = {"pending": 0, "win": 0, "loss": 0, "push": 0, "total": 0}
+    for result_type, count in results:
+        if result_type == PickResult.PENDING:
+            counts["pending"] = count
+        elif result_type == PickResult.WIN:
+            counts["win"] = count
+        elif result_type == PickResult.LOSS:
+            counts["loss"] = count
+        elif result_type == PickResult.PUSH:
+            counts["push"] = count
+        counts["total"] += count
+
+    return counts
+
+
+def get_performance_stats_for_window(
+    days_back: int = 7,
+    sport: Optional[str] = None,
+    db: Session = None
+) -> Dict[str, Any]:
+    """
+    v10.54: Get performance stats for the rolling window.
+    Returns: {wins, losses, pushes, total_graded, hit_rate, profit_units}
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return {"wins": 0, "losses": 0, "pushes": 0, "total_graded": 0, "hit_rate": 0.0, "profit_units": 0.0}
+            return _get_performance_stats_impl(days_back, sport, db)
+    else:
+        return _get_performance_stats_impl(days_back, sport, db)
+
+
+def _get_performance_stats_impl(days_back: int, sport: Optional[str], db: Session) -> Dict[str, Any]:
+    """Internal implementation."""
+    from sqlalchemy import func
+
+    # Calculate date range in ET
+    et_now = get_et_now()
+    start_date = (et_now - timedelta(days=days_back)).strftime("%Y-%m-%d")
+
+    base_query = db.query(
+        PickLedger.result,
+        func.count(PickLedger.id),
+        func.sum(PickLedger.profit_units)
+    ).filter(
+        PickLedger.result.in_([PickResult.WIN, PickResult.LOSS, PickResult.PUSH]),
+        PickLedger.created_date_et >= start_date
+    )
+
+    if sport:
+        base_query = base_query.filter(PickLedger.sport == sport.upper())
+
+    results = base_query.group_by(PickLedger.result).all()
+
+    stats = {"wins": 0, "losses": 0, "pushes": 0, "total_graded": 0, "hit_rate": 0.0, "profit_units": 0.0}
+
+    for result_type, count, profit in results:
+        profit = profit or 0.0
+        if result_type == PickResult.WIN:
+            stats["wins"] = count
+        elif result_type == PickResult.LOSS:
+            stats["losses"] = count
+        elif result_type == PickResult.PUSH:
+            stats["pushes"] = count
+        stats["total_graded"] += count
+        stats["profit_units"] += float(profit)
+
+    # Calculate hit rate (excluding pushes)
+    decisions = stats["wins"] + stats["losses"]
+    if decisions > 0:
+        stats["hit_rate"] = round(stats["wins"] / decisions * 100, 1)
+
+    stats["profit_units"] = round(stats["profit_units"], 2)
+
+    return stats
 
 
 def get_config_changes(

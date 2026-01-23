@@ -669,11 +669,12 @@ class JSONLGradingJob:
         return results
 
     async def _grade_sport(self, sport: str, date_et: str = None) -> dict:
-        """Grade predictions for a single sport.
+        """
+        v10.54: Grade predictions for a single sport using both JSONL and Postgres.
 
         Args:
             sport: Sport code (NBA, NFL, etc.)
-            date_et: Optional date in YYYY-MM-DD format (defaults to yesterday)
+            date_et: Optional date in YYYY-MM-DD format (defaults to yesterday in ET)
         """
         sport = sport.upper()
         result = {
@@ -685,18 +686,51 @@ class JSONLGradingJob:
             "losses": 0,
             "pushes": 0,
             "no_action": 0,
+            "postgres_updated": 0,
             "weights_adjusted": False
         }
 
-        # Get ungraded predictions for the specified date (or yesterday)
+        # v10.54: Import database functions for Postgres grading
+        try:
+            from database import (
+                get_pending_picks_for_date, update_pick_result,
+                PickResult, get_et_now, DB_ENABLED
+            )
+            db_available = DB_ENABLED
+        except ImportError:
+            db_available = False
+            logger.warning(f"[{sport}] Database not available for Postgres grading")
+
+        # v10.54: Determine date in ET if not provided
+        if not date_et:
+            if db_available:
+                et_now = get_et_now()
+                date_et = (et_now - timedelta(days=1)).strftime("%Y-%m-%d")
+            else:
+                date_et = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        result["date"] = date_et
+
+        # Get ungraded predictions from JSONL
         ungraded = self.auto_grader.get_ungraded_predictions(sport, date_et=date_et)
         result["ungraded_count"] = len(ungraded)
 
-        if not ungraded:
-            logger.info(f"[{sport}] No ungraded predictions found")
+        # v10.54: Also get PENDING picks from Postgres for syncing
+        postgres_pending = []
+        if db_available:
+            try:
+                from datetime import date as dt_date
+                target_date = dt_date.fromisoformat(date_et)
+                postgres_pending = get_pending_picks_for_date(target_date, sport)
+                logger.info(f"[{sport}] Found {len(postgres_pending)} PENDING picks in Postgres for {date_et}")
+            except Exception as e:
+                logger.warning(f"[{sport}] Failed to fetch Postgres pending picks: {e}")
+
+        if not ungraded and not postgres_pending:
+            logger.info(f"[{sport}] No ungraded predictions found (JSONL or Postgres)")
             return result
 
-        logger.info(f"[{sport}] Found {len(ungraded)} ungraded predictions")
+        logger.info(f"[{sport}] Found {len(ungraded)} ungraded JSONL, {len(postgres_pending)} Postgres pending")
 
         # Fetch actual results and grade each prediction
         graded_results = []
@@ -716,19 +750,99 @@ class JSONLGradingJob:
             result["losses"] = grade_result.get("losses", 0)
             result["pushes"] = grade_result.get("pushes", 0)
 
-            # Adjust weights if we have enough graded predictions
-            grading_stats = self.auto_grader.get_grading_stats(sport, days_back=7)
-            if grading_stats.get("total_graded", 0) >= 30:
-                logger.info(f"[{sport}] Enough data for weight adjustment ({grading_stats['total_graded']} graded)")
-                # Trigger weight adjustment
+        # v10.54: Update Postgres PickLedger with graded results
+        if db_available and postgres_pending:
+            postgres_updated = 0
+            for pick in postgres_pending:
                 try:
-                    for stat_type in ["points", "rebounds", "assists"]:
-                        self.auto_grader.adjust_weights(sport, stat_type, days_back=7, apply_changes=True)
-                    result["weights_adjusted"] = True
+                    # Try to find matching graded result
+                    grade_info = await self._grade_single_prediction(sport, {
+                        "pick_type": "prop" if pick.player_name else "game",
+                        "player_name": pick.player_name or "",
+                        "stat_type": pick.market,
+                        "event_id": pick.event_id,
+                        "game": pick.matchup,
+                        "market": pick.market,
+                        "selection": pick.selection,
+                        "line": pick.line,
+                        "side": pick.side,
+                        "home_team": pick.home_team,
+                        "away_team": pick.away_team,
+                        "date_et": date_et
+                    })
+
+                    if grade_info and grade_info.get("actual") is not None:
+                        actual_value = grade_info["actual"]
+                        line = pick.line or 0
+                        side = (pick.side or "").upper()
+
+                        # Determine result based on actual vs line
+                        if side == "OVER":
+                            if actual_value > line:
+                                pick_result = PickResult.WIN
+                                profit = pick.recommended_units * self._get_profit_mult(pick.odds)
+                            elif actual_value < line:
+                                pick_result = PickResult.LOSS
+                                profit = -pick.recommended_units
+                            else:
+                                pick_result = PickResult.PUSH
+                                profit = 0.0
+                        elif side == "UNDER":
+                            if actual_value < line:
+                                pick_result = PickResult.WIN
+                                profit = pick.recommended_units * self._get_profit_mult(pick.odds)
+                            elif actual_value > line:
+                                pick_result = PickResult.LOSS
+                                profit = -pick.recommended_units
+                            else:
+                                pick_result = PickResult.PUSH
+                                profit = 0.0
+                        else:
+                            # For spreads/ML, assume actual_value is margin
+                            pick_result = PickResult.WIN if actual_value > 0 else PickResult.LOSS
+                            profit = pick.recommended_units * self._get_profit_mult(pick.odds) if pick_result == PickResult.WIN else -pick.recommended_units
+
+                        # Update Postgres
+                        if update_pick_result(pick.pick_uid, pick_result, profit, actual_value):
+                            postgres_updated += 1
+                            if pick_result == PickResult.WIN:
+                                result["wins"] += 1
+                            elif pick_result == PickResult.LOSS:
+                                result["losses"] += 1
+                            elif pick_result == PickResult.PUSH:
+                                result["pushes"] += 1
+
                 except Exception as e:
-                    logger.warning(f"[{sport}] Weight adjustment failed: {e}")
+                    logger.warning(f"[{sport}] Failed to update Postgres pick {pick.pick_uid}: {e}")
+
+            result["postgres_updated"] = postgres_updated
+            logger.info(f"[{sport}] Updated {postgres_updated} picks in Postgres")
+
+        # Adjust weights if we have enough graded predictions
+        grading_stats = self.auto_grader.get_grading_stats(sport, days_back=7)
+        if grading_stats.get("total_graded", 0) >= 30:
+            logger.info(f"[{sport}] Enough data for weight adjustment ({grading_stats['total_graded']} graded)")
+            # Trigger weight adjustment
+            try:
+                for stat_type in ["points", "rebounds", "assists"]:
+                    self.auto_grader.adjust_weights(sport, stat_type, days_back=7, apply_changes=True)
+                result["weights_adjusted"] = True
+            except Exception as e:
+                logger.warning(f"[{sport}] Weight adjustment failed: {e}")
 
         return result
+
+    def _get_profit_mult(self, odds: int) -> float:
+        """Calculate profit multiplier from American odds."""
+        if not odds:
+            return 1.0
+        try:
+            if odds > 0:
+                return odds / 100
+            else:
+                return 100 / abs(odds)
+        except (ValueError, ZeroDivisionError):
+            return 1.0
 
     async def _grade_single_prediction(self, sport: str, pred: dict) -> Optional[dict]:
         """
@@ -1239,7 +1353,8 @@ class DailyScheduler:
     
     def _start_apscheduler(self):
         """Start using APScheduler."""
-        self.scheduler = BackgroundScheduler()
+        # v10.54: All jobs use America/New_York timezone consistently
+        self.scheduler = BackgroundScheduler(timezone="America/New_York")
 
         # v10.31 Grading + Tuning at 5 AM ET (before legacy audit)
         self.scheduler.add_job(
@@ -1273,48 +1388,48 @@ class DailyScheduler:
             name="Daily Audit (6:30 AM ET)"
         )
 
-        # Props fetch at 10 AM daily (morning fresh data for community)
+        # Props fetch at 10 AM ET daily (morning fresh data for community)
         self.scheduler.add_job(
             self.props_job.run,
-            CronTrigger(hour=10, minute=SchedulerConfig.PROPS_FETCH_MINUTE),
+            CronTrigger(hour=10, minute=SchedulerConfig.PROPS_FETCH_MINUTE, timezone="America/New_York"),
             id="props_fetch_morning",
-            name="Props Fetch (10 AM daily)"
+            name="Props Fetch (10 AM ET daily)"
         )
 
-        # Props fetch at 6 PM daily (evening refresh for goldilocks zone)
+        # Props fetch at 6 PM ET daily (evening refresh for goldilocks zone)
         self.scheduler.add_job(
             self.props_job.run,
-            CronTrigger(hour=18, minute=SchedulerConfig.PROPS_FETCH_MINUTE),
+            CronTrigger(hour=18, minute=SchedulerConfig.PROPS_FETCH_MINUTE, timezone="America/New_York"),
             id="props_fetch_evening",
-            name="Props Fetch (6 PM daily)"
+            name="Props Fetch (6 PM ET daily)"
         )
 
-        # Weekend-only: Props fetch at 12 PM (noon games)
+        # Weekend-only: Props fetch at 12 PM ET (noon games)
         self.scheduler.add_job(
             self.props_job.run,
-            CronTrigger(day_of_week="sat,sun", hour=12, minute=SchedulerConfig.PROPS_FETCH_MINUTE),
+            CronTrigger(day_of_week="sat,sun", hour=12, minute=SchedulerConfig.PROPS_FETCH_MINUTE, timezone="America/New_York"),
             id="props_fetch_weekend_noon",
-            name="Props Fetch (12 PM weekends)"
+            name="Props Fetch (12 PM ET weekends)"
         )
 
-        # Weekend-only: Props fetch at 2 PM (afternoon games)
+        # Weekend-only: Props fetch at 2 PM ET (afternoon games)
         self.scheduler.add_job(
             self.props_job.run,
-            CronTrigger(day_of_week="sat,sun", hour=14, minute=SchedulerConfig.PROPS_FETCH_MINUTE),
+            CronTrigger(day_of_week="sat,sun", hour=14, minute=SchedulerConfig.PROPS_FETCH_MINUTE, timezone="America/New_York"),
             id="props_fetch_weekend_afternoon",
-            name="Props Fetch (2 PM weekends)"
+            name="Props Fetch (2 PM ET weekends)"
         )
 
-        # Weekly cleanup on Sunday at 3 AM
+        # Weekly cleanup on Sunday at 3 AM ET
         self.scheduler.add_job(
             self.cleanup_job.run,
-            CronTrigger(day_of_week="sun", hour=3, minute=0),
+            CronTrigger(day_of_week="sun", hour=3, minute=0, timezone="America/New_York"),
             id="weekly_cleanup",
-            name="Weekly Cleanup"
+            name="Weekly Cleanup (3 AM ET)"
         )
 
         self.scheduler.start()
-        logger.info("APScheduler started: smoke_test@5:30AM, jsonl_grading@6AM, audit@6:30AM, props@10AM+6PM daily (+12PM+2PM weekends), cleanup@Sun3AM")
+        logger.info("APScheduler started (America/New_York): smoke_test@5:30AM_ET, jsonl_grading@6AM_ET, audit@6:30AM_ET, props@10AM+6PM_ET daily (+12PM+2PM_ET weekends), cleanup@Sun3AM_ET")
     
     def _start_simple_scheduler(self):
         """Fallback simple scheduler using threading."""

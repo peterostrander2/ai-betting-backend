@@ -7770,6 +7770,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
                         # v10.32+: Also save to SignalLedger for ROI tracking
                         # Generate pick_uid same way as PickLedger for foreign key
+                        # v10.54: Use ET date to match PickLedger's pick_uid generation
+                        from datetime import date as dt_date
+                        from database import get_et_date_str
+                        et_date_str = get_et_date_str()
                         pick_uid = PickLedger.generate_pick_uid(
                             sport=sport.upper(),
                             event_id=pick.get("event_id"),
@@ -7778,7 +7782,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                             line=pick.get("line"),
                             odds=pick.get("odds", -110),
                             version="production_v10.33+",
-                            pick_date=datetime.utcnow().date()
+                            pick_date=dt_date.fromisoformat(et_date_str)
                         )
 
                         # Save each fired signal to SignalLedger
@@ -7896,38 +7900,54 @@ async def lstm_status():
 
 @router.get("/grader/status")
 async def grader_status():
-    """Check auto-grader status and current weights."""
-    if not AUTO_GRADER_AVAILABLE:
-        return {
-            "available": False,
-            "note": "Auto-grader module not available",
-            "timestamp": datetime.now().isoformat()
-        }
+    """
+    v10.54: Check auto-grader status with Postgres-backed pick counts.
+    Shows pending vs graded counts using ET date bucketing.
+    """
+    from database import get_pick_counts_for_date, get_performance_stats_for_window, get_et_now, DB_ENABLED
 
-    grader = get_grader()  # Use singleton - CRITICAL for data persistence!
+    # Get today's date in ET
+    et_now = get_et_now()
+    today_et = et_now.date()
+    today_str = today_et.strftime("%Y-%m-%d")
 
-    # v10.38: Get predictions logged from JSONL files (today)
-    predictions_logged_today = grader.get_predictions_logged_count()
+    # Get counts from Postgres
+    today_counts = get_pick_counts_for_date(today_et)
+    stats_7d = get_performance_stats_for_window(days_back=7)
 
-    # v10.38: Get grading stats for last 7 days
-    grading_stats = grader.get_grading_stats(days_back=7)
+    # Also check auto_grader for legacy JSONL stats
+    grader_available = AUTO_GRADER_AVAILABLE
+    jsonl_logged = 0
+    grader_weights_loaded = False
+
+    if AUTO_GRADER_AVAILABLE:
+        grader = get_grader()
+        jsonl_logged = grader.get_predictions_logged_count()
+        grader_weights_loaded = bool(grader.weights)
 
     return {
-        "available": True,
-        "supported_sports": grader.SUPPORTED_SPORTS,
-        "predictions_logged_today": predictions_logged_today,
-        "predictions_logged_legacy": sum(len(p) for p in grader.predictions.values()),
-        "grading_stats_7d": {
-            "total_predictions": grading_stats.get("total_predictions", 0),
-            "total_graded": grading_stats.get("total_graded", 0),
-            "total_ungraded": grading_stats.get("total_ungraded", 0),
-            "wins": grading_stats.get("wins", 0),
-            "losses": grading_stats.get("losses", 0),
-            "hit_rate": grading_stats.get("hit_rate", 0.0)
+        "available": grader_available,
+        "database_enabled": DB_ENABLED,
+        "today_et": today_str,
+        "today_counts": {
+            "total": today_counts["total"],
+            "pending": today_counts["pending"],
+            "graded": today_counts["win"] + today_counts["loss"] + today_counts["push"],
+            "wins": today_counts["win"],
+            "losses": today_counts["loss"],
+            "pushes": today_counts["push"]
         },
-        "weights_loaded": bool(grader.weights),
-        "storage_path": grader.storage_path,
-        "note": "Use /grader/weights/{sport} to see current weights. v10.38: Now using JSONL logging.",
+        "stats_7d": {
+            "total_graded": stats_7d["total_graded"],
+            "wins": stats_7d["wins"],
+            "losses": stats_7d["losses"],
+            "pushes": stats_7d["pushes"],
+            "hit_rate": stats_7d["hit_rate"],
+            "profit_units": stats_7d["profit_units"]
+        },
+        "jsonl_logged_today": jsonl_logged,
+        "weights_loaded": grader_weights_loaded,
+        "note": "v10.54: Now using Postgres with ET date bucketing. JSONL logging optional.",
         "timestamp": datetime.now().isoformat()
     }
 
@@ -8213,7 +8233,7 @@ async def grade_predictions_manually(
 @router.get("/grader/daily-report")
 async def get_daily_community_report(days_back: int = 1):
     """
-    Generate a community-friendly daily report.
+    v10.54: Generate a community-friendly daily report using Postgres with ET dates.
 
     This report is designed to share with your community showing:
     - Yesterday's performance across all sports
@@ -8223,62 +8243,62 @@ async def get_daily_community_report(days_back: int = 1):
 
     Share this every morning to build trust and transparency!
     """
-    if not AUTO_GRADER_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+    from database import get_et_now, get_picks_for_date, PickResult, DB_ENABLED
+    from datetime import date as dt_date
+
+    if not DB_ENABLED:
+        raise HTTPException(status_code=503, detail="Database not available for daily report")
 
     try:
-        grader = get_grader()  # Use singleton
-
-        report_date = (datetime.now() - timedelta(days=days_back)).strftime("%B %d, %Y")
-        today = datetime.now().strftime("%B %d, %Y")
+        # v10.54: Use ET date for correct day bucketing
+        et_now = get_et_now()
+        target_date = (et_now - timedelta(days=days_back)).date()
+        report_date = target_date.strftime("%B %d, %Y")
+        today = et_now.strftime("%B %d, %Y")
 
         # Collect performance across all sports
         sports_data = {}
         total_picks = 0
         total_hits = 0
+        total_losses = 0
         overall_lessons = []
         improvements = []
 
         for sport in ["NBA", "NFL", "MLB", "NHL"]:
-            predictions = grader.predictions.get(sport, [])
-            cutoff = datetime.now() - timedelta(days=days_back + 1)
-            end_cutoff = datetime.now() - timedelta(days=days_back - 1)
+            # v10.54: Query Postgres using ET date bucketing
+            picks = get_picks_for_date(target_date, sport)
 
-            # Filter to yesterday's graded predictions
-            graded = [
-                p for p in predictions
-                if p.actual_value is not None and
-                cutoff <= datetime.fromisoformat(p.timestamp) <= end_cutoff
-            ]
+            # Filter to settled picks only
+            settled = [p for p in picks if p.result in [PickResult.WIN, PickResult.LOSS, PickResult.PUSH]]
 
-            if graded:
-                hits = sum(1 for p in graded if p.hit)
-                total = len(graded)
-                hit_rate = hits / total if total > 0 else 0
+            if settled:
+                wins = sum(1 for p in settled if p.result == PickResult.WIN)
+                losses = sum(1 for p in settled if p.result == PickResult.LOSS)
+                total = len(settled)
+                hit_rate = wins / (wins + losses) if (wins + losses) > 0 else 0
 
-                # Calculate bias
-                errors = [p.error for p in graded if p.error is not None]
-                avg_error = sum(errors) / len(errors) if errors else 0
+                # Calculate net units
+                net_units = sum(p.profit_units or 0 for p in settled)
 
                 sports_data[sport] = {
                     "picks": total,
-                    "wins": hits,
-                    "losses": total - hits,
+                    "wins": wins,
+                    "losses": losses,
                     "hit_rate": round(hit_rate * 100, 1),
                     "status": "🔥" if hit_rate >= 0.55 else ("✅" if hit_rate >= 0.50 else "📈"),
-                    "avg_error": round(avg_error, 2)
+                    "net_units": round(net_units, 2)
                 }
 
                 total_picks += total
-                total_hits += hits
+                total_hits += wins
+                total_losses += losses
 
-                # Generate lessons learned
-                if avg_error > 2:
-                    overall_lessons.append(f"{sport}: We were predicting slightly high. Adjusting down.")
-                    improvements.append(f"Lowered {sport} prediction weights by {min(abs(avg_error) * 2, 5):.1f}%")
-                elif avg_error < -2:
-                    overall_lessons.append(f"{sport}: We were predicting slightly low. Adjusting up.")
-                    improvements.append(f"Raised {sport} prediction weights by {min(abs(avg_error) * 2, 5):.1f}%")
+                # Generate lessons learned based on performance
+                if hit_rate < 0.45:
+                    overall_lessons.append(f"{sport}: Reviewing our model factors. Adjusting weights.")
+                    improvements.append(f"Recalibrating {sport} prediction weights")
+                elif hit_rate >= 0.55:
+                    overall_lessons.append(f"{sport}: Model performing well!")
 
         # Calculate overall hit rate
         overall_hit_rate = (total_hits / total_picks * 100) if total_picks > 0 else 0
@@ -8363,9 +8383,10 @@ Whether we win or lose, we're always improving! 💪
 async def get_v1031_daily_report(sport: str, date_str: str = None):
     """
     v10.31: Get daily report for a sport from PickLedger.
+    v10.54: Updated to use ET date bucketing.
 
     Query Parameters:
-    - date: YYYY-MM-DD format (default: yesterday)
+    - date: YYYY-MM-DD format (default: yesterday in ET)
 
     Returns:
     - Performance summary (W-L-P, net_units, ROI)
@@ -8378,13 +8399,14 @@ async def get_v1031_daily_report(sport: str, date_str: str = None):
 
     try:
         from datetime import date as date_type
-        from database import get_picks_for_date, get_config_changes, PickResult
+        from database import get_picks_for_date, get_config_changes, PickResult, get_et_now
 
-        # Parse date
+        # v10.54: Parse date or use yesterday in ET
         if date_str:
             target_date = date_type.fromisoformat(date_str)
         else:
-            target_date = (datetime.now() - timedelta(days=1)).date()
+            et_now = get_et_now()
+            target_date = (et_now - timedelta(days=1)).date()
 
         sport_upper = sport.upper()
 
