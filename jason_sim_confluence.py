@@ -14,6 +14,9 @@
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 
+# v10.55: Import tiering module - single source of truth for tier assignment
+from tiering import tier_from_score as tiering_tier_from_score
+
 logger = logging.getLogger("jason_sim")
 
 # ============================================================================
@@ -517,38 +520,23 @@ def recompute_tier(score: float, current_tier: Dict[str, Any]) -> Dict[str, Any]
     """
     Recompute bet tier based on new score.
 
-    Uses standard SMASH SPOT tier thresholds.
+    v10.55: Uses tiering module for consistent thresholds.
     """
-    # Default thresholds (NBA)
-    thresholds = {
-        "PASS": 4.75,
-        "MONITOR": 5.75,
-        "EDGE_LEAN": 6.50,
-        "GOLD_STAR": 7.50
-    }
+    # v10.55: Use tiering module for consistent tier assignment
+    tier, _ = tiering_tier_from_score(score)
 
-    # Determine tier
-    if score >= thresholds["GOLD_STAR"]:
-        tier = "GOLD_STAR"
-        units = 2.0
-        action = "SMASH"
-    elif score >= thresholds["EDGE_LEAN"]:
-        tier = "EDGE_LEAN"
-        units = 1.0
-        action = "PLAY"
-    elif score >= thresholds["MONITOR"]:
-        tier = "MONITOR"
-        units = 0.0
-        action = "WATCH"
-    else:
-        tier = "PASS"
-        units = 0.0
-        action = "SKIP"
+    tier_map = {
+        "GOLD_STAR": {"units": 2.0, "action": "SMASH"},
+        "EDGE_LEAN": {"units": 1.0, "action": "PLAY"},
+        "MONITOR": {"units": 0.0, "action": "WATCH"},
+        "PASS": {"units": 0.0, "action": "SKIP"},
+    }
+    config = tier_map.get(tier, tier_map["PASS"])
 
     return {
         "tier": tier,
-        "units": units,
-        "action": action
+        "units": config["units"],
+        "action": config["action"]
     }
 
 

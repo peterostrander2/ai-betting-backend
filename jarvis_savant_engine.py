@@ -49,6 +49,9 @@ from dataclasses import dataclass, asdict
 from collections import defaultdict
 import hashlib
 
+# v10.55: Import tiering module - single source of truth for tier assignment
+from tiering import tier_from_score as tiering_tier_from_score
+
 # ============================================================================
 # LOGGING
 # ============================================================================
@@ -916,23 +919,21 @@ class JarvisSavantEngine:
             tier = "ML_DOG_LOTTO"
             unit_size = 0.5
             explanation = "NHL Dog Protocol triggered. ML dog lotto play."
-        # Standard tier determination based on final score (v3 thresholds)
-        elif final_score >= 7.5:
-            tier = "GOLD_STAR"
-            unit_size = 2.0
-            explanation = "GOLD STAR - Maximum confidence. 2 unit play."
-        elif final_score >= 6.5:
-            tier = "EDGE_LEAN"
-            unit_size = 1.0
-            explanation = "EDGE LEAN - Strong edge detected. 1 unit play."
-        elif final_score >= 5.5:
-            tier = "MONITOR"
-            unit_size = 0.0
-            explanation = "MONITOR - Track but no action."
         else:
-            tier = "PASS"
-            unit_size = 0.0
-            explanation = "PASS - Insufficient edge (below 5.5)."
+            # v10.55: Use tiering module for consistent tier assignment
+            tier, _ = tiering_tier_from_score(final_score)
+            if tier == "GOLD_STAR":
+                unit_size = 2.0
+                explanation = "GOLD STAR - Maximum confidence. 2 unit play."
+            elif tier == "EDGE_LEAN":
+                unit_size = 1.0
+                explanation = "EDGE LEAN - Strong edge detected. 1 unit play."
+            elif tier == "MONITOR":
+                unit_size = 0.0
+                explanation = "MONITOR - Track but no action."
+            else:
+                unit_size = 0.0
+                explanation = "PASS - Insufficient edge (below 5.5)."
 
         return {
             "tier": tier,

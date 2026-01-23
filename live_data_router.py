@@ -40,6 +40,9 @@ import json
 import re
 import numpy as np
 
+# v10.55: Import tiering module - single source of truth for tier assignment
+from tiering import tier_from_score as tiering_tier_from_score, DEFAULT_TIERS as TIERING_DEFAULT_TIERS
+
 # Import MasterPredictionSystem for comprehensive AI scoring
 try:
     from advanced_ml_backend import MasterPredictionSystem
@@ -940,26 +943,16 @@ def tier_from_score(score: float, tiers: dict = None) -> tuple:
     """
     Return (tier, badge) from score. Single source of truth for tier assignment.
 
-    v10.22: Now accepts optional per-sport tier thresholds.
+    v10.55: Delegates to tiering.py module for consistency.
 
-    Default Thresholds (NBA):
+    Default Thresholds:
     - GOLD_STAR: >= 7.5
     - EDGE_LEAN: >= 6.5
     - MONITOR: >= 5.5
     - PASS: < 5.5
     """
-    # Default NBA thresholds if not provided
-    if tiers is None:
-        tiers = {"PASS": 5.5, "MONITOR": 5.5, "EDGE_LEAN": 6.5, "GOLD_STAR": 7.5}
-
-    score = clamp_score(score)
-    if score >= tiers.get("GOLD_STAR", 7.5):
-        return ("GOLD_STAR", "GOLD STAR")
-    if score >= tiers.get("EDGE_LEAN", 6.5):
-        return ("EDGE_LEAN", "EDGE LEAN")
-    if score >= tiers.get("MONITOR", 5.5):
-        return ("MONITOR", "MONITOR")
-    return ("PASS", "PASS")
+    # v10.55: Delegate to tiering module (single source of truth)
+    return tiering_tier_from_score(score, tiers)
 
 
 def order_reasons(reasons: list) -> list:
@@ -4790,11 +4783,14 @@ async def get_best_bets_all(debug: int = 0):
         )[:3]
 
         for pick in fallback_pool:
-            pick["tier"] = "MONITOR"
+            # v10.55: Use tier_from_score on actual final_score - don't force MONITOR
+            fb_score = float(pick.get("final_score", pick.get("smash_score", pick.get("total_score", 0))))
+            fb_tier, _ = tier_from_score(fb_score)
+            pick["tier"] = fb_tier
             pick["badge"] = "FALLBACK"
             pick["fallback"] = True
             pick["reasons"] = pick.get("reasons", []) + [
-                "GOVERNOR: GLOBAL_FALLBACK_TOP3 (no EDGE_LEAN/GOLD_STAR qualified across all sports)"
+                "GOVERNOR: GLOBAL_FALLBACK_TOP3 (below publish gate but included for volume)"
             ]
             # v10.52: Ensure labels on fallback picks too
             ensure_pick_labels(pick)
@@ -7573,12 +7569,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
             # Mark each fallback pick
             for pick in fallback_picks:
-                # Force tier to MONITOR for fallback picks
-                pick["tier"] = "MONITOR"
+                # v10.55: Use tier_from_score on actual final_score - don't force MONITOR
+                fb_score = float(pick.get("final_score", pick.get("smash_score", pick.get("total_score", 0))))
+                fb_tier, _ = tier_from_score(fb_score)
+                pick["tier"] = fb_tier
                 pick["badge"] = "FALLBACK"
                 pick["fallback"] = True
                 pick["reasons"] = pick.get("reasons", []) + [
-                    "SYSTEM: FALLBACK_MONITOR_TOP3 (no EDGE_LEAN/GOLD_STAR qualified)"
+                    "SYSTEM: FALLBACK_TOP3 (below publish gate but included for volume)"
                 ]
 
                 # Distribute to appropriate list based on source
