@@ -1577,3 +1577,102 @@ curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
 Expected: At least 1-3 EDGE_LEAN or GOLD_STAR props returned.
 
 ---
+
+## Session Log: January 23, 2026 - v10.48 Tier A/B Split + Action Leans
+
+### What Was Done
+
+**1. Tier A/B Split for /best-bets/all**
+
+Separated picks into two tiers for better risk management:
+
+| Tier | Name | Score Range | Max Picks | Max Units |
+|------|------|-------------|-----------|-----------|
+| **A** | Official Card | ≥ 7.05 (GOLD_STAR + EDGE_LEAN) | 14 | No limit |
+| **B** | Action Leans | 6.70 ≤ score < 7.05 | 10 | 1.0 |
+
+**2. Backwards Compatibility**
+
+Existing clients reading `all_picks` + `summary` are unaffected:
+- `all_picks` contains ONLY Tier A (Official Card)
+- `summary.props_count / games_count / gold_star_count / edge_lean_count` = Tier A only
+
+**3. New Response Fields**
+
+```json
+{
+  "action_leans": {
+    "count": 8,
+    "picks": [...],
+    "threshold_min": 6.70,
+    "threshold_max": 7.05,
+    "max_units": 1.0
+  },
+  "summary": {
+    "official_count": 14,
+    "action_leans_count": 8,
+    "total_published_count": 22
+  }
+}
+```
+
+**4. Debug Block**
+
+```json
+{
+  "debug": {
+    "action_leans": {
+      "threshold_min": 6.70,
+      "threshold_max": 7.05,
+      "max_published": 10,
+      "candidates_before_filter": 25,
+      "candidates_after_dedup": 18,
+      "published": 8
+    }
+  }
+}
+```
+
+**5. Hard Guarantees Enforced**
+
+| Guarantee | Enforcement |
+|-----------|-------------|
+| Tier B score 6.70 ≤ x < 7.05 | Filter + validation |
+| Tier B max 10 picks | Slice after dedup |
+| Tier B units ≤ 1.0 | `min(units, 1.0)` |
+| Tier B no GOLD_STAR/EDGE_LEAN badges | Filter check |
+| Tier A max 14 picks | Slice |
+
+**6. Safety Tests Added**
+
+Three new tests in `test_api.py`:
+- `test_tier_b_score_range()` - Validates 6.70 ≤ score < 7.05
+- `test_tier_b_no_gold_star_badges()` - No forbidden badges/tiers
+- `test_tier_b_max_units()` - Units ≤ 1.0
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - v10.48 Tier A/B split, action_leans)
+test_api.py           (MODIFIED - 3 new safety tests)
+README.md             (MODIFIED - action_leans schema docs)
+CLAUDE.md             (MODIFIED - Session log)
+```
+
+### Verification
+
+```bash
+# Test Tier A/B split
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/all?debug=1" \
+  -H "X-API-Key: YOUR_KEY" | jq '{
+    official: .all_picks.count,
+    action_leans: .action_leans.count,
+    total: .summary.total_published_count,
+    debug_action_leans: .debug.action_leans
+  }'
+
+# Run safety tests
+python test_api.py
+```
+
+---
