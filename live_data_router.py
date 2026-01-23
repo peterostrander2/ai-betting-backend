@@ -1,4 +1,5 @@
-# live_data_router.py v15.0 - SCORING v10.52
+# live_data_router.py v15.0 - SCORING v10.53
+# v10.53: Soft Stacking Governor (prevent same-team spam, allow SMASH stacks)
 # v10.52: Time Gate (Same Day ET + Not Started) + team/opponent/game_time_et labels
 # v10.43: Publish Gate (dominance dedup + quality gate + correlation penalty)
 # v10.42: Universal fallback guarantee + debug counters + games_reason fix
@@ -3736,6 +3737,115 @@ def ensure_pick_labels(pick: Dict[str, Any]) -> Dict[str, Any]:
     return pick
 
 
+# ============================================================================
+# v10.53: SOFT STACKING GOVERNOR
+# Prevents same-team spam while allowing SMASH stacks to override limits
+# ============================================================================
+
+# Stacking configuration
+SMASH_STACK_THRESHOLD = 7.85  # Picks with final_score >= this get SMASH override
+
+# Official Card stacking limits
+OFFICIAL_DEFAULT_MAX_PER_GAME = 3
+OFFICIAL_DEFAULT_MAX_PER_TEAM_GAME = 2
+OFFICIAL_SMASH_MAX_PER_GAME = 5
+OFFICIAL_SMASH_MAX_PER_TEAM_GAME = 3
+OFFICIAL_HARD_CAP_PER_GAME = 5
+OFFICIAL_HARD_CAP_PER_TEAM_GAME = 3
+
+# Action Leans stacking limits (looser since they're gamble feelers)
+LEANS_MAX_PER_GAME = 4
+LEANS_MAX_PER_TEAM_GAME = 3
+
+
+def is_smash_stack(pick: Dict[str, Any]) -> bool:
+    """
+    Check if a pick qualifies as a SMASH STACK (allows higher stacking limits).
+    Requires: tier == "GOLD_STAR" AND final_score >= SMASH_STACK_THRESHOLD
+    """
+    if pick.get("tier") != "GOLD_STAR":
+        return False
+
+    score = float(pick.get("final_score") or pick.get("smash_score") or pick.get("total_score") or 0)
+    return score >= SMASH_STACK_THRESHOLD
+
+
+def apply_stacking_limits(
+    picks: List[Dict[str, Any]],
+    *,
+    default_max_game: int = 3,
+    default_max_team_game: int = 2,
+    smash_max_game: int = 5,
+    smash_max_team_game: int = 3,
+    hard_cap_game: int = 5,
+    hard_cap_team_game: int = 3
+) -> tuple:
+    """
+    Apply stacking limits to prevent same-team spam while allowing SMASH stacks.
+
+    Args:
+        picks: List of picks (must be sorted by score DESC)
+        default_max_game: Max picks per game (non-SMASH)
+        default_max_team_game: Max picks per team per game (non-SMASH)
+        smash_max_game: Max picks per game for SMASH stacks
+        smash_max_team_game: Max picks per team per game for SMASH stacks
+        hard_cap_game: Absolute max picks per game (even for SMASH)
+        hard_cap_team_game: Absolute max picks per team per game (even for SMASH)
+
+    Returns:
+        tuple: (filtered_picks, removed_count)
+    """
+    from collections import defaultdict
+
+    game_counts = defaultdict(int)
+    team_game_counts = defaultdict(int)
+
+    out = []
+    removed = 0
+
+    for pick in picks:
+        # Get game identifier
+        game_id = (
+            pick.get("game") or
+            pick.get("matchup") or
+            f"{pick.get('away_team', '')}@{pick.get('home_team', '')}" or
+            ""
+        )
+        team = pick.get("team") or ""
+        key_team_game = (game_id, team)
+
+        # Determine limits based on SMASH status
+        max_game = default_max_game
+        max_team_game = default_max_team_game
+
+        if is_smash_stack(pick):
+            max_game = smash_max_game
+            max_team_game = smash_max_team_game
+
+        # Check hard caps (always apply, even for SMASH)
+        if game_counts[game_id] >= hard_cap_game:
+            removed += 1
+            continue
+        if team_game_counts[key_team_game] >= hard_cap_team_game:
+            removed += 1
+            continue
+
+        # Check current limits
+        if game_counts[game_id] >= max_game:
+            removed += 1
+            continue
+        if team_game_counts[key_team_game] >= max_team_game:
+            removed += 1
+            continue
+
+        # Pick passes - add to output
+        out.append(pick)
+        game_counts[game_id] += 1
+        team_game_counts[key_team_game] += 1
+
+    return out, removed
+
+
 @router.get("/odds/{sport}")
 async def get_odds(sport: str, debug: int = 0, auth: bool = Depends(verify_api_key)):
     """
@@ -4490,6 +4600,56 @@ async def get_best_bets_all(debug: int = 0):
         global_gate_debug["after_corr_penalty"] = len(all_picks_final)
         global_gate_debug["published_total"] = len(all_picks_final)
 
+    # =========================================================================
+    # v10.53: SOFT STACKING GOVERNOR
+    # Prevents same-team spam while allowing SMASH stacks to override limits
+    # Applied AFTER time_gate, dedup, correlation penalty, publish gating
+    # =========================================================================
+
+    stacking_debug = {
+        "official_default_max_per_game": OFFICIAL_DEFAULT_MAX_PER_GAME,
+        "official_default_max_per_team_game": OFFICIAL_DEFAULT_MAX_PER_TEAM_GAME,
+        "smash_threshold": SMASH_STACK_THRESHOLD,
+        "official_smash_max_per_game": OFFICIAL_SMASH_MAX_PER_GAME,
+        "official_smash_max_per_team_game": OFFICIAL_SMASH_MAX_PER_TEAM_GAME,
+        "official_hard_cap_per_game": OFFICIAL_HARD_CAP_PER_GAME,
+        "official_hard_cap_per_team_game": OFFICIAL_HARD_CAP_PER_TEAM_GAME,
+        "action_leans_max_per_game": LEANS_MAX_PER_GAME,
+        "action_leans_max_per_team_game": LEANS_MAX_PER_TEAM_GAME,
+        "official_before_stacking": len(all_picks_final),
+        "official_after_stacking": 0,
+        "removed_official_by_stacking": 0,
+        "leans_before_stacking": len(action_leans_picks),
+        "leans_after_stacking": 0,
+        "removed_leans_by_stacking": 0
+    }
+
+    # Apply stacking to Official Card
+    all_picks_final, removed_official = apply_stacking_limits(
+        all_picks_final,
+        default_max_game=OFFICIAL_DEFAULT_MAX_PER_GAME,
+        default_max_team_game=OFFICIAL_DEFAULT_MAX_PER_TEAM_GAME,
+        smash_max_game=OFFICIAL_SMASH_MAX_PER_GAME,
+        smash_max_team_game=OFFICIAL_SMASH_MAX_PER_TEAM_GAME,
+        hard_cap_game=OFFICIAL_HARD_CAP_PER_GAME,
+        hard_cap_team_game=OFFICIAL_HARD_CAP_PER_TEAM_GAME
+    )
+    stacking_debug["official_after_stacking"] = len(all_picks_final)
+    stacking_debug["removed_official_by_stacking"] = removed_official
+
+    # Apply stacking to Action Leans (looser limits)
+    action_leans_picks, removed_leans = apply_stacking_limits(
+        action_leans_picks,
+        default_max_game=LEANS_MAX_PER_GAME,
+        default_max_team_game=LEANS_MAX_PER_TEAM_GAME,
+        smash_max_game=LEANS_MAX_PER_GAME,  # No SMASH override for leans
+        smash_max_team_game=LEANS_MAX_PER_TEAM_GAME,
+        hard_cap_game=LEANS_MAX_PER_GAME,
+        hard_cap_team_game=LEANS_MAX_PER_TEAM_GAME
+    )
+    stacking_debug["leans_after_stacking"] = len(action_leans_picks)
+    stacking_debug["removed_leans_by_stacking"] = removed_leans
+
     # UNIVERSAL FALLBACK: Never return 0 picks
     if len(all_picks_final) == 0:
         logger.warning("ALL-SPORTS: Zero picks after gate - activating GLOBAL FALLBACK")
@@ -4517,11 +4677,12 @@ async def get_best_bets_all(debug: int = 0):
 
     debug_info["global_publish_gate"] = global_gate_debug
     debug_info["action_leans"] = action_leans_debug  # v10.51
+    debug_info["stacking"] = stacking_debug  # v10.53
 
     # Build response
     result = {
-        "source": "production_v10.52_all_sports",
-        "scoring_system": "v10.52: Time-gated 2-tier publishing (Same Day ET + Not Started)",
+        "source": "production_v10.53_all_sports",
+        "scoring_system": "v10.53: Time-gated + Soft Stacking Governor (SMASH stacks allowed)",
         "all_picks": {
             "count": len(all_picks_final),
             "picks": all_picks_final
