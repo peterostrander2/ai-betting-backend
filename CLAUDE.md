@@ -16,6 +16,33 @@
 
 ---
 
+## Daily Picks - Quick Access
+
+**When the user asks for today's picks, use this:**
+
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+```
+
+**API Key:** `bookie-prod-2026-xK9mP2nQ7vR4`
+
+**Endpoints for picks:**
+| Sport | Endpoint |
+|-------|----------|
+| NBA | `/live/best-bets/nba` |
+| NFL | `/live/best-bets/nfl` |
+| MLB | `/live/best-bets/mlb` |
+| NHL | `/live/best-bets/nhl` |
+| ALL | `/live/best-bets/all` |
+
+**Format the response for community posting:**
+- Show GOLD_STAR picks first (highest confidence)
+- Then EDGE_LEAN picks
+- Include: player, line, over/under, odds, score
+
+---
+
 ## IMPORTANT: Paid APIs - Always Use These
 
 **We pay for Odds API and Playbook API. Always use these for any data needs:**
