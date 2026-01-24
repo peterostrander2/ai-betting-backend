@@ -346,44 +346,118 @@ def safe_lower(x) -> str:
     """Safely convert any value to lowercase string. Handles None and non-string types."""
     return str(x or "").lower()
 
-def is_game_today(commence_time: str) -> bool:
-    """
-    Check if a game's commence_time is TODAY in ET timezone.
+# ============================================================================
+# v10.77: TODAY-ONLY ET FILTER (single source of truth)
+# ============================================================================
+# INVARIANT: All daily pulls must only include games where commence_time
+# converted to ET falls inside today's ET boundary [00:00:00, next day 00:00:00)
+# This applies to: NBA, NHL, NCAAB, NFL, MLB - ALL sports use this filter.
+# ============================================================================
 
-    v10.50: Date filter to only show today's games in best-bets.
-    The next day starts at 12:01 AM ET (midnight).
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
+
+
+def is_today_et(commence_time_iso: str, now: datetime = None) -> bool:
+    """
+    v10.77: True if the event's start time falls within TODAY in ET:
+    [00:00:00, next day 00:00:00)
+
+    This is the SINGLE SOURCE OF TRUTH for day boundary filtering.
+    Uses America/New_York timezone (handles DST correctly).
 
     Args:
-        commence_time: ISO format timestamp (e.g., "2026-01-23T01:08:46Z")
+        commence_time_iso: ISO format timestamp (e.g., "2026-01-24T23:00:00Z")
+        now: Optional datetime for testing (defaults to current time in ET)
 
     Returns:
-        True if game is today, False otherwise
+        True if game is today ET, False otherwise
     """
-    if not commence_time:
+    if not commence_time_iso:
         return False
 
     try:
-        from datetime import datetime, timezone, timedelta
+        if now is None:
+            now = datetime.now(ET)
 
-        # Parse the commence time (handle Z suffix)
-        if commence_time.endswith("Z"):
-            game_dt = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
-        else:
-            game_dt = datetime.fromisoformat(commence_time)
+        # Parse ISO time (supports ...Z suffix)
+        t = datetime.fromisoformat(commence_time_iso.replace("Z", "+00:00"))
+        t_et = t.astimezone(ET)
 
-        # Convert to ET (UTC-5, ignoring DST for simplicity)
-        et_offset = timezone(timedelta(hours=-5))
-        game_dt_et = game_dt.astimezone(et_offset)
+        # Today's boundaries in ET
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
 
-        # Get current time in ET
-        now_utc = datetime.now(timezone.utc)
-        now_et = now_utc.astimezone(et_offset)
-
-        # Compare dates (year, month, day)
-        return game_dt_et.date() == now_et.date()
+        return day_start <= t_et < day_end
     except Exception:
-        # If parsing fails, include the game (fail open)
-        return True
+        # If parsing fails, exclude the game (fail closed for data integrity)
+        return False
+
+
+def is_game_today(commence_time: str) -> bool:
+    """
+    Legacy wrapper for is_today_et() - use is_today_et() for new code.
+    """
+    return is_today_et(commence_time)
+
+
+def filter_today_games(games: list, debug: bool = False) -> list:
+    """
+    v10.77: Filter games to only include those starting TODAY in ET.
+
+    Args:
+        games: List of game dicts with commence_time/start_time field
+        debug: If True, log dropped games
+
+    Returns:
+        List of games that start today ET
+    """
+    now = datetime.now(ET)
+    kept = []
+    dropped = []
+
+    for g in games:
+        t = g.get("commence_time") or g.get("start_time") or g.get("startTime")
+        if is_today_et(t, now=now):
+            kept.append(g)
+        else:
+            dropped.append(g)
+
+    if debug and dropped:
+        logger.info(f"TODAY_ET filter: {len(games)} raw → {len(kept)} kept, {len(dropped)} dropped")
+        for g in dropped[:5]:
+            t_str = g.get("commence_time") or g.get("start_time") or g.get("startTime") or ""
+            try:
+                t_et = datetime.fromisoformat(t_str.replace("Z", "+00:00")).astimezone(ET)
+                away = g.get("away_team") or g.get("awayTeamName") or "?"
+                home = g.get("home_team") or g.get("homeTeamName") or "?"
+                logger.info(f"  DROPPED (not today ET): {away} @ {home} | {t_et.isoformat()}")
+            except Exception:
+                pass
+
+    return kept
+
+
+def debug_day_filter(games: list, source: str = "Unknown") -> tuple:
+    """
+    v10.77: Debug helper to show day filter results.
+
+    Returns:
+        Tuple of (kept_games, dropped_games, summary_str)
+    """
+    now = datetime.now(ET)
+    kept, dropped = [], []
+
+    for g in games:
+        t = g.get("commence_time") or g.get("start_time") or g.get("startTime")
+        if is_today_et(t, now=now):
+            kept.append(g)
+        else:
+            dropped.append(g)
+
+    summary = f"{source} raw: {len(games)} | TODAY_ET kept: {len(kept)} | dropped: {len(dropped)}"
+    return kept, dropped, summary
 
 # ============================================================================
 # v10.34: CACHE SCHEMA VERSIONING
@@ -8813,9 +8887,25 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         odds_http_status = resp.status_code if resp else None
 
         if resp and resp.status_code == 200:
-            games = resp.json()
-            raw_events_count = len(games)  # v10.38: Track raw events from Odds API
-            odds_provider_status = "OK" if len(games) > 0 else "EMPTY"
+            games_raw = resp.json()
+            raw_events_count = len(games_raw)  # v10.38: Track raw events from Odds API
+
+            # v10.77: Apply TODAY_ET filter BEFORE any processing
+            games, dropped_games, filter_summary = debug_day_filter(games_raw, source=f"OddsAPI_{sport}")
+            today_games_count = len(games)
+            logger.info(f"v10.77: {filter_summary}")
+
+            # Log dropped games for debugging
+            if dropped_games and debug:
+                for g in dropped_games[:3]:
+                    t_str = g.get("commence_time", "")
+                    try:
+                        t_et = datetime.fromisoformat(t_str.replace("Z", "+00:00")).astimezone(ET)
+                        logger.info(f"  DROPPED: {g.get('away_team')} @ {g.get('home_team')} | {t_et.isoformat()} (not today ET)")
+                    except Exception:
+                        pass
+
+            odds_provider_status = "OK" if today_games_count > 0 else ("EMPTY_TODAY" if raw_events_count > 0 else "EMPTY")
 
             # v10.45: Store successful odds snapshot in fallback cache
             if len(games) > 0:
