@@ -9,7 +9,7 @@
 ## Project Overview
 
 **Bookie-o-em** - AI Sports Prop Betting Backend
-**Version:** v14.6 / Engine v10.65 PRODUCTION HARDENED
+**Version:** v14.6 / Engine v10.66 PRODUCTION HARDENED
 **Stack:** Python 3.11+, FastAPI, Railway deployment
 **Frontend:** bookie-member-app (separate repo)
 **Production URL:** https://web-production-7b2a.up.railway.app
@@ -2157,5 +2157,78 @@ curl "https://web-production-7b2a.up.railway.app/api-coverage" -H "X-API-Key: YO
 | Economic Tailwind | Consumer confidence high | +0.25 | Esoteric score |
 | Economic Headwind | Consumer confidence low | -0.15 | Esoteric score |
 | News Momentum | Many trending stories | +0.2 | Esoteric score |
+
+---
+
+## Session Log: January 23, 2026 - v10.66 Alternative Data APIs Fully Configured
+
+### What Was Done
+
+**All 4 Alternative Data APIs Successfully Configured in Railway:**
+
+| API | Env Variable | Status | Features |
+|-----|--------------|--------|----------|
+| Twitter/X | `TWITTER_BEARER` | ✅ Active | injury_alerts, sentiment |
+| Finnhub | `FINNHUB_KEY` | ✅ Active | sportsbook_sentiment, market_sentiment |
+| SerpAPI | `SERPAPI_KEY` | ✅ Active | injury_news, trending |
+| FRED | `FRED_API_KEY` | ✅ Active | economic_sentiment, consumer_confidence |
+
+**Issue Fixed:** Railway environment variables had leading spaces in names (` FRED_API_KEY` instead of `FRED_API_KEY`). Fixed by deleting and re-adding without spaces.
+
+### Verification Endpoints
+
+```bash
+# Check all API configurations
+curl "https://web-production-7b2a.up.railway.app/live/env-check" -H "X-API-Key: YOUR_KEY"
+
+# Full API coverage summary
+curl "https://web-production-7b2a.up.railway.app/live/api-coverage" -H "X-API-Key: YOUR_KEY"
+```
+
+### Best-Bets Test Results (NBA)
+
+| Category | Count | Tiers |
+|----------|-------|-------|
+| Game Picks | 6 | 2 GOLD_STAR, 4 EDGE_LEAN |
+| Prop Picks | 5 | 2 GOLD_STAR, 3 EDGE_LEAN |
+
+Sample picks:
+- GOLD_STAR (7.78): Pelicans @ Grizzlies
+- GOLD_STAR (7.77): Rockets @ Pistons
+- GOLD_STAR (7.63): Jock Landale threes under 1.5
+- GOLD_STAR (7.62): Jaden Ivey points under 8.5
+
+### Complete Railway Environment Variables
+
+```bash
+# Core APIs (CRITICAL)
+ODDS_API_KEY=xxx              # Live odds, props, scores
+PLAYBOOK_API_KEY=xxx          # Splits, sharp money, injuries
+
+# Alternative Data APIs (v10.66)
+TWITTER_BEARER=xxx            # Breaking injury news
+FINNHUB_KEY=xxx               # Sportsbook stock sentiment
+SERPAPI_KEY=xxx               # Google News aggregation
+FRED_API_KEY=xxx              # Economic indicators
+
+# Other APIs
+WEATHER_API_KEY=xxx           # Game day weather
+ASTRONOMY_API_ID=xxx          # Moon phases, planetary hours
+ASTRONOMY_API_SECRET=xxx      # Astronomy auth
+
+# Platform
+API_AUTH_ENABLED=true
+API_AUTH_KEY=xxx
+DATABASE_URL=xxx
+WHOP_API_KEY=xxx
+```
+
+### System Status
+
+- **Engine Version:** v10.66
+- **All Core APIs:** ✅ Configured
+- **All Alternative Data APIs:** ✅ Configured
+- **Scoring Pipeline:** ✅ Fully operational
+- **Production URL:** https://web-production-7b2a.up.railway.app
 
 ---
