@@ -349,7 +349,7 @@ PLAYBOOK_API_KEY=xxx      # Playbook Sports API - Splits, sharp money, injuries
 WEATHER_API_KEY=xxx       # Weather API - Game day weather (outdoor sports)
 ASTRONOMY_API_ID=xxx      # Astronomy API - Moon phases, planetary hours (esoteric)
 ASTRONOMY_API_SECRET=xxx  # Astronomy API secret
-ROTOWIRE_API_KEY=xxx      # RotoWire - Starting lineups, referee assignments
+# RotoWire removed v10.68 - replaced by free ESPN API
 ```
 
 ### Alternative Data APIs
@@ -396,7 +396,6 @@ PORT=8000                 # Read via os.environ.get("PORT", 8000)
 | `WEATHER_API_KEY` | WeatherAPI | Game day weather for outdoor sports (MLB, NFL) | ✅ Integrated |
 | `ASTRONOMY_API_ID` | Astronomy API | Moon phases, void moon, planetary positions | ✅ Esoteric engine |
 | `ASTRONOMY_API_SECRET` | Astronomy API | Auth secret for astronomy data | ✅ Esoteric engine |
-| `ROTOWIRE_API_KEY` | RotoWire | Starting lineups, referee assignments, injuries | ⏳ Ready (needs key) |
 
 ### Alternative Data APIs (Edge Signals)
 
@@ -411,7 +410,7 @@ PORT=8000                 # Read via os.environ.get("PORT", 8000)
 
 | Key | Service | Purpose | Integration Status |
 |-----|---------|---------|-------------------|
-| `WHOP_API_KEY` | Whop | Membership/payments | User subscription management |
+| `WHOP_API_KEY` | Whop | Membership/payments | ✅ Configured |
 
 ### Alternative Data Integration Ideas
 
@@ -1767,13 +1766,8 @@ player_first_goalscorer
 
 ### Additional Data Sources
 
-**RotoWire API (Optional):**
-- Starting lineups
-- Referee assignments
-- Injury news
-
-**Free APIs (Fallback):**
-- ESPN (player stats for grading)
+**Free APIs:**
+- ESPN (starting lineups, referee assignments, referee tendencies, player stats)
 - BallDontLie (NBA backup)
 - NOAA (space weather for esoteric)
 
@@ -2068,10 +2062,10 @@ After v10.65, we now utilize:
 - ✅ Splits-history (historical)
 - ✅ Me (usage/quota)
 
-**Optional (RotoWire):**
-- ⏳ Starting lineups (not configured)
-- ⏳ Referee assignments (not configured)
-- ⏳ Injury news (not configured)
+**ESPN (FREE - v10.68):**
+- ✅ Starting lineups
+- ✅ Referee assignments
+- ✅ Referee tendencies (foul rates, over/under lean)
 
 ---
 
