@@ -416,7 +416,8 @@ def apply_publish_gate(
     # Step 3: Quality gate
     if apply_gate:
         current_picks, gate_stats = apply_quality_gate(current_picks, target_max)
-        debug["publish_threshold_edge_lean"] = gate_stats["edge_lean_threshold"]
+        # v10.57: Use props threshold as the reported threshold (games use fixed 6.85)
+        debug["publish_threshold_edge_lean"] = gate_stats["edge_lean_threshold_props"]
         debug["publish_threshold_gold_star"] = gate_stats["gold_star_threshold"]
         debug["gate_stats"] = gate_stats
 
