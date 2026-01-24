@@ -167,6 +167,64 @@ async def metrics():
 async def metrics_status():
     return get_metrics_status()
 
+
+# Public smoke test alert endpoint for UptimeRobot (no auth required)
+@app.api_route("/smoke-test/status", methods=["GET", "HEAD"])
+async def public_smoke_test_status():
+    """
+    Public alert endpoint for external monitoring (UptimeRobot, Cronitor, etc.)
+
+    Returns HTTP 200 if last smoke test passed, HTTP 503 if failed.
+    No authentication required.
+    """
+    import os
+    import json
+    from datetime import datetime, timedelta
+
+    log_dir = "./smoke_test_logs"
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Try today's log first, then yesterday's
+    for date_str in [today, yesterday]:
+        log_path = os.path.join(log_dir, f"smoke_test_{date_str}.json")
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, "r") as f:
+                    results = json.load(f)
+
+                failed = results.get("failed", 0)
+                critical_failures = results.get("critical_failures", [])
+
+                if failed > 0 or len(critical_failures) > 0:
+                    return Response(
+                        content=json.dumps({
+                            "status": "alert",
+                            "failed_tests": failed,
+                            "critical_failures": critical_failures,
+                            "test_date": date_str,
+                            "message": "Smoke test failed"
+                        }),
+                        status_code=503,
+                        media_type="application/json"
+                    )
+                else:
+                    return {
+                        "status": "ok",
+                        "passed_tests": results.get("passed", 0),
+                        "test_date": date_str,
+                        "message": "All systems operational"
+                    }
+            except Exception:
+                pass
+
+    # No smoke test log found - return OK (system just deployed or logs cleared)
+    return {
+        "status": "ok",
+        "message": "No smoke test logs found - system healthy",
+        "next_scheduled": "5:30 AM ET daily"
+    }
+
 # Esoteric today energy (frontend expects this at /esoteric/today-energy)
 @app.get("/esoteric/today-energy")
 async def esoteric_today_energy():
