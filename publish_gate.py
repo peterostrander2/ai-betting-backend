@@ -249,6 +249,10 @@ def apply_correlation_penalty(picks: List[Dict[str, Any]]) -> Tuple[List[Dict[st
 # PART B: DYNAMIC QUALITY GATE
 # ============================================================================
 
+# v10.57: Game picks use fixed threshold (no escalation from props)
+GAME_PICK_EDGE_LEAN_THRESHOLD = 6.85  # Lower than props to allow game picks through
+
+
 def apply_quality_gate(
     picks: List[Dict[str, Any]],
     target_max: int = TARGET_MAX_PICKS
@@ -259,21 +263,26 @@ def apply_quality_gate(
     - Publish all GOLD_STAR
     - Publish EDGE_LEAN only if score >= threshold
     - Escalate threshold if too many picks remain
+    - v10.57: Game picks use fixed threshold (not affected by props escalation)
 
     Returns:
         Tuple of (gated_picks, stats)
     """
-    # Start with default thresholds
+    # v10.57: Separate props and game picks
+    props = [p for p in picks if p.get("player_name") or p.get("player")]
+    game_picks = [p for p in picks if not (p.get("player_name") or p.get("player"))]
+
+    # Start with default thresholds for props
     edge_lean_threshold = EDGE_LEAN_THRESHOLDS[0]
     gold_star_threshold = GOLD_STAR_THRESHOLDS[0]
 
     edge_lean_step = 0
     gold_star_step = 0
 
-    def filter_picks(el_thresh: float, gs_thresh: float) -> List[Dict[str, Any]]:
+    def filter_picks(pick_list: List[Dict[str, Any]], el_thresh: float, gs_thresh: float) -> List[Dict[str, Any]]:
         """Filter picks based on thresholds."""
         result = []
-        for pick in picks:
+        for pick in pick_list:
             tier = pick.get("tier", "")
             score = get_score(pick)
 
@@ -286,34 +295,54 @@ def apply_quality_gate(
             # MONITOR and below are not published (unless fallback)
         return result
 
-    # Initial filter
-    gated = filter_picks(edge_lean_threshold, gold_star_threshold)
+    # Initial filter for props
+    gated_props = filter_picks(props, edge_lean_threshold, gold_star_threshold)
 
-    # Escalate EDGE_LEAN threshold if too many picks
-    while len(gated) > target_max and edge_lean_step < len(EDGE_LEAN_THRESHOLDS) - 1:
+    # Escalate EDGE_LEAN threshold for props if too many
+    props_target = max(1, target_max - 5)  # Reserve 5 slots for game picks
+    while len(gated_props) > props_target and edge_lean_step < len(EDGE_LEAN_THRESHOLDS) - 1:
         edge_lean_step += 1
         edge_lean_threshold = EDGE_LEAN_THRESHOLDS[edge_lean_step]
-        gated = filter_picks(edge_lean_threshold, gold_star_threshold)
+        gated_props = filter_picks(props, edge_lean_threshold, gold_star_threshold)
 
     # If still too many, escalate GOLD_STAR threshold (last resort)
-    while len(gated) > target_max and gold_star_step < len(GOLD_STAR_THRESHOLDS) - 1:
+    while len(gated_props) > props_target and gold_star_step < len(GOLD_STAR_THRESHOLDS) - 1:
         gold_star_step += 1
         gold_star_threshold = GOLD_STAR_THRESHOLDS[gold_star_step]
-        gated = filter_picks(edge_lean_threshold, gold_star_threshold)
+        gated_props = filter_picks(props, edge_lean_threshold, gold_star_threshold)
+
+    # v10.57: Game picks use FIXED threshold (not affected by props escalation)
+    gated_games = filter_picks(game_picks, GAME_PICK_EDGE_LEAN_THRESHOLD, GOLD_STAR_THRESHOLDS[0])
+
+    # Merge results
+    gated = gated_props + gated_games
 
     # Add publish gate info to remaining picks
     for pick in gated:
         pick["publish_gate_passed"] = True
         reasons = pick.get("reasons", [])
         tier = pick.get("tier", "")
-        if tier == "EDGE_LEAN" and edge_lean_threshold > EDGE_LEAN_THRESHOLDS[0]:
-            reasons.append(f"PUBLISH_GATE: Passed escalated EDGE_LEAN threshold ({edge_lean_threshold})")
+        is_game_pick = not (pick.get("player_name") or pick.get("player"))
+
+        if tier == "EDGE_LEAN":
+            if is_game_pick:
+                reasons.append(f"PUBLISH_GATE: Game pick passed fixed threshold ({GAME_PICK_EDGE_LEAN_THRESHOLD})")
+            elif edge_lean_threshold > EDGE_LEAN_THRESHOLDS[0]:
+                reasons.append(f"PUBLISH_GATE: Passed escalated EDGE_LEAN threshold ({edge_lean_threshold})")
         pick["reasons"] = reasons
+
+    # Sort by score descending
+    gated.sort(key=lambda x: get_score(x), reverse=True)
 
     stats = {
         "input_count": len(picks),
         "output_count": len(gated),
-        "edge_lean_threshold": edge_lean_threshold,
+        "props_input": len(props),
+        "props_output": len(gated_props),
+        "games_input": len(game_picks),
+        "games_output": len(gated_games),
+        "edge_lean_threshold_props": edge_lean_threshold,
+        "edge_lean_threshold_games": GAME_PICK_EDGE_LEAN_THRESHOLD,
         "edge_lean_step": edge_lean_step,
         "gold_star_threshold": gold_star_threshold,
         "gold_star_step": gold_star_step,
