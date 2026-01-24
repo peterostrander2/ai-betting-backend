@@ -3555,7 +3555,8 @@ async def get_sharp_money(sport: str):
                 except ValueError as e:
                     logger.error("Failed to parse Playbook response: %s", e)
 
-            if resp and resp.status_code == 429:
+            # v10.71: Fix - check splits_resp not undefined 'resp'
+            if splits_resp and not isinstance(splits_resp, Exception) and splits_resp.status_code == 429:
                 raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
 
         except HTTPException:
