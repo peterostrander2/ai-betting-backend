@@ -9,7 +9,7 @@
 ## Project Overview
 
 **Bookie-o-em** - AI Sports Prop Betting Backend
-**Version:** v14.6 / Engine v10.69 PRODUCTION HARDENED
+**Version:** v14.6 / Engine v10.71 PRODUCTION HARDENED
 **Stack:** Python 3.11+, FastAPI, Railway deployment
 **Frontend:** bookie-member-app (separate repo)
 **Production URL:** https://web-production-7b2a.up.railway.app
@@ -2243,7 +2243,7 @@ WHOP_API_KEY=xxx
 
 ### System Status
 
-- **Engine Version:** v10.70
+- **Engine Version:** v10.71
 - **All Core APIs:** ✅ Configured
 - **All Alternative Data APIs:** ✅ Configured
 - **ESPN Integration:** ✅ Active (lineups, officials, referee tendencies)
@@ -2414,7 +2414,7 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" -H 
 
 ### System Status
 
-- **Engine Version:** v10.70
+- **Engine Version:** v10.71
 - **ESPN Integration:** ✅ Active (free API, always available)
 - **Features:** starting_lineups, officials, referee_tendencies
 - **Sports Supported:** nba, nfl, mlb, nhl, ncaab
@@ -2705,10 +2705,80 @@ Great session. Completed:
 
 ---
 
-## Final API Status (v10.70) - All Systems Live
+## Session Log: January 24, 2026 - v10.71 Jason Sim Auto-Population
+
+### The Problem
+
+Jason Sim confluence layer was not working because `no_payloads_uploaded: true` in debug output. The layer requires simulation payloads to be uploaded externally, but nothing was generating them.
+
+### What Was Fixed
+
+**Added Auto-Population of Jason Sim Payloads**
+
+When best-bets generates picks, it now automatically creates Jason Sim payloads from game data:
+
+| Function | Purpose |
+|----------|---------|
+| `generate_jason_sim_payload()` | Create synthetic payload from spread/total/moneyline |
+| `auto_populate_jason_sim_payloads()` | Populate JASON_SIM_PAYLOADS dict for all games |
+
+**Market-Implied Probability Conversion:**
+
+| Input | Output |
+|-------|--------|
+| Spread | Win% via logistic function: `1 / (1 + 10^(-spread/7))` |
+| Moneyline (if no spread) | Win% via implied probability |
+| Total | Projected scores: `total/2 ± spread/2` |
+
+**Integration Point:**
+
+Added in best-bets game picks section (line ~8768), right before processing games:
+```python
+if jason_sim_games:
+    jason_sim_populated = auto_populate_jason_sim_payloads(sport_lower, jason_sim_games)
+    logger.info(f"v10.71: Auto-populated {jason_sim_populated} Jason Sim payloads for {sport}")
+```
+
+### Expected Results
+
+| Metric | Before | After |
+|--------|--------|-------|
+| `no_payloads_uploaded` | true | false |
+| `games_matched` | 0 | N (number of games) |
+| `boosted` | 0 | varies |
+| `downgraded` | 0 | varies |
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - Added auto-population functions + wiring)
+main.py               (MODIFIED - ENGINE_VERSION = "v10.71")
+CLAUDE.md             (MODIFIED - Session log)
+```
+
+### Verification
+
+```bash
+# Check Jason Sim is now populated
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" \
+  -H "X-API-Key: YOUR_KEY" | jq '.debug.jason_sim'
+
+# Expected output:
+# {
+#   "available": true,
+#   "games_checked": N,
+#   "games_matched": N,
+#   "boosted": X,
+#   "no_payloads_uploaded": false
+# }
+```
+
+---
+
+## Final API Status (v10.71) - All Systems Live
 
 **Last Updated:** January 24, 2026
-**Engine Version:** v10.70 (Glitch Protocol Complete)
+**Engine Version:** v10.71 (Jason Sim Auto-Population)
 
 ### All 11 APIs Online ✅
 
@@ -2749,7 +2819,7 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba" -H "X-API-K
 
 ### System Health
 
-- **Engine Version:** v10.70
+- **Engine Version:** v10.71
 - **All Core APIs:** ✅ Online
 - **All Alt Data APIs:** ✅ Online
 - **All Esoteric APIs:** ✅ Online
