@@ -54,7 +54,15 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 # v10.55: Import tiering module - single source of truth for tier assignment
-from tiering import tier_from_score as tiering_tier_from_score, DEFAULT_TIERS as TIERING_DEFAULT_TIERS, TIER_CONFIG
+from tiering import (
+    tier_from_score as tiering_tier_from_score,
+    DEFAULT_TIERS as TIERING_DEFAULT_TIERS,
+    TIER_CONFIG,
+    TIER_ORDER,
+    normalize_confidence,
+    filter_tier_badges,
+    downgrade_tier,
+)
 
 # v10.82: Import centralized version constants
 from env_config import Config
@@ -820,12 +828,11 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict 
             pick["status"] = "INVALID_INJURY"
             pick["debug_flags"].append(f"INJURY_{injury_status}:{player}")
         elif injury_status == "QUESTIONABLE":
-            # Downgrade tier by 1 for questionable players
-            tier_order = ["PASS", "MONITOR", "EDGE_LEAN", "GOLD_STAR", "TITANIUM_SMASH"]
-            current_idx = tier_order.index(pick["tier"]) if pick["tier"] in tier_order else 0
-            if current_idx > 0:
-                pick["original_tier"] = pick["tier"]
-                new_tier = tier_order[current_idx - 1]
+            # Downgrade tier by 1 for questionable players using tiering.py
+            current_tier = pick["tier"]
+            if current_tier != "PASS":
+                pick["original_tier"] = current_tier
+                new_tier = downgrade_tier(current_tier, steps=1)
                 pick["tier"] = new_tier
                 # Update all tier bundle fields
                 new_config = TIER_CONFIG.get(new_tier, TIER_CONFIG["PASS"])
@@ -851,6 +858,20 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict 
         pick["movement_flag"] = False
         pick["movement_summary"] = None
         pick["movement_severity"] = None
+
+    # =========================================================================
+    # v10.86: Confidence normalization (always label + pct)
+    # =========================================================================
+    raw_confidence = pick.get("confidence", pick.get("confidence_score", 50))
+    conf_label, conf_pct = normalize_confidence(raw_confidence)
+    pick["confidence_label"] = conf_label
+    pick["confidence_pct"] = conf_pct
+
+    # =========================================================================
+    # v10.86: Filter tier-like badges from badges[] to avoid contradiction
+    # =========================================================================
+    raw_badges = pick.get("badges", [])
+    pick["badges"] = filter_tier_badges(raw_badges, pick["tier"])
 
     return pick
 
