@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.68"  # ESPN Lineups & Referees: Free starting lineups, officials, referee tendency analysis
+ENGINE_VERSION = "v10.69"  # Harmonic Convergence: Golden Boost when Math (AI>8.0) AND Magic (Esoteric>8.0) align
 API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 

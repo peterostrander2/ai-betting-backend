@@ -7621,6 +7621,32 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     f"JARVIS TURBO: +{jarvis_turbo_boost:.2f} (hits={jarvis_hits_count}, rs={jarvis_rs:.2f}, gate=EDGE_LEAN+)"
                 )
 
+        # =====================================================================
+        # v10.69: HARMONIC CONVERGENCE / GOLDEN BOOST
+        # =====================================================================
+        # Crown Jewels integration: When BOTH "Math" (AI score) AND "Magic"
+        # (Esoteric score) are highly aligned (>8.0), this signals a rare
+        # confluence where quantitative models AND esoteric signals agree.
+        #
+        # Gate conditions (BOTH required):
+        #   - ai_score >= 8.0 (80th percentile of AI engine)
+        #   - esoteric_score >= 8.0 (80th percentile of esoteric signals)
+        #
+        # Boost: +0.75 points (significant but not overpowering)
+        # =====================================================================
+        HARMONIC_GATE_AI = 8.0
+        HARMONIC_GATE_ESOTERIC = 8.0
+        HARMONIC_BOOST = 0.75
+        harmonic_convergence = False
+        harmonic_reasons = []
+
+        if ai_score >= HARMONIC_GATE_AI and esoteric_score >= HARMONIC_GATE_ESOTERIC:
+            harmonic_convergence = True
+            final_score += HARMONIC_BOOST
+            harmonic_reasons.append(
+                f"HARMONIC: Golden Convergence +{HARMONIC_BOOST:.2f} (Math={ai_score:.1f}, Magic={esoteric_score:.1f})"
+            )
+
         # Cap final score at 9.99 (never exceed)
         final_score = min(final_score, FINAL_SCORE_CAP)
 
@@ -7675,7 +7701,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
         # Combine all reasons for explainability (v10.24: AI ENGINE first, then RESEARCH, ESOTERIC, etc.)
         # v10.39: Add JARVIS TURBO reasons after confluence (upgrade layer)
-        all_reasons = ai_reasons + research_reasons + esoteric_reasons + confluence_reasons + jarvis_turbo_reasons + smash_reasons
+        # v10.69: Add HARMONIC reasons for Golden Convergence
+        all_reasons = ai_reasons + research_reasons + esoteric_reasons + confluence_reasons + jarvis_turbo_reasons + harmonic_reasons + smash_reasons
 
         # v10.58: Calculate exact contributions for final_math ledger
         ai_contrib = round(ai_score * w_ai, 4)
@@ -7704,6 +7731,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "pillar_boost": round(pillar_boost, 2),  # v10.3: additive pillars
                 "confluence_boost": round(confluence_boost, 2),  # v10.4: jarvis confluence
                 "jarvis_turbo_boost": round(jarvis_turbo_boost, 2),  # v10.39: Jarvis turbo upgrade
+                "harmonic_convergence_boost": round(HARMONIC_BOOST if harmonic_convergence else 0.0, 2),  # v10.69: Golden boost
                 "alignment_pct": round(alignment_pct, 1)
             },
             # v10.58: Full engine breakdown for PROOF LEDGER
@@ -7771,6 +7799,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             },
             "jarvis_hits_count": jarvis_hits_count,  # v10.39: Count of Jarvis triggers hit
             "jarvis_turbo_boost": round(jarvis_turbo_boost, 2),  # v10.39: Turbo boost applied
+            "harmonic_convergence": harmonic_convergence,  # v10.69: Golden boost triggered (Math+Magic both >8.0)
             "esoteric_breakdown": {
                 # v10.58: Esoteric is NON-JARVIS only (environment signals)
                 # Gematria/Jarvis triggers now in jarvis_rs exclusively
