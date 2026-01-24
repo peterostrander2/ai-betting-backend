@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.66"  # Alternative Data Integration: Twitter, Finnhub, SerpAPI, FRED for edge signals
+ENGINE_VERSION = "v10.68"  # ESPN Lineups & Referees: Free starting lineups, officials, referee tendency analysis
 API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 

@@ -4575,7 +4575,7 @@ async def get_api_coverage():
         alt_data_status = get_alt_data_status()
 
     return {
-        "version": "v10.66",
+        "version": "v10.68",
         "odds_api": {
             "configured": bool(ODDS_API_KEY),
             "endpoints_used": [
@@ -4615,12 +4615,30 @@ async def get_api_coverage():
             ]
         },
         "free_apis": [
-            {"name": "ESPN", "purpose": "Box scores, player stats, injuries", "cost": "FREE"},
+            {
+                "name": "ESPN",
+                "purpose": "Box scores, player stats, injuries, starting lineups, officials, referee tendencies",
+                "cost": "FREE",
+                "features": ["starting_lineups", "officials", "referee_tendencies", "player_stats", "injuries"],
+                "sports": ["nba", "nfl", "mlb", "nhl", "ncaab"]
+            },
             {"name": "BallDontLie", "purpose": "NBA player stats backup", "cost": "FREE"},
             {"name": "NOAA", "purpose": "Space weather (Schumann resonance)", "cost": "FREE"},
         ],
+        "espn_integration": {
+            "configured": True,
+            "features": ["starting_lineups", "officials", "referee_tendencies"],
+            "endpoints_used": [
+                {"endpoint": "/scoreboard", "purpose": "Today's games list", "cost": "FREE"},
+                {"endpoint": "/summary?event={id}", "purpose": "Starters + officials for specific game", "cost": "FREE"}
+            ],
+            "referee_database": {
+                "known_refs": 10,
+                "tendencies_tracked": ["foul_rate", "over_tendency", "reputation"]
+            },
+            "scoring_integration": "referee_adjustment pillar (+/-0.2 for totals bets)"
+        },
         "optional_apis": [
-            {"name": "RotoWire", "env_var": "ROTOWIRE_API_KEY", "purpose": "Referee assignments, starting lineups, injury news"},
             {"name": "Weather", "env_var": "WEATHER_API_KEY", "purpose": "Game day weather for outdoor sports"},
         ],
         "alternative_data_apis": {

@@ -1,5 +1,5 @@
 """
-Alternative Data Integration - v10.66
+Alternative Data Integration - v10.68
 =====================================
 Combines all alternative data sources into unified context
 for the scoring pipeline.
@@ -9,6 +9,7 @@ Integration Points:
 2. Finnhub sentiment → Alternative sharp signal
 3. News trending → Public sentiment indicator
 4. FRED economics → Esoteric score component
+5. ESPN lineups → Starter confirmation + referee tendencies
 """
 
 import asyncio
@@ -36,6 +37,11 @@ from .fred_api import (
     get_consumer_confidence,
     is_fred_configured
 )
+from .espn_lineups import (
+    get_lineups_for_game,
+    get_referee_impact,
+    get_espn_status
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +52,7 @@ CACHE_TTL_SECONDS = 600  # 10 minutes
 
 def get_alt_data_status() -> Dict[str, Any]:
     """Get status of all alternative data sources."""
+    espn_status = get_espn_status()
     return {
         "twitter": {
             "configured": is_twitter_configured(),
@@ -63,11 +70,16 @@ def get_alt_data_status() -> Dict[str, Any]:
             "configured": is_fred_configured(),
             "features": ["economic_sentiment", "consumer_confidence"]
         },
+        "espn": {
+            "configured": espn_status.get("configured", True),  # ESPN is always free
+            "features": espn_status.get("features", [])
+        },
         "any_configured": any([
             is_twitter_configured(),
             is_finnhub_configured(),
             is_serpapi_configured(),
-            is_fred_configured()
+            is_fred_configured(),
+            True  # ESPN always available
         ])
     }
 
@@ -77,17 +89,19 @@ async def get_alternative_data_context(
     teams: List[str] = None,
     include_injuries: bool = True,
     include_sentiment: bool = True,
-    include_economic: bool = True
+    include_economic: bool = True,
+    include_lineups: bool = True
 ) -> Dict[str, Any]:
     """
     Fetch all alternative data in parallel and return unified context.
 
     Args:
         sport: Sport code (nba, nfl, mlb, nhl)
-        teams: Optional list of team names to focus on
+        teams: Optional list of team names to focus on [home, away]
         include_injuries: Include Twitter/SerpAPI injury alerts
         include_sentiment: Include Finnhub/Twitter sentiment
         include_economic: Include FRED economic data
+        include_lineups: Include ESPN lineups and referee data
 
     Returns:
         {
@@ -109,16 +123,24 @@ async def get_alternative_data_context(
                 "risk_appetite": str,
                 "consumer_confidence": float
             },
+            "lineups": {
+                "available": bool,
+                "starters": {...},
+                "officials": [...],
+                "referee_analysis": {...}
+            },
             "edge_signals": {
                 "institutional_move": bool,
                 "breaking_news_strength": float,
                 "economic_tailwind": bool,
-                "volume_spike": bool
+                "volume_spike": bool,
+                "referee_over_lean": bool
             },
             "scoring_adjustments": {
                 "hospital_fade_boost": float,  # Extra boost for injury pillar
                 "sharp_alternative": float,  # Alternative sharp signal
-                "esoteric_alt_data": float  # Component for esoteric score
+                "esoteric_alt_data": float,  # Component for esoteric score
+                "referee_adjustment": float  # Adjustment based on ref tendencies
             }
         }
     """
@@ -150,16 +172,24 @@ async def get_alternative_data_context(
             "risk_appetite": "MEDIUM",
             "consumer_confidence": 70.0
         },
+        "lineups": {
+            "available": False,
+            "starters": {"home": [], "away": []},
+            "officials": [],
+            "referee_analysis": {}
+        },
         "edge_signals": {
             "institutional_move": False,
             "breaking_news_strength": 0.0,
             "economic_tailwind": False,
-            "volume_spike": False
+            "volume_spike": False,
+            "referee_over_lean": False
         },
         "scoring_adjustments": {
             "hospital_fade_boost": 0.0,
             "sharp_alternative": 0.0,
-            "esoteric_alt_data": 0.0
+            "esoteric_alt_data": 0.0,
+            "referee_adjustment": 0.0
         },
         "sources_used": [],
         "fetch_time": datetime.now().isoformat()
@@ -191,6 +221,11 @@ async def get_alternative_data_context(
         tasks.append(get_economic_sentiment())
         task_names.append("fred_economic")
 
+    # ESPN lineups and referees (always available - free API)
+    if include_lineups and teams and len(teams) >= 2:
+        tasks.append(get_lineups_for_game(sport, teams[0], teams[1]))
+        task_names.append("espn_lineups")
+
     if not tasks:
         logger.debug("No alternative data sources configured")
         return result
@@ -206,6 +241,7 @@ async def get_alternative_data_context(
         market_sentiment = {}
         social_sentiment = {}
         economic_data = {}
+        espn_lineups_data = {}
 
         for name, response in zip(task_names, responses):
             if isinstance(response, Exception):
@@ -229,6 +265,8 @@ async def get_alternative_data_context(
                 social_sentiment = response
             elif name == "fred_economic":
                 economic_data = response
+            elif name == "espn_lineups":
+                espn_lineups_data = response
 
         # Combine injury alerts
         all_injuries = twitter_injuries + serpapi_injuries
@@ -261,12 +299,25 @@ async def get_alternative_data_context(
                 "consumer_confidence": economic_data.get("consumer_confidence", 70)
             }
 
+        # Process ESPN lineups and referees
+        if espn_lineups_data:
+            ref_analysis = espn_lineups_data.get("referee_analysis", {})
+            result["lineups"] = {
+                "available": True,
+                "starters": espn_lineups_data.get("starters", {"home": [], "away": []}),
+                "starters_count": espn_lineups_data.get("starters_count", {}),
+                "officials": espn_lineups_data.get("officials", []),
+                "referee_analysis": ref_analysis
+            }
+
         # Calculate edge signals
+        ref_analysis = result.get("lineups", {}).get("referee_analysis", {})
         result["edge_signals"] = {
             "institutional_move": sportsbook_sentiment.get("institutional_move", False),
             "breaking_news_strength": len(high_confidence) / 10.0,  # 0-1 scale
             "economic_tailwind": economic_data.get("sentiment", 0) > 0.3,
-            "volume_spike": sportsbook_sentiment.get("volume_spike", False)
+            "volume_spike": sportsbook_sentiment.get("volume_spike", False),
+            "referee_over_lean": ref_analysis.get("over_tendency", 0.5) > 0.52
         }
 
         # Calculate scoring adjustments
@@ -331,17 +382,20 @@ def _calculate_scoring_adjustments(context: Dict) -> Dict[str, float]:
     - hospital_fade_boost: Extra points for Hospital Fade pillar when injuries detected
     - sharp_alternative: Alternative sharp signal when Finnhub shows institutional move
     - esoteric_alt_data: Component for esoteric score
+    - referee_adjustment: Adjustment based on referee tendencies (for totals)
     """
     adjustments = {
         "hospital_fade_boost": 0.0,
         "sharp_alternative": 0.0,
-        "esoteric_alt_data": 0.0
+        "esoteric_alt_data": 0.0,
+        "referee_adjustment": 0.0
     }
 
     edge_signals = context.get("edge_signals", {})
     sentiment = context.get("sentiment", {})
     economic = context.get("economic", {})
     injuries = context.get("injury_alerts", {})
+    lineups = context.get("lineups", {})
 
     # Hospital Fade Boost
     # If we detect breaking injury news with high confidence, boost hospital fade
@@ -372,10 +426,19 @@ def _calculate_scoring_adjustments(context: Dict) -> Dict[str, float]:
     if news_strength > 0.5:
         adjustments["esoteric_alt_data"] += 0.2
 
+    # Referee Adjustment (for totals bets)
+    # High-foul refs = slight over lean, lets-them-play refs = slight under lean
+    ref_analysis = lineups.get("referee_analysis", {})
+    if ref_analysis.get("foul_tendency") == "HIGH_FOUL":
+        adjustments["referee_adjustment"] = 0.15  # Slight boost to overs
+    elif ref_analysis.get("foul_tendency") == "LOW_FOUL":
+        adjustments["referee_adjustment"] = -0.10  # Slight lean to unders
+
     # Cap adjustments
     adjustments["hospital_fade_boost"] = min(0.5, adjustments["hospital_fade_boost"])
     adjustments["sharp_alternative"] = min(1.5, adjustments["sharp_alternative"])
     adjustments["esoteric_alt_data"] = max(-0.3, min(0.5, adjustments["esoteric_alt_data"]))
+    adjustments["referee_adjustment"] = max(-0.2, min(0.2, adjustments["referee_adjustment"]))
 
     return adjustments
 

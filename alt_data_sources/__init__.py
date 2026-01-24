@@ -1,11 +1,12 @@
 """
-Alternative Data Sources Module - v10.66
+Alternative Data Sources Module - v10.68
 ========================================
 Integrates non-traditional data sources for betting edge signals:
 - Twitter: Breaking injury news from beat reporters
 - Finnhub: Sportsbook stock sentiment (DKNG, FLTR)
 - SerpAPI: News aggregation and trending topics
 - FRED: Economic indicators and consumer sentiment
+- ESPN: Starting lineups and referee tendencies (FREE)
 """
 
 from .twitter_api import (
@@ -27,6 +28,13 @@ from .fred_api import (
     get_economic_sentiment,
     get_consumer_confidence,
     is_fred_configured
+)
+from .espn_lineups import (
+    get_lineups_for_game,
+    get_referee_impact,
+    get_todays_games,
+    get_game_details,
+    get_espn_status
 )
 from .integration import (
     get_alternative_data_context,
@@ -50,6 +58,12 @@ __all__ = [
     "get_economic_sentiment",
     "get_consumer_confidence",
     "is_fred_configured",
+    # ESPN Lineups & Referees
+    "get_lineups_for_game",
+    "get_referee_impact",
+    "get_todays_games",
+    "get_game_details",
+    "get_espn_status",
     # Integration
     "get_alternative_data_context",
     "get_alt_data_status",
