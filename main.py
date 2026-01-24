@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.65"  # Complete API coverage: period markets, Playbook teams/schedule/games/splits-history
+ENGINE_VERSION = "v10.66"  # Alternative Data Integration: Twitter, Finnhub, SerpAPI, FRED for edge signals
 API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 

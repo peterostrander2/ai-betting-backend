@@ -1,4 +1,5 @@
-# live_data_router.py v15.0 - SCORING v10.59
+# live_data_router.py v15.0 - SCORING v10.66
+# v10.66: Alternative Data Integration (Twitter, Finnhub, SerpAPI, FRED)
 # v10.59: Wire Disconnected Features (Biorhythms, Hurst, Kelly Criterion)
 # v10.57: Data Integrity Validators (prop_integrity + injury_guard before publish_gate)
 # v10.54: Production V3 Contract Compliance (deterministic id, int confidence, ordered reasons)
@@ -77,6 +78,21 @@ try:
 except ImportError:
     PLAYBOOK_UTIL_AVAILABLE = False
     logger.warning("playbook_api module not available - using inline fetch")
+
+# v10.66: Import Alternative Data Sources (Twitter, Finnhub, SerpAPI, FRED)
+try:
+    from alt_data_sources import (
+        get_alternative_data_context,
+        get_alt_data_status,
+        is_twitter_configured,
+        is_finnhub_configured,
+        is_serpapi_configured,
+        is_fred_configured
+    )
+    ALT_DATA_AVAILABLE = True
+except ImportError:
+    ALT_DATA_AVAILABLE = False
+    logger.warning("alt_data_sources module not available - alternative data disabled")
 
 # Import Auto-Grader singleton (CRITICAL: use get_grader() not AutoGrader())
 try:
@@ -4535,12 +4551,17 @@ async def get_playbook_games(sport: str, date: str = None):
 @router.get("/api-coverage")
 async def get_api_coverage():
     """
-    v10.65: Summary of all API endpoints and data sources being utilized.
+    v10.66: Summary of all API endpoints and data sources being utilized.
 
     Shows what data we're pulling from each paid API subscription.
     """
+    # v10.66: Get alternative data status
+    alt_data_status = {}
+    if ALT_DATA_AVAILABLE:
+        alt_data_status = get_alt_data_status()
+
     return {
-        "version": "v10.65",
+        "version": "v10.66",
         "odds_api": {
             "configured": bool(ODDS_API_KEY),
             "endpoints_used": [
@@ -4588,6 +4609,32 @@ async def get_api_coverage():
             {"name": "RotoWire", "env_var": "ROTOWIRE_API_KEY", "purpose": "Referee assignments, starting lineups, injury news"},
             {"name": "Weather", "env_var": "WEATHER_API_KEY", "purpose": "Game day weather for outdoor sports"},
         ],
+        "alternative_data_apis": {
+            "twitter": {
+                "configured": alt_data_status.get("twitter", {}).get("configured", False),
+                "env_var": "TWITTER_BEARER",
+                "purpose": "Breaking injury news, beat reporter alerts, sentiment analysis",
+                "integration": "Hospital Fade pillar boost + injury alerts"
+            },
+            "finnhub": {
+                "configured": alt_data_status.get("finnhub", {}).get("configured", False),
+                "env_var": "FINNHUB_KEY",
+                "purpose": "Sportsbook stock sentiment (DKNG, FLTR), institutional movement",
+                "integration": "Alternative sharp signal when no traditional sharp detected"
+            },
+            "serpapi": {
+                "configured": alt_data_status.get("serpapi", {}).get("configured", False),
+                "env_var": "SERPAPI_KEY",
+                "purpose": "Google News aggregation, trending injury stories",
+                "integration": "Supplementary injury detection"
+            },
+            "fred": {
+                "configured": alt_data_status.get("fred", {}).get("configured", False),
+                "env_var": "FRED_API_KEY",
+                "purpose": "Economic indicators, consumer sentiment index",
+                "integration": "Esoteric score component (economic tailwind/headwind)"
+            }
+        },
         "backend_endpoints": {
             "scores": "/live/scores/{sport}",
             "props": "/live/props/{sport}",
@@ -6224,6 +6271,48 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             logger.warning(f"v10.61: RotoWire referee fetch failed (continuing without): {e}")
         logger.debug(f"v10.57: Built injury index with {len(injury_index)} players")
 
+    # v10.66: Fetch Alternative Data Context (Twitter, Finnhub, SerpAPI, FRED)
+    alt_data_context = {}
+    alt_data_adjustments = {"hospital_fade_boost": 0.0, "sharp_alternative": 0.0, "esoteric_alt_data": 0.0}
+    if ALT_DATA_AVAILABLE:
+        try:
+            # Get list of teams from sharp data for focused fetching
+            teams_list = []
+            for signal in sharp_data.get("data", []):
+                if signal.get("home_team"):
+                    teams_list.append(signal["home_team"])
+                if signal.get("away_team"):
+                    teams_list.append(signal["away_team"])
+            teams_list = list(set(teams_list))[:10]  # Limit to first 10 unique teams
+
+            alt_data_context = await get_alternative_data_context(
+                sport=sport_lower,
+                teams=teams_list,
+                include_injuries=True,
+                include_sentiment=True,
+                include_economic=True
+            )
+
+            if alt_data_context.get("available"):
+                alt_data_adjustments = alt_data_context.get("scoring_adjustments", alt_data_adjustments)
+                logger.info(f"v10.66: Alt data loaded - sources={alt_data_context.get('sources_used', [])}, "
+                           f"injuries={len(alt_data_context.get('injury_alerts', {}).get('combined', []))}")
+
+                # Merge Twitter/SerpAPI injury alerts into injuries_by_team
+                for alert in alt_data_context.get("injury_alerts", {}).get("high_confidence", []):
+                    team = alert.get("team", "")
+                    player = alert.get("player_name", "")
+                    status = alert.get("status", "")
+                    if team and player and status in ("OUT", "DOUBTFUL"):
+                        if team not in injuries_by_team:
+                            injuries_by_team[team] = {"count": 0, "key_players": [], "severity_score": 0}
+                        if player not in injuries_by_team[team]["key_players"]:
+                            injuries_by_team[team]["key_players"].append(f"{player} (breaking)")
+                            injuries_by_team[team]["severity_score"] += 1.5 if status == "OUT" else 0.75
+                            injuries_by_team[team]["count"] += 1
+        except Exception as e:
+            logger.warning(f"v10.66: Alternative data fetch failed (continuing without): {e}")
+
     # Get esoteric engines for enhanced scoring
     jarvis = get_jarvis_savant()
     vedic = get_vedic_astro()
@@ -6859,6 +6948,20 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 pillar_boost += penalty
                 research_reasons.append(f"RESEARCH: Injury Concern ({our_team} {our_key_out} key out) {penalty:.2f}")
 
+            # v10.66: Alternative Data Hospital Fade Boost (Twitter/SerpAPI breaking news)
+            hospital_alt_boost = alt_data_adjustments.get("hospital_fade_boost", 0)
+            if hospital_alt_boost > 0 and opp_key_out >= 1:
+                pillar_boost += hospital_alt_boost
+                research_reasons.append(f"RESEARCH: Breaking Injury News +{hospital_alt_boost:.2f}")
+
+        # v10.66: Alternative Sharp Signal (Finnhub institutional movement)
+        # Only applies when no traditional sharp signal detected
+        if not has_sharp_signal:
+            sharp_alt = alt_data_adjustments.get("sharp_alternative", 0)
+            if sharp_alt >= 1.0:
+                pillar_boost += sharp_alt
+                research_reasons.append(f"RESEARCH: Institutional Sentiment +{sharp_alt:.2f}")
+
         # ========== SHARP-INDEPENDENT PILLARS (v10.3) ==========
         # Pillar 4: Home Court Advantage (game picks only)
         if is_game_pick and is_home:
@@ -7411,8 +7514,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             esoteric_reasons.append(ext_reason)
 
         # --- ESOTERIC SCORE (v10.59: Environment + Player Signals - NO Jarvis) ---
-        # Base 5.0 + astro + fib + vortex + daily + external + biorhythm + hurst
+        # Base 5.0 + astro + fib + vortex + daily + external + biorhythm + hurst + alt_data
         # Excludes: Gematria (Jarvis), Triggers (Jarvis), Public Fade (Research)
+        # v10.66: Added alternative data component (FRED economic + news momentum)
+        alt_data_esoteric = alt_data_adjustments.get("esoteric_alt_data", 0)
+        if alt_data_esoteric != 0:
+            esoteric_reasons.append(f"ESOTERIC: Alt Data Sentiment {'+' if alt_data_esoteric > 0 else ''}{alt_data_esoteric:.2f}")
+
         esoteric_raw = (
             5.0 +                    # Neutral base
             astro_score +            # Vedic astro (0-2.0 pts)
@@ -7421,7 +7529,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             daily_edge_score +       # Daily energy (0-1.0 pts)
             micro_boost_external +   # Weather/NOAA/Planetary (+/-0.25 pts)
             biorhythm_score +        # v10.59: Player biorhythm (-0.25 to +0.5 pts)
-            hurst_score              # v10.59: Trend momentum (0-0.15 pts)
+            hurst_score +            # v10.59: Trend momentum (0-0.15 pts)
+            alt_data_esoteric        # v10.66: FRED/Finnhub/Twitter sentiment (-0.3 to +0.5 pts)
         )
         esoteric_score = max(0, min(10, esoteric_raw))
 

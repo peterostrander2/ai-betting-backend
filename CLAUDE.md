@@ -2050,3 +2050,112 @@ After v10.65, we now utilize:
 - ⏳ Injury news (not configured)
 
 ---
+
+## Session Log: January 23, 2026 - v10.66 Alternative Data Integration
+
+### Goal
+
+Integrate all available API keys (Twitter, Finnhub, SerpAPI, FRED) into the scoring pipeline to gain additional edge signals beyond traditional betting data.
+
+### What Was Done
+
+**Created `alt_data_sources/` module with 5 files:**
+
+| File | Purpose | Data Provided |
+|------|---------|---------------|
+| `twitter_api.py` | Twitter/X API integration | Breaking injury alerts, sentiment analysis |
+| `finnhub_api.py` | Stock market data | Sportsbook sentiment (DKNG, FLTR), institutional moves |
+| `serpapi_news.py` | Google News aggregation | Trending injury stories, player buzz |
+| `fred_api.py` | Federal Reserve data | Economic indicators, consumer confidence |
+| `integration.py` | Unified context provider | Combined scoring adjustments |
+
+**Scoring Pipeline Integration:**
+
+The alternative data flows into three scoring pillars:
+
+1. **Hospital Fade Pillar Boost** (+0.25 to +0.5)
+   - When Twitter/SerpAPI detect high-confidence injury news
+   - Supplements official injury data with breaking news
+
+2. **Alternative Sharp Signal** (+1.0 to +1.5)
+   - When Finnhub detects institutional movement in sportsbook stocks
+   - Only applies when no traditional sharp signal is detected
+   - Acts as proxy for "smart money" sentiment
+
+3. **Esoteric Alt Data Component** (-0.3 to +0.5)
+   - FRED economic sentiment (consumer confidence)
+   - News momentum (trending stories)
+   - Adds to esoteric score calculation
+
+**Data Flow:**
+```
+get_best_bets()
+    ↓
+get_alternative_data_context(sport, teams)
+    ↓
+Parallel fetch: Twitter + Finnhub + SerpAPI + FRED
+    ↓
+Calculate scoring_adjustments:
+    - hospital_fade_boost
+    - sharp_alternative
+    - esoteric_alt_data
+    ↓
+Apply in calculate_pick_score():
+    - pillar_boost += hospital_fade_boost (when injuries detected)
+    - pillar_boost += sharp_alternative (when no traditional sharp)
+    - esoteric_raw += esoteric_alt_data
+```
+
+### Files Changed
+
+```
+alt_data_sources/__init__.py     (NEW)
+alt_data_sources/twitter_api.py  (NEW - 350 lines)
+alt_data_sources/finnhub_api.py  (NEW - 320 lines)
+alt_data_sources/serpapi_news.py (NEW - 280 lines)
+alt_data_sources/fred_api.py     (NEW - 250 lines)
+alt_data_sources/integration.py  (NEW - 300 lines)
+env_config.py                    (MODIFIED - Added 5 new API keys)
+live_data_router.py              (MODIFIED - Integration into scoring)
+main.py                          (MODIFIED - ENGINE_VERSION = "v10.66")
+CLAUDE.md                        (MODIFIED - Documentation)
+```
+
+### Environment Variables Required
+
+Add these to Railway to activate:
+
+```bash
+TWITTER_BEARER=xxx        # Twitter API bearer token
+FINNHUB_KEY=xxx          # Finnhub stock data API key
+SERPAPI_KEY=xxx          # SerpAPI (Google Search) key
+FRED_API_KEY=xxx         # Federal Reserve data API key
+WHOP_API_KEY=xxx         # Whop membership platform
+```
+
+### Testing
+
+```bash
+# Check API coverage (shows which alt data sources are configured)
+curl "https://web-production-7b2a.up.railway.app/api-coverage" -H "X-API-Key: YOUR_KEY"
+
+# Response includes:
+# "alternative_data_apis": {
+#   "twitter": {"configured": true/false, ...},
+#   "finnhub": {"configured": true/false, ...},
+#   "serpapi": {"configured": true/false, ...},
+#   "fred": {"configured": true/false, ...}
+# }
+```
+
+### Expected Impact
+
+| Signal | When Active | Boost | Use Case |
+|--------|-------------|-------|----------|
+| Breaking Injury News | Twitter detects OUT/DOUBTFUL | +0.25 to +0.5 | Hospital fade pillar |
+| Institutional Sentiment | DKNG stock spike + no sharp | +1.0 to +1.5 | Alternative sharp signal |
+| Economic Tailwind | Consumer confidence high | +0.25 | Esoteric score |
+| Economic Headwind | Consumer confidence low | -0.15 | Esoteric score |
+| News Momentum | Many trending stories | +0.2 | Esoteric score |
+
+---
