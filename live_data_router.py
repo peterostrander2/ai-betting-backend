@@ -10276,7 +10276,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "game_candidates_before_filter": games_candidates_count,
             # v10.81: Time gate debug (TODAY-ONLY filter enforcement)
             "today_only_enforced": True,
-            "time_gate": debug_info.get("time_gate", {})
+            "time_gate": {
+                "raw_events_count": raw_events_count,
+                "today_games_count": today_games_count,
+                "removed_not_today": raw_events_count - today_games_count
+            }
         }
 
     # ================================================================
