@@ -21,8 +21,12 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Configuration
-FINNHUB_KEY = os.getenv("FINNHUB_KEY", os.getenv("FINNHUB_API_KEY", ""))
+# Configuration - use centralized env_config
+try:
+    from env_config import Config
+    FINNHUB_KEY = Config.FINNHUB_KEY or ""
+except ImportError:
+    FINNHUB_KEY = os.getenv("FINNHUB_KEY", os.getenv("FINNHUB_API_KEY", ""))
 FINNHUB_API_BASE = "https://finnhub.io/api/v1"
 
 # Cache for API responses (30 min TTL - market data changes slower)

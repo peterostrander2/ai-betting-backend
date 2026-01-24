@@ -20,8 +20,12 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Configuration
-FRED_API_KEY = os.getenv("FRED_API_KEY", "")
+# Configuration - use centralized env_config
+try:
+    from env_config import Config
+    FRED_API_KEY = Config.FRED_API_KEY or ""
+except ImportError:
+    FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 FRED_API_BASE = "https://api.stlouisfed.org/fred"
 
 # Cache for API responses (6 hours - economic data updates slowly)

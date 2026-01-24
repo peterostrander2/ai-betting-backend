@@ -21,8 +21,12 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Configuration
-TWITTER_BEARER = os.getenv("TWITTER_BEARER", "")
+# Configuration - use centralized env_config
+try:
+    from env_config import Config
+    TWITTER_BEARER = Config.TWITTER_BEARER or ""
+except ImportError:
+    TWITTER_BEARER = os.getenv("TWITTER_BEARER", "")
 TWITTER_API_BASE = "https://api.twitter.com/2"
 
 # Cache for API responses (15 min TTL)

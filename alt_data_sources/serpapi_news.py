@@ -21,8 +21,12 @@ import re
 
 logger = logging.getLogger(__name__)
 
-# Configuration
-SERPAPI_KEY = os.getenv("SERPAPI_KEY", os.getenv("SERP_API_KEY", ""))
+# Configuration - use centralized env_config
+try:
+    from env_config import Config
+    SERPAPI_KEY = Config.SERPAPI_KEY or ""
+except ImportError:
+    SERPAPI_KEY = os.getenv("SERPAPI_KEY", os.getenv("SERP_API_KEY", ""))
 SERPAPI_BASE = "https://serpapi.com/search"
 
 # Cache for API responses (20 min TTL)
