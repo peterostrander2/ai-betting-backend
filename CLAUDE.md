@@ -378,6 +378,20 @@ PLAYBOOK_API_BASE=xxx     # Override Playbook API URL
 PORT=8000                 # Read via os.environ.get("PORT", 8000)
 ```
 
+### Local Development (.env file)
+
+**IMPORTANT:** For local testing, create a `.env` file with actual keys:
+
+```bash
+# Copy from .env.example and fill in values
+cp .env.example .env
+
+# Required for testing endpoints locally
+API_AUTH_KEY=bookie-prod-2026-xK9mP2nQ7vR4
+```
+
+The `.env` file is gitignored. Keys are stored in Railway for production.
+
 ---
 
 ## All Available API Keys & Use Cases
@@ -1361,7 +1375,7 @@ for event in events:  # Fetch ALL games - don't miss any smash picks
 
 **Railway Environment Variables (8 pillars project):**
 ```
-ODDS_API_KEY=ceb2e3a6a3302e0f38fd0d34150294e9
+ODDS_API_KEY=3e96371b01014bb6e8ed343843dbcb64
 PLAYBOOK_API_KEY=pbk_d6f65d6a74c53d5ef9b455a9a147c853b82b
 ```
 
@@ -2819,11 +2833,40 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba" -H "X-API-K
 
 ### System Health
 
-- **Engine Version:** v10.71
+- **Engine Version:** v10.76
 - **All Core APIs:** ✅ Online
 - **All Alt Data APIs:** ✅ Online
 - **All Esoteric APIs:** ✅ Online
 - **Database:** ✅ Connected
 - **Production URL:** https://web-production-7b2a.up.railway.app
+
+---
+
+## Known Limitations & Data Timing Issues
+
+### Odds API Event Lag (Props Availability)
+
+**Issue:** Odds API's `/events` endpoint lags behind actual game schedules. Evening games may not appear in Odds API until closer to game time, even though Playbook API shows them.
+
+**Impact:** Player props can only be fetched for games that exist in Odds API's events list. If Odds API hasn't added a game yet, we can't fetch props for it.
+
+**Example:**
+- Playbook shows 15 NHL games today
+- Odds API only has 9 events (8 completed + 1 upcoming)
+- Evening games not in Odds API yet = no props available
+
+**Affected Sports:** NHL, MLB (lower priority sports for Odds API)
+
+**NOT a bug** - this is a data provider timing limitation.
+
+**Workaround:** Props become available as Odds API adds events throughout the day. Check again closer to game time.
+
+### Playbook API Data Quality
+
+**Issue:** Playbook API sometimes returns null values for team names in certain endpoints (observed with NHL `/lines`).
+
+**Impact:** Game matching may fail when team names are null.
+
+**Workaround:** Fall back to Odds API for game data when Playbook returns nulls.
 
 ---
