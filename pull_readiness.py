@@ -267,7 +267,12 @@ def check_splits_gate(
         )
 
     games_with_splits = len(splits_data)
-    coverage_pct = (games_with_splits / max(1, total_games)) * 100
+
+    # Avoid misleading % when total_games is 0
+    if total_games == 0:
+        coverage_pct = 100.0 if games_with_splits > 0 else 0.0
+    else:
+        coverage_pct = (games_with_splits / total_games) * 100
 
     # Check freshness
     freshness_ok = True
