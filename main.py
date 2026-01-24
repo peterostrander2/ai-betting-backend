@@ -97,8 +97,8 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.79"  # Glitch Protocol refactor: 5 standalone modules (esoteric/physics/hive_mind/market/math_glitch)
-API_VERSION = "14.6"
+ENGINE_VERSION = "v10.80"  # Canonical schema + Glitch Protocol v1.0
+API_VERSION = "14.7"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 
 
@@ -109,7 +109,8 @@ async def health():
         "status": "healthy",
         "version": API_VERSION,
         "engine_version": ENGINE_VERSION,
-        "database": database.DB_ENABLED
+        "database": database.DB_ENABLED,
+        "tiering": "v10.55"  # Single source of truth
     }
 
 
@@ -133,19 +134,40 @@ async def version():
         "engine_version": ENGINE_VERSION,
         "git_commit": git_hash,
         "build_timestamp": datetime.utcnow().isoformat() + "Z",
-        "engine_separation": {
-            "version": "v10.58",
-            "ai_engine": "8-model ensemble (unchanged)",
-            "research_engine": "Sharp Split, RLM, Public Fade, Hospital Fade, Goldilocks",
-            "esoteric_engine": "Vedic Astro, Fibonacci, Vortex, Daily Edge, External (NO Jarvis)",
-            "jarvis_engine": "Gematria, Sacred Triggers (201/33/93/322/2178), Mid-spread amplifier"
+        "scoring_architecture": {
+            "version": "v10.80",
+            "ai_engine": "8-model ensemble (0-8 pts scaled to 0-10)",
+            "research_engine": "Sharp Split, RLM, Public Fade, Hospital Fade, Goldilocks (0-8 pts scaled to 0-10)",
+            "esoteric_engine": "Vedic Astro, Fibonacci, Vortex, Chrome Resonance, Daily Edge (NO Jarvis)",
+            "jarvis_engine": "Gematria, Sacred Triggers (47/88/201/33/93/322/2178), Mid-spread amplifier"
+        },
+        "glitch_protocol": {
+            "version": "v1.0",
+            "modules": ["esoteric", "physics", "hive_mind", "market", "math_glitch"],
+            "titanium_rule": "3-of-4 modules fired = TITANIUM_SMASH",
+            "harmonic_convergence": "AI >= 8.0 AND Esoteric >= 8.0 = +0.75 boost"
+        },
+        "tiering": {
+            "version": "v10.55",
+            "source": "tiering.py (single source of truth)",
+            "thresholds": {
+                "GOLD_STAR": ">= 7.5",
+                "EDGE_LEAN": ">= 6.5",
+                "MONITOR": ">= 5.5",
+                "PASS": "< 5.5"
+            }
         },
         "double_counting_rules": [
             "Public Fade: Research ONLY (not Jarvis, not Esoteric)",
             "Gematria: Jarvis ONLY (not Esoteric)",
             "Fibonacci/Vortex: Esoteric ONLY (not Jarvis)",
             "Mid-spread amplifier: Jarvis ONLY"
-        ]
+        ],
+        "jason_sim": {
+            "version": "v2.0",
+            "type": "POST-PICK confluence layer",
+            "actions": ["BOOST", "DOWNGRADE", "BLOCK"]
+        }
     }
 
 
