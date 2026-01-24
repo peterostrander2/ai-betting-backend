@@ -545,16 +545,19 @@ def validate_market_sanity(pick: Dict[str, Any], sport: str) -> tuple:
 def check_engine_integrity(pick: Dict[str, Any]) -> Dict[str, Any]:
     """
     v10.83: Check engine integrity and identify missing engines.
+    v10.88: Fixed to check scoring_breakdown for scores (not just top-level).
 
     Returns dict with:
     - engines_missing: list of missing engine names
     - score_total_source: "FULL_STACK" | "AI_ONLY_FALLBACK" | "PARTIAL_STACK"
     - engine_integrity_ok: bool
     """
-    ai_score = pick.get("ai_score", 0.0)
-    research_score = pick.get("research_score", 0.0)
-    esoteric_score = pick.get("esoteric_score", 0.0)
-    jarvis_score = pick.get("jarvis_score", 0.0)
+    # v10.88: Check both top-level and scoring_breakdown for scores
+    breakdown = pick.get("scoring_breakdown", {})
+    ai_score = pick.get("ai_score") or breakdown.get("ai_score", 0.0)
+    research_score = pick.get("research_score") or breakdown.get("research_score", 0.0)
+    esoteric_score = pick.get("esoteric_score") or breakdown.get("esoteric_score", 0.0)
+    jarvis_score = pick.get("jarvis_score") or breakdown.get("jarvis_score", 0.0)
 
     engines_missing = []
 

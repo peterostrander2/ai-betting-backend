@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.87"  # v10.87: Added debug_trace object for troubleshooting
+    ENGINE_VERSION = "v10.88"  # v10.88: Fixed engine integrity check to use scoring_breakdown
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 
