@@ -10056,6 +10056,16 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         "signals_saved": 0  # Will be updated by save logic below
     }
 
+    # v10.75: Apply time status to all picks before normalization
+    for pick in top_props + top_game_picks:
+        if not pick.get("status_time"):
+            game_time_iso = pick.get("game_time") or pick.get("commence_time", "")
+            game_state = pick.get("game_state") or pick.get("status")
+            time_status = compute_time_status(game_time_iso, game_state=game_state)
+            pick["status_time"] = time_status
+            pick["start_time_et"] = time_status.get("start_time_et")
+            pick["pulled_at_et"] = time_status.get("pulled_at_et")
+
     # v10.72: Normalize ALL picks to canonical PickCard format
     # This ensures consistent output regardless of pick type (spread/ML/total/prop)
     all_raw_picks = top_props + top_game_picks
