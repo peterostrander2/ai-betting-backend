@@ -813,6 +813,18 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict 
     pick["badge"] = config["badge"]
 
     # =========================================================================
+    # v10.89: Flatten scoring_breakdown fields to top level for frontend
+    # Frontend can now read pick.research_score instead of pick.scoring_breakdown.research_score
+    # =========================================================================
+    breakdown = pick.get("scoring_breakdown", {})
+    if breakdown:
+        pick["ai_score"] = breakdown.get("ai_score")
+        pick["research_score"] = breakdown.get("research_score")
+        pick["esoteric_score"] = breakdown.get("esoteric_score")
+        pick["jarvis_score"] = breakdown.get("jarvis_score")
+        pick["alignment_pct"] = breakdown.get("alignment_pct")
+
+    # =========================================================================
     # v10.83: Props - prop_stat, direction, injury validation
     # =========================================================================
     if pick.get("player") or pick.get("player_name"):

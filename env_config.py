@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.88"  # v10.88: Fixed engine integrity check to use scoring_breakdown
+    ENGINE_VERSION = "v10.89"  # v10.89: Flatten scoring_breakdown to top-level for frontend
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 
