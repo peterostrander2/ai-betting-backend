@@ -56,6 +56,9 @@ if not logger.handlers:
 # v10.55: Import tiering module - single source of truth for tier assignment
 from tiering import tier_from_score as tiering_tier_from_score, DEFAULT_TIERS as TIERING_DEFAULT_TIERS
 
+# v10.82: Import centralized version constants
+from env_config import Config
+
 # v10.72: Import PickCard schema for normalized output
 from pick_schema import PickCard, normalize_pick, normalize_picks, picks_to_table
 
@@ -374,6 +377,86 @@ def safe_upper(x) -> str:
 def safe_lower(x) -> str:
     """Safely convert any value to lowercase string. Handles None and non-string types."""
     return str(x or "").lower()
+
+# ============================================================================
+# v10.82: CANONICAL PICK ENRICHMENT
+# ============================================================================
+# Adds all required canonical fields to picks for stable API contract.
+# This is applied to all picks before they're returned in the response.
+# ============================================================================
+
+def enrich_pick_canonical(pick: Dict[str, Any], sport: str) -> Dict[str, Any]:
+    """
+    v10.82: Enrich a pick with all canonical schema fields.
+    Ensures every pick has required fields for stable API contract.
+
+    Adds:
+    - pick_id: Stable deterministic ID
+    - league: Sport league name
+    - action: SKIP|WATCH|PLAY|SMASH
+    - tier_badge: Alias for badge
+    - engines: { ai, research, esoteric, jarvis }
+    - units: Alias for recommended_units
+    - For props: prop_stat, direction
+    - Movement: movement_flag, movement_summary, movement_severity
+    """
+    import hashlib
+
+    # Generate stable pick_id if not present
+    if not pick.get("pick_id"):
+        pick_key = f"{sport}|{pick.get('game_id', '')}|{pick.get('market', pick.get('market_key', ''))}|{pick.get('selection', '')}|{pick.get('line', '')}|{pick.get('odds', '')}"
+        pick["pick_id"] = hashlib.sha256(pick_key.encode()).hexdigest()[:16]
+
+    # League (same as sport for now)
+    pick["league"] = sport.upper()
+
+    # Action based on tier
+    tier = pick.get("tier", "PASS")
+    tier_to_action = {
+        "TITANIUM_SMASH": "SMASH",
+        "GOLD_STAR": "SMASH",
+        "EDGE_LEAN": "PLAY",
+        "MONITOR": "WATCH",
+        "PASS": "SKIP"
+    }
+    pick["action"] = tier_to_action.get(tier, "SKIP")
+
+    # tier_badge (alias for badge)
+    pick["tier_badge"] = pick.get("badge", tier)
+
+    # units (alias for recommended_units)
+    pick["units"] = pick.get("recommended_units", pick.get("units", 0.0))
+
+    # Engines object (consolidate scoring breakdown)
+    pick["engines"] = {
+        "ai": pick.get("ai_score", 0.0),
+        "research": pick.get("research_score", pick.get("research_components", {}).get("total", 0.0)) if isinstance(pick.get("research_components"), dict) else pick.get("research_score", 0.0),
+        "esoteric": pick.get("esoteric_score", 0.0),
+        "jarvis": pick.get("jarvis_score", 0.0)
+    }
+
+    # For props: prop_stat and direction
+    if pick.get("player") or pick.get("player_name"):
+        pick["prop_stat"] = pick.get("stat_type", pick.get("market", ""))
+        over_under = pick.get("over_under", pick.get("side", ""))
+        pick["direction"] = over_under.upper() if over_under else None
+    else:
+        pick["prop_stat"] = None
+        pick["direction"] = None
+
+    # Movement monitoring fields (placeholder - to be populated by change_monitor)
+    if "movement_flag" not in pick:
+        pick["movement_flag"] = False
+        pick["movement_summary"] = None
+        pick["movement_severity"] = None
+
+    return pick
+
+
+def enrich_picks_batch(picks: List[Dict[str, Any]], sport: str) -> List[Dict[str, Any]]:
+    """v10.82: Enrich a batch of picks with canonical fields."""
+    return [enrich_pick_canonical(pick, sport) for pick in picks]
+
 
 # ============================================================================
 # v10.77: TODAY-ONLY ET FILTER (single source of truth)
@@ -6477,7 +6560,7 @@ async def get_best_bets_all(debug: int = 0):
 
     # Build response
     result = {
-        "source": "production_v10.67_all_sports",
+        "source": f"production_{Config.ENGINE_VERSION}_all_sports",
         "scoring_system": "v10.67: Time gate status messaging",
         "all_picks": {
             "count": len(all_picks_final),
@@ -10126,10 +10209,27 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     if fallback_used and games_picks_count == 0:
         games_reason = "FALLBACK_MONITOR_USED"
 
+    # v10.82: Enrich picks with canonical fields before response
+    top_props = enrich_picks_batch(top_props, sport)
+    top_game_picks = enrich_picks_batch(top_game_picks, sport)
+
+    # v10.82: Generate ET timestamp for response
+    from zoneinfo import ZoneInfo
+    ET = ZoneInfo(Config.TIMEZONE)
+    now_et = datetime.now(ET)
+    generated_at_est = now_et.isoformat()
+
     result = {
         "sport": sport.upper(),
-        "source": "production_v10.38",
-        "scoring_system": "v10.38: Games debug visibility + Late-night ET detection",
+        "league": sport.upper(),  # v10.82: Canonical schema field
+        "source": f"production_{Config.ENGINE_VERSION}",
+        "scoring_system": f"{Config.ENGINE_VERSION}: Production schema lock + version sync",
+        # v10.82: Version metadata (must match /version endpoint)
+        "engine_version": Config.ENGINE_VERSION,
+        "api_version": Config.API_VERSION,
+        "timezone": Config.TIMEZONE,
+        "generated_at_est": generated_at_est,
+        "today_only_enforced": True,
         "picks": merged_picks,  # Root picks[] for frontend SmashSpots rendering
         "props": props_result,
         "game_picks": {

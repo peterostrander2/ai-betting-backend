@@ -52,6 +52,13 @@ def get_env_bool(name: str, default: bool = False) -> bool:
 class Config:
     """Centralized configuration from Railway env vars."""
 
+    # ============================================================================
+    # VERSION CONSTANTS - Single source of truth for API versioning
+    # ============================================================================
+    ENGINE_VERSION = "v10.82"  # v10.82: Production schema lock + version sync
+    API_VERSION = "14.8"
+    TIMEZONE = "America/New_York"
+
     # Database
     DATABASE_URL = get_env("DATABASE_URL")
 

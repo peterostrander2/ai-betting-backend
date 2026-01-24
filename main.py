@@ -21,6 +21,7 @@ import uvicorn
 from fastapi.responses import Response
 from live_data_router import router as live_router, close_shared_client
 import database
+from env_config import Config  # v10.82: Centralized version constants
 from daily_scheduler import scheduler_router, init_scheduler, get_scheduler, run_daily_cycle
 from auto_grader import get_grader
 from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILABLE
@@ -96,10 +97,10 @@ async def root():
         "sports": ["nba", "nfl", "mlb", "nhl"]
     }
 
-# Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.81"  # v10.81: Display + time-gate fields for frontend
-API_VERSION = "14.7"
-BUILD_COMMIT = "db87159"  # Updated on deploy
+# Centralized version info - imported from env_config (single source of truth)
+ENGINE_VERSION = Config.ENGINE_VERSION
+API_VERSION = Config.API_VERSION
+BUILD_COMMIT = "63a84fa"  # Updated on deploy
 
 
 # Health check at root level (some frontends expect this)
