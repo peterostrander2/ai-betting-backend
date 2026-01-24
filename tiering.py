@@ -24,6 +24,7 @@ DEFAULT_TIERS: Dict[str, float] = {
 }
 
 TIER_CONFIG: Dict[str, Dict] = {
+    "TITANIUM_SMASH": {"units": 2.5, "action": "SMASH", "badge": "TITANIUM SMASH"},
     "GOLD_STAR": {"units": 2.0, "action": "SMASH", "badge": "GOLD STAR"},
     "EDGE_LEAN": {"units": 1.0, "action": "PLAY", "badge": "EDGE LEAN"},
     "MONITOR": {"units": 0.0, "action": "WATCH", "badge": "MONITOR"},

@@ -54,7 +54,7 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 # v10.55: Import tiering module - single source of truth for tier assignment
-from tiering import tier_from_score as tiering_tier_from_score, DEFAULT_TIERS as TIERING_DEFAULT_TIERS
+from tiering import tier_from_score as tiering_tier_from_score, DEFAULT_TIERS as TIERING_DEFAULT_TIERS, TIER_CONFIG
 
 # v10.82: Import centralized version constants
 from env_config import Config
@@ -788,17 +788,10 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict 
             tier = "MONITOR"
 
     # =========================================================================
-    # v10.84: TIER BUNDLE - All tier-related fields from single source
+    # v10.85: TIER BUNDLE - Import from tiering.py (single source of truth)
     # tier, tier_badge, action, units MUST be locked together
     # =========================================================================
-    tier_config = {
-        "TITANIUM_SMASH": {"badge": "TITANIUM SMASH", "action": "SMASH", "units": 2.5},
-        "GOLD_STAR": {"badge": "GOLD STAR", "action": "SMASH", "units": 2.0},
-        "EDGE_LEAN": {"badge": "EDGE LEAN", "action": "PLAY", "units": 1.0},
-        "MONITOR": {"badge": "MONITOR", "action": "WATCH", "units": 0.0},
-        "PASS": {"badge": "PASS", "action": "SKIP", "units": 0.0},
-    }
-    config = tier_config.get(tier, tier_config["PASS"])
+    config = TIER_CONFIG.get(tier, TIER_CONFIG["PASS"])
 
     pick["tier"] = tier  # Ensure tier is set (may have been downgraded)
     pick["tier_badge"] = config["badge"]
@@ -835,7 +828,7 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict 
                 new_tier = tier_order[current_idx - 1]
                 pick["tier"] = new_tier
                 # Update all tier bundle fields
-                new_config = tier_config.get(new_tier, tier_config["PASS"])
+                new_config = TIER_CONFIG.get(new_tier, TIER_CONFIG["PASS"])
                 pick["tier_badge"] = new_config["badge"]
                 pick["action"] = new_config["action"]
                 pick["units"] = new_config["units"]
