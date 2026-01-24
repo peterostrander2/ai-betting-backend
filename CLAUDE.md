@@ -799,7 +799,7 @@ curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H 
 
 **Name:** code-simplifier
 **Model:** opus
-**Purpose:** Simplifies and refines code for clarity, consistency, and maintainability while preserving all functionality.
+**Purpose:** Simplifies and refines code for clarity, consistency, and maintainability while preserving all functionality. Focuses on recently modified code unless instructed otherwise.
 
 ### When to Use
 - After writing or modifying code
@@ -808,18 +808,41 @@ curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H 
 
 ### Principles
 
-1. **Preserve Functionality**: Never change what code does - only how it does it
-2. **Apply Project Standards**: Follow CLAUDE.md coding standards
-3. **Enhance Clarity**: Reduce complexity, eliminate redundancy, improve naming
-4. **Maintain Balance**: Avoid over-simplification that reduces maintainability
-5. **Focus Scope**: Only refine recently modified code unless instructed otherwise
+1. **Preserve Functionality**: Never change what code does - only how it does it. All original features, outputs, and behaviors must remain intact.
 
-### Code Standards (Python)
+2. **Apply Project Standards**: Follow CLAUDE.md coding standards including:
+   - Use async functions with proper type hints
+   - Prefer explicit over implicit
+   - Follow proper error handling patterns
+   - Maintain consistent naming conventions
 
-- Use async functions with type hints
-- Prefer explicit over implicit
-- Choose clarity over brevity
-- Remove unnecessary comments that describe obvious code
+3. **Enhance Clarity**: Simplify code structure by:
+   - Reducing unnecessary complexity and nesting
+   - Eliminating redundant code and abstractions
+   - Improving readability through clear variable and function names
+   - Consolidating related logic
+   - Removing unnecessary comments that describe obvious code
+   - Avoiding nested ternary operators - prefer if/else or switch
+   - Choosing clarity over brevity
+
+4. **Maintain Balance**: Avoid over-simplification that could:
+   - Reduce code clarity or maintainability
+   - Create overly clever solutions that are hard to understand
+   - Combine too many concerns into single functions
+   - Remove helpful abstractions that improve organization
+   - Prioritize "fewer lines" over readability
+   - Make the code harder to debug or extend
+
+5. **Focus Scope**: Only refine code that has been recently modified, unless explicitly instructed to review a broader scope.
+
+### Refinement Process
+
+1. Identify the recently modified code sections
+2. Analyze for opportunities to improve elegance and consistency
+3. Apply project-specific best practices and coding standards
+4. Ensure all functionality remains unchanged
+5. Verify the refined code is simpler and more maintainable
+6. Document only significant changes that affect understanding
 
 ### What NOT to Do
 
@@ -828,6 +851,7 @@ curl "https://web-production-7b2a.up.railway.app/live/community/leaderboard" -H 
 - Combine too many concerns into single functions
 - Remove helpful abstractions
 - Prioritize "fewer lines" over readability
+- Use nested ternaries or dense one-liners
 
 ---
 
