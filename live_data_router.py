@@ -8498,6 +8498,29 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 prop_book_url = BOOKMAKER_BET_URLS.get(prop_book_key)
                 prop_odds_pulled_at = datetime.now().isoformat()
 
+                # v10.81: Compute display fields for frontend (props)
+                prop_display_title = f"{away_team} @ {home_team}"
+                prop_display_pick = f"{player} {(side or 'Over').upper()} {line_val} {stat_label} ({odds:+d}) — {prop_book_display}"
+
+                # v10.81: Compute time-gate fields for props
+                prop_game_time_utc = game.get("commence_time", "")
+                prop_has_started = False
+                prop_started_minutes_ago = None
+                prop_game_time_est = ""
+                try:
+                    if prop_game_time_utc:
+                        from zoneinfo import ZoneInfo
+                        ET = ZoneInfo("America/New_York")
+                        prop_game_dt = datetime.fromisoformat(prop_game_time_utc.replace("Z", "+00:00"))
+                        prop_game_dt_et = prop_game_dt.astimezone(ET)
+                        prop_game_time_est = prop_game_dt_et.isoformat()
+                        now_et = datetime.now(ET)
+                        if now_et > prop_game_dt_et:
+                            prop_has_started = True
+                            prop_started_minutes_ago = int((now_et - prop_game_dt_et).total_seconds() / 60)
+                except Exception:
+                    pass
+
                 # Build the prop pick object
                 prop_pick = {
                     "sport": sport.upper(),  # v10.57: Required for validators
@@ -8520,6 +8543,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     "team": home_team,  # Frontend expected field
                     "opponent": away_team,  # Frontend expected field
                     "game_time": game.get("commence_time", datetime.now().isoformat()),
+                    # v10.81: Frontend display fields
+                    "display_title": prop_display_title,
+                    "display_pick": prop_display_pick,
+                    # v10.81: Time-gate fields
+                    "game_time_est": prop_game_time_est,
+                    "has_started": prop_has_started,
+                    "started_minutes_ago": prop_started_minutes_ago,
                     "recommendation": f"{(side or 'Over').upper()} {line_val} {stat_label}",  # v10.10: include stat label (v10.47: defensive None)
                     "smash_score": total_score,
                     "final_score": total_score,  # Production v3 schema
@@ -9108,6 +9138,36 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                             if monte_carlo_data.get("edge_pct", 0) > 8:
                                 badges_game.append("MONTE_CARLO")
 
+                            # v10.81: Compute display fields for frontend
+                            display_title = f"{away_team} @ {home_team}"
+                            if market_key == "spreads" and point is not None:
+                                display_pick = f"{pick_name} {point:+.1f} ({odds:+d}) — {book_display}"
+                            elif market_key == "h2h":
+                                display_pick = f"{pick_name} ML ({odds:+d}) — {book_display}"
+                            elif market_key == "totals" and point is not None:
+                                display_pick = f"{pick_name} {point} ({odds:+d}) — {book_display}"
+                            else:
+                                display_pick = f"{display} ({odds:+d}) — {book_display}"
+
+                            # v10.81: Compute time-gate fields
+                            game_time_utc = game.get("commence_time", "")
+                            has_started = False
+                            started_minutes_ago = None
+                            game_time_est = ""
+                            try:
+                                if game_time_utc:
+                                    from zoneinfo import ZoneInfo
+                                    ET = ZoneInfo("America/New_York")
+                                    game_dt = datetime.fromisoformat(game_time_utc.replace("Z", "+00:00"))
+                                    game_dt_et = game_dt.astimezone(ET)
+                                    game_time_est = game_dt_et.isoformat()
+                                    now_et = datetime.now(ET)
+                                    if now_et > game_dt_et:
+                                        has_started = True
+                                        started_minutes_ago = int((now_et - game_dt_et).total_seconds() / 60)
+                            except Exception:
+                                pass
+
                             game_picks.append({
                                 "sport": sport.upper(),  # v10.57: For consistency with props
                                 "game_id": game.get("game_id", game.get("id", "")),  # v10.57: For consistency
@@ -9124,7 +9184,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                                 "away_team": away_team,
                                 "market": market_key,
                                 "recommendation": display,
-                                "game_time": game.get("commence_time", datetime.now().isoformat()),
+                                "game_time": game_time_utc or datetime.now().isoformat(),
+                                # v10.81: Frontend display fields
+                                "display_title": display_title,
+                                "display_pick": display_pick,
+                                # v10.81: Time-gate fields
+                                "game_time_est": game_time_est,
+                                "has_started": has_started,
+                                "started_minutes_ago": started_minutes_ago,
                                 "smash_score": total_score_game,
                                 "final_score": total_score_game,  # Production v3 schema
                                 "predicted_value": (point + 3) if market_key == "totals" else None,
@@ -10206,7 +10273,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "fallback_used": odds_fallback_used
             },
             # v10.45: Include game_candidates_before_filter for /best-bets/all debug
-            "game_candidates_before_filter": games_candidates_count
+            "game_candidates_before_filter": games_candidates_count,
+            # v10.81: Time gate debug (TODAY-ONLY filter enforcement)
+            "today_only_enforced": True,
+            "time_gate": debug_info.get("time_gate", {})
         }
 
     # ================================================================

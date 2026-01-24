@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.80"  # Canonical schema + Glitch Protocol v1.0
+ENGINE_VERSION = "v10.81"  # v10.81: Display + time-gate fields for frontend
 API_VERSION = "14.7"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 

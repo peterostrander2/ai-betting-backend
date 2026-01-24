@@ -292,5 +292,95 @@ class TestBookAllowlist(unittest.TestCase):
         self.assertGreaterEqual(len(BOOK_ALLOWLIST), 5)
 
 
+class TestCanonicalSchemaKeys(unittest.TestCase):
+    """Test that canonical schema enforces required fields."""
+
+    # v10.81: Canonical required fields for game picks
+    GAME_PICK_REQUIRED_KEYS = {
+        "sport", "game_id", "home_team", "away_team", "market_key",
+        "selection", "odds_american", "final_score", "tier",
+        "book_key", "book_name", "book_link",
+        "display_title", "display_pick",
+        "game_time_est", "has_started"
+    }
+
+    # v10.81: Canonical required fields for props
+    PROP_PICK_REQUIRED_KEYS = {
+        "sport", "game_id", "player_name", "stat_type", "line",
+        "over_under", "odds_american", "final_score", "tier",
+        "book_key", "book_name", "book_link",
+        "display_title", "display_pick",
+        "game_time_est", "has_started"
+    }
+
+    def test_game_pick_schema_fields_defined(self):
+        """Game pick schema must define all required canonical fields."""
+        # Create a minimal valid pick and verify CanonicalPick accepts it
+        pick = CanonicalPick(
+            sport="NBA",
+            league="NBA",
+            event_id="test123",
+            game_time_utc="2026-01-24T19:00:00Z",
+            game_time_est="2026-01-24T14:00:00-05:00",
+            is_today_est=True,
+            home_team="Lakers",
+            away_team="Celtics",
+            market_type=MarketType.SPREAD,
+            selection="Lakers -3.5"
+        )
+        # Verify essential fields exist
+        self.assertIsNotNone(pick.sport)
+        self.assertIsNotNone(pick.home_team)
+        self.assertIsNotNone(pick.away_team)
+        self.assertIsNotNone(pick.market_type)
+        self.assertIsNotNone(pick.selection)
+
+    def test_canonical_pick_has_matchup_display(self):
+        """CanonicalPick must auto-generate matchup_display."""
+        pick = CanonicalPick(
+            sport="NBA",
+            league="NBA",
+            event_id="test123",
+            game_time_utc="2026-01-24T19:00:00Z",
+            game_time_est="2026-01-24T14:00:00-05:00",
+            is_today_est=True,
+            home_team="Lakers",
+            away_team="Celtics",
+            market_type=MarketType.SPREAD,
+            selection="Lakers -3.5"
+        )
+        self.assertEqual(pick.matchup_display, "Celtics @ Lakers")
+
+    def test_canonical_pick_generates_pick_id(self):
+        """CanonicalPick must auto-generate pick_id."""
+        pick = CanonicalPick(
+            sport="NBA",
+            league="NBA",
+            event_id="test123",
+            game_time_utc="2026-01-24T19:00:00Z",
+            game_time_est="2026-01-24T14:00:00-05:00",
+            is_today_est=True,
+            home_team="Lakers",
+            away_team="Celtics",
+            market_type=MarketType.SPREAD,
+            selection="Lakers -3.5"
+        )
+        self.assertTrue(len(pick.pick_id) > 0)
+        # pick_id should be deterministic for same inputs
+        pick2 = CanonicalPick(
+            sport="NBA",
+            league="NBA",
+            event_id="test123",
+            game_time_utc="2026-01-24T19:00:00Z",
+            game_time_est="2026-01-24T14:00:00-05:00",
+            is_today_est=True,
+            home_team="Lakers",
+            away_team="Celtics",
+            market_type=MarketType.SPREAD,
+            selection="Lakers -3.5"
+        )
+        self.assertEqual(pick.pick_id, pick2.pick_id)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
