@@ -2165,12 +2165,237 @@ JARVIS_TRIGGERS = {
     2178: {"name": "THE IMMORTAL", "boost": 20, "tier": "LEGENDARY", "description": "Only number where n4=reverse AND n4=66^4. Never collapses.", "mathematical": True},
     201: {"name": "THE ORDER", "boost": 12, "tier": "HIGH", "description": "Jesuit Order gematria. The Event of 201.", "mathematical": False},
     33: {"name": "THE MASTER", "boost": 10, "tier": "HIGH", "description": "Highest master number. Masonic significance.", "mathematical": False},
+    47: {"name": "THE AGENT", "boost": 8, "tier": "MEDIUM", "description": "Agent of chaos. Discordian prime. High variance indicator.", "mathematical": False},
+    88: {"name": "THE INFINITE", "boost": 8, "tier": "MEDIUM", "description": "Double infinity. Mercury retrograde resonance. Cycle completion.", "mathematical": False},
     93: {"name": "THE WILL", "boost": 10, "tier": "HIGH", "description": "Thelema sacred number. Will and Love.", "mathematical": False},
     322: {"name": "THE SOCIETY", "boost": 10, "tier": "HIGH", "description": "Skull & Bones. Genesis 3:22.", "mathematical": False}
 }
 
 POWER_NUMBERS = [11, 22, 33, 44, 55, 66, 77, 88, 99]
 TESLA_NUMBERS = [3, 6, 9]
+
+# ============================================================================
+# v10.70: CHROME RESONANCE - Jersey Color Psychology
+# ============================================================================
+# Red = Aggression (ATS strength), Black = Penalties/Fouls (fade in close games)
+# Blue = Control/Defense, White = Neutrality, Green = Balance
+TEAM_PRIMARY_COLORS = {
+    # NBA
+    "Bulls": "RED", "Heat": "RED", "Rockets": "RED", "Raptors": "RED", "Blazers": "RED",
+    "Hawks": "RED", "Wizards": "RED", "Pistons": "RED", "Clippers": "RED",
+    "Nets": "BLACK", "Spurs": "BLACK", "Kings": "BLACK",
+    "Lakers": "GOLD", "Warriors": "GOLD", "Pacers": "GOLD", "Nuggets": "GOLD",
+    "Celtics": "GREEN", "Bucks": "GREEN", "Jazz": "GREEN",
+    "Knicks": "BLUE", "Mavericks": "BLUE", "Thunder": "BLUE", "Grizzlies": "BLUE",
+    "76ers": "BLUE", "Timberwolves": "BLUE", "Magic": "BLUE", "Hornets": "BLUE",
+    "Suns": "ORANGE", "Cavaliers": "WINE",
+    # NFL
+    "Chiefs": "RED", "49ers": "RED", "Cardinals": "RED", "Buccaneers": "RED",
+    "Falcons": "RED", "Texans": "RED", "Patriots": "RED",
+    "Raiders": "BLACK", "Ravens": "BLACK", "Saints": "BLACK", "Panthers": "BLACK",
+    "Steelers": "BLACK", "Bengals": "BLACK", "Jaguars": "BLACK",
+    "Cowboys": "BLUE", "Bills": "BLUE", "Colts": "BLUE", "Chargers": "BLUE",
+    "Titans": "BLUE", "Lions": "BLUE", "Giants": "BLUE", "Seahawks": "BLUE",
+    "Packers": "GREEN", "Eagles": "GREEN", "Jets": "GREEN",
+    "Broncos": "ORANGE", "Bears": "ORANGE", "Browns": "ORANGE", "Dolphins": "ORANGE",
+    "Commanders": "BURGUNDY", "Vikings": "PURPLE",
+    # MLB
+    "Cardinals": "RED", "Reds": "RED", "Angels": "RED", "Phillies": "RED",
+    "Nationals": "RED", "Diamondbacks": "RED", "Guardians": "RED",
+    "Giants": "BLACK", "Pirates": "BLACK", "White Sox": "BLACK", "Marlins": "BLACK",
+    "Dodgers": "BLUE", "Cubs": "BLUE", "Royals": "BLUE", "Blue Jays": "BLUE",
+    "Rays": "BLUE", "Brewers": "BLUE", "Mariners": "BLUE", "Rangers": "BLUE",
+    "Athletics": "GREEN", "Padres": "GREEN",
+    "Orioles": "ORANGE", "Astros": "ORANGE", "Tigers": "ORANGE", "Mets": "ORANGE",
+    "Yankees": "NAVY", "Red Sox": "NAVY", "Twins": "NAVY", "Braves": "NAVY",
+    "Rockies": "PURPLE",
+}
+
+def get_chrome_resonance(home_team: str, away_team: str) -> Dict[str, Any]:
+    """
+    v10.70: Chrome Resonance - Analyze psychological impact of team colors.
+
+    Red = Aggression (ATS edge), Black = Penalties (fade in close games)
+    """
+    home_color = TEAM_PRIMARY_COLORS.get(home_team, "NEUTRAL")
+    away_color = TEAM_PRIMARY_COLORS.get(away_team, "NEUTRAL")
+
+    chrome_boost = 0.0
+    chrome_signal = "NEUTRAL"
+    chrome_reason = ""
+
+    # Red vs non-Red = aggression advantage
+    if home_color == "RED" and away_color != "RED":
+        chrome_boost = 0.15
+        chrome_signal = "HOME_AGGRESSION"
+        chrome_reason = f"Chrome: {home_team} RED aggression vs {away_team}"
+    elif away_color == "RED" and home_color != "RED":
+        chrome_boost = -0.10  # Away red slightly less impactful
+        chrome_signal = "AWAY_AGGRESSION"
+        chrome_reason = f"Chrome: {away_team} RED aggression (road)"
+
+    # Black = foul/penalty prone (fade in close spreads)
+    if home_color == "BLACK" or away_color == "BLACK":
+        chrome_signal = "PENALTY_RISK" if chrome_signal == "NEUTRAL" else chrome_signal
+        chrome_reason = chrome_reason or f"Chrome: BLACK team penalty risk"
+
+    return {
+        "available": True,
+        "home_color": home_color,
+        "away_color": away_color,
+        "chrome_boost": chrome_boost,
+        "chrome_signal": chrome_signal,
+        "chrome_reason": chrome_reason
+    }
+
+# ============================================================================
+# v10.70: BENFORD'S LAW ANOMALY DETECTION
+# ============================================================================
+# Natural data follows Benford distribution for leading digits
+# Violations indicate "Mathematical Imposters" - fade streaks
+
+BENFORD_EXPECTED = {
+    1: 0.301, 2: 0.176, 3: 0.125, 4: 0.097,
+    5: 0.079, 6: 0.067, 7: 0.058, 8: 0.051, 9: 0.046
+}
+
+def check_benford_anomaly(recent_stats: List[float], threshold: float = 0.15) -> Dict[str, Any]:
+    """
+    v10.70: Check if recent stats violate Benford's Law.
+
+    If leading digits don't follow natural distribution, the streak is artificial.
+    Returns anomaly signal to fade the streak.
+    """
+    if not recent_stats or len(recent_stats) < 5:
+        return {"available": False, "is_anomaly": False, "reason": "Insufficient data"}
+
+    # Extract leading digits
+    leading_digits = []
+    for stat in recent_stats:
+        if stat > 0:
+            leading = int(str(abs(stat)).lstrip('0').lstrip('.')[0])
+            if 1 <= leading <= 9:
+                leading_digits.append(leading)
+
+    if len(leading_digits) < 5:
+        return {"available": False, "is_anomaly": False, "reason": "Insufficient valid digits"}
+
+    # Calculate observed distribution
+    observed = {d: 0 for d in range(1, 10)}
+    for d in leading_digits:
+        observed[d] += 1
+
+    total = len(leading_digits)
+    observed_pct = {d: count / total for d, count in observed.items()}
+
+    # Calculate deviation from Benford
+    total_deviation = sum(abs(observed_pct[d] - BENFORD_EXPECTED[d]) for d in range(1, 10))
+    avg_deviation = total_deviation / 9
+
+    is_anomaly = avg_deviation > threshold
+
+    return {
+        "available": True,
+        "is_anomaly": is_anomaly,
+        "deviation": round(avg_deviation, 4),
+        "threshold": threshold,
+        "sample_size": total,
+        "signal": "FADE_STREAK" if is_anomaly else "NATURAL",
+        "reason": f"Benford deviation {avg_deviation:.3f} {'> ANOMALY' if is_anomaly else '< natural'}"
+    }
+
+# ============================================================================
+# v10.70: ATMOSPHERIC DRAG (Barometric Pressure)
+# ============================================================================
+# >30.10 inHg = Heavy Air (Bet Under), <29.80 inHg = Thin Air (Bet Over)
+
+def calculate_atmospheric_drag(pressure_in: float) -> Dict[str, Any]:
+    """
+    v10.70: Calculate atmospheric drag betting signal from barometric pressure.
+
+    High pressure = heavy air = harder to throw/hit = UNDER
+    Low pressure = thin air = ball travels easier = OVER
+    """
+    if not pressure_in or pressure_in <= 0:
+        return {"available": False, "signal": "NEUTRAL", "boost": 0.0}
+
+    if pressure_in > 30.10:
+        return {
+            "available": True,
+            "pressure_in": pressure_in,
+            "signal": "HEAVY_AIR",
+            "direction": "UNDER",
+            "boost": 0.20,
+            "reason": f"Atmospheric Drag: {pressure_in:.2f} inHg HEAVY AIR (bet under)"
+        }
+    elif pressure_in < 29.80:
+        return {
+            "available": True,
+            "pressure_in": pressure_in,
+            "signal": "THIN_AIR",
+            "direction": "OVER",
+            "boost": 0.20,
+            "reason": f"Atmospheric Drag: {pressure_in:.2f} inHg THIN AIR (bet over)"
+        }
+    else:
+        return {
+            "available": True,
+            "pressure_in": pressure_in,
+            "signal": "NEUTRAL",
+            "direction": None,
+            "boost": 0.0,
+            "reason": f"Atmospheric Drag: {pressure_in:.2f} inHg (neutral)"
+        }
+
+# ============================================================================
+# v10.70: LINGUISTIC DIVERGENCE (Hate-Buy Trap)
+# ============================================================================
+# Negative Sentiment + RLM towards that team = Sharps buying the hate
+
+def detect_hate_buy_trap(
+    sentiment_score: float,  # -1 to 1 scale
+    rlm_detected: bool,
+    rlm_direction: str,  # "HOME" or "AWAY"
+    sentiment_target: str  # Which team sentiment is about
+) -> Dict[str, Any]:
+    """
+    v10.70: Detect "Hate-Buy" trap where sharps buy hated teams.
+
+    If public hates a team (negative sentiment) BUT line moves toward them (RLM),
+    sharps are loading up. Classic contrarian edge.
+    """
+    if not rlm_detected:
+        return {"available": False, "is_trap": False, "reason": "No RLM detected"}
+
+    # Negative sentiment (-0.3 or worse) + RLM = Hate-Buy
+    is_negative = sentiment_score < -0.3
+    rlm_matches_hated = (
+        (sentiment_target == "HOME" and rlm_direction == "HOME") or
+        (sentiment_target == "AWAY" and rlm_direction == "AWAY")
+    )
+
+    is_trap = is_negative and rlm_matches_hated
+
+    if is_trap:
+        return {
+            "available": True,
+            "is_trap": True,
+            "sentiment_score": sentiment_score,
+            "rlm_direction": rlm_direction,
+            "boost": 0.35,
+            "signal": "HATE_BUY",
+            "reason": f"Hate-Buy Trap: Public hates {sentiment_target} but sharps buying (RLM {rlm_direction})"
+        }
+
+    return {
+        "available": True,
+        "is_trap": False,
+        "sentiment_score": sentiment_score,
+        "rlm_direction": rlm_direction,
+        "boost": 0.0,
+        "signal": "NO_TRAP",
+        "reason": "No hate-buy pattern detected"
+    }
 
 # ============================================================================
 # ESOTERIC HELPER FUNCTIONS (exported for main.py)
@@ -7514,6 +7739,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         if alt_data_esoteric != 0:
             esoteric_reasons.append(f"ESOTERIC: Alt Data Sentiment {'+' if alt_data_esoteric > 0 else ''}{alt_data_esoteric:.2f}")
 
+        # v10.70: Chrome Resonance (jersey color psychology)
+        chrome_score = 0.0
+        if home_team and away_team:
+            chrome_data = get_chrome_resonance(home_team, away_team)
+            if chrome_data.get("chrome_boost", 0) != 0:
+                chrome_score = chrome_data["chrome_boost"]
+                esoteric_reasons.append(f"ESOTERIC: {chrome_data['chrome_reason']} {chrome_score:+.2f}")
+
         esoteric_raw = (
             5.0 +                    # Neutral base
             astro_score +            # Vedic astro (0-2.0 pts)
@@ -7523,7 +7756,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             micro_boost_external +   # Weather/NOAA/Planetary (+/-0.25 pts)
             biorhythm_score +        # v10.59: Player biorhythm (-0.25 to +0.5 pts)
             hurst_score +            # v10.59: Trend momentum (0-0.15 pts)
-            alt_data_esoteric        # v10.66: FRED/Finnhub/Twitter sentiment (-0.3 to +0.5 pts)
+            alt_data_esoteric +      # v10.66: FRED/Finnhub/Twitter sentiment (-0.3 to +0.5 pts)
+            chrome_score             # v10.70: Chrome Resonance (+/-0.15 pts)
         )
         esoteric_score = max(0, min(10, esoteric_raw))
 

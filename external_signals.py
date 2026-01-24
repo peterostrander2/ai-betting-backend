@@ -135,6 +135,8 @@ async def get_weather_context(city: str = None, lat: float = None, lon: float = 
                 "wind_mph": current.get("wind_mph", 0),
                 "humidity": current.get("humidity"),
                 "condition": current.get("condition", {}).get("text", ""),
+                "pressure_in": current.get("pressure_in"),  # v10.70: Atmospheric Drag
+                "pressure_mb": current.get("pressure_mb"),  # Metric backup
                 "is_dome": False,
                 "weather_impact": _calculate_weather_impact(current)
             }

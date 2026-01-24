@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.69"  # Harmonic Convergence: Golden Boost when Math (AI>8.0) AND Magic (Esoteric>8.0) align
+ENGINE_VERSION = "v10.70"  # Glitch Protocol: +47/88 triggers, Chrome Resonance, Benford Anomaly, Atmospheric Drag, Hate-Buy Trap
 API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 
