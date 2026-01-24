@@ -1,4 +1,4 @@
-# live_data_router.py v15.0 - SCORING v10.66
+# live_data_router.py v15.1 - SCORING v10.79 (Glitch Protocol Modules)
 # v10.66: Alternative Data Integration (Twitter, Finnhub, SerpAPI, FRED)
 # v10.59: Wire Disconnected Features (Biorhythms, Hurst, Kelly Criterion)
 # v10.57: Data Integrity Validators (prop_integrity + injury_guard before publish_gate)
@@ -275,6 +275,35 @@ try:
 except ImportError:
     PLAYER_BIRTH_DATA_AVAILABLE = False
     logger.warning("player_birth_data not available - player biorhythms disabled")
+
+# v10.79: Import Glitch Protocol modules (Master Audit File compliance)
+try:
+    from glitch import (
+        # Main entry point
+        get_glitch_analysis,
+        # Esoteric
+        get_chrome_resonance as glitch_chrome_resonance,
+        get_esoteric_signals as glitch_esoteric_signals,
+        TEAM_PRIMARY_COLORS as GLITCH_TEAM_COLORS,
+        # Physics
+        calculate_atmospheric_drag as glitch_atmospheric_drag,
+        get_physics_signals as glitch_physics_signals,
+        # Hive Mind
+        detect_hate_buy_trap as glitch_hate_buy_trap,
+        get_hive_mind_signals as glitch_hive_mind_signals,
+        # Market
+        check_benford_anomaly as glitch_benford_anomaly,
+        get_market_signals as glitch_market_signals,
+        # Math Glitch
+        check_titanium_rule,
+        check_harmonic_convergence,
+        calculate_glitch_score,
+        JARVIS_TRIGGERS as GLITCH_JARVIS_TRIGGERS,
+    )
+    GLITCH_PROTOCOL_AVAILABLE = True
+except ImportError as e:
+    GLITCH_PROTOCOL_AVAILABLE = False
+    logger.warning(f"glitch module not available: {e} - using legacy inline functions")
 
 # Redis import with fallback
 try:
@@ -2570,10 +2599,16 @@ TEAM_PRIMARY_COLORS = {
 
 def get_chrome_resonance(home_team: str, away_team: str) -> Dict[str, Any]:
     """
-    v10.70: Chrome Resonance - Analyze psychological impact of team colors.
+    v10.79: Chrome Resonance - Analyze psychological impact of team colors.
 
+    Delegates to glitch.esoteric module when available.
     Red = Aggression (ATS edge), Black = Penalties (fade in close games)
     """
+    # v10.79: Delegate to glitch module if available
+    if GLITCH_PROTOCOL_AVAILABLE:
+        return glitch_chrome_resonance(home_team, away_team)
+
+    # Legacy fallback
     home_color = TEAM_PRIMARY_COLORS.get(home_team, "NEUTRAL")
     away_color = TEAM_PRIMARY_COLORS.get(away_team, "NEUTRAL")
 
@@ -2618,11 +2653,17 @@ BENFORD_EXPECTED = {
 
 def check_benford_anomaly(recent_stats: List[float], threshold: float = 0.15) -> Dict[str, Any]:
     """
-    v10.70: Check if recent stats violate Benford's Law.
+    v10.79: Check if recent stats violate Benford's Law.
 
+    Delegates to glitch.market module when available.
     If leading digits don't follow natural distribution, the streak is artificial.
     Returns anomaly signal to fade the streak.
     """
+    # v10.79: Delegate to glitch module if available
+    if GLITCH_PROTOCOL_AVAILABLE:
+        return glitch_benford_anomaly(recent_stats, threshold)
+
+    # Legacy fallback
     if not recent_stats or len(recent_stats) < 5:
         return {"available": False, "is_anomaly": False, "reason": "Insufficient data"}
 
@@ -2668,11 +2709,17 @@ def check_benford_anomaly(recent_stats: List[float], threshold: float = 0.15) ->
 
 def calculate_atmospheric_drag(pressure_in: float) -> Dict[str, Any]:
     """
-    v10.70: Calculate atmospheric drag betting signal from barometric pressure.
+    v10.79: Calculate atmospheric drag betting signal from barometric pressure.
 
+    Delegates to glitch.physics module when available.
     High pressure = heavy air = harder to throw/hit = UNDER
     Low pressure = thin air = ball travels easier = OVER
     """
+    # v10.79: Delegate to glitch module if available
+    if GLITCH_PROTOCOL_AVAILABLE:
+        return glitch_atmospheric_drag(pressure_in)
+
+    # Legacy fallback
     if not pressure_in or pressure_in <= 0:
         return {"available": False, "signal": "NEUTRAL", "boost": 0.0}
 
@@ -2716,11 +2763,17 @@ def detect_hate_buy_trap(
     sentiment_target: str  # Which team sentiment is about
 ) -> Dict[str, Any]:
     """
-    v10.70: Detect "Hate-Buy" trap where sharps buy hated teams.
+    v10.79: Detect "Hate-Buy" trap where sharps buy hated teams.
 
+    Delegates to glitch.hive_mind module when available.
     If public hates a team (negative sentiment) BUT line moves toward them (RLM),
     sharps are loading up. Classic contrarian edge.
     """
+    # v10.79: Delegate to glitch module if available
+    if GLITCH_PROTOCOL_AVAILABLE:
+        return glitch_hate_buy_trap(sentiment_score, rlm_detected, rlm_direction, sentiment_target)
+
+    # Legacy fallback
     if not rlm_detected:
         return {"available": False, "is_trap": False, "reason": "No RLM detected"}
 

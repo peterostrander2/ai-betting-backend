@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.78"  # Debug pipeline clarity: events -> today_games -> games_with_odds -> candidates -> picks
+ENGINE_VERSION = "v10.79"  # Glitch Protocol refactor: 5 standalone modules (esoteric/physics/hive_mind/market/math_glitch)
 API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 
