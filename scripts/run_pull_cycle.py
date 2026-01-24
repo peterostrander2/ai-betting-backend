@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run Pull Cycle v10.73
+Run Pull Cycle v10.75
 =====================
 Single command to run a complete pick pull cycle.
 
@@ -13,8 +13,9 @@ Behavior:
 1. Checks readiness gates for the sport
 2. Pulls picks via API (or directly if running locally)
 3. Validates engine completeness on each pick
-4. Outputs community-ready table
-5. Saves snapshot for change monitoring
+4. Shows time status for each pick (PREGAME/LOCKED/STARTED/FINAL)
+5. Outputs community-ready table
+6. Saves snapshot for change monitoring
 """
 
 import argparse
@@ -40,6 +41,7 @@ from pull_readiness import (
 )
 from change_monitor import check_for_changes, get_change_summary, save_snapshot
 from pick_schema import normalize_picks, picks_to_table, PickCard
+from time_status import get_time_state_summary, format_time_status, TimeState
 
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://web-production-7b2a.up.railway.app")
@@ -204,6 +206,43 @@ def print_change_report(report):
     print(get_change_summary(report))
 
 
+def print_time_state_summary(picks: List[Dict]):
+    """
+    v10.75: Print time state summary showing pick eligibility.
+    """
+    print("\n" + "-" * 60)
+    print("⏱️  TIME STATE SUMMARY")
+    print("-" * 60)
+
+    summary = get_time_state_summary(picks)
+
+    pregame = summary.get("pregame_count", 0)
+    locked = summary.get("locked_count", 0)
+    started = summary.get("started_count", 0)
+    final_count = summary.get("final_count", 0)
+    unknown = summary.get("unknown_count", 0)
+    live_eligible = summary.get("live_eligible_count", 0)
+
+    total = pregame + locked + started + final_count + unknown
+
+    print(f"\n  PREGAME (safe to bet):      {pregame:>3} picks")
+    print(f"  LOCKED (5min grace):        {locked:>3} picks")
+    print(f"  STARTED (live-bet only):    {started:>3} picks")
+    print(f"  FINAL (archive):            {final_count:>3} picks")
+    print(f"  UNKNOWN:                    {unknown:>3} picks")
+    print(f"  " + "-" * 30)
+    print(f"  TOTAL:                      {total:>3} picks")
+    print(f"\n  Live-Bet Eligible:          {live_eligible:>3} picks")
+
+    # Recommendation
+    if pregame + locked > 0:
+        print(f"\n  ✅ {pregame + locked} picks available for pregame betting")
+    if started > 0:
+        print(f"  ⚠️  {started} picks require LIVE BET placement")
+    if final_count > 0:
+        print(f"  📦 {final_count} picks should be archived (game complete)")
+
+
 async def run_pull_cycle(sport: str, force: bool = False, save: bool = True) -> Dict:
     """
     Run a complete pull cycle for a sport.
@@ -273,10 +312,14 @@ async def run_pull_cycle(sport: str, force: bool = False, save: bool = True) -> 
         "completeness_pct": round((complete_count / max(1, len(all_picks))) * 100, 1)
     }
 
-    # Step 5: Print picks table
+    # Step 5: Time state summary (v10.75)
+    print_time_state_summary(all_picks)
+    result["time_state"] = get_time_state_summary(all_picks)
+
+    # Step 6: Print picks table
     print_picks_table(all_picks, sport)
 
-    # Step 6: Check for changes
+    # Step 7: Check for changes
     if save:
         change_report = check_for_changes(sport, all_picks)
         print_change_report(change_report)
@@ -285,13 +328,20 @@ async def run_pull_cycle(sport: str, force: bool = False, save: bool = True) -> 
 
     result["success"] = True
 
-    # Step 7: Summary
+    # Step 8: Summary
     print("\n" + "=" * 60)
     print("✅ PULL CYCLE COMPLETE")
     print("=" * 60)
     print(f"Sport: {sport.upper()}")
     print(f"Picks: {len(all_picks)} ({len(props)} props, {len(game_picks)} games)")
     print(f"Engine Completeness: {result['engine_audit']['completeness_pct']}%")
+
+    # v10.75: Time state summary
+    ts = result.get("time_state", {})
+    pregame = ts.get("pregame_count", 0) + ts.get("locked_count", 0)
+    live_only = ts.get("started_count", 0)
+    print(f"Pregame Ready: {pregame} | Live-Bet Only: {live_only}")
+
     print(f"Timestamp: {result['timestamp']}")
 
     return result

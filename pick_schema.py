@@ -7,8 +7,11 @@ before rendering. This ensures consistent output format.
 """
 
 from dataclasses import dataclass, field, asdict
-from typing import List, Optional
+from typing import List, Optional, Dict
 from enum import Enum
+
+# v10.75: Import time status module
+from time_status import compute_time_status, format_time_status, TimeState
 
 
 class MarketType(str, Enum):
@@ -65,6 +68,11 @@ class PickCard:
     market_id: Optional[str] = None
     selection_id: Optional[str] = None
 
+    # v10.75: Time status fields
+    start_time_et: Optional[str] = None  # ISO format, ET timezone
+    pulled_at_et: Optional[str] = None   # ISO format, ET timezone
+    status_time: Optional[Dict] = None   # Full time status object
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         d = asdict(self)
@@ -76,7 +84,9 @@ class PickCard:
         """One-line display format for tables."""
         book_info = f"{self.book}" if self.book != "—" else ""
         link_info = "🔗" if self.book_url else ""
-        return f"{self.tier.value:10} {self.score:.2f}  {self.game:35} {self.selection_name} {self.selection_detail} ({self.odds_display}) {book_info} {link_info}"
+        # v10.75: Include time status
+        time_str = format_time_status(self.status_time) if self.status_time else ""
+        return f"{self.tier.value:10} {self.score:.2f}  {self.game:35} {self.selection_name} {self.selection_detail} ({self.odds_display}) {book_info} {link_info} [{time_str}]"
 
 
 def normalize_game_pick(raw: dict, sport: str = "—") -> PickCard:
@@ -149,6 +159,11 @@ def normalize_game_pick(raw: dict, sport: str = "—") -> PickCard:
     reasons = raw.get("reasons", [])
     signals_fired = extract_signals_from_reasons(reasons)
 
+    # v10.75: Compute time status
+    raw_start_time = raw.get("start_time", raw.get("commence_time", raw.get("game_time")))
+    game_state = raw.get("game_state", raw.get("status"))
+    time_status = compute_time_status(raw_start_time, game_state=game_state)
+
     return PickCard(
         sport=sport.upper(),
         league=raw.get("league", sport.upper()),
@@ -171,6 +186,9 @@ def normalize_game_pick(raw: dict, sport: str = "—") -> PickCard:
         event_id=raw.get("event_id", raw.get("game_id")),
         market_id=raw.get("market_id"),
         selection_id=raw.get("selection_id"),
+        start_time_et=time_status.get("start_time_et"),
+        pulled_at_et=time_status.get("pulled_at_et"),
+        status_time=time_status,
     )
 
 
@@ -226,6 +244,11 @@ def normalize_prop_pick(raw: dict, sport: str = "—") -> PickCard:
     signals_fired = extract_signals_from_reasons(reasons) + badges
     signals_fired = list(set(signals_fired))  # Dedupe
 
+    # v10.75: Compute time status
+    raw_start_time = raw.get("game_time", raw.get("start_time", raw.get("commence_time")))
+    game_state = raw.get("game_state", raw.get("status"))
+    time_status = compute_time_status(raw_start_time, game_state=game_state)
+
     return PickCard(
         sport=sport.upper(),
         league=raw.get("league", sport.upper()),
@@ -248,6 +271,9 @@ def normalize_prop_pick(raw: dict, sport: str = "—") -> PickCard:
         event_id=raw.get("event_id", raw.get("game_id")),
         market_id=raw.get("market_id"),
         selection_id=raw.get("selection_id"),
+        start_time_et=time_status.get("start_time_et"),
+        pulled_at_et=time_status.get("pulled_at_et"),
+        status_time=time_status,
     )
 
 
@@ -352,23 +378,28 @@ def format_stat_type(stat_type: str) -> str:
 def picks_to_table(picks: List[PickCard]) -> str:
     """
     Render picks as a formatted table string.
+    v10.75: Added time status column.
     """
     if not picks:
         return "No picks available."
 
     lines = []
-    header = f"{'Tier':<12} {'Score':>6}  {'Game':<35} {'Pick':<30} {'Odds':>8} {'Book':<4}"
+    header = f"{'Tier':<12} {'Score':>6}  {'Game':<30} {'Pick':<25} {'Odds':>8} {'Time Status':<25}"
     lines.append(header)
     lines.append("=" * len(header))
 
     for p in picks:
         pick_str = f"{p.selection_name} {p.selection_detail}"
-        if len(pick_str) > 30:
-            pick_str = pick_str[:27] + "..."
-        game_str = p.game if len(p.game) <= 35 else p.game[:32] + "..."
+        if len(pick_str) > 25:
+            pick_str = pick_str[:22] + "..."
+        game_str = p.game if len(p.game) <= 30 else p.game[:27] + "..."
 
-        link_icon = "🔗" if p.book_url else ""
-        line = f"{p.tier.value:<12} {p.score:>6.2f}  {game_str:<35} {pick_str:<30} {p.odds_display:>8} {p.book:<4} {link_icon}"
+        # v10.75: Format time status
+        time_str = format_time_status(p.status_time) if p.status_time else "UNKNOWN"
+        if len(time_str) > 25:
+            time_str = time_str[:22] + "..."
+
+        line = f"{p.tier.value:<12} {p.score:>6.2f}  {game_str:<30} {pick_str:<25} {p.odds_display:>8} {time_str:<25}"
         lines.append(line)
 
     return "\n".join(lines)

@@ -66,6 +66,12 @@ from pull_readiness import (
 )
 from change_monitor import check_for_changes, save_snapshot, get_change_summary
 
+# v10.75: Import time status module for live-bet detection
+from time_status import (
+    compute_time_status, format_time_status, get_time_state_summary,
+    TimeState, Recommendation, LiveBand
+)
+
 # Import MasterPredictionSystem for comprehensive AI scoring
 try:
     from advanced_ml_backend import MasterPredictionSystem
@@ -5362,6 +5368,15 @@ def ensure_pick_labels(pick: Dict[str, Any]) -> Dict[str, Any]:
             dt_et = convert_to_et(dt_utc)
             pick["game_time_et"] = format_et_display(dt_et)
 
+    # v10.75: Add time status for live-bet detection
+    if not pick.get("status_time"):
+        game_time_iso = pick.get("game_time") or pick.get("commence_time", "")
+        game_state = pick.get("game_state") or pick.get("status")
+        time_status = compute_time_status(game_time_iso, game_state=game_state)
+        pick["status_time"] = time_status
+        pick["start_time_et"] = time_status.get("start_time_et")
+        pick["pulled_at_et"] = time_status.get("pulled_at_et")
+
     return pick
 
 
@@ -10460,8 +10475,12 @@ async def get_audit(sport: str):
                 "picks_missing_jarvis": missing_jarvis[:10],
                 "picks_missing_jason_sim": missing_jason[:10]
             }
+
+            # v10.75: Get time state summary
+            time_state_summary = get_time_state_summary(all_picks)
     except Exception as e:
         logger.warning(f"Engine audit error: {e}")
+        time_state_summary = {}
 
     return {
         "sport": sport.upper(),
@@ -10476,6 +10495,7 @@ async def get_audit(sport: str):
             for w in windows
         ],
         "engine_audit": engine_audit,
+        "time_state_summary": time_state_summary,
         "timestamp": datetime.now().isoformat()
     }
 
