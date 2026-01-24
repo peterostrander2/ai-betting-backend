@@ -96,10 +96,57 @@ async def root():
         "sports": ["nba", "nfl", "mlb", "nhl"]
     }
 
+# Centralized version info - updated with each major change
+ENGINE_VERSION = "v10.58"  # 4-Engine Separation (NO DOUBLE COUNTING)
+API_VERSION = "14.3"
+BUILD_COMMIT = "db87159"  # Updated on deploy
+
+
 # Health check at root level (some frontends expect this)
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "version": "14.2", "database": database.DB_ENABLED}
+    return {
+        "status": "healthy",
+        "version": API_VERSION,
+        "engine_version": ENGINE_VERSION,
+        "database": database.DB_ENABLED
+    }
+
+
+# Detailed version/build endpoint for deployment verification
+@app.get("/version")
+async def version():
+    import subprocess
+    from datetime import datetime
+
+    # Try to get actual git commit hash
+    try:
+        git_hash = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()[:7]
+    except Exception:
+        git_hash = BUILD_COMMIT
+
+    return {
+        "api_version": API_VERSION,
+        "engine_version": ENGINE_VERSION,
+        "git_commit": git_hash,
+        "build_timestamp": datetime.utcnow().isoformat() + "Z",
+        "engine_separation": {
+            "version": "v10.58",
+            "ai_engine": "8-model ensemble (unchanged)",
+            "research_engine": "Sharp Split, RLM, Public Fade, Hospital Fade, Goldilocks",
+            "esoteric_engine": "Vedic Astro, Fibonacci, Vortex, Daily Edge, External (NO Jarvis)",
+            "jarvis_engine": "Gematria, Sacred Triggers (201/33/93/322/2178), Mid-spread amplifier"
+        },
+        "double_counting_rules": [
+            "Public Fade: Research ONLY (not Jarvis, not Esoteric)",
+            "Gematria: Jarvis ONLY (not Esoteric)",
+            "Fibonacci/Vortex: Esoteric ONLY (not Jarvis)",
+            "Mid-spread amplifier: Jarvis ONLY"
+        ]
+    }
 
 
 # Database status endpoint

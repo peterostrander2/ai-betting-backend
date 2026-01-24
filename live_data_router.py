@@ -6223,6 +6223,12 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         # v10.39: Add JARVIS TURBO reasons after confluence (upgrade layer)
         all_reasons = ai_reasons + research_reasons + esoteric_reasons + confluence_reasons + jarvis_turbo_reasons + smash_reasons
 
+        # v10.58: Calculate exact contributions for final_math ledger
+        ai_contrib = round(ai_score * w_ai, 4)
+        research_contrib = round(research_score * w_research, 4)
+        esoteric_contrib = round(esoteric_score * w_esoteric, 4)
+        jarvis_contrib = round(jarvis_rs * w_jarvis, 4)
+
         return {
             "total_score": round(final_score, 2),
             "confidence": confidence,
@@ -6245,6 +6251,69 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "confluence_boost": round(confluence_boost, 2),  # v10.4: jarvis confluence
                 "jarvis_turbo_boost": round(jarvis_turbo_boost, 2),  # v10.39: Jarvis turbo upgrade
                 "alignment_pct": round(alignment_pct, 1)
+            },
+            # v10.58: Full engine breakdown for PROOF LEDGER
+            "engine_breakdown": {
+                "ai": {
+                    "score": round(ai_score, 2),
+                    "weight": w_ai,
+                    "contribution": ai_contrib,
+                    "models_used": list(ai_breakdown.keys()) if ai_breakdown else [],
+                    "reasons": ai_reasons
+                },
+                "research": {
+                    "score": round(research_score, 2),
+                    "weight": w_research,
+                    "contribution": research_contrib,
+                    "pillars_hit": [r for r in research_reasons if "RESEARCH:" in r],
+                    "pillars_count": len([r for r in research_reasons if "RESEARCH:" in r and "+" in r]),
+                    "base_score": base_ai,
+                    "pillar_boost": round(pillar_boost, 2),
+                    "reasons": research_reasons
+                },
+                "esoteric": {
+                    "score": round(esoteric_score, 2),
+                    "weight": w_esoteric,
+                    "contribution": esoteric_contrib,
+                    "signals_used": {
+                        "astro_score": round(astro_score, 2),
+                        "fib_score": round(fib_score, 2),
+                        "vortex_score": round(vortex_score, 2),
+                        "daily_edge_score": round(daily_edge_score, 2),
+                        "external_micro_boost": round(micro_boost_external, 2)
+                    },
+                    "reasons": esoteric_reasons
+                },
+                "jarvis": {
+                    "jarvis_rs": round(jarvis_rs, 2),
+                    "weight": w_jarvis,
+                    "contribution": jarvis_contrib,
+                    "jarvis_active": jarvis_triggered,
+                    "jarvis_hits_count": jarvis_hits_count,
+                    "jarvis_triggers_hit": jarvis_triggers_hit,
+                    "jarvis_reasons": jarvis_reasons,
+                    "immortal_detected": immortal_detected
+                }
+            },
+            # v10.58: Final math ledger showing exact calculation
+            "final_math": {
+                "formula": "FINAL = (AI × w_ai) + (Research × w_res) + (Esoteric × w_eso) + (Jarvis × w_jar) + Confluence + Turbo",
+                "weights": {
+                    "ai": w_ai,
+                    "research": w_research,
+                    "esoteric": w_esoteric,
+                    "jarvis": w_jarvis
+                },
+                "contributions": {
+                    "ai_contrib": ai_contrib,
+                    "research_contrib": research_contrib,
+                    "esoteric_contrib": esoteric_contrib,
+                    "jarvis_contrib": jarvis_contrib,
+                    "confluence_boost": round(confluence_boost, 2),
+                    "jarvis_turbo_boost": round(jarvis_turbo_boost, 2)
+                },
+                "sum_before_turbo": round(ai_contrib + research_contrib + esoteric_contrib + jarvis_contrib + confluence_boost, 4),
+                "final_score": round(final_score, 2)
             },
             "jarvis_hits_count": jarvis_hits_count,  # v10.39: Count of Jarvis triggers hit
             "jarvis_turbo_boost": round(jarvis_turbo_boost, 2),  # v10.39: Turbo boost applied
