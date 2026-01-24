@@ -2495,6 +2495,43 @@ curl "https://web-production-7b2a.up.railway.app/live/api-coverage" \
   }'
 ```
 
+### Esoteric APIs (Edge Signals)
+
+| API | Status | Features | Scoring Integration |
+|-----|--------|----------|---------------------|
+| **Weather API** | ✅ Online | Game day weather for outdoor sports | Weather impact boost (+/-0.2 for MLB/NFL) |
+| **Astronomy API** | ✅ Online | Moon phases, planetary positions | Void moon warnings, planetary hours |
+| **NOAA** | ✅ Online | Schumann resonance (7.83 Hz baseline) | Space weather anomaly detection |
+
+### Esoteric Engine Features
+
+| Feature | Source | Current Value | Betting Impact |
+|---------|--------|---------------|----------------|
+| **Moon Phase** | Astronomy API | Waxing Crescent (29.6%) | Phase-based edge adjustments |
+| **Void Moon** | Astronomical Ephemeris | Active/Inactive tracking | Avoid major bets during void |
+| **Planetary Hours** | Astronomy API | Current ruler (Mercury/Saturn/etc) | Favorable timing for bet types |
+| **Schumann Resonance** | NOAA | 7.74 Hz (Normal) | Anomaly = market volatility |
+| **Noosphere Velocity** | Aggregated sentiment | Trending direction | Collective mood indicator |
+
+### Esoteric Endpoints
+
+```bash
+# Daily energy report (public)
+curl "https://web-production-7b2a.up.railway.app/esoteric/today-energy"
+
+# Full esoteric edge analysis
+curl "https://web-production-7b2a.up.railway.app/live/esoteric-edge" \
+  -H "X-API-Key: YOUR_KEY"
+
+# Noosphere status
+curl "https://web-production-7b2a.up.railway.app/live/noosphere/status" \
+  -H "X-API-Key: YOUR_KEY"
+
+# GANN physics
+curl "https://web-production-7b2a.up.railway.app/live/gann-physics-status" \
+  -H "X-API-Key: YOUR_KEY"
+```
+
 ### Data Flow Summary
 
 ```
@@ -2508,7 +2545,7 @@ curl "https://web-production-7b2a.up.railway.app/live/api-coverage" \
 │  FREE APIs                                                  │
 │    ├── ESPN ──────────→ Lineups, Officials, Ref Tendencies │
 │    ├── BallDontLie ───→ NBA Stats (backup)                 │
-│    └── NOAA ──────────→ Space Weather (esoteric)           │
+│    └── NOAA ──────────→ Space Weather (Schumann resonance) │
 ├─────────────────────────────────────────────────────────────┤
 │  ALTERNATIVE DATA                                           │
 │    ├── Twitter ───────→ Breaking Injury News               │
@@ -2516,10 +2553,15 @@ curl "https://web-production-7b2a.up.railway.app/live/api-coverage" \
 │    ├── SerpAPI ───────→ Google News Aggregation            │
 │    └── FRED ──────────→ Economic Indicators                │
 ├─────────────────────────────────────────────────────────────┤
+│  ESOTERIC SIGNALS                                           │
+│    ├── Weather API ──→ Game Day Weather (outdoor sports)   │
+│    ├── Astronomy API → Moon Phases, Planetary Hours        │
+│    └── Noosphere ────→ Collective Sentiment Velocity       │
+├─────────────────────────────────────────────────────────────┤
 │                           ↓                                 │
-│              SCORING PIPELINE (8 Pillars)                   │
+│    SCORING PIPELINE: 8 AI Models + 8 Pillars + Esoteric    │
 │                           ↓                                 │
-│              BEST-BETS OUTPUT (GOLD_STAR, EDGE_LEAN)        │
+│         BEST-BETS OUTPUT (GOLD_STAR, EDGE_LEAN)            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
