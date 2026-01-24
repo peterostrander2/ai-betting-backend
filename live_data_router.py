@@ -8864,6 +8864,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
     # v10.38: Track raw events count for debug visibility
     raw_events_count = 0
+    today_games_count = 0  # v10.77: Games after TODAY_ET filter
 
     # v10.45: Track odds metrics for diagnostics
     odds_provider_status = "UNKNOWN"
@@ -10300,6 +10301,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             # v10.38: Games debug visibility (why are game picks empty?)
             "games_reason": games_reason,
             "events_count": raw_events_count,
+            "today_games_count": today_games_count,  # v10.77: After TODAY_ET filter
+            "tomorrow_filtered_count": raw_events_count - today_games_count,  # v10.77: Games dropped (not today ET)
             "games_candidates_count": games_candidates_count,
             "games_picks_count": games_picks_count,
             # v10.42: Props debug visibility (matching games pattern)
