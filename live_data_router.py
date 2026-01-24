@@ -5887,6 +5887,49 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             pillar_boost += boost
             research_reasons.append(f"RESEARCH: Multi-Pillar Confluence +{boost:.2f}")
 
+        # v10.61 Pillar 11: Prop Correlation - boost when prop aligns with game environment
+        # Props that correlate with high-scoring games (OVER) get boost when game total is high
+        # Props that correlate with defensive games (UNDER) get boost when game total is low
+        if not is_game_pick and market:
+            mw_prop_corr = get_mw("PILLAR_PROP_CORRELATION")
+            effective_total = game_total if game_total is not None else total
+            market_lower = market.lower()
+
+            # Scoring cluster props (points, assists, 3PT) correlate with high totals
+            if any(stat in market_lower for stat in ["point", "assist", "three", "pts"]):
+                if effective_total and effective_total >= 225:
+                    boost = 0.25 * mw_prop_corr
+                    pillar_boost += boost
+                    research_reasons.append(f"RESEARCH: Prop Correlation (scoring + high total) +{boost:.2f}")
+                elif effective_total and effective_total <= 210:
+                    penalty = -0.15 * mw_prop_corr
+                    pillar_boost += penalty
+                    research_reasons.append(f"RESEARCH: Prop Correlation (scoring + low total) {penalty:.2f}")
+
+            # Rebounding props correlate with pace and missed shots
+            elif any(stat in market_lower for stat in ["rebound", "reb"]):
+                if effective_total and effective_total >= 225:
+                    boost = 0.15 * mw_prop_corr
+                    pillar_boost += boost
+                    research_reasons.append(f"RESEARCH: Prop Correlation (rebounds + high pace) +{boost:.2f}")
+
+        # v10.61 Pillar 12: Volume Discipline - penalty for extreme public consensus
+        # When ticket % is very lopsided (>75%), market may be a trap
+        # This complements Public Fade by adding caution even when fading public
+        ticket_pct = sharp_signal.get("ticket_pct", 50) or 50
+        if ticket_pct >= 75:
+            mw_volume = get_mw("PILLAR_VOLUME_DISCIPLINE")
+            # Slight penalty for extreme consensus either way (trap risk)
+            penalty = -0.15 * mw_volume
+            pillar_boost += penalty
+            research_reasons.append(f"RESEARCH: Volume Discipline ({ticket_pct}% consensus = trap risk) {penalty:.2f}")
+        elif ticket_pct <= 25:
+            # Very contrarian - could be sharp or could be wrong
+            mw_volume = get_mw("PILLAR_VOLUME_DISCIPLINE")
+            penalty = -0.10 * mw_volume
+            pillar_boost += penalty
+            research_reasons.append(f"RESEARCH: Volume Discipline ({ticket_pct}% contrarian = verify edge) {penalty:.2f}")
+
         # v10.36 Context Layer: Defensive Matchup + Pace Adjustments
         # These use context_layer.py data that was previously disconnected
         context_adjustment = 0.0

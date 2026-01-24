@@ -97,8 +97,8 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.60"  # Weather Impact + Officials Service wired
-API_VERSION = "14.4"
+ENGINE_VERSION = "v10.61"  # Complete 8 Pillars: +Prop Correlation +Volume Discipline
+API_VERSION = "14.5"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 
 
