@@ -6326,7 +6326,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
     # v10.66: Fetch Alternative Data Context (Twitter, Finnhub, SerpAPI, FRED)
     alt_data_context = {}
-    alt_data_adjustments = {"hospital_fade_boost": 0.0, "sharp_alternative": 0.0, "esoteric_alt_data": 0.0}
+    alt_data_adjustments = {"hospital_fade_boost": 0.0, "sharp_alternative": 0.0, "esoteric_alt_data": 0.0, "referee_adjustment": 0.0}
     if ALT_DATA_AVAILABLE:
         try:
             # Get list of teams from sharp data for focused fetching
@@ -6343,7 +6343,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 teams=teams_list,
                 include_injuries=True,
                 include_sentiment=True,
-                include_economic=True
+                include_economic=True,
+                include_lineups=True  # v10.68: ESPN lineups + referee tendencies
             )
 
             if alt_data_context.get("available"):
@@ -8512,6 +8513,29 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                                     score_data["bet_tier"] = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
                                 else:
                                     score_data["bet_tier"] = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
+
+                            # v10.68: ESPN Referee Adjustment for Totals
+                            referee_adj = alt_data_adjustments.get("referee_adjustment", 0.0)
+                            if pick_type == "TOTAL" and referee_adj != 0.0:
+                                is_over = pick_name.upper() == "OVER"
+                                # Apply referee adjustment: positive = boost overs, negative = boost unders
+                                if (is_over and referee_adj > 0) or (not is_over and referee_adj < 0):
+                                    adj_value = abs(referee_adj)
+                                    score_data["total_score"] = min(10.0, score_data.get("total_score", 5.0) + adj_value)
+                                    tendency = "HIGH_FOUL" if referee_adj > 0 else "LOW_FOUL"
+                                    score_data["reasons"] = score_data.get("reasons", []) + [
+                                        f"ESPN: Referee {tendency} tendency +{adj_value:.2f}"
+                                    ]
+                                    # Recalculate tier with boosted score
+                                    boosted_score = score_data["total_score"]
+                                    if boosted_score >= 7.5:
+                                        score_data["bet_tier"] = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
+                                    elif boosted_score >= 6.5:
+                                        score_data["bet_tier"] = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
+                                    elif boosted_score >= 5.5:
+                                        score_data["bet_tier"] = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
+                                    else:
+                                        score_data["bet_tier"] = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
 
                             # Calculate frontend-expected fields for game picks
                             total_score_game = score_data.get("total_score", 5.0)
