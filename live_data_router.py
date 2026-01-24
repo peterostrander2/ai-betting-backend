@@ -4035,7 +4035,8 @@ async def get_sharp_money(sport: str):
                     json_body = splits_resp.json()
                     splits = json_body if isinstance(json_body, list) else json_body.get("data", json_body.get("games", []))
 
-                    # Derive sharp signals: when money% differs from ticket% by 10%+
+                    # Derive sharp signals: when money% differs from ticket% by 7%+
+                    # v10.91: Lowered threshold from 10% to 7% - today's markets have tighter splits
                     for game in splits:
                         # v10.71: Handle both flat and nested Playbook API structures
                         # Nested structure: splits.spread.money.homePercent / splits.spread.bets.homePercent
@@ -4054,7 +4055,7 @@ async def get_sharp_money(sport: str):
 
                         diff = abs(money_pct - ticket_pct)
 
-                        if diff >= 10:  # 10%+ difference indicates sharp action
+                        if diff >= 7:  # v10.91: 7%+ difference indicates sharp action (was 10%)
                             # v10.14: Uppercase for consistency with directional correlation
                             sharp_side = "HOME" if money_pct > ticket_pct else "AWAY"
                             game_id = game.get("id", game.get("gameId"))
@@ -4071,7 +4072,7 @@ async def get_sharp_money(sport: str):
                                 "side": sharp_side,  # Alias for compatibility
                                 "money_pct": money_pct,
                                 "ticket_pct": ticket_pct,
-                                "signal_strength": "STRONG" if diff >= 20 else "MODERATE",
+                                "signal_strength": "STRONG" if diff >= 15 else "MODERATE",  # v10.91: 15%+ STRONG, 7%+ MODERATE
                                 "source": "playbook_splits"
                             }
 
@@ -5381,10 +5382,10 @@ async def get_playbook_splits_history(sport: str, date: str = None):
                 ticket_pct = game.get("ticket_pct", game.get("ticketPct", 50))
                 diff = abs(money_pct - ticket_pct)
 
-                if diff >= 10:
+                if diff >= 7:  # v10.91: Lowered from 10% to 7%
                     game["sharp_detected"] = True
                     game["sharp_side"] = "HOME" if money_pct > ticket_pct else "AWAY"
-                    game["sharp_strength"] = "STRONG" if diff >= 20 else "MODERATE"
+                    game["sharp_strength"] = "STRONG" if diff >= 15 else "MODERATE"  # v10.91: 15%+ STRONG
                     sharp_games.append(game)
 
             result = {
@@ -7867,9 +7868,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             return max(0.7, min(1.35, combined))
 
         # Pillar 1: Sharp Money (direction-gated for props)
+        # v10.91: Lowered thresholds - 7%+ MODERATE, 15%+ STRONG
         sharp_diff = sharp_signal.get("diff", 0) or 0
         sharp_strength = sharp_signal.get("signal_strength", "NONE")
-        has_sharp_signal = sharp_strength in ("STRONG", "MODERATE") or sharp_diff >= 10
+        has_sharp_signal = sharp_strength in ("STRONG", "MODERATE") or sharp_diff >= 7
 
         if is_game_pick:
             # Game picks always get full weight (no direction gating)
@@ -7878,7 +7880,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 boost = 2.0 * mw_sharp
                 pillar_boost += boost
                 research_reasons.append(f"RESEARCH: Sharp Split (Game) +{boost:.2f}")
-            elif sharp_strength == "MODERATE" or sharp_diff >= 10:
+            elif sharp_strength == "MODERATE" or sharp_diff >= 7:  # v10.91: 7%+
                 boost = 1.0 * mw_sharp
                 pillar_boost += boost
                 research_reasons.append(f"RESEARCH: Sharp Split (Game) +{boost:.2f}")

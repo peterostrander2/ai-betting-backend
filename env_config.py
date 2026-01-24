@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.90"  # v10.90: Prop availability check - filter out players with pulled lines
+    ENGINE_VERSION = "v10.91"  # v10.91: Lower sharp threshold 10%→7% to detect more signals
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 
