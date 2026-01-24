@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.63"  # True RLM: opening_line vs current_line from Playbook /lines API
+ENGINE_VERSION = "v10.64"  # Full Odds API utilization: scores, expanded props, alt lines, team totals, historical
 API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 

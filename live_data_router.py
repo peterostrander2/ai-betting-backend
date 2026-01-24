@@ -3545,6 +3545,124 @@ async def get_injuries(sport: str):
     return result
 
 
+@router.get("/scores/{sport}")
+async def get_scores(sport: str, days_from: int = 1):
+    """
+    v10.64: Get live and recent game scores from Odds API.
+
+    CRITICAL for auto-grading picks! This endpoint provides final scores
+    needed to verify pick outcomes.
+
+    Args:
+        sport: Sport key (nba, nfl, mlb, nhl)
+        days_from: How many days back to include (1-3, default 1)
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "source": "odds_api",
+        "count": N,
+        "data": [
+            {
+                "id": "event_id",
+                "sport_key": "basketball_nba",
+                "home_team": "Los Angeles Lakers",
+                "away_team": "Boston Celtics",
+                "commence_time": "2026-01-23T00:00:00Z",
+                "completed": true,
+                "scores": [
+                    {"name": "Los Angeles Lakers", "score": "112"},
+                    {"name": "Boston Celtics", "score": "108"}
+                ],
+                "last_update": "2026-01-23T03:30:00Z"
+            }
+        ]
+    }
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Clamp days_from to 1-3
+    days_from = max(1, min(3, days_from))
+
+    # Check cache first (short TTL for live scores)
+    cache_key = f"scores:{sport_lower}:{days_from}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+    data = []
+
+    if not ODDS_API_KEY:
+        logger.warning("ODDS_API_KEY not configured for scores")
+        return {"sport": sport.upper(), "source": "none", "count": 0, "data": [], "message": "API key not configured"}
+
+    try:
+        # Odds API scores endpoint - FREE for live/upcoming, 2 credits for daysFrom
+        scores_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/scores"
+        params = {
+            "apiKey": ODDS_API_KEY,
+            "daysFrom": days_from
+        }
+
+        resp = await fetch_with_retries("GET", scores_url, params=params)
+
+        if resp and resp.status_code == 200:
+            games = resp.json()
+
+            for game in games:
+                scores_data = game.get("scores", [])
+                home_score = None
+                away_score = None
+
+                for score_entry in scores_data:
+                    if score_entry.get("name") == game.get("home_team"):
+                        home_score = score_entry.get("score")
+                    elif score_entry.get("name") == game.get("away_team"):
+                        away_score = score_entry.get("score")
+
+                data.append({
+                    "id": game.get("id"),
+                    "sport_key": game.get("sport_key"),
+                    "sport_title": game.get("sport_title"),
+                    "home_team": game.get("home_team"),
+                    "away_team": game.get("away_team"),
+                    "commence_time": game.get("commence_time"),
+                    "completed": game.get("completed", False),
+                    "home_score": home_score,
+                    "away_score": away_score,
+                    "scores": scores_data,
+                    "last_update": game.get("last_update")
+                })
+
+            logger.info("Odds API scores for %s: %d games (days_from=%d)", sport, len(data), days_from)
+
+        elif resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
+        else:
+            logger.warning("Odds API scores returned %s for %s", resp.status_code if resp else "no response", sport)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Odds API scores fetch failed for %s: %s", sport, e)
+
+    result = {
+        "sport": sport.upper(),
+        "source": "odds_api" if data else "none",
+        "count": len(data),
+        "data": data,
+        "completed_count": sum(1 for g in data if g.get("completed")),
+        "live_count": sum(1 for g in data if not g.get("completed") and g.get("scores"))
+    }
+
+    # Short cache for live scores (2 minutes)
+    api_cache.set(cache_key, result, ttl=120)
+    return result
+
+
 @router.get("/lines/{sport}")
 async def get_lines(sport: str):
     """
@@ -3658,6 +3776,369 @@ async def get_lines(sport: str):
     result = {"sport": sport.upper(), "source": "odds_api" if data else "none", "count": len(data), "data": data}
     api_cache.set(cache_key, result)
     return result
+
+
+@router.get("/alternate-lines/{sport}")
+async def get_alternate_lines(sport: str):
+    """
+    v10.64: Get alternate spreads and totals for hook shopping.
+
+    Provides multiple spread and total options per game for finding
+    the best number (e.g., -6.5 vs -7 vs -7.5).
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "source": "odds_api",
+        "count": N,
+        "data": [
+            {
+                "game_id": "...",
+                "home_team": "Lakers",
+                "away_team": "Celtics",
+                "alternate_spreads": [
+                    {"point": -5.5, "price": -130, "book": "draftkings"},
+                    {"point": -6.5, "price": -110, "book": "draftkings"},
+                    {"point": -7.5, "price": +100, "book": "draftkings"}
+                ],
+                "alternate_totals": [
+                    {"point": 218.5, "price": -110, "book": "fanduel"},
+                    {"point": 220.5, "price": -110, "book": "fanduel"}
+                ]
+            }
+        ]
+    }
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    cache_key = f"alt_lines:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+    data = []
+
+    if not ODDS_API_KEY:
+        return {"sport": sport.upper(), "source": "none", "count": 0, "data": [], "message": "API key not configured"}
+
+    try:
+        # Fetch alternate spreads and totals
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "alternate_spreads,alternate_totals",
+                "oddsFormat": "american"
+            }
+        )
+
+        if resp and resp.status_code == 200:
+            games = resp.json()
+
+            for game in games:
+                game_data = {
+                    "game_id": game.get("id"),
+                    "home_team": game.get("home_team"),
+                    "away_team": game.get("away_team"),
+                    "commence_time": game.get("commence_time"),
+                    "alternate_spreads": [],
+                    "alternate_totals": []
+                }
+
+                for bm in game.get("bookmakers", []):
+                    book = bm.get("key")
+                    for market in bm.get("markets", []):
+                        market_key = market.get("key")
+                        for outcome in market.get("outcomes", []):
+                            entry = {
+                                "team": outcome.get("name"),
+                                "point": outcome.get("point"),
+                                "price": outcome.get("price"),
+                                "book": book
+                            }
+                            if market_key == "alternate_spreads":
+                                game_data["alternate_spreads"].append(entry)
+                            elif market_key == "alternate_totals":
+                                game_data["alternate_totals"].append(entry)
+
+                if game_data["alternate_spreads"] or game_data["alternate_totals"]:
+                    data.append(game_data)
+
+            logger.info("Alternate lines for %s: %d games", sport, len(data))
+
+        elif resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Alternate lines fetch failed for %s: %s", sport, e)
+
+    result = {"sport": sport.upper(), "source": "odds_api" if data else "none", "count": len(data), "data": data}
+    api_cache.set(cache_key, result, ttl=300)
+    return result
+
+
+@router.get("/team-totals/{sport}")
+async def get_team_totals(sport: str):
+    """
+    v10.64: Get team totals (individual team over/unders).
+
+    Critical for prop correlation - if team total is 115.5 over,
+    player point props on that team are more likely to hit overs.
+
+    Response Schema:
+    {
+        "sport": "NBA",
+        "source": "odds_api",
+        "count": N,
+        "data": [
+            {
+                "game_id": "...",
+                "home_team": "Lakers",
+                "away_team": "Celtics",
+                "team_totals": {
+                    "Lakers": {"over": 112.5, "over_price": -110, "under": 112.5, "under_price": -110},
+                    "Celtics": {"over": 108.5, "over_price": -115, "under": 108.5, "under_price": -105}
+                }
+            }
+        ]
+    }
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    cache_key = f"team_totals:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+    data = []
+
+    if not ODDS_API_KEY:
+        return {"sport": sport.upper(), "source": "none", "count": 0, "data": [], "message": "API key not configured"}
+
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "team_totals",
+                "oddsFormat": "american"
+            }
+        )
+
+        if resp and resp.status_code == 200:
+            games = resp.json()
+
+            for game in games:
+                game_data = {
+                    "game_id": game.get("id"),
+                    "home_team": game.get("home_team"),
+                    "away_team": game.get("away_team"),
+                    "commence_time": game.get("commence_time"),
+                    "team_totals": {}
+                }
+
+                for bm in game.get("bookmakers", [])[:1]:  # First book only to avoid duplicates
+                    for market in bm.get("markets", []):
+                        if market.get("key") == "team_totals":
+                            for outcome in market.get("outcomes", []):
+                                team = outcome.get("description", "")
+                                side = outcome.get("name", "").lower()  # "Over" or "Under"
+                                point = outcome.get("point")
+                                price = outcome.get("price")
+
+                                if team not in game_data["team_totals"]:
+                                    game_data["team_totals"][team] = {}
+
+                                if side == "over":
+                                    game_data["team_totals"][team]["over"] = point
+                                    game_data["team_totals"][team]["over_price"] = price
+                                elif side == "under":
+                                    game_data["team_totals"][team]["under"] = point
+                                    game_data["team_totals"][team]["under_price"] = price
+
+                if game_data["team_totals"]:
+                    data.append(game_data)
+
+            logger.info("Team totals for %s: %d games", sport, len(data))
+
+        elif resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Team totals fetch failed for %s: %s", sport, e)
+
+    result = {"sport": sport.upper(), "source": "odds_api" if data else "none", "count": len(data), "data": data}
+    api_cache.set(cache_key, result, ttl=300)
+    return result
+
+
+@router.get("/historical-odds/{sport}")
+async def get_historical_odds(sport: str, date: str = None, markets: str = "spreads,totals"):
+    """
+    v10.64: Get historical odds snapshot for opening lines.
+
+    WARNING: EXPENSIVE - 10 credits per market per region!
+    Use sparingly. Data available from June 2020, 5-10 minute intervals.
+
+    Args:
+        sport: Sport key (nba, nfl, mlb, nhl)
+        date: ISO timestamp (e.g., "2026-01-22T12:00:00Z"). Defaults to 24h ago.
+        markets: Comma-separated markets (default: spreads,totals)
+
+    Response includes previous_timestamp and next_timestamp for navigation.
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    if not ODDS_API_KEY:
+        return {"sport": sport.upper(), "source": "none", "count": 0, "data": [], "message": "API key not configured"}
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    # Default to 24 hours ago if no date specified
+    if not date:
+        from datetime import timezone
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        date = yesterday.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Cache with date in key (historical data doesn't change)
+    cache_key = f"historical_odds:{sport_lower}:{date}:{markets}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    try:
+        hist_url = f"{ODDS_API_BASE}/historical/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", hist_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "date": date,
+                "regions": "us",
+                "markets": markets,
+                "oddsFormat": "american"
+            }
+        )
+
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            result = {
+                "sport": sport.upper(),
+                "source": "odds_api_historical",
+                "timestamp": data.get("timestamp"),
+                "previous_timestamp": data.get("previous_timestamp"),
+                "next_timestamp": data.get("next_timestamp"),
+                "count": len(data.get("data", [])),
+                "data": data.get("data", []),
+                "cost_warning": "10 credits per market per region"
+            }
+            # Long cache for historical (it doesn't change)
+            api_cache.set(cache_key, result, ttl=3600)
+            logger.info("Historical odds for %s at %s: %d events", sport, date, result["count"])
+            return result
+
+        elif resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
+        elif resp and resp.status_code == 422:
+            return {"sport": sport.upper(), "source": "none", "count": 0, "data": [], "message": "Invalid date format. Use ISO 8601 (e.g., 2026-01-22T12:00:00Z)"}
+        else:
+            logger.warning("Historical odds returned %s for %s", resp.status_code if resp else "no response", sport)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Historical odds fetch failed for %s: %s", sport, e)
+
+    return {"sport": sport.upper(), "source": "none", "count": 0, "data": []}
+
+
+@router.get("/available-markets/{sport}/{event_id}")
+async def get_available_markets(sport: str, event_id: str):
+    """
+    v10.64: Discover all available markets for a specific event.
+
+    Returns market keys available from each bookmaker. Useful for
+    finding what player props and alternate lines exist.
+
+    Cost: 1 credit
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    if not ODDS_API_KEY:
+        return {"sport": sport.upper(), "source": "none", "markets": [], "message": "API key not configured"}
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    cache_key = f"markets:{sport_lower}:{event_id}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    try:
+        markets_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/events/{event_id}/markets"
+        resp = await fetch_with_retries(
+            "GET", markets_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us"
+            }
+        )
+
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            bookmakers = data.get("bookmakers", [])
+
+            # Aggregate all unique markets across bookmakers
+            all_markets = set()
+            markets_by_book = {}
+
+            for bm in bookmakers:
+                book_key = bm.get("key")
+                book_markets = [m.get("key") for m in bm.get("markets", [])]
+                markets_by_book[book_key] = book_markets
+                all_markets.update(book_markets)
+
+            result = {
+                "sport": sport.upper(),
+                "event_id": event_id,
+                "source": "odds_api",
+                "all_markets": sorted(list(all_markets)),
+                "markets_by_bookmaker": markets_by_book,
+                "total_unique_markets": len(all_markets)
+            }
+
+            api_cache.set(cache_key, result, ttl=300)
+            logger.info("Available markets for %s event %s: %d markets", sport, event_id, len(all_markets))
+            return result
+
+        elif resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
+        elif resp and resp.status_code == 404:
+            return {"sport": sport.upper(), "event_id": event_id, "source": "none", "markets": [], "message": "Event not found"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Available markets fetch failed: %s", e)
+
+    return {"sport": sport.upper(), "event_id": event_id, "source": "none", "markets": []}
 
 
 # ============================================================================
@@ -4399,14 +4880,39 @@ async def get_props(sport: str):
             events = events_resp.json()
             logger.info("Found %d events for %s props", len(events), sport)
 
-            # Step 2: Fetch props for each event (limit to first 5 to avoid rate limits)
-            prop_markets = "player_points,player_rebounds,player_assists,player_threes"
-            if sport_lower == "nfl":
-                prop_markets = "player_pass_tds,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions"
+            # Step 2: Fetch props for each event
+            # v10.64: Expanded prop markets - use ALL available player props from Odds API
+            if sport_lower == "nba":
+                prop_markets = ",".join([
+                    "player_points", "player_rebounds", "player_assists", "player_threes",
+                    "player_blocks", "player_steals", "player_turnovers",
+                    "player_points_rebounds_assists", "player_points_rebounds",
+                    "player_points_assists", "player_rebounds_assists",
+                    "player_double_double", "player_first_basket"
+                ])
+            elif sport_lower == "nfl":
+                prop_markets = ",".join([
+                    "player_pass_tds", "player_pass_yds", "player_pass_completions", "player_pass_attempts",
+                    "player_pass_interceptions", "player_rush_yds", "player_rush_attempts",
+                    "player_reception_yds", "player_receptions", "player_anytime_td",
+                    "player_kicking_points", "player_field_goals_made",
+                    "player_tackles_assists", "player_sacks"
+                ])
             elif sport_lower == "mlb":
-                prop_markets = "batter_total_bases,batter_hits,batter_rbis,pitcher_strikeouts"
+                prop_markets = ",".join([
+                    "batter_total_bases", "batter_hits", "batter_rbis", "batter_runs_scored",
+                    "batter_home_runs", "batter_walks", "batter_stolen_bases", "batter_strikeouts",
+                    "pitcher_strikeouts", "pitcher_hits_allowed", "pitcher_walks",
+                    "pitcher_earned_runs", "pitcher_outs"
+                ])
             elif sport_lower == "nhl":
-                prop_markets = "player_points,player_shots_on_goal,player_assists"
+                prop_markets = ",".join([
+                    "player_points", "player_goals", "player_assists",
+                    "player_shots_on_goal", "player_blocked_shots",
+                    "player_power_play_points", "goalie_saves"
+                ])
+            else:
+                prop_markets = "player_points,player_rebounds,player_assists"
 
             for event in events:  # Fetch ALL games - don't miss any smash picks
                 event_id = event.get("id")
