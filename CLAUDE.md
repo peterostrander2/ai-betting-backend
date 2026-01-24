@@ -9,7 +9,7 @@
 ## Project Overview
 
 **Bookie-o-em** - AI Sports Prop Betting Backend
-**Version:** v14.6 / Engine v10.67 PRODUCTION HARDENED
+**Version:** v14.6 / Engine v10.68 PRODUCTION HARDENED
 **Stack:** Python 3.11+, FastAPI, Railway deployment
 **Frontend:** bookie-member-app (separate repo)
 **Production URL:** https://web-production-7b2a.up.railway.app
@@ -2249,9 +2249,10 @@ WHOP_API_KEY=xxx
 
 ### System Status
 
-- **Engine Version:** v10.67
+- **Engine Version:** v10.68
 - **All Core APIs:** ✅ Configured
 - **All Alternative Data APIs:** ✅ Configured
+- **ESPN Integration:** ✅ Active (lineups, officials, referee tendencies)
 - **Scoring Pipeline:** ✅ Fully operational
 - **Production URL:** https://web-production-7b2a.up.railway.app
 
@@ -2307,5 +2308,123 @@ CLAUDE.md             (MODIFIED - Updated version + session log)
 curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/all" \
   -H "X-API-Key: YOUR_KEY" | jq '{status_message, "all_picks.count": .all_picks.count}'
 ```
+
+---
+
+## Session Log: January 24, 2026 - v10.68 ESPN Lineups & Referees Integration
+
+### Goal
+
+Replace paid RotoWire API with free ESPN data for starting lineups and referee assignments.
+
+### What Was Done
+
+**1. Created `alt_data_sources/espn_lineups.py` (430 lines)**
+
+New module for ESPN API integration:
+
+| Function | Purpose |
+|----------|---------|
+| `get_todays_games(sport)` | Fetch today's games from ESPN scoreboard |
+| `get_game_details(sport, espn_event_id)` | Starters + officials for specific game |
+| `get_lineups_for_game(sport, home, away)` | Match team names to ESPN event ID |
+| `get_referee_impact(sport, home, away)` | Referee-based scoring adjustment |
+| `analyze_referee_crew(officials)` | Analyze known ref tendencies |
+| `get_espn_status()` | Integration status check |
+
+**2. Referee Tendencies Database (10 NBA Refs)**
+
+| Referee | Foul Rate | Over Tendency | Reputation |
+|---------|-----------|---------------|------------|
+| Scott Foster | 1.15 | 0.52 | whistle-happy |
+| Tony Brothers | 1.12 | 0.54 | high-foul |
+| Kane Fitzgerald | 1.08 | 0.51 | moderate |
+| Marc Davis | 0.95 | 0.48 | lets-them-play |
+| Ed Malloy | 1.05 | 0.50 | neutral |
+| James Capers | 1.10 | 0.53 | veteran-whistle |
+| Ben Taylor | 0.98 | 0.49 | balanced |
+| John Goble | 1.02 | 0.50 | neutral |
+| Curtis Blair | 1.07 | 0.51 | moderate |
+| Eric Lewis | 0.96 | 0.47 | player-friendly |
+
+**3. Scoring Integration**
+
+Referee tendencies now affect totals picks:
+
+| Foul Tendency | Adjustment | Effect |
+|---------------|------------|--------|
+| HIGH_FOUL (>1.08) | +0.15 | Boost to overs |
+| LOW_FOUL (<0.95) | -0.10 | Lean to unders |
+| NEUTRAL | 0.0 | No adjustment |
+
+**4. Updated `alt_data_sources/integration.py`**
+
+- Added `include_lineups` parameter to `get_alternative_data_context()`
+- ESPN data fetched in parallel with other alt data sources
+- New fields in context: `lineups`, `referee_analysis`
+- New scoring adjustment: `referee_adjustment`
+
+**5. Updated `/api-coverage` Endpoint**
+
+- ESPN now shows full feature list: starting_lineups, officials, referee_tendencies
+- Removed RotoWire from optional_apis (ESPN provides this for free)
+- Added `espn_integration` section with endpoints and ref database info
+
+### ESPN API Endpoints Used (FREE)
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/scoreboard` | Today's games list with ESPN event IDs |
+| `/summary?event={id}` | Game details with starters + officials |
+
+### Data Flow
+
+```
+get_alternative_data_context(sport, teams, include_lineups=True)
+    ↓
+get_lineups_for_game(sport, home_team, away_team)
+    ↓
+ESPN /scoreboard → Find ESPN event ID
+    ↓
+ESPN /summary?event={id} → Get starters + officials
+    ↓
+analyze_referee_crew(officials) → Calculate tendencies
+    ↓
+Return: {
+    "lineups": {"starters": {...}, "officials": [...]},
+    "referee_analysis": {"crew_chief": "...", "foul_tendency": "HIGH_FOUL"},
+    "scoring_adjustments": {"referee_adjustment": 0.15}
+}
+```
+
+### Files Changed
+
+```
+alt_data_sources/espn_lineups.py   (NEW - 430 lines)
+alt_data_sources/__init__.py       (MODIFIED - Added ESPN exports)
+alt_data_sources/integration.py    (MODIFIED - ESPN integration)
+live_data_router.py                (MODIFIED - Updated /api-coverage)
+main.py                            (MODIFIED - ENGINE_VERSION = "v10.68")
+CLAUDE.md                          (MODIFIED - Session log)
+```
+
+### Testing
+
+```bash
+# Check ESPN integration in API coverage
+curl "https://web-production-7b2a.up.railway.app/live/api-coverage" -H "X-API-Key: YOUR_KEY" | jq '.espn_integration'
+
+# Test best-bets with ESPN data (check for referee_adjustment in debug)
+curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" -H "X-API-Key: YOUR_KEY"
+```
+
+### System Status
+
+- **Engine Version:** v10.68
+- **ESPN Integration:** ✅ Active (free API, always available)
+- **Features:** starting_lineups, officials, referee_tendencies
+- **Sports Supported:** nba, nfl, mlb, nhl, ncaab
+- **Known Referees:** 10 (NBA)
+- **Production URL:** https://web-production-7b2a.up.railway.app
 
 ---
