@@ -766,6 +766,231 @@ JASON_SIM_STALE_HOURS = 6
 
 
 # ============================================================================
+# v10.71: AUTO-GENERATE JASON SIM PAYLOADS FROM GAME DATA
+# ============================================================================
+
+def generate_jason_sim_payload(
+    game_id: str,
+    home_team: str,
+    away_team: str,
+    spread: float = 0.0,
+    total: float = 220.0,
+    home_ml: int = -110,
+    away_ml: int = -110
+) -> Dict[str, Any]:
+    """
+    v10.71: Auto-generate Jason Sim payload from game data.
+
+    Uses spread and moneyline to estimate win percentages.
+    This is a synthetic simulation based on market-implied probabilities.
+    """
+    # Convert spread to win probability (rough estimate)
+    # Spread of -7 means ~70% favorite, spread of +7 means ~30% underdog
+    # Using logistic approximation: win_pct = 1 / (1 + 10^(-spread/7))
+    if spread != 0:
+        home_win_pct = 1 / (1 + (10 ** (-spread / 7)))
+    else:
+        # Use moneyline if spread is 0
+        if home_ml < 0:
+            home_win_pct = abs(home_ml) / (abs(home_ml) + 100)
+        else:
+            home_win_pct = 100 / (home_ml + 100)
+
+    away_win_pct = 1 - home_win_pct
+
+    # Calculate projected scores from total and spread
+    home_projected = (total / 2) - (spread / 2)
+    away_projected = (total / 2) + (spread / 2)
+
+    # Variance flag based on total magnitude
+    if total > 240:
+        variance_flag = "HIGH"
+    elif total < 200:
+        variance_flag = "LOW"
+    else:
+        variance_flag = "MEDIUM"
+
+    return {
+        "game_id": game_id,
+        "home_team": home_team,
+        "away_team": away_team,
+        "sim_runs_per_game": 10000,  # Synthetic
+        "results": {
+            "win_pct_home": round(home_win_pct, 4),
+            "win_pct_away": round(away_win_pct, 4),
+            "win_pct_injury_adj": round(home_win_pct, 4),  # Use same for now
+            "projected_total": total,
+            "projected_home_score": round(home_projected, 1),
+            "projected_away_score": round(away_projected, 1),
+            "confidence": 0.75,  # Market-implied confidence
+            "variance_flag": variance_flag
+        },
+        "source": "auto_generated_v10.71",
+        "valid": True
+    }
+
+
+def auto_populate_jason_sim_payloads(sport: str, games_data: List[Dict[str, Any]]) -> int:
+    """
+    v10.71: Auto-populate Jason Sim payloads from games data.
+
+    Called during best-bets generation to ensure Jason Sim has data to work with.
+    Returns number of payloads generated.
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in JASON_SIM_PAYLOADS:
+        return 0
+
+    generated = 0
+
+    for game in games_data:
+        game_id = game.get("id") or game.get("game_id") or ""
+        home_team = game.get("home_team", "")
+        away_team = game.get("away_team", "")
+
+        if not home_team or not away_team:
+            continue
+
+        # Extract spread, total, moneylines from game data
+        spread = 0.0
+        total = 220.0
+        home_ml = -110
+        away_ml = -110
+
+        # Try to get spread
+        if "spread" in game:
+            spread = float(game.get("spread", 0) or 0)
+        elif "spreads" in game:
+            spreads = game.get("spreads", {})
+            if isinstance(spreads, dict):
+                spread = float(spreads.get("home", 0) or 0)
+
+        # Try to get total
+        if "total" in game:
+            total = float(game.get("total", 220) or 220)
+        elif "totals" in game:
+            totals = game.get("totals", {})
+            if isinstance(totals, dict):
+                total = float(totals.get("over", 220) or 220)
+
+        # Try to get moneylines
+        if "h2h" in game:
+            h2h = game.get("h2h", {})
+            if isinstance(h2h, dict):
+                home_ml = int(h2h.get("home", -110) or -110)
+                away_ml = int(h2h.get("away", -110) or -110)
+
+        # Generate payload
+        payload = generate_jason_sim_payload(
+            game_id=game_id or f"{away_team}@{home_team}",
+            home_team=home_team,
+            away_team=away_team,
+            spread=spread,
+            total=total,
+            home_ml=home_ml,
+            away_ml=away_ml
+        )
+
+        # Normalize using jason_sim_confluence if available
+        if JASON_SIM_AVAILABLE:
+            try:
+                normalized = normalize_jason_sim(
+                    game_id=payload["game_id"],
+                    home_team=home_team,
+                    away_team=away_team,
+                    payload=payload
+                )
+                payload = normalized
+            except Exception:
+                pass
+
+        # Store under multiple keys
+        JASON_SIM_PAYLOADS[sport_lower][payload["game_id"]] = payload
+        JASON_SIM_PAYLOADS[sport_lower][f"{away_team}@{home_team}"] = payload
+        generated += 1
+
+    if generated > 0:
+        JASON_SIM_LAST_UPDATE[sport_lower] = datetime.now()
+        logger.info(f"Jason Sim: Auto-generated {generated} payloads for {sport}")
+
+    return generated
+
+
+# ============================================================================
+# v10.71: MARKET AVAILABILITY + INJURY GATING
+# ============================================================================
+
+def validate_prop_market_availability(
+    player_name: str,
+    stat_type: str,
+    available_props: List[Dict[str, Any]],
+    injury_data: Dict[str, Any] = None
+) -> Dict[str, Any]:
+    """
+    v10.71: Validate that a player prop exists in the market and player is active.
+
+    Returns:
+        {
+            "market_exists": bool,
+            "injury_status": str,  # ACTIVE, OUT, QUESTIONABLE, UNKNOWN
+            "penalty": float,      # Penalty to apply (0 if valid)
+            "reason": str,
+            "should_block": bool   # True if prop should be removed from card
+        }
+    """
+    result = {
+        "market_exists": False,
+        "injury_status": "UNKNOWN",
+        "penalty": 0.0,
+        "reason": "",
+        "should_block": False
+    }
+
+    # Check if prop exists in available markets
+    player_lower = player_name.lower()
+    for prop in available_props:
+        prop_player = (prop.get("player_name", "") or prop.get("description", "")).lower()
+        if player_lower in prop_player or prop_player in player_lower:
+            result["market_exists"] = True
+            break
+
+    # Check injury status
+    if injury_data:
+        injuries = injury_data.get("injuries", [])
+        for inj in injuries:
+            inj_player = (inj.get("player", "") or inj.get("name", "")).lower()
+            if player_lower in inj_player or inj_player in player_lower:
+                status = (inj.get("status", "") or inj.get("injury_status", "")).upper()
+                if status in ("OUT", "O"):
+                    result["injury_status"] = "OUT"
+                    result["should_block"] = True
+                    result["reason"] = f"Player {player_name} is OUT"
+                elif status in ("DOUBTFUL", "D"):
+                    result["injury_status"] = "DOUBTFUL"
+                    result["penalty"] = -0.5
+                    result["reason"] = f"Player {player_name} is DOUBTFUL (-0.5)"
+                elif status in ("QUESTIONABLE", "Q", "GTD"):
+                    result["injury_status"] = "QUESTIONABLE"
+                    result["penalty"] = -0.25
+                    result["reason"] = f"Player {player_name} is QUESTIONABLE (-0.25)"
+                else:
+                    result["injury_status"] = "ACTIVE"
+                break
+
+    # If market doesn't exist, apply penalty
+    if not result["market_exists"]:
+        result["penalty"] = -1.0
+        result["should_block"] = True
+        result["reason"] = f"Prop for {player_name} not found in sportsbook markets"
+
+    # Default to ACTIVE if no injury found
+    if result["injury_status"] == "UNKNOWN":
+        result["injury_status"] = "ACTIVE"
+
+    return result
+
+
+# ============================================================================
 # DETERMINISTIC RNG FOR FALLBACK DATA
 # ============================================================================
 
@@ -8541,6 +8766,45 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
         # v10.45: Process games if we have data (from API or fallback)
         if raw_events_count > 0:
+            # v10.71: Auto-populate Jason Sim payloads from games data
+            # Transform Odds API format to Jason Sim expected format
+            jason_sim_games = []
+            for g in games:
+                if not is_game_today(g.get("commence_time", "")):
+                    continue
+                game_entry = {
+                    "id": g.get("id"),
+                    "game_id": g.get("id"),
+                    "home_team": g.get("home_team", ""),
+                    "away_team": g.get("away_team", ""),
+                }
+                # Extract spread/total/h2h from first bookmaker
+                for bm in g.get("bookmakers", [])[:1]:
+                    for mkt in bm.get("markets", []):
+                        mk = mkt.get("key", "")
+                        outcomes = mkt.get("outcomes", [])
+                        if mk == "spreads":
+                            for o in outcomes:
+                                if o.get("name") == g.get("home_team"):
+                                    game_entry["spread"] = o.get("point", 0)
+                        elif mk == "totals":
+                            for o in outcomes:
+                                if o.get("name") == "Over":
+                                    game_entry["total"] = o.get("point", 220)
+                        elif mk == "h2h":
+                            h2h = {}
+                            for o in outcomes:
+                                if o.get("name") == g.get("home_team"):
+                                    h2h["home"] = o.get("price", -110)
+                                elif o.get("name") == g.get("away_team"):
+                                    h2h["away"] = o.get("price", -110)
+                            game_entry["h2h"] = h2h
+                jason_sim_games.append(game_entry)
+
+            if jason_sim_games:
+                jason_sim_populated = auto_populate_jason_sim_payloads(sport_lower, jason_sim_games)
+                logger.info(f"v10.71: Auto-populated {jason_sim_populated} Jason Sim payloads for {sport}")
+
             for game in games:
                 # v10.50: Only process TODAY's games (skip future dates)
                 game_commence = game.get("commence_time", "")
