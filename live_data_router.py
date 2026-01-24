@@ -59,6 +59,13 @@ from tiering import tier_from_score as tiering_tier_from_score, DEFAULT_TIERS as
 # v10.72: Import PickCard schema for normalized output
 from pick_schema import PickCard, normalize_pick, normalize_picks, picks_to_table
 
+# v10.73: Import pull readiness and change monitor
+from pull_readiness import (
+    check_readiness, get_recommended_pull_windows,
+    validate_pick_pipeline, audit_pick_engines, REQUIRED_ENGINES
+)
+from change_monitor import check_for_changes, save_snapshot, get_change_summary
+
 # Import MasterPredictionSystem for comprehensive AI scoring
 try:
     from advanced_ml_backend import MasterPredictionSystem
@@ -10351,6 +10358,124 @@ async def grader_status():
         "jsonl_logged_today": jsonl_logged,
         "weights_loaded": grader_weights_loaded,
         "note": "v10.54: Now using Postgres with ET date bucketing. JSONL logging optional.",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# ============================================================================
+# v10.73: PULL READINESS + AUDIT ENDPOINT
+# ============================================================================
+
+@router.get("/audit/{sport}")
+async def get_audit(sport: str):
+    """
+    v10.73: Audit endpoint for pull readiness and engine completeness.
+
+    Returns:
+    - Readiness gates status
+    - Pull window recommendations
+    - Engine completeness stats
+    - Picks missing engines
+    """
+    sport_lower = sport.lower()
+
+    # Fetch readiness data
+    splits_data = None
+    injury_data = None
+    games_data = []
+    total_games = 0
+
+    try:
+        # Get splits
+        splits_resp = await get_splits(sport)
+        if isinstance(splits_resp, dict):
+            splits_data = splits_resp.get("data") or splits_resp.get("splits", [])
+
+        # Get injuries
+        injury_resp = await get_injuries(sport)
+        if isinstance(injury_resp, dict):
+            injury_data = injury_resp.get("data") or injury_resp.get("injuries", [])
+
+        # Get lines/games
+        lines_resp = await get_lines(sport)
+        if isinstance(lines_resp, dict):
+            games_data = lines_resp.get("data") or lines_resp.get("lines", [])
+            total_games = len(games_data)
+    except Exception as e:
+        logger.warning(f"Audit data fetch error: {e}")
+
+    # Check readiness
+    readiness = check_readiness(
+        sport=sport_lower,
+        injury_data=injury_data,
+        splits_data=splits_data,
+        games=games_data,
+        total_games=total_games
+    )
+
+    # Get recommended windows
+    windows = get_recommended_pull_windows(sport_lower)
+
+    # Get latest picks for engine audit
+    engine_audit = {
+        "total_picks": 0,
+        "complete": 0,
+        "incomplete": 0,
+        "completeness_pct": 0,
+        "missing_engines": [],
+        "picks_missing_jarvis": [],
+        "picks_missing_jason_sim": []
+    }
+
+    try:
+        # Fetch best-bets to audit
+        best_bets = await get_best_bets(sport, debug=1)
+        if isinstance(best_bets, dict):
+            props = best_bets.get("props", {}).get("picks", [])
+            game_picks = best_bets.get("game_picks", {}).get("picks", [])
+            all_picks = props + game_picks
+
+            complete_count = 0
+            missing_jarvis = []
+            missing_jason = []
+
+            for pick in all_picks:
+                valid, reason, audit = validate_pick_pipeline(pick)
+                if audit.complete:
+                    complete_count += 1
+                else:
+                    pick_name = pick.get("player_name") or pick.get("selection_name") or pick.get("game", "")[:30]
+                    if "JARVIS_ENGINE" in audit.engines_missing:
+                        missing_jarvis.append(pick_name)
+                    if "JASON_SIM" in audit.engines_missing:
+                        missing_jason.append(pick_name)
+
+            total = len(all_picks)
+            engine_audit = {
+                "total_picks": total,
+                "complete": complete_count,
+                "incomplete": total - complete_count,
+                "completeness_pct": round((complete_count / max(1, total)) * 100, 1),
+                "required_engines": REQUIRED_ENGINES,
+                "picks_missing_jarvis": missing_jarvis[:10],
+                "picks_missing_jason_sim": missing_jason[:10]
+            }
+    except Exception as e:
+        logger.warning(f"Engine audit error: {e}")
+
+    return {
+        "sport": sport.upper(),
+        "readiness": readiness.to_dict(),
+        "recommended_windows": [
+            {
+                "start_time": w.start_time,
+                "end_time": w.end_time,
+                "label": w.label,
+                "day_type": w.day_type
+            }
+            for w in windows
+        ],
+        "engine_audit": engine_audit,
         "timestamp": datetime.now().isoformat()
     }
 

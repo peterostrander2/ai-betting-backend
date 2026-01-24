@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.72"  # PickCard Normalization: Canonical schema for all pick types (spread/ML/total/prop)
+ENGINE_VERSION = "v10.73"  # Pull Readiness System: Data gates, engine audit, change monitoring
 API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 
