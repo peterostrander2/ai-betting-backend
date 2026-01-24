@@ -3501,8 +3501,21 @@ async def get_sharp_money(sport: str):
 
                     # Derive sharp signals: when money% differs from ticket% by 10%+
                     for game in splits:
-                        money_pct = game.get("money_pct", game.get("moneyPct", 50))
-                        ticket_pct = game.get("ticket_pct", game.get("ticketPct", 50))
+                        # v10.71: Handle both flat and nested Playbook API structures
+                        # Nested structure: splits.spread.money.homePercent / splits.spread.bets.homePercent
+                        # Flat structure: money_pct / ticket_pct
+                        splits_data = game.get("splits", {})
+                        spread_data = splits_data.get("spread", {})
+
+                        if spread_data:
+                            # Nested structure (current Playbook API)
+                            money_pct = spread_data.get("money", {}).get("homePercent", 50)
+                            ticket_pct = spread_data.get("bets", {}).get("homePercent", 50)
+                        else:
+                            # Flat structure (legacy)
+                            money_pct = game.get("money_pct", game.get("moneyPct", 50))
+                            ticket_pct = game.get("ticket_pct", game.get("ticketPct", 50))
+
                         diff = abs(money_pct - ticket_pct)
 
                         if diff >= 10:  # 10%+ difference indicates sharp action
@@ -3510,10 +3523,14 @@ async def get_sharp_money(sport: str):
                             sharp_side = "HOME" if money_pct > ticket_pct else "AWAY"
                             game_id = game.get("id", game.get("gameId"))
 
+                            # v10.71: Handle homeTeamName/awayTeamName field names
+                            home_team = game.get("home_team", game.get("homeTeam", game.get("homeTeamName", "")))
+                            away_team = game.get("away_team", game.get("awayTeam", game.get("awayTeamName", "")))
+
                             signal = {
                                 "game_id": game_id,
-                                "home_team": game.get("home_team", game.get("homeTeam")),
-                                "away_team": game.get("away_team", game.get("awayTeam")),
+                                "home_team": home_team,
+                                "away_team": away_team,
                                 "sharp_side": sharp_side,
                                 "side": sharp_side,  # Alias for compatibility
                                 "money_pct": money_pct,
