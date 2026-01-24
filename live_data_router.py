@@ -56,6 +56,9 @@ if not logger.handlers:
 # v10.55: Import tiering module - single source of truth for tier assignment
 from tiering import tier_from_score as tiering_tier_from_score, DEFAULT_TIERS as TIERING_DEFAULT_TIERS
 
+# v10.72: Import PickCard schema for normalized output
+from pick_schema import PickCard, normalize_pick, normalize_picks, picks_to_table
+
 # Import MasterPredictionSystem for comprehensive AI scoring
 try:
     from advanced_ml_backend import MasterPredictionSystem
@@ -10030,6 +10033,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         "picks_saved": 0,  # Will be updated by save logic below
         "signals_saved": 0  # Will be updated by save logic below
     }
+
+    # v10.72: Normalize ALL picks to canonical PickCard format
+    # This ensures consistent output regardless of pick type (spread/ML/total/prop)
+    all_raw_picks = top_props + top_game_picks
+    normalized_cards = normalize_picks(all_raw_picks, sport)
+    result["picks_normalized"] = [card.to_dict() for card in normalized_cards]
+    result["picks_table"] = picks_to_table(normalized_cards)
 
     # Debug mode: Add diagnostic info (v10.22 expanded with sport profiles)
     if debug == 1:
