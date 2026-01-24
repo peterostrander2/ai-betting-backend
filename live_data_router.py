@@ -137,13 +137,16 @@ except ImportError:
     logger.warning("sport_seasons module not available - season gating disabled")
 
 # v10.31: Import external signals for multi-API enrichment
+# v10.60: Add get_weather_context for NFL/MLB weather impact
 try:
     from external_signals import (
-        get_external_context, calculate_external_micro_boost
+        get_external_context, calculate_external_micro_boost, get_weather_context
     )
     EXTERNAL_SIGNALS_AVAILABLE = True
+    WEATHER_API_AVAILABLE = True
 except ImportError:
     EXTERNAL_SIGNALS_AVAILABLE = False
+    WEATHER_API_AVAILABLE = False
     logger.warning("external_signals module not available - enrichment disabled")
 
 # Import AI Engine Layer (v10.24: 8 AI Models)
@@ -155,13 +158,16 @@ except ImportError:
 
 # v10.36: Import Context Layer for defensive rankings + pace adjustments
 # v10.59: Add MonteCarloService for game simulation
+# v10.60: Add OfficialsService for referee impact
 try:
-    from context_layer import DefensiveRankService, PaceVectorService, MonteCarloService
+    from context_layer import DefensiveRankService, PaceVectorService, MonteCarloService, OfficialsService
     CONTEXT_LAYER_AVAILABLE = True
     MONTE_CARLO_AVAILABLE = True
+    OFFICIALS_SERVICE_AVAILABLE = True
 except ImportError:
     CONTEXT_LAYER_AVAILABLE = False
     MONTE_CARLO_AVAILABLE = False
+    OFFICIALS_SERVICE_AVAILABLE = False
     logger.warning("context_layer module not available - matchup adjustments disabled")
     logger.warning("ai_engine_layer module not available - using defaults")
 
@@ -5938,6 +5944,62 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     pace_penalty = max(-0.2, pace_value / 20)
                     context_adjustment += pace_penalty
                     research_reasons.append(f"CONTEXT: Slow Pace {pace_penalty:.2f}")
+
+        # v10.60 Context Layer: Weather Impact (NFL/MLB outdoor games only)
+        # Weather data is fetched via external_context at endpoint start
+        if is_game_pick and sport and sport.lower() in ["nfl", "mlb"]:
+            weather_data = external_context.get("weather", {})
+            if weather_data.get("available"):
+                weather_impact = weather_data.get("weather_impact", "NEUTRAL")
+                wind_mph = weather_data.get("wind_mph", 0) or 0
+                temp_f = weather_data.get("temp_f", 70) or 70
+
+                if weather_impact == "FAVORABLE":
+                    # Perfect conditions - slight boost for totals OVER
+                    if market == "totals":
+                        weather_boost = 0.20
+                        context_adjustment += weather_boost
+                        research_reasons.append(f"WEATHER: Favorable conditions +{weather_boost:.2f}")
+                elif weather_impact == "UNFAVORABLE":
+                    # Bad weather - affects passing/scoring
+                    if market == "totals":
+                        # UNDER more likely in bad weather
+                        weather_penalty = -0.25
+                        context_adjustment += weather_penalty
+                        research_reasons.append(f"WEATHER: Unfavorable ({temp_f:.0f}F, {wind_mph:.0f}mph wind) {weather_penalty:.2f}")
+                    elif market == "spreads" and wind_mph > 20:
+                        # High wind affects passing teams more
+                        weather_penalty = -0.15
+                        context_adjustment += weather_penalty
+                        research_reasons.append(f"WEATHER: High Wind ({wind_mph:.0f}mph) {weather_penalty:.2f}")
+
+        # v10.60 Context Layer: Officials Impact (when referee data available)
+        # OfficialsService can analyze crew tendencies for totals/spreads
+        # Note: Officials data requires referee assignments from external source
+        # When wired, use: OfficialsService.get_adjustment(sport, lead_official, ...)
+        # For now, this is a placeholder until referee assignments are fetched
+        if is_game_pick and OFFICIALS_SERVICE_AVAILABLE:
+            # Check if officials data is available in the game context
+            # This would come from an external API that provides referee assignments
+            officials_data = None  # Placeholder - would be passed in when available
+            if officials_data and officials_data.get("lead_official"):
+                try:
+                    officials_adj = OfficialsService.get_adjustment(
+                        sport=sport.upper(),
+                        lead_official=officials_data.get("lead_official", ""),
+                        official_2=officials_data.get("official_2", ""),
+                        official_3=officials_data.get("official_3", ""),
+                        bet_type="total" if market == "totals" else "spread",
+                        is_home=is_home
+                    )
+                    if officials_adj:
+                        adj_value = officials_adj.get("value", 0)
+                        if adj_value != 0:
+                            officials_boost = min(0.25, max(-0.25, adj_value * 0.1))
+                            context_adjustment += officials_boost
+                            research_reasons.append(f"OFFICIALS: {officials_adj.get('reason', 'Referee tendency')} {officials_boost:+.2f}")
+                except Exception as e:
+                    logger.debug(f"Officials adjustment failed: {e}")
 
         # Apply context adjustment to pillar_boost
         pillar_boost += context_adjustment

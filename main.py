@@ -97,8 +97,8 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.58"  # 4-Engine Separation (NO DOUBLE COUNTING)
-API_VERSION = "14.3"
+ENGINE_VERSION = "v10.60"  # Weather Impact + Officials Service wired
+API_VERSION = "14.4"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 
 
