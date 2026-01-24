@@ -8865,6 +8865,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     # v10.38: Track raw events count for debug visibility
     raw_events_count = 0
     today_games_count = 0  # v10.77: Games after TODAY_ET filter
+    games_with_odds_count = 0  # v10.78: Games that have bookmaker/odds data
 
     # v10.45: Track odds metrics for diagnostics
     odds_provider_status = "UNKNOWN"
@@ -9006,6 +9007,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 game_key = f"{away_team}@{home_team}"
                 game_str = f"{home_team}{away_team}"
                 sharp_signal = sharp_lookup.get(game_key, {})
+
+                # v10.78: Track games with odds data
+                if game.get("bookmakers"):
+                    games_with_odds_count += 1
 
                 for bm in game.get("bookmakers", [])[:1]:  # Just use first book for now
                     # v10.76: Capture book info for pick metadata
@@ -10299,11 +10304,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 "confluence_reasons_count": len(confluence_reasons)
             },
             # v10.38: Games debug visibility (why are game picks empty?)
+            # Pipeline: events_count -> today_games_count -> games_with_odds_count -> games_candidates_count -> games_picks_count
             "games_reason": games_reason,
-            "events_count": raw_events_count,
-            "today_games_count": today_games_count,  # v10.77: After TODAY_ET filter
-            "tomorrow_filtered_count": raw_events_count - today_games_count,  # v10.77: Games dropped (not today ET)
-            "games_candidates_count": games_candidates_count,
+            "events_count": raw_events_count,  # Step 1: Raw from Odds API
+            "today_games_count": today_games_count,  # Step 2: After TODAY_ET filter
+            "tomorrow_filtered_count": raw_events_count - today_games_count,  # Games dropped (not today ET)
+            "games_with_odds_count": games_with_odds_count,  # Step 3: Games with bookmaker/odds data
+            "games_candidates_count": games_candidates_count,  # Step 4: Scored picks generated
             "games_picks_count": games_picks_count,
             # v10.42: Props debug visibility (matching games pattern)
             "props_reason": props_reason,

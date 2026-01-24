@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.77"  # TODAY-ONLY ET Filter: Strict day boundary [00:00-24:00 ET] for all picks
+ENGINE_VERSION = "v10.78"  # Debug pipeline clarity: events -> today_games -> games_with_odds -> candidates -> picks
 API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 
