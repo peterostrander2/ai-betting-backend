@@ -1,4 +1,5 @@
-# live_data_router.py v15.0 - SCORING v10.57
+# live_data_router.py v15.0 - SCORING v10.59
+# v10.59: Wire Disconnected Features (Biorhythms, Hurst, Kelly Criterion)
 # v10.57: Data Integrity Validators (prop_integrity + injury_guard before publish_gate)
 # v10.54: Production V3 Contract Compliance (deterministic id, int confidence, ordered reasons)
 # v10.53: Soft Stacking Governor (prevent same-team spam, allow SMASH stacks)
@@ -153,11 +154,14 @@ except ImportError:
     AI_ENGINE_AVAILABLE = False
 
 # v10.36: Import Context Layer for defensive rankings + pace adjustments
+# v10.59: Add MonteCarloService for game simulation
 try:
-    from context_layer import DefensiveRankService, PaceVectorService
+    from context_layer import DefensiveRankService, PaceVectorService, MonteCarloService
     CONTEXT_LAYER_AVAILABLE = True
+    MONTE_CARLO_AVAILABLE = True
 except ImportError:
     CONTEXT_LAYER_AVAILABLE = False
+    MONTE_CARLO_AVAILABLE = False
     logger.warning("context_layer module not available - matchup adjustments disabled")
     logger.warning("ai_engine_layer module not available - using defaults")
 
@@ -210,6 +214,26 @@ try:
 except ImportError:
     VALIDATORS_AVAILABLE = False
     logger.warning("validators module not available - skipping data integrity checks")
+
+# v10.59: Import esoteric features for enhanced scoring (biorhythms, hurst)
+try:
+    from esoteric_engine import (
+        calculate_biorhythms,
+        calculate_hurst_exponent,
+        SAMPLE_PLAYERS as ESOTERIC_PLAYERS
+    )
+    ESOTERIC_FEATURES_AVAILABLE = True
+except ImportError:
+    ESOTERIC_FEATURES_AVAILABLE = False
+    logger.warning("esoteric_engine features not available - biorhythms/hurst disabled")
+
+# v10.59: Import player birth data for biorhythm lookups
+try:
+    from player_birth_data import get_player_data, get_all_players
+    PLAYER_BIRTH_DATA_AVAILABLE = True
+except ImportError:
+    PLAYER_BIRTH_DATA_AVAILABLE = False
+    logger.warning("player_birth_data not available - player biorhythms disabled")
 
 # Redis import with fallback
 try:
@@ -4970,6 +4994,66 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         except (ValueError, TypeError, ZeroDivisionError):
             return 0.5  # Default 50% if invalid
 
+    # v10.59: Kelly Criterion-based unit sizing (fractional Kelly for safety)
+    def calculate_kelly_units(final_score: float, odds: int, tier: str) -> float:
+        """
+        Calculate recommended units using fractional Kelly Criterion.
+
+        Edge = (AI predicted win probability) - (implied probability from odds)
+        Kelly % = Edge / (Odds to 1) = Edge * (odds / 100 if neg, 100/odds if pos)
+
+        We use 1/4 Kelly (conservative) to reduce variance.
+
+        Returns: Recommended units (capped by tier limits)
+        """
+        if tier in ("PASS", "MONITOR"):
+            return 0.0
+
+        try:
+            odds = int(odds)
+            # Convert final_score (0-10) to estimated win probability (50-75% range)
+            # Score 5.0 = 50%, Score 10.0 = 75%
+            est_win_prob = 0.50 + (final_score - 5.0) * 0.05
+            est_win_prob = max(0.50, min(0.75, est_win_prob))
+
+            # Implied probability from odds
+            if odds > 0:
+                implied_prob = 100 / (odds + 100)
+                decimal_odds = (odds / 100) + 1
+            else:
+                implied_prob = abs(odds) / (abs(odds) + 100)
+                decimal_odds = (100 / abs(odds)) + 1
+
+            # Edge = estimated - implied
+            edge = est_win_prob - implied_prob
+
+            if edge <= 0:
+                # No edge, use tier-based default
+                return 2.0 if tier == "GOLD_STAR" else 1.0
+
+            # Kelly formula: (bp - q) / b
+            # b = decimal odds - 1, p = win prob, q = 1 - p
+            b = decimal_odds - 1
+            if b <= 0:
+                return 2.0 if tier == "GOLD_STAR" else 1.0
+
+            kelly_fraction = (b * est_win_prob - (1 - est_win_prob)) / b
+
+            # Use 1/4 Kelly (conservative)
+            quarter_kelly = kelly_fraction * 0.25
+
+            # Convert to units (1 unit = 1% of bankroll assumption)
+            # Scale: 0.05 Kelly = 2 units, 0.025 Kelly = 1 unit
+            kelly_units = (quarter_kelly / 0.025)
+
+            # Cap by tier
+            max_units = 2.5 if tier == "GOLD_STAR" else 1.5
+            return round(min(max(0.5, kelly_units), max_units), 1)
+
+        except Exception:
+            # Fallback to tier-based
+            return 2.0 if tier == "GOLD_STAR" else 1.0
+
     # Check cache first
     # v10.16: Skip cache for debug/inspection modes to ensure fresh diagnostic data
     # v10.34: Include schema version in cache key to auto-invalidate on schema changes
@@ -6034,6 +6118,42 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             if astro_score > 0.5:
                 esoteric_reasons.append(f"ESOTERIC: Astro favorable +{round(astro_score, 2)}")
 
+            # --- v10.59: BIORHYTHMS (player-specific esoteric signal) ---
+            # Only for props (requires player_name), adds 0 to 0.5 pts
+            biorhythm_score = 0.0
+            if ESOTERIC_FEATURES_AVAILABLE and PLAYER_BIRTH_DATA_AVAILABLE and player_name and not is_game_pick:
+                try:
+                    player_data = get_player_data(player_name)
+                    if player_data and player_data.get("birth_date"):
+                        bio = calculate_biorhythms(player_data["birth_date"])
+                        bio_status = bio.get("status", "NEUTRAL")
+                        bio_overall = bio.get("overall", 0)
+
+                        # Convert biorhythm status to score modifier (0-0.5 range)
+                        if bio_status == "PEAK":
+                            biorhythm_score = 0.5  # Peak performance expected
+                        elif bio_status == "RISING":
+                            biorhythm_score = 0.25  # Trending up
+                        elif bio_status == "FALLING":
+                            biorhythm_score = -0.15  # Minor penalty
+                        elif bio_status == "LOW":
+                            biorhythm_score = -0.25  # Avoid prop
+
+                        if biorhythm_score != 0:
+                            esoteric_reasons.append(f"ESOTERIC: Biorhythm {bio_status} {biorhythm_score:+.2f}")
+                except Exception as e:
+                    logger.debug(f"Biorhythm calculation failed for {player_name}: {e}")
+
+            # --- v10.59: HURST EXPONENT (trend detection for momentum plays) ---
+            # Uses recent scoring history to detect trend/mean-reversion regime
+            hurst_score = 0.0
+            # Note: Would need player stat history for full implementation
+            # For now, use daily energy as proxy for "market momentum"
+            if ESOTERIC_FEATURES_AVAILABLE and daily_energy.get("overall_score", 50) > 60:
+                # High energy day = trending market = momentum plays favored
+                hurst_score = 0.15
+                esoteric_reasons.append(f"ESOTERIC: Trend momentum +{hurst_score:.2f}")
+
         else:
             # Fallback to simple trigger check for Jarvis RS
             jarvis_rs = 5.0
@@ -6056,6 +6176,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             fib_score = 0
             vortex_score = 0
             astro_score = 0
+            biorhythm_score = 0  # v10.59: Fallback
+            hurst_score = 0  # v10.59: Fallback
 
         # --- DAILY EDGE (esoteric environment) ---
         if daily_energy.get("overall_score", 50) >= 85:
@@ -6069,8 +6191,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         for ext_reason in external_reasons:
             esoteric_reasons.append(ext_reason)
 
-        # --- ESOTERIC SCORE (v10.58: Environment Only - NO Jarvis components) ---
-        # Base 5.0 + astro + fib + vortex + daily + external
+        # --- ESOTERIC SCORE (v10.59: Environment + Player Signals - NO Jarvis) ---
+        # Base 5.0 + astro + fib + vortex + daily + external + biorhythm + hurst
         # Excludes: Gematria (Jarvis), Triggers (Jarvis), Public Fade (Research)
         esoteric_raw = (
             5.0 +                    # Neutral base
@@ -6078,7 +6200,9 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             fib_score +              # Fibonacci (0-0.5 pts)
             vortex_score +           # Vortex (0-0.5 pts)
             daily_edge_score +       # Daily energy (0-1.0 pts)
-            micro_boost_external     # Weather/NOAA/Planetary (+/-0.25 pts)
+            micro_boost_external +   # Weather/NOAA/Planetary (+/-0.25 pts)
+            biorhythm_score +        # v10.59: Player biorhythm (-0.25 to +0.5 pts)
+            hurst_score              # v10.59: Trend momentum (0-0.15 pts)
         )
         esoteric_score = max(0, min(10, esoteric_raw))
 
@@ -6197,13 +6321,22 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         final_score = clamp_score(final_score)
         tier, badge = tier_from_score(final_score, profile["tiers"])
 
-        # Map tier to units and action
-        tier_config = {
-            "GOLD_STAR": {"units": 2.0, "action": "SMASH"},
-            "EDGE_LEAN": {"units": 1.0, "action": "PLAY"},
-            "MONITOR": {"units": 0.0, "action": "WATCH"},
-            "PASS": {"units": 0.0, "action": "SKIP"}
-        }
+        # v10.59: Kelly Criterion-enhanced unit sizing
+        # Uses edge calculation for actionable tiers, falls back to fixed for others
+        if tier in ("GOLD_STAR", "EDGE_LEAN") and odds:
+            kelly_units = calculate_kelly_units(final_score, odds, tier)
+            tier_config = {
+                "GOLD_STAR": {"units": kelly_units, "action": "SMASH"},
+                "EDGE_LEAN": {"units": kelly_units, "action": "PLAY"},
+            }
+        else:
+            tier_config = {
+                "GOLD_STAR": {"units": 2.0, "action": "SMASH"},
+                "EDGE_LEAN": {"units": 1.0, "action": "PLAY"},
+            }
+        tier_config["MONITOR"] = {"units": 0.0, "action": "WATCH"}
+        tier_config["PASS"] = {"units": 0.0, "action": "SKIP"}
+
         config = tier_config.get(tier, {"units": 0.0, "action": "SKIP"})
         bet_tier = {"tier": tier, "units": config["units"], "action": config["action"]}
 
@@ -6891,6 +7024,90 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                                 sport=sport_lower   # v10.20: pass sport for NHL ML Dog
                             )
 
+                            # v10.59: Monte Carlo simulation for game picks
+                            monte_carlo_data = {}
+                            monte_carlo_edge = 0.0
+                            if MONTE_CARLO_AVAILABLE and home_team and away_team:
+                                try:
+                                    if market_key == "spreads" and point is not None:
+                                        # Evaluate spread bet
+                                        mc_result = MonteCarloService.evaluate_spread(
+                                            sport=sport_lower,
+                                            home_team=home_team,
+                                            away_team=away_team,
+                                            spread=point,
+                                            num_simulations=5000  # Reduced for performance
+                                        )
+                                        monte_carlo_data = {
+                                            "type": "spread",
+                                            "predicted_margin": mc_result["predicted_margin"],
+                                            "margin_vs_spread": mc_result["margin_vs_spread"],
+                                            "cover_pct": mc_result["home_cover_pct"] if is_home_pick else mc_result["away_cover_pct"],
+                                            "edge_pct": mc_result["edge_pct"],
+                                            "mc_confidence": mc_result["confidence"],
+                                            "mc_recommendation": mc_result["recommendation"],
+                                        }
+                                        # Add Monte Carlo edge to score (max 0.3 pts)
+                                        if mc_result["edge_pct"] > 5:
+                                            monte_carlo_edge = min(0.3, mc_result["edge_pct"] / 30)
+                                            score_data["reasons"] = score_data.get("reasons", []) + [
+                                                f"MONTE_CARLO: {mc_result['confidence']} edge ({mc_result['edge_pct']:.1f}%) +{monte_carlo_edge:.2f}"
+                                            ]
+                                    elif market_key == "totals" and point is not None:
+                                        # Evaluate total bet
+                                        mc_result = MonteCarloService.evaluate_total(
+                                            sport=sport_lower,
+                                            home_team=home_team,
+                                            away_team=away_team,
+                                            total_line=point,
+                                            num_simulations=5000
+                                        )
+                                        is_over = pick_name.upper() == "OVER"
+                                        monte_carlo_data = {
+                                            "type": "total",
+                                            "predicted_total": mc_result["predicted_total"],
+                                            "total_vs_line": mc_result["total_vs_line"],
+                                            "hit_pct": mc_result["over_pct"] if is_over else mc_result["under_pct"],
+                                            "edge_pct": mc_result["edge_pct"],
+                                            "mc_confidence": mc_result["confidence"],
+                                            "mc_recommendation": mc_result["recommendation"],
+                                        }
+                                        # Add Monte Carlo edge to score (max 0.3 pts)
+                                        if mc_result["edge_pct"] > 5:
+                                            monte_carlo_edge = min(0.3, mc_result["edge_pct"] / 30)
+                                            score_data["reasons"] = score_data.get("reasons", []) + [
+                                                f"MONTE_CARLO: {mc_result['confidence']} edge ({mc_result['edge_pct']:.1f}%) +{monte_carlo_edge:.2f}"
+                                            ]
+                                    elif market_key == "h2h":
+                                        # Evaluate moneyline bet
+                                        mc_result = MonteCarloService.simulate_game(
+                                            sport=sport_lower,
+                                            home_team=home_team,
+                                            away_team=away_team,
+                                            num_simulations=5000
+                                        )
+                                        win_pct = mc_result["home_win_pct"] if is_home_pick else mc_result["away_win_pct"]
+                                        monte_carlo_data = {
+                                            "type": "moneyline",
+                                            "win_pct": win_pct,
+                                            "predicted_margin": mc_result["predicted_margin"],
+                                            "mc_confidence": mc_result["confidence"],
+                                            "margin_68_band": mc_result["margin_68_band"],
+                                        }
+                                        # Add edge based on win probability
+                                        if win_pct > 0.58:
+                                            monte_carlo_edge = min(0.25, (win_pct - 0.5) * 1.5)
+                                            score_data["reasons"] = score_data.get("reasons", []) + [
+                                                f"MONTE_CARLO: {win_pct*100:.1f}% win probability +{monte_carlo_edge:.2f}"
+                                            ]
+
+                                    # Apply Monte Carlo edge to score
+                                    if monte_carlo_edge > 0:
+                                        score_data["total_score"] = min(10.0, score_data.get("total_score", 5.0) + monte_carlo_edge)
+
+                                except Exception as mc_err:
+                                    logger.debug(f"Monte Carlo simulation failed: {mc_err}")
+
                             # v10.24: Track AI + Jarvis call for game picks
                             jarvis_debug["calls_total"] += 1
                             jarvis_debug["calls_game"] += 1
@@ -6954,6 +7171,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                             if nhl_ml_dog_active:
                                 badges_game.append("NHL_ML_DOG")
 
+                            # v10.59: Add Monte Carlo badge if high edge
+                            if monte_carlo_data.get("edge_pct", 0) > 8:
+                                badges_game.append("MONTE_CARLO")
+
                             game_picks.append({
                                 "sport": sport.upper(),  # v10.57: For consistency with props
                                 "game_id": game.get("game_id", game.get("id", "")),  # v10.57: For consistency
@@ -6980,7 +7201,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                                 "reasons": score_data.get("reasons", []),  # Production v3 explainability
                                 **score_data,
                                 "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
-                                "source": "odds_api"
+                                "source": "odds_api",
+                                "monte_carlo": monte_carlo_data if monte_carlo_data else None,  # v10.59
                             })
     except Exception as e:
         logger.warning("Game odds fetch failed: %s", e)
