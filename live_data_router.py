@@ -5021,7 +5021,7 @@ async def get_api_coverage():
         alt_data_status = get_alt_data_status()
 
     return {
-        "version": "v10.68",
+        "version": "v10.80",
         "odds_api": {
             "configured": bool(ODDS_API_KEY),
             "endpoints_used": [
@@ -8511,6 +8511,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     "side": side,
                     "over_under": (side or "over").lower(),  # Frontend expected field (v10.47: defensive None)
                     "odds": odds,
+                    "odds_american": odds,  # v10.80: Canonical schema field
                     "game": f"{away_team} @ {home_team}",
                     "matchup": f"{away_team} vs {home_team}",  # Production v3 schema
                     "selection": formatted_selection,  # v10.10: "Player Side Line StatLabel"
@@ -8535,6 +8536,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     "book": prop_book_key,
                     "book_display": prop_book_display,
                     "book_url": prop_book_url,
+                    # v10.80: Canonical schema book fields
+                    "book_key": prop_book_key,
+                    "book_name": prop_book_display,
+                    "book_link": prop_book_url,
                     "market_key": market,
                     "odds_pulled_at": prop_odds_pulled_at,
                     "line_at_pull": line_val,
@@ -9111,6 +9116,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                                 "team": pick_name if market_key != "totals" else None,
                                 "line": point,
                                 "odds": odds,
+                                "odds_american": odds,  # v10.80: Canonical schema field
                                 "game": f"{away_team} @ {home_team}",
                                 "matchup": f"{away_team} vs {home_team}",  # Production v3 schema
                                 "selection": display,  # Production v3 schema
@@ -9135,6 +9141,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                                 "book": book_key,
                                 "book_display": book_display,
                                 "book_url": book_url,
+                                # v10.80: Canonical schema book fields
+                                "book_key": book_key,
+                                "book_name": book_display,
+                                "book_link": book_url,
                                 "market_key": market_key,
                                 "odds_pulled_at": odds_pulled_at,
                                 "line_at_pull": point,
