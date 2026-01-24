@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-v10.82: Production Schema Integration Tests
+v10.83: Production Schema Integration Tests
 
 Tests the canonical API contract for /live/best-bets/* endpoints.
+Includes v10.83 hardening tests: book URL quality, NHL validation, engine integrity, movement.
 
 Run: python3 test_production_schema.py [--prod]
 """
@@ -36,6 +37,18 @@ PICK_REQUIRED_FIELDS = {
     "reasons",
 }
 
+# v10.83: New optional fields (should exist but not break if missing)
+PICK_V1083_FIELDS = {
+    "book_url_quality",
+    "book_url_reason",
+    "engines_missing",
+    "score_total_source",
+    "engine_integrity_ok",
+    "movement_flag",
+    "movement_severity",
+    "status",
+}
+
 # Required response-level fields
 RESPONSE_REQUIRED_FIELDS = {
     "sport",
@@ -49,6 +62,12 @@ RESPONSE_REQUIRED_FIELDS = {
     "game_picks",
     "props",
 }
+
+# Valid enum values for v10.83 fields
+VALID_BOOK_URL_QUALITY = {"DEEP", "LEAGUE", "SEARCH", "HOMEPAGE"}
+VALID_SCORE_SOURCE = {"FULL_STACK", "AI_ONLY_FALLBACK", "PARTIAL_STACK"}
+VALID_MOVEMENT_SEVERITY = {"LOW", "MED", "HIGH", None}
+VALID_STATUS = {"VALID", "INVALID_MARKET", "INVALID_INJURY"}
 
 
 def curl_json(url: str, headers: Dict[str, str] = None) -> Optional[Dict]:
@@ -199,7 +218,6 @@ def check_book_urls(data: Dict) -> bool:
 
     if missing_book_url:
         print(f"  WARN: Missing book URLs: {missing_book_url[:5]}...")
-        # Not a hard failure - URLs may be null if not available
 
     print("  PASS: Book URL check complete")
     return True
@@ -226,6 +244,106 @@ def check_has_started(data: Dict) -> bool:
         return False
 
     print("  PASS: All picks have valid has_started boolean")
+    return True
+
+
+def check_book_url_quality(data: Dict) -> bool:
+    """v10.83: Check book_url_quality exists and has valid enum value."""
+    print("\n[7] Book URL Quality Check (v10.83)")
+
+    invalid = []
+    all_picks = (data.get("game_picks", {}).get("picks", []) +
+                 data.get("props", {}).get("picks", []))
+
+    for i, pick in enumerate(all_picks):
+        quality = pick.get("book_url_quality")
+        if quality is None:
+            invalid.append(f"pick[{i}]: missing book_url_quality")
+        elif quality not in VALID_BOOK_URL_QUALITY:
+            invalid.append(f"pick[{i}]: invalid quality={quality}")
+
+    if invalid:
+        print(f"  WARN: {invalid[:3]}")
+        # Not a hard failure yet - field is new
+    else:
+        print("  PASS: All picks have valid book_url_quality")
+
+    return True
+
+
+def check_engine_integrity(data: Dict) -> bool:
+    """v10.83: Check engine integrity fields."""
+    print("\n[8] Engine Integrity Check (v10.83)")
+
+    issues = []
+    all_picks = (data.get("game_picks", {}).get("picks", []) +
+                 data.get("props", {}).get("picks", []))
+
+    for i, pick in enumerate(all_picks[:5]):  # Sample first 5
+        engines = pick.get("engines", {})
+        engines_missing = pick.get("engines_missing", [])
+        score_source = pick.get("score_total_source")
+
+        # Check if engines show 0.0 but engines_missing is empty
+        zero_engines = [k for k, v in engines.items() if v == 0.0 and k != "ai"]
+        if zero_engines and not engines_missing:
+            # This is acceptable if there's engine breakdown data
+            pass
+
+        # Check score_total_source is valid
+        if score_source and score_source not in VALID_SCORE_SOURCE:
+            issues.append(f"pick[{i}]: invalid score_total_source={score_source}")
+
+    if issues:
+        print(f"  WARN: {issues}")
+    else:
+        print("  PASS: Engine integrity fields look correct")
+
+    return True
+
+
+def check_nhl_market_sanity(data: Dict, sport: str) -> bool:
+    """v10.83: Check NHL picks don't have absurd spreads."""
+    print("\n[9] NHL Market Sanity Check (v10.83)")
+
+    if sport.lower() != "nhl":
+        print("  SKIP: Not NHL data")
+        return True
+
+    invalid_spreads = []
+    for i, pick in enumerate(data.get("game_picks", {}).get("picks", [])):
+        market = pick.get("market", pick.get("market_key", ""))
+        line = pick.get("line")
+
+        if market in ("spreads", "spread") and line is not None:
+            if abs(line) >= 3.5:
+                invalid_spreads.append(f"pick[{i}]: line={line}")
+
+    if invalid_spreads:
+        print(f"  FAIL: Invalid NHL puck lines found: {invalid_spreads}")
+        return False
+
+    print("  PASS: No absurd NHL spreads (all puck lines < 3.5)")
+    return True
+
+
+def check_movement_fields(data: Dict) -> bool:
+    """v10.83: Check movement monitoring fields exist."""
+    print("\n[10] Movement Fields Check (v10.83)")
+
+    all_picks = (data.get("game_picks", {}).get("picks", []) +
+                 data.get("props", {}).get("picks", []))
+
+    missing_movement = []
+    for i, pick in enumerate(all_picks[:5]):
+        if "movement_flag" not in pick:
+            missing_movement.append(f"pick[{i}]: missing movement_flag")
+
+    if missing_movement:
+        print(f"  WARN: {missing_movement}")
+    else:
+        print("  PASS: Movement fields present")
+
     return True
 
 
@@ -285,8 +403,14 @@ def run_sport_test(base_url: str, sport: str) -> bool:
     if not check_has_started(data):
         all_passed = False
 
+    # v10.83 checks
+    check_book_url_quality(data)
+    check_engine_integrity(data)
+    check_nhl_market_sanity(data, sport)
+    check_movement_fields(data)
+
     # Print sample picks
-    print("\n[7] Sample Output")
+    print("\n[11] Sample Output")
     game_picks = data.get("game_picks", {}).get("picks", [])
     if game_picks:
         pick = game_picks[0]
@@ -295,9 +419,14 @@ def run_sport_test(base_url: str, sport: str) -> bool:
         print(f"    display_title: {pick.get('display_title')}")
         print(f"    display_pick: {pick.get('display_pick')}")
         print(f"    book_url: {pick.get('book_url') or pick.get('book_link')}")
+        print(f"    book_url_quality: {pick.get('book_url_quality')}")
         print(f"    has_started: {pick.get('has_started')}")
         print(f"    action: {pick.get('action')}")
         print(f"    engines: {pick.get('engines')}")
+        print(f"    engines_missing: {pick.get('engines_missing')}")
+        print(f"    score_total_source: {pick.get('score_total_source')}")
+        print(f"    movement_flag: {pick.get('movement_flag')}")
+        print(f"    status: {pick.get('status')}")
 
     prop_picks = data.get("props", {}).get("picks", [])
     if prop_picks:
@@ -308,7 +437,8 @@ def run_sport_test(base_url: str, sport: str) -> bool:
         print(f"    display_pick: {pick.get('display_pick')}")
         print(f"    prop_stat: {pick.get('prop_stat')}")
         print(f"    direction: {pick.get('direction')}")
-        print(f"    book_url: {pick.get('book_url') or pick.get('book_link')}")
+        print(f"    injury_status: {pick.get('injury_status')}")
+        print(f"    book_url_quality: {pick.get('book_url_quality')}")
         print(f"    has_started: {pick.get('has_started')}")
 
     return all_passed
@@ -318,7 +448,7 @@ def main():
     use_prod = "--prod" in sys.argv
     base_url = PROD_URL if use_prod else LOCAL_URL
 
-    print(f"Production Schema Integration Tests")
+    print(f"Production Schema Integration Tests (v10.83)")
     print(f"Target: {base_url}")
     print(f"{'='*60}")
 

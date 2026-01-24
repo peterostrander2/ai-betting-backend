@@ -379,16 +379,330 @@ def safe_lower(x) -> str:
     return str(x or "").lower()
 
 # ============================================================================
-# v10.82: CANONICAL PICK ENRICHMENT
+# v10.83: PRODUCTION HARDENING - CANONICAL PICK ENRICHMENT
 # ============================================================================
 # Adds all required canonical fields to picks for stable API contract.
-# This is applied to all picks before they're returned in the response.
+# Includes: book URL quality, market validation, engine integrity, movement monitoring
 # ============================================================================
 
-def enrich_pick_canonical(pick: Dict[str, Any], sport: str) -> Dict[str, Any]:
+# v10.83: In-memory movement cache for tracking line/odds changes
+_MOVEMENT_CACHE: Dict[str, Dict[str, Any]] = {}
+
+# v10.83: Sportsbook URL templates for deep linking
+BOOK_URL_TEMPLATES = {
+    "fanduel": {
+        "homepage": "https://sportsbook.fanduel.com",
+        "nba": "https://sportsbook.fanduel.com/basketball/nba",
+        "nhl": "https://sportsbook.fanduel.com/hockey/nhl",
+        "nfl": "https://sportsbook.fanduel.com/football/nfl",
+        "mlb": "https://sportsbook.fanduel.com/baseball/mlb",
+        "ncaab": "https://sportsbook.fanduel.com/basketball/college-basketball",
+        "search": "https://sportsbook.fanduel.com/search?query={query}",
+    },
+    "draftkings": {
+        "homepage": "https://sportsbook.draftkings.com",
+        "nba": "https://sportsbook.draftkings.com/leagues/basketball/nba",
+        "nhl": "https://sportsbook.draftkings.com/leagues/hockey/nhl",
+        "nfl": "https://sportsbook.draftkings.com/leagues/football/nfl",
+        "mlb": "https://sportsbook.draftkings.com/leagues/baseball/mlb",
+        "ncaab": "https://sportsbook.draftkings.com/leagues/basketball/ncaab",
+        "search": "https://sportsbook.draftkings.com/search?query={query}",
+    },
+    "betmgm": {
+        "homepage": "https://sports.betmgm.com",
+        "nba": "https://sports.betmgm.com/en/sports/basketball-7/betting/usa-9/nba-6004",
+        "nhl": "https://sports.betmgm.com/en/sports/hockey-12/betting/usa-9/nhl-34",
+        "nfl": "https://sports.betmgm.com/en/sports/football-11/betting/usa-9/nfl-35",
+        "mlb": "https://sports.betmgm.com/en/sports/baseball-23/betting/usa-9/mlb-75",
+        "search": "https://sports.betmgm.com/en/sports?query={query}",
+    },
+    "caesars": {
+        "homepage": "https://sportsbook.caesars.com",
+        "nba": "https://sportsbook.caesars.com/us/az/bet/basketball/nba",
+        "nhl": "https://sportsbook.caesars.com/us/az/bet/hockey/nhl",
+        "nfl": "https://sportsbook.caesars.com/us/az/bet/football/nfl",
+        "search": "https://sportsbook.caesars.com/us/az/bet/search?query={query}",
+    },
+    "betrivers": {
+        "homepage": "https://www.betrivers.com",
+        "nba": "https://www.betrivers.com/sports/basketball/nba",
+        "nhl": "https://www.betrivers.com/sports/hockey/nhl",
+        "nfl": "https://www.betrivers.com/sports/football/nfl",
+        "search": "https://www.betrivers.com/search?q={query}",
+    },
+    "fanatics": {
+        "homepage": "https://sportsbook.fanatics.com",
+        "nba": "https://sportsbook.fanatics.com/basketball/nba",
+        "nhl": "https://sportsbook.fanatics.com/hockey/nhl",
+        "nfl": "https://sportsbook.fanatics.com/football/nfl",
+        "search": "https://sportsbook.fanatics.com/search?q={query}",
+    },
+}
+
+
+def build_book_url(book_key: str, sport: str, display_title: str = None, player_name: str = None) -> tuple:
     """
-    v10.82: Enrich a pick with all canonical schema fields.
-    Ensures every pick has required fields for stable API contract.
+    v10.83: Build the best possible book URL with quality indicator.
+
+    Returns: (url, quality, reason)
+    - quality: "DEEP" | "LEAGUE" | "SEARCH" | "HOMEPAGE"
+    - reason: short explanation
+    """
+    book_key_lower = (book_key or "").lower().replace(" ", "").replace("-", "")
+    sport_lower = (sport or "").lower()
+
+    # Normalize book key variations
+    book_map = {
+        "fanduel": "fanduel",
+        "draftkings": "draftkings",
+        "betmgm": "betmgm",
+        "caesars": "caesars",
+        "williamhill": "caesars",
+        "betrivers": "betrivers",
+        "fanatics": "fanatics",
+        "pointsbet": "fanatics",  # PointsBet was acquired by Fanatics
+    }
+
+    normalized_book = book_map.get(book_key_lower)
+    templates = BOOK_URL_TEMPLATES.get(normalized_book, {})
+
+    if not templates:
+        # Unknown book - return generic homepage if we have book_url
+        return (None, "HOMEPAGE", f"unknown_book:{book_key}")
+
+    # Try league page first (most useful)
+    league_url = templates.get(sport_lower)
+    if league_url:
+        return (league_url, "LEAGUE", f"{sport_lower}_page")
+
+    # Try search URL with player or team name
+    search_template = templates.get("search")
+    if search_template:
+        query = player_name or (display_title.split(" @ ")[0] if display_title and " @ " in display_title else None)
+        if query:
+            search_url = search_template.format(query=query.replace(" ", "+"))
+            return (search_url, "SEARCH", f"search:{query[:20]}")
+
+    # Fallback to homepage
+    homepage = templates.get("homepage")
+    if homepage:
+        return (homepage, "HOMEPAGE", "fallback_homepage")
+
+    return (None, "HOMEPAGE", "no_url_available")
+
+
+def validate_market_sanity(pick: Dict[str, Any], sport: str) -> tuple:
+    """
+    v10.83: Validate market sanity for sport-specific rules.
+
+    Returns: (is_valid, reason)
+    """
+    sport_lower = sport.lower()
+    line = pick.get("line")
+    market = pick.get("market", pick.get("market_key", ""))
+
+    # NHL-specific validation
+    if sport_lower == "nhl":
+        if market in ("spreads", "spread"):
+            # NHL puck lines are typically +/-1.5, occasionally +/-2.5
+            if line is not None and abs(line) >= 3.5:
+                return (False, f"NHL_INVALID_PUCKLINE:{line}")
+
+        if market in ("totals", "total"):
+            # NHL totals typically range 4.5-8.5
+            if line is not None and (line < 4.0 or line > 9.0):
+                return (False, f"NHL_INVALID_TOTAL:{line}")
+
+    # NBA-specific validation
+    if sport_lower == "nba":
+        if market in ("totals", "total"):
+            # NBA totals typically range 200-260
+            if line is not None and (line < 180 or line > 280):
+                return (False, f"NBA_INVALID_TOTAL:{line}")
+
+        if market in ("spreads", "spread"):
+            # NBA spreads rarely exceed +/-20
+            if line is not None and abs(line) > 25:
+                return (False, f"NBA_INVALID_SPREAD:{line}")
+
+    # NFL-specific validation
+    if sport_lower == "nfl":
+        if market in ("totals", "total"):
+            if line is not None and (line < 30 or line > 70):
+                return (False, f"NFL_INVALID_TOTAL:{line}")
+
+    return (True, None)
+
+
+def check_engine_integrity(pick: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    v10.83: Check engine integrity and identify missing engines.
+
+    Returns dict with:
+    - engines_missing: list of missing engine names
+    - score_total_source: "FULL_STACK" | "AI_ONLY_FALLBACK" | "PARTIAL_STACK"
+    - engine_integrity_ok: bool
+    """
+    ai_score = pick.get("ai_score", 0.0)
+    research_score = pick.get("research_score", 0.0)
+    esoteric_score = pick.get("esoteric_score", 0.0)
+    jarvis_score = pick.get("jarvis_score", 0.0)
+
+    engines_missing = []
+
+    # Check if engines actually ran (0.0 could mean not run or actually scored 0)
+    # Use presence of breakdown/components as indicator
+    if research_score == 0.0 and not pick.get("research_components"):
+        engines_missing.append("research")
+
+    if esoteric_score == 0.0 and not pick.get("esoteric_components") and not pick.get("esoteric_breakdown"):
+        engines_missing.append("esoteric")
+
+    if jarvis_score == 0.0 and not pick.get("jarvis_triggers") and not pick.get("jarvis_breakdown"):
+        engines_missing.append("jarvis")
+
+    # Determine score source
+    if len(engines_missing) == 0:
+        score_total_source = "FULL_STACK"
+    elif len(engines_missing) == 3 and ai_score > 0:
+        score_total_source = "AI_ONLY_FALLBACK"
+    else:
+        score_total_source = "PARTIAL_STACK"
+
+    engine_integrity_ok = len(engines_missing) == 0
+
+    return {
+        "engines_missing": engines_missing,
+        "score_total_source": score_total_source,
+        "engine_integrity_ok": engine_integrity_ok
+    }
+
+
+def check_injury_status(player_name: str, team: str, sport: str, injuries_data: Dict = None) -> str:
+    """
+    v10.83: Check injury status for a player.
+
+    Returns: "HEALTHY"|"QUESTIONABLE"|"OUT"|"DOUBTFUL"|"SUSPENDED"|"UNKNOWN"
+    """
+    if not player_name:
+        return "UNKNOWN"
+
+    # Stub implementation - can be enhanced with injury API data
+    # For now, check if injuries_data was passed and contains this player
+    if injuries_data:
+        player_lower = player_name.lower()
+        for injury in injuries_data.get("data", []):
+            if player_lower in injury.get("player", "").lower():
+                status = injury.get("status", "").upper()
+                if status in ("OUT", "O"):
+                    return "OUT"
+                elif status in ("DOUBTFUL", "D"):
+                    return "DOUBTFUL"
+                elif status in ("QUESTIONABLE", "Q"):
+                    return "QUESTIONABLE"
+                elif status in ("SUSPENDED", "SUSP"):
+                    return "SUSPENDED"
+
+    return "HEALTHY"
+
+
+def compute_movement(pick: Dict[str, Any], pick_id: str) -> Dict[str, Any]:
+    """
+    v10.83: Compute movement by comparing to cached previous state.
+
+    Returns dict with movement_flag, movement_summary, movement_severity
+    """
+    global _MOVEMENT_CACHE
+
+    current_state = {
+        "odds": pick.get("odds", pick.get("odds_american")),
+        "line": pick.get("line"),
+        "book_key": pick.get("book_key"),
+        "has_started": pick.get("has_started", False),
+        "timestamp": datetime.now().isoformat()
+    }
+
+    movement = {
+        "movement_flag": False,
+        "movement_summary": None,
+        "movement_severity": None
+    }
+
+    # Get previous state from cache
+    prev_state = _MOVEMENT_CACHE.get(pick_id)
+
+    if prev_state:
+        changes = []
+        severity_score = 0
+
+        # Check odds change
+        prev_odds = prev_state.get("odds")
+        curr_odds = current_state.get("odds")
+        if prev_odds is not None and curr_odds is not None and prev_odds != curr_odds:
+            odds_diff = abs(curr_odds - prev_odds)
+            direction = "better" if curr_odds > prev_odds else "worse"
+            changes.append(f"odds {prev_odds}→{curr_odds}")
+            if odds_diff >= 20:
+                severity_score += 3
+            elif odds_diff >= 10:
+                severity_score += 2
+            else:
+                severity_score += 1
+
+        # Check line change
+        prev_line = prev_state.get("line")
+        curr_line = current_state.get("line")
+        if prev_line is not None and curr_line is not None and prev_line != curr_line:
+            line_diff = abs(curr_line - prev_line)
+            changes.append(f"line {prev_line}→{curr_line}")
+            if line_diff >= 1.0:
+                severity_score += 3
+            elif line_diff >= 0.5:
+                severity_score += 2
+            else:
+                severity_score += 1
+
+        # Check has_started change
+        prev_started = prev_state.get("has_started", False)
+        curr_started = current_state.get("has_started", False)
+        if prev_started != curr_started and curr_started:
+            changes.append("game STARTED")
+            severity_score += 3
+
+        # Check book change
+        prev_book = prev_state.get("book_key")
+        curr_book = current_state.get("book_key")
+        if prev_book and curr_book and prev_book != curr_book:
+            changes.append(f"book {prev_book}→{curr_book}")
+            severity_score += 1
+
+        if changes:
+            movement["movement_flag"] = True
+            movement["movement_summary"] = "; ".join(changes)
+            if severity_score >= 3:
+                movement["movement_severity"] = "HIGH"
+            elif severity_score >= 2:
+                movement["movement_severity"] = "MED"
+            else:
+                movement["movement_severity"] = "LOW"
+
+    # Update cache with current state
+    _MOVEMENT_CACHE[pick_id] = current_state
+
+    # Limit cache size to prevent memory issues
+    if len(_MOVEMENT_CACHE) > 1000:
+        # Remove oldest entries
+        sorted_keys = sorted(_MOVEMENT_CACHE.keys(),
+                           key=lambda k: _MOVEMENT_CACHE[k].get("timestamp", ""))
+        for key in sorted_keys[:200]:
+            del _MOVEMENT_CACHE[key]
+
+    return movement
+
+
+def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict = None) -> Dict[str, Any]:
+    """
+    v10.83: Enrich a pick with all canonical schema fields + production validations.
 
     Adds:
     - pick_id: Stable deterministic ID
@@ -396,11 +710,17 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str) -> Dict[str, Any]:
     - action: SKIP|WATCH|PLAY|SMASH
     - tier_badge: Alias for badge
     - engines: { ai, research, esoteric, jarvis }
-    - units: Alias for recommended_units
-    - For props: prop_stat, direction
-    - Movement: movement_flag, movement_summary, movement_severity
+    - engines_missing, score_total_source, engine_integrity_ok (v10.83)
+    - book_url_quality, book_url_reason (v10.83)
+    - movement_flag, movement_summary, movement_severity (v10.83)
+    - status, debug_flags (v10.83 validation)
+    - For props: prop_stat, direction, injury_status
     """
     import hashlib
+
+    # Initialize debug_flags list
+    if "debug_flags" not in pick:
+        pick["debug_flags"] = []
 
     # Generate stable pick_id if not present
     if not pick.get("pick_id"):
@@ -410,8 +730,64 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str) -> Dict[str, Any]:
     # League (same as sport for now)
     pick["league"] = sport.upper()
 
-    # Action based on tier
+    # =========================================================================
+    # v10.83: Book URL Quality
+    # =========================================================================
+    book_key = pick.get("book_key", pick.get("book", ""))
+    player_name = pick.get("player_name", pick.get("player"))
+    display_title = pick.get("display_title", "")
+
+    url, quality, reason = build_book_url(book_key, sport, display_title, player_name)
+
+    # Only update book_url if we got a better one
+    if url and (not pick.get("book_url") or quality in ("DEEP", "LEAGUE")):
+        pick["book_url"] = url
+        pick["book_link"] = url  # Keep both for compatibility
+
+    pick["book_url_quality"] = quality
+    pick["book_url_reason"] = reason
+
+    # =========================================================================
+    # v10.83: Market Sanity Validation
+    # =========================================================================
+    is_valid, invalid_reason = validate_market_sanity(pick, sport)
+    if not is_valid:
+        pick["status"] = "INVALID_MARKET"
+        pick["debug_flags"].append(invalid_reason)
+    else:
+        if "status" not in pick:
+            pick["status"] = "VALID"
+
+    # =========================================================================
+    # v10.83: Engine Integrity Check
+    # =========================================================================
+    engines = {
+        "ai": pick.get("ai_score", 0.0),
+        "research": pick.get("research_score", pick.get("research_components", {}).get("total", 0.0)) if isinstance(pick.get("research_components"), dict) else pick.get("research_score", 0.0),
+        "esoteric": pick.get("esoteric_score", 0.0),
+        "jarvis": pick.get("jarvis_score", 0.0)
+    }
+    pick["engines"] = engines
+
+    integrity = check_engine_integrity(pick)
+    pick["engines_missing"] = integrity["engines_missing"]
+    pick["score_total_source"] = integrity["score_total_source"]
+    pick["engine_integrity_ok"] = integrity["engine_integrity_ok"]
+
+    # =========================================================================
+    # v10.83: Tier safety downgrade for incomplete engine stack
+    # =========================================================================
     tier = pick.get("tier", "PASS")
+
+    if not Config.ALLOW_PARTIAL_STACK_BUMP:
+        # If missing any engine and tier >= EDGE_LEAN, force downgrade to MONITOR
+        if integrity["engines_missing"] and tier in ("GOLD_STAR", "EDGE_LEAN", "TITANIUM_SMASH"):
+            pick["original_tier"] = tier
+            pick["tier"] = "MONITOR"
+            pick["debug_flags"].append(f"TIER_DOWNGRADE:partial_stack:{','.join(integrity['engines_missing'])}")
+            tier = "MONITOR"
+
+    # Action based on tier
     tier_to_action = {
         "TITANIUM_SMASH": "SMASH",
         "GOLD_STAR": "SMASH",
@@ -427,25 +803,47 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str) -> Dict[str, Any]:
     # units (alias for recommended_units)
     pick["units"] = pick.get("recommended_units", pick.get("units", 0.0))
 
-    # Engines object (consolidate scoring breakdown)
-    pick["engines"] = {
-        "ai": pick.get("ai_score", 0.0),
-        "research": pick.get("research_score", pick.get("research_components", {}).get("total", 0.0)) if isinstance(pick.get("research_components"), dict) else pick.get("research_score", 0.0),
-        "esoteric": pick.get("esoteric_score", 0.0),
-        "jarvis": pick.get("jarvis_score", 0.0)
-    }
-
-    # For props: prop_stat and direction
+    # =========================================================================
+    # v10.83: Props - prop_stat, direction, injury validation
+    # =========================================================================
     if pick.get("player") or pick.get("player_name"):
         pick["prop_stat"] = pick.get("stat_type", pick.get("market", ""))
         over_under = pick.get("over_under", pick.get("side", ""))
         pick["direction"] = over_under.upper() if over_under else None
+
+        # Injury check for props
+        player = pick.get("player_name", pick.get("player", ""))
+        team = pick.get("team", pick.get("home_team", ""))
+        injury_status = check_injury_status(player, team, sport, injuries_data)
+        pick["injury_status"] = injury_status
+
+        # Exclude OUT/DOUBTFUL/SUSPENDED props
+        if injury_status in ("OUT", "DOUBTFUL", "SUSPENDED"):
+            pick["status"] = "INVALID_INJURY"
+            pick["debug_flags"].append(f"INJURY_{injury_status}:{player}")
+        elif injury_status == "QUESTIONABLE":
+            # Downgrade tier by 1 for questionable players
+            tier_order = ["PASS", "MONITOR", "EDGE_LEAN", "GOLD_STAR", "TITANIUM_SMASH"]
+            current_idx = tier_order.index(tier) if tier in tier_order else 0
+            if current_idx > 0:
+                pick["original_tier"] = tier
+                pick["tier"] = tier_order[current_idx - 1]
+                pick["debug_flags"].append(f"TIER_DOWNGRADE:questionable:{player}")
+                pick["action"] = tier_to_action.get(pick["tier"], "SKIP")
     else:
         pick["prop_stat"] = None
         pick["direction"] = None
+        pick["injury_status"] = None
 
-    # Movement monitoring fields (placeholder - to be populated by change_monitor)
-    if "movement_flag" not in pick:
+    # =========================================================================
+    # v10.83: Movement Monitoring
+    # =========================================================================
+    if Config.ENABLE_MOVEMENT_MONITOR:
+        movement = compute_movement(pick, pick["pick_id"])
+        pick["movement_flag"] = movement["movement_flag"]
+        pick["movement_summary"] = movement["movement_summary"]
+        pick["movement_severity"] = movement["movement_severity"]
+    else:
         pick["movement_flag"] = False
         pick["movement_summary"] = None
         pick["movement_severity"] = None
@@ -453,9 +851,18 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str) -> Dict[str, Any]:
     return pick
 
 
-def enrich_picks_batch(picks: List[Dict[str, Any]], sport: str) -> List[Dict[str, Any]]:
-    """v10.82: Enrich a batch of picks with canonical fields."""
-    return [enrich_pick_canonical(pick, sport) for pick in picks]
+def enrich_picks_batch(picks: List[Dict[str, Any]], sport: str, injuries_data: Dict = None) -> List[Dict[str, Any]]:
+    """v10.83: Enrich a batch of picks with canonical fields and filter invalid picks."""
+    enriched = []
+    for pick in picks:
+        enriched_pick = enrich_pick_canonical(pick, sport, injuries_data)
+        enriched.append(enriched_pick)
+    return enriched
+
+
+def filter_valid_picks(picks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """v10.83: Filter out invalid picks (status != VALID)."""
+    return [p for p in picks if p.get("status", "VALID") == "VALID"]
 
 
 # ============================================================================
@@ -6766,7 +7173,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     # Check cache first
     # v10.16: Skip cache for debug/inspection modes to ensure fresh diagnostic data
     # v10.34: Include schema version in cache key to auto-invalidate on schema changes
-    cache_key = f"{CACHE_SCHEMA_VERSION}:best-bets:{sport_lower}"
+    # v10.83: Include date_et and engine_version to ensure version-safe caching
+    from zoneinfo import ZoneInfo
+    _ET = ZoneInfo("America/New_York")
+    _date_et = datetime.now(_ET).strftime("%Y-%m-%d")
+    cache_key = f"{CACHE_SCHEMA_VERSION}:{Config.ENGINE_VERSION}:{_date_et}:best-bets:{sport_lower}"
     cache_hit = False
     if debug != 1 and include_conflicts != 1:
         cached = api_cache.get(cache_key)
@@ -10209,9 +10620,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     if fallback_used and games_picks_count == 0:
         games_reason = "FALLBACK_MONITOR_USED"
 
-    # v10.82: Enrich picks with canonical fields before response
-    top_props = enrich_picks_batch(top_props, sport)
-    top_game_picks = enrich_picks_batch(top_game_picks, sport)
+    # v10.83: Enrich picks with canonical fields + validations before response
+    top_props = enrich_picks_batch(top_props, sport, injuries_data)
+    top_game_picks = enrich_picks_batch(top_game_picks, sport, injuries_data)
+
+    # v10.83: Filter out invalid picks (market sanity, injury exclusions)
+    top_props = filter_valid_picks(top_props)
+    top_game_picks = filter_valid_picks(top_game_picks)
 
     # v10.82: Generate ET timestamp for response
     from zoneinfo import ZoneInfo
