@@ -5917,11 +5917,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         jarvis_triggered = False
 
         if jarvis:
-            # --- JARVIS TRIGGERS (20% weight, max 2.0 pts) ---
+            # --- JARVIS TRIGGERS (v10.58: collected here, applied in Jarvis RS only) ---
+            # NOTE: Triggers are NO LONGER added to esoteric_reasons - they only affect Jarvis RS
             trigger_result = jarvis.check_jarvis_trigger(game_str)
-            raw_jarvis = 0.0
             for trig in trigger_result.get("triggers_hit", []):
-                raw_jarvis += trig["boost"] / 10  # Normalize boost
                 jarvis_triggers_hit.append({
                     "number": trig["number"],
                     "name": trig["name"],
@@ -5930,20 +5929,23 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 })
                 if trig["number"] == 2178:
                     immortal_detected = True
-                    esoteric_reasons.append(f"ESOTERIC: IMMORTAL 2178 +0.8")
-                else:
-                    esoteric_reasons.append(f"ESOTERIC: Jarvis Trigger {trig['number']} +0.4")
             jarvis_triggered = len(jarvis_triggers_hit) > 0
-            # Scale to 20% weight (max 2.0 pts)
-            jarvis_score = min(1.0, raw_jarvis) * 10 * ESOTERIC_WEIGHTS["jarvis"]
 
             # =================================================================
-            # v10.40: 4-ENGINE SEPARATION
+            # v10.58: 4-ENGINE SEPARATION (NO DOUBLE COUNTING)
             # =================================================================
-            # 1. AI ENGINE (0-10): 8-model ensemble (already calculated above)
-            # 2. RESEARCH ENGINE (0-10): Pillars + market edges (already calculated above)
-            # 3. ESOTERIC ENGINE (0-10): Environment only (NO Jarvis, NO gematria)
-            # 4. JARVIS ENGINE (0-10): Standalone ritual score (gematria + triggers)
+            # 1. AI ENGINE (0-10): 8-model ensemble (unchanged)
+            # 2. RESEARCH ENGINE (0-10): Market/human inefficiencies ONLY
+            #    - Contains: Sharp Split, RLM, Public Fade, Expert Consensus
+            #    - Contains: Hospital Fade, Goldilocks (Mid-Spread Boss Zone)
+            #    - Public Fade is ONLY here (not in Jarvis or Esoteric)
+            # 3. ESOTERIC ENGINE (0-10): NON-JARVIS environment signals
+            #    - Contains: Vedic Astro, Fibonacci, Vortex, Daily Edge, External
+            #    - Does NOT contain: Gematria, Jarvis triggers, Public Fade
+            # 4. JARVIS ENGINE (0-10): STANDALONE ritual score
+            #    - Contains: Gematria, Sacred Triggers (201/33/93/322/2178)
+            #    - Contains: Mid-spread amplifier (Goldilocks 20% boost to Jarvis RS)
+            #    - Does NOT contain: Fibonacci, Vortex (those are Esoteric)
             # =================================================================
 
             # --- JARVIS RS CALCULATION (STANDALONE ENGINE) ---
@@ -5994,22 +5996,20 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     jarvis_rs += trap_mod  # Apply trap penalty to Jarvis RS
                     jarvis_reasons.append(f"JARVIS: Trap Gate {round(trap_mod, 2)}")
 
-                # --- FIBONACCI for Jarvis (if aligned) ---
+                # --- FIBONACCI (v10.58: Esoteric ONLY, no longer in Jarvis RS) ---
                 fib_alignment = jarvis.calculate_fibonacci_alignment(float(spread) if spread else 0)
                 fib_raw = fib_alignment.get("modifier", 0)
-                if fib_raw > 0:
-                    fib_jarvis_boost = fib_raw * 0.5  # Small Jarvis boost
-                    jarvis_rs += fib_jarvis_boost
-                fib_score = max(0, fib_raw) * 0.5  # Reduced for esoteric (environment only)
+                fib_score = max(0, fib_raw) * 0.5  # Esoteric environment signal only
+                if fib_score > 0:
+                    esoteric_reasons.append(f"ESOTERIC: Fibonacci Alignment +{fib_score:.2f}")
 
-                # --- VORTEX for Jarvis (if pattern detected) ---
+                # --- VORTEX (v10.58: Esoteric ONLY, no longer in Jarvis RS) ---
                 vortex_value = int(abs(spread * 10)) if spread else 0
                 vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
                 vortex_raw = vortex_pattern.get("modifier", 0)
-                if vortex_raw > 0:
-                    vortex_jarvis_boost = vortex_raw * 0.5  # Small Jarvis boost
-                    jarvis_rs += vortex_jarvis_boost
-                vortex_score = max(0, vortex_raw) * 0.5  # Reduced for esoteric (environment only)
+                vortex_score = max(0, vortex_raw) * 0.5  # Esoteric environment signal only
+                if vortex_score > 0:
+                    esoteric_reasons.append(f"ESOTERIC: Vortex Pattern +{vortex_score:.2f}")
 
             # Add JARVIS sacred trigger boosts to Jarvis RS
             for trigger in jarvis_triggers_hit:
@@ -6020,11 +6020,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             # Clamp Jarvis RS to 0-10
             jarvis_rs = max(0, min(10, jarvis_rs))
 
-            # --- ESOTERIC SCORE (v10.40: NON-JARVIS ONLY) ---
+            # --- ESOTERIC SCORE (v10.58: Environment-only, NO Jarvis components) ---
             # Contains ONLY: Vedic astro, Fibonacci, Vortex, Daily edge, External signals
-            # Does NOT contain: Gematria, Jarvis triggers, Public Fade, Mid-spread
-            gematria_score = 0  # Reset - gematria is now in Jarvis RS only
-            public_fade_mod = 0  # Public fade is now in Research only
+            # Does NOT contain: Gematria (Jarvis), Triggers (Jarvis), Public Fade (Research)
+            gematria_score = 0  # v10.58: Gematria is in Jarvis RS exclusively
+            public_fade_mod = 0  # v10.58: Public Fade is in Research exclusively
 
             # --- ASTRO (environment signal) ---
             astro = vedic.calculate_astro_score() if vedic else {"overall_score": 50}
@@ -6069,15 +6069,16 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         for ext_reason in external_reasons:
             esoteric_reasons.append(ext_reason)
 
-        # --- ESOTERIC SCORE (v10.40: Environment Only) ---
-        # Base 5.0 + astro + fib + vortex + daily + external (NO gematria, NO jarvis, NO public fade)
+        # --- ESOTERIC SCORE (v10.58: Environment Only - NO Jarvis components) ---
+        # Base 5.0 + astro + fib + vortex + daily + external
+        # Excludes: Gematria (Jarvis), Triggers (Jarvis), Public Fade (Research)
         esoteric_raw = (
             5.0 +                    # Neutral base
-            astro_score +            # 0-2.0 pts
-            fib_score +              # 0-0.5 pts
-            vortex_score +           # 0-0.5 pts
-            daily_edge_score +       # 0-1.0 pts
-            micro_boost_external     # +/-0.25 pts
+            astro_score +            # Vedic astro (0-2.0 pts)
+            fib_score +              # Fibonacci (0-0.5 pts)
+            vortex_score +           # Vortex (0-0.5 pts)
+            daily_edge_score +       # Daily energy (0-1.0 pts)
+            micro_boost_external     # Weather/NOAA/Planetary (+/-0.25 pts)
         )
         esoteric_score = max(0, min(10, esoteric_raw))
 
@@ -6248,14 +6249,13 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "jarvis_hits_count": jarvis_hits_count,  # v10.39: Count of Jarvis triggers hit
             "jarvis_turbo_boost": round(jarvis_turbo_boost, 2),  # v10.39: Turbo boost applied
             "esoteric_breakdown": {
-                "gematria": round(gematria_score, 2),       # 52% weight
-                "jarvis_triggers": round(jarvis_score, 2),  # 20% weight
-                "astro": round(astro_score, 2),             # 13% weight
-                "fibonacci": round(fib_score, 2),           # 5% weight
-                "vortex": round(vortex_score, 2),           # 5% weight
-                "daily_edge": round(daily_edge_score, 2),   # 5% weight
-                "public_fade_mod": round(public_fade_mod, 2),
-                "trap_mod": round(trap_mod, 2)
+                # v10.58: Esoteric is NON-JARVIS only (environment signals)
+                # Gematria/Jarvis triggers now in jarvis_rs exclusively
+                "astro": round(astro_score, 2),             # Vedic astro (max 2.0 pts)
+                "fibonacci": round(fib_score, 2),           # Fib alignment (max 0.5 pts)
+                "vortex": round(vortex_score, 2),           # Vortex pattern (max 0.5 pts)
+                "daily_edge": round(daily_edge_score, 2),   # Daily energy (max 1.0 pts)
+                "external_micro": round(micro_boost_external, 2),  # Weather/NOAA/Planetary
             },
             "jarvis_triggers": jarvis_triggers_hit,
             "jarvis_active": jarvis_triggered,  # v10.4: for SmashSpot check
