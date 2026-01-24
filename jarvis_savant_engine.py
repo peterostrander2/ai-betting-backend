@@ -901,16 +901,16 @@ class JarvisSavantEngine:
         nhl_dog_protocol: bool = False
     ) -> Dict[str, Any]:
         """
-        Determine bet tier based on FINAL score (v10.1 spec).
+        Determine bet tier based on FINAL score.
 
         FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
 
-        Tiers (v10.1 spec):
-        - GOLD_STAR (2u): FINAL ≥ 9.0
-        - EDGE_LEAN (1u): FINAL ≥ 7.5
+        Tiers (from tiering.py - single source of truth):
+        - GOLD_STAR (2u): FINAL >= 7.5
+        - EDGE_LEAN (1u): FINAL >= 6.5
         - ML_DOG_LOTTO (0.5u): NHL Dog Protocol triggered
-        - MONITOR (0u): FINAL ≥ 6.0
-        - PASS: FINAL < 6.0
+        - MONITOR (0u): FINAL >= 5.5
+        - PASS: FINAL < 5.5
         """
         confluence_level = confluence.get("level", "DIVERGENT")
 
