@@ -58,9 +58,16 @@ def _apply_under_penalty(pick: Dict[str, Any]) -> Dict[str, Any]:
     Reduces final_score by 0.15 for UNDER picks unless under_supported=True.
     Re-tiers after penalty application.
 
+    v10.57: Skip penalty for game picks (totals UNDER is legitimate strategy).
+
     Returns a new dict (does not mutate original).
     """
     pick = pick.copy()
+
+    # v10.57: Skip UNDER penalty for game picks (no player_name = game pick)
+    is_game_pick = not (pick.get("player_name") or pick.get("stat_type"))
+    if is_game_pick:
+        return pick
 
     side = (pick.get("side") or pick.get("over_under") or "").upper()
     under_supported = pick.get("under_supported", False)
