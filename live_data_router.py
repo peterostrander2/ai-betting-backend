@@ -5720,6 +5720,36 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             independent_prop_boost = min(0.35, independent_prop_boost)
             pillar_boost += independent_prop_boost
 
+        # ========== GAME PICK INDEPENDENT BOOSTS (v10.57) ==========
+        # Game picks need equivalent boosts to compete with props
+        if is_game_pick:
+            game_pick_boost = 0.0
+
+            # Spread Value (tight spread = competitive game)
+            abs_spread = abs(spread) if spread else 0
+            if 0 < abs_spread <= 6:
+                game_pick_boost += 0.15
+                research_reasons.append("RESEARCH: Tight Spread (competitive) +0.15")
+
+            # Totals Value (reasonable total = predictable)
+            if market == "totals" and 200 <= total <= 230:
+                game_pick_boost += 0.15
+                research_reasons.append("RESEARCH: Reasonable Total +0.15")
+
+            # Home Team Boost (home teams have advantage)
+            if is_home:
+                game_pick_boost += 0.10
+                research_reasons.append("RESEARCH: Home Team Edge +0.10")
+
+            # Market Quality (spreads and totals more liquid than ML)
+            if market in ["spreads", "totals"]:
+                game_pick_boost += 0.10
+                research_reasons.append("RESEARCH: Liquid Market +0.10")
+
+            # Cap game pick boost at 0.40
+            game_pick_boost = min(0.40, game_pick_boost)
+            pillar_boost += game_pick_boost
+
         # ========== CONTEXT MODIFIERS ==========
         # Pillar 7: Mid-Spread Boss Zone (v10.20: renamed from Goldilocks)
         abs_spread = abs(spread) if spread else 0
