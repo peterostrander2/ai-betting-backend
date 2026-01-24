@@ -50,8 +50,15 @@ class PickCard:
 
     # Sportsbook info
     book: str = "—"  # DK | FD | MGM | etc.
+    book_display: Optional[str] = None  # v10.76: Human-readable book name
     book_url: Optional[str] = None
     book_status: str = "no_link"  # "linked" | "no_link" | "not_offered"
+
+    # v10.76: Strict pick template - odds tracking
+    market_key: Optional[str] = None  # Raw market identifier (spreads, h2h, totals, player_points, etc.)
+    odds_pulled_at: Optional[str] = None  # ISO timestamp when odds were fetched
+    line_at_pull: Optional[float] = None  # Line value at time of pull
+    odds_at_pull: Optional[int] = None  # American odds at time of pull
 
     # Scoring
     score: float = 0.0
@@ -175,8 +182,13 @@ def normalize_game_pick(raw: dict, sport: str = "—") -> PickCard:
         odds=odds,
         odds_display=odds_display,
         book=raw.get("book", raw.get("sportsbook", "—")),
+        book_display=raw.get("book_display"),
         book_url=raw.get("book_url", raw.get("bet_url", None)),
         book_status="linked" if raw.get("book_url") else "no_link",
+        market_key=raw.get("market_key", raw.get("market")),
+        odds_pulled_at=raw.get("odds_pulled_at"),
+        line_at_pull=raw.get("line_at_pull"),
+        odds_at_pull=raw.get("odds_at_pull"),
         score=score,
         tier=tier,
         units=units,
@@ -260,8 +272,13 @@ def normalize_prop_pick(raw: dict, sport: str = "—") -> PickCard:
         odds=odds,
         odds_display=odds_display,
         book=raw.get("book", raw.get("sportsbook", "—")),
+        book_display=raw.get("book_display"),
         book_url=raw.get("book_url", raw.get("bet_url", None)),
         book_status="linked" if raw.get("book_url") else "no_link",
+        market_key=raw.get("market_key", raw.get("market")),
+        odds_pulled_at=raw.get("odds_pulled_at"),
+        line_at_pull=raw.get("line_at_pull"),
+        odds_at_pull=raw.get("odds_at_pull"),
         score=score,
         tier=tier,
         units=units,

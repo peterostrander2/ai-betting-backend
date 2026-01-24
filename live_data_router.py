@@ -446,6 +446,48 @@ SPORT_PROFILES = {
 }
 
 
+# ============================================================================
+# v10.76: BOOKMAKER DISPLAY NAMES - Maps Odds API keys to friendly names
+# ============================================================================
+BOOKMAKER_DISPLAY_NAMES = {
+    "draftkings": "DraftKings",
+    "fanduel": "FanDuel",
+    "betmgm": "BetMGM",
+    "pointsbetus": "PointsBet",
+    "caesars": "Caesars",
+    "williamhill_us": "Caesars",
+    "bovada": "Bovada",
+    "betonlineag": "BetOnline",
+    "betrivers": "BetRivers",
+    "unibet_us": "Unibet",
+    "foxbet": "FOX Bet",
+    "twinspires": "TwinSpires",
+    "superbook": "SuperBook",
+    "wynnbet": "WynnBET",
+    "betfred": "Betfred",
+    "espnbet": "ESPN BET",
+    "fanatics": "Fanatics",
+    "hardrockbet": "Hard Rock Bet",
+    "fliff": "Fliff",
+    "mybookieag": "MyBookie",
+    "betus": "BetUS",
+    "lowvig": "LowVig",
+    "pinnacle": "Pinnacle",
+}
+
+# v10.76: Sportsbook deep link URL templates (where available)
+BOOKMAKER_BET_URLS = {
+    "draftkings": "https://sportsbook.draftkings.com",
+    "fanduel": "https://sportsbook.fanduel.com",
+    "betmgm": "https://sports.betmgm.com",
+    "caesars": "https://www.caesars.com/sportsbook-and-casino",
+    "betrivers": "https://www.betrivers.com",
+    "pointsbetus": "https://www.pointsbet.com",
+    "espnbet": "https://espnbet.com",
+    "fanatics": "https://sportsbook.fanatics.com",
+}
+
+
 def get_sport_profile(sport_name: str) -> dict:
     """Get sport profile with safe fallback to NBA defaults."""
     return SPORT_PROFILES.get(sport_name.lower(), SPORT_PROFILES["nba"])
@@ -8520,6 +8562,12 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 # Estimated predicted value
                 predicted_value = line_val + (2.5 if side == "Over" else -2.5) * (total_score / 8.0)
 
+                # v10.76: Capture book info for prop metadata
+                prop_book_key = prop.get("book", "unknown")
+                prop_book_display = BOOKMAKER_DISPLAY_NAMES.get(prop_book_key, prop_book_key.title() if prop_book_key else "Unknown")
+                prop_book_url = BOOKMAKER_BET_URLS.get(prop_book_key)
+                prop_odds_pulled_at = datetime.now().isoformat()
+
                 # Build the prop pick object
                 prop_pick = {
                     "sport": sport.upper(),  # v10.57: Required for validators
@@ -8552,7 +8600,15 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                     "reasons": score_data.get("reasons", []),  # Production v3 explainability
                     **score_data,
                     "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
-                    "source": "odds_api"
+                    "source": "odds_api",
+                    # v10.76: Book tracking for strict pick template
+                    "book": prop_book_key,
+                    "book_display": prop_book_display,
+                    "book_url": prop_book_url,
+                    "market_key": market,
+                    "odds_pulled_at": prop_odds_pulled_at,
+                    "line_at_pull": line_val,
+                    "odds_at_pull": odds,
                 }
 
                 # v10.14: Add mapping reason for explainability
@@ -8861,6 +8917,12 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 sharp_signal = sharp_lookup.get(game_key, {})
 
                 for bm in game.get("bookmakers", [])[:1]:  # Just use first book for now
+                    # v10.76: Capture book info for pick metadata
+                    book_key = bm.get("key", "unknown")
+                    book_display = BOOKMAKER_DISPLAY_NAMES.get(book_key, book_key.title())
+                    book_url = BOOKMAKER_BET_URLS.get(book_key)
+                    odds_pulled_at = datetime.now().isoformat()
+
                     for market in bm.get("markets", []):
                         market_key = market.get("key", "")
 
@@ -9117,6 +9179,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                                 "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
                                 "source": "odds_api",
                                 "monte_carlo": monte_carlo_data if monte_carlo_data else None,  # v10.59
+                                # v10.76: Book tracking for strict pick template
+                                "book": book_key,
+                                "book_display": book_display,
+                                "book_url": book_url,
+                                "market_key": market_key,
+                                "odds_pulled_at": odds_pulled_at,
+                                "line_at_pull": point,
+                                "odds_at_pull": odds,
                             })
     except Exception as e:
         logger.warning("Game odds fetch failed: %s", e)

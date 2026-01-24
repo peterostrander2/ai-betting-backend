@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.75"  # Time Status Detection: Live-bet eligibility for all picks
+ENGINE_VERSION = "v10.76"  # Strict Pick Template: Book tracking for all picks (book, market, odds_pulled_at)
 API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 
