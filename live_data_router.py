@@ -5986,10 +5986,26 @@ async def get_best_bets_all(debug: int = 0):
     for pick in action_leans_picks:
         normalize_pick_for_v3(pick, pick.get("sport", ""))
 
+    # v10.67: Generate status message based on time gate results
+    status_message = None
+    if len(all_picks_final) == 0:
+        started_count = time_gate_debug.get("removed_already_started", 0)
+        not_today_count = time_gate_debug.get("removed_not_today", 0)
+        candidates_before = time_gate_debug.get("candidates_before_time_gate", 0)
+
+        if started_count > 0 and candidates_before > 0:
+            status_message = f"All {started_count} game(s) have already started. Check back tomorrow for new picks."
+        elif not_today_count > 0:
+            status_message = f"No games scheduled for today. {not_today_count} game(s) are scheduled for other days."
+        elif candidates_before == 0:
+            status_message = "No games found across any sport. This may be an off-day or API issue."
+        else:
+            status_message = "No picks available at this time."
+
     # Build response
     result = {
-        "source": "production_v10.54_all_sports",
-        "scoring_system": "v10.54: V3 Contract Compliant (id, int confidence, ordered reasons)",
+        "source": "production_v10.67_all_sports",
+        "scoring_system": "v10.67: Time gate status messaging",
         "all_picks": {
             "count": len(all_picks_final),
             "picks": all_picks_final
@@ -6018,6 +6034,11 @@ async def get_best_bets_all(debug: int = 0):
         },
         "timestamp": datetime.now().isoformat()
     }
+
+    # v10.67: Add status message when no picks available
+    if status_message:
+        result["status_message"] = status_message
+        result["all_picks"]["message"] = status_message
 
     if debug == 1:
         result["debug"] = debug_info
