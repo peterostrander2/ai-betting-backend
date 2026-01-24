@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.89"  # v10.89: Flatten scoring_breakdown to top-level for frontend
+    ENGINE_VERSION = "v10.90"  # v10.90: Prop availability check - filter out players with pulled lines
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 

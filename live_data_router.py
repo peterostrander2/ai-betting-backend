@@ -9297,6 +9297,75 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         tier_threshold=["GOLD_STAR", "EDGE_LEAN"]
     )
 
+    # =========================================================================
+    # v10.90: Prop Availability Check - Filter out players whose lines were pulled
+    # Sportsbooks pull lines when players are ruled OUT (late scratch, injury, etc.)
+    # This prevents serving stale props for unavailable players
+    # =========================================================================
+    props_before_availability = len(actionable_props)
+    unavailable_players = []
+
+    if actionable_props and ODDS_API_KEY:
+        try:
+            # Get unique game IDs from props
+            game_ids = list(set(p.get("game_id") for p in actionable_props if p.get("game_id")))
+
+            # For each game, get currently available players
+            available_players_by_game = {}
+            for game_id in game_ids[:5]:  # Limit to 5 games to control API usage
+                try:
+                    check_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/events/{game_id}/odds"
+                    check_resp = await fetch_with_retries(
+                        "GET", check_url,
+                        params={
+                            "apiKey": ODDS_API_KEY,
+                            "regions": "us",
+                            "markets": "player_points",
+                            "oddsFormat": "american"
+                        },
+                        timeout=5.0
+                    )
+                    if check_resp and check_resp.status_code == 200:
+                        check_data = check_resp.json()
+                        players_set = set()
+                        for book in check_data.get("bookmakers", []):
+                            for market in book.get("markets", []):
+                                for outcome in market.get("outcomes", []):
+                                    player_name = outcome.get("description", "")
+                                    if player_name:
+                                        players_set.add(player_name.lower())
+                        available_players_by_game[game_id] = players_set
+                except Exception:
+                    pass  # Skip game if check fails
+
+            # Filter out props where player is no longer available
+            validated_props = []
+            for prop in actionable_props:
+                game_id = prop.get("game_id")
+                player_name = prop.get("player_name", prop.get("player", "")).lower()
+
+                if game_id in available_players_by_game:
+                    available = available_players_by_game[game_id]
+                    if player_name and player_name not in available:
+                        # Player's lines were pulled - they're likely OUT
+                        unavailable_players.append({
+                            "player": prop.get("player_name", prop.get("player")),
+                            "reason": "LINES_PULLED"
+                        })
+                        prop["availability_status"] = "UNAVAILABLE"
+                        continue  # Skip this prop
+
+                validated_props.append(prop)
+
+            actionable_props = validated_props
+
+        except Exception as e:
+            logger.warning(f"v10.90: Prop availability check failed: {e}")
+            # Continue with unvalidated props if check fails
+
+    props_after_availability = len(actionable_props)
+    props_filtered_unavailable = props_before_availability - props_after_availability
+
     top_props = actionable_props
 
     # ============================================
@@ -10425,6 +10494,14 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         validator_debug["dropped_games"] = validator_debug["games_before"] - len(top_game_picks)
         validator_debug["drop_reasons"] = all_drop_reasons
 
+    # v10.90: Add availability check results to debug
+    validator_debug["props_filtered_unavailable"] = props_filtered_unavailable
+    validator_debug["unavailable_players"] = unavailable_players
+
+    if props_filtered_unavailable > 0:
+        logger.info(f"v10.90: Filtered {props_filtered_unavailable} props - lines pulled: {[p['player'] for p in unavailable_players]}")
+
+    if VALIDATORS_AVAILABLE and (top_props or top_game_picks):
         # Log summary
         total_dropped = validator_debug["dropped_props"] + validator_debug["dropped_games"]
         if total_dropped > 0:
