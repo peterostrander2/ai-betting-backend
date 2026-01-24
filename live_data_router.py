@@ -787,21 +787,26 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict 
             pick["debug_flags"].append(f"TIER_DOWNGRADE:partial_stack:{','.join(integrity['engines_missing'])}")
             tier = "MONITOR"
 
-    # Action based on tier
-    tier_to_action = {
-        "TITANIUM_SMASH": "SMASH",
-        "GOLD_STAR": "SMASH",
-        "EDGE_LEAN": "PLAY",
-        "MONITOR": "WATCH",
-        "PASS": "SKIP"
+    # =========================================================================
+    # v10.84: TIER BUNDLE - All tier-related fields from single source
+    # tier, tier_badge, action, units MUST be locked together
+    # =========================================================================
+    tier_config = {
+        "TITANIUM_SMASH": {"badge": "TITANIUM SMASH", "action": "SMASH", "units": 2.5},
+        "GOLD_STAR": {"badge": "GOLD STAR", "action": "SMASH", "units": 2.0},
+        "EDGE_LEAN": {"badge": "EDGE LEAN", "action": "PLAY", "units": 1.0},
+        "MONITOR": {"badge": "MONITOR", "action": "WATCH", "units": 0.0},
+        "PASS": {"badge": "PASS", "action": "SKIP", "units": 0.0},
     }
-    pick["action"] = tier_to_action.get(tier, "SKIP")
+    config = tier_config.get(tier, tier_config["PASS"])
 
-    # tier_badge (alias for badge)
-    pick["tier_badge"] = pick.get("badge", tier)
+    pick["tier"] = tier  # Ensure tier is set (may have been downgraded)
+    pick["tier_badge"] = config["badge"]
+    pick["action"] = config["action"]
+    pick["units"] = config["units"]
 
-    # units (alias for recommended_units)
-    pick["units"] = pick.get("recommended_units", pick.get("units", 0.0))
+    # Also update badge field for backwards compatibility
+    pick["badge"] = config["badge"]
 
     # =========================================================================
     # v10.83: Props - prop_stat, direction, injury validation
@@ -824,12 +829,18 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict 
         elif injury_status == "QUESTIONABLE":
             # Downgrade tier by 1 for questionable players
             tier_order = ["PASS", "MONITOR", "EDGE_LEAN", "GOLD_STAR", "TITANIUM_SMASH"]
-            current_idx = tier_order.index(tier) if tier in tier_order else 0
+            current_idx = tier_order.index(pick["tier"]) if pick["tier"] in tier_order else 0
             if current_idx > 0:
-                pick["original_tier"] = tier
-                pick["tier"] = tier_order[current_idx - 1]
+                pick["original_tier"] = pick["tier"]
+                new_tier = tier_order[current_idx - 1]
+                pick["tier"] = new_tier
+                # Update all tier bundle fields
+                new_config = tier_config.get(new_tier, tier_config["PASS"])
+                pick["tier_badge"] = new_config["badge"]
+                pick["action"] = new_config["action"]
+                pick["units"] = new_config["units"]
+                pick["badge"] = new_config["badge"]
                 pick["debug_flags"].append(f"TIER_DOWNGRADE:questionable:{player}")
-                pick["action"] = tier_to_action.get(pick["tier"], "SKIP")
     else:
         pick["prop_stat"] = None
         pick["direction"] = None

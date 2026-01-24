@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.83"  # v10.83: Production hardening (book links, movement, validation)
+    ENGINE_VERSION = "v10.84"  # v10.84: Tier bundle lock (tier/badge/action/units always in sync)
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 
