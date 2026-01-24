@@ -177,6 +177,17 @@ try:
 except ImportError:
     APSCHEDULER_AVAILABLE = False
 
+# v10.61: Import RotoWire API for referee assignments + starting lineups
+try:
+    from rotowire_api import (
+        get_referee_assignments, get_starting_lineups, get_injury_news,
+        get_officials_for_game, is_player_in_lineup, is_rotowire_configured
+    )
+    ROTOWIRE_AVAILABLE = is_rotowire_configured()
+except ImportError:
+    ROTOWIRE_AVAILABLE = False
+    logger.warning("rotowire_api module not available - referee data disabled")
+
 # v10.41: Import Jason Sim 2.0 confluence layer
 try:
     from jason_sim_confluence import (
@@ -2393,9 +2404,24 @@ async def system_health():
     if not CONTEXT_LAYER_AVAILABLE:
         issues.append("Context layer unavailable - matchup adjustments disabled")
 
+    # 5c. RotoWire API (v10.61: Referee assignments + lineups)
+    rotowire_status = {
+        "available": ROTOWIRE_AVAILABLE,
+        "features": [
+            "Referee Assignments (activates Officials pillar)",
+            "Starting Lineups (lineup validation)",
+            "Injury News (real-time updates)"
+        ],
+        "status": "ACTIVE" if ROTOWIRE_AVAILABLE else "NOT_CONFIGURED"
+    }
+    health["components"]["rotowire"] = rotowire_status
+    if not ROTOWIRE_AVAILABLE:
+        issues.append("RotoWire API not configured - referee impact disabled")
+
     # 6. Pillars Status (which have data sources)
     # v10.35: Hospital Fade and Hook Discipline now active
     # v10.36: Expert Consensus derived from Sharp Split (sharp money = expert money)
+    # v10.61: Added Prop Correlation + Volume Discipline + Officials
     pillars = {
         "active": [
             {"name": "Sharp Split", "data_source": "Playbook API splits", "status": "ACTIVE"},
@@ -2408,11 +2434,14 @@ async def system_health():
             {"name": "Prime Time", "data_source": "Game time", "status": "ACTIVE"},
             {"name": "Hook Discipline", "data_source": "Spread value (v10.35)", "status": "ACTIVE"},
             {"name": "Mid-Spread Boss Zone", "data_source": "Spread value", "status": "ACTIVE"},
+            {"name": "Prop Correlation", "data_source": "Game total + market type (v10.61)", "status": "ACTIVE"},
+            {"name": "Volume Discipline", "data_source": "Ticket % consensus (v10.61)", "status": "ACTIVE"},
+            {"name": "Officials Impact", "data_source": "RotoWire API (v10.61)", "status": "ACTIVE" if ROTOWIRE_AVAILABLE else "NEEDS_API"},
             {"name": "Multi-Pillar Confluence", "data_source": "Calculated", "status": "ACTIVE"}
         ],
         "inactive": [],
-        "active_count": 11,
-        "total_defined": 11
+        "active_count": 14 if ROTOWIRE_AVAILABLE else 13,
+        "total_defined": 14
     }
     health["components"]["pillars"] = pillars
 
@@ -5136,6 +5165,27 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     injury_index = {}
     if VALIDATORS_AVAILABLE:
         injury_index = build_injury_index(injuries_data.get("data", []))
+
+    # v10.61: Fetch referee assignments from RotoWire (for Officials pillar)
+    referee_lookup = {}  # game_key -> {"lead_official": str, "official_2": str, ...}
+    if ROTOWIRE_AVAILABLE:
+        try:
+            from datetime import date as date_type
+            refs_data = await get_referee_assignments(sport, date_type.today())
+            if refs_data.get("available"):
+                for game in refs_data.get("games", []):
+                    home = game.get("home_team", "")
+                    away = game.get("away_team", "")
+                    if home and away:
+                        # Create multiple key formats for matching
+                        game_key = f"{away}@{home}"
+                        referee_lookup[game_key.lower()] = game.get("officials", {})
+                        # Also store by team names individually for fuzzy matching
+                        referee_lookup[home.lower()] = game.get("officials", {})
+                        referee_lookup[away.lower()] = game.get("officials", {})
+                logger.info(f"v10.61: RotoWire loaded {len(refs_data.get('games', []))} referee assignments for {sport.upper()}")
+        except Exception as e:
+            logger.warning(f"v10.61: RotoWire referee fetch failed (continuing without): {e}")
         logger.debug(f"v10.57: Built injury index with {len(injury_index)} players")
 
     # Get esoteric engines for enhanced scoring
@@ -6017,14 +6067,22 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                         research_reasons.append(f"WEATHER: High Wind ({wind_mph:.0f}mph) {weather_penalty:.2f}")
 
         # v10.60 Context Layer: Officials Impact (when referee data available)
+        # v10.61: Now wired to RotoWire API for real referee assignments!
         # OfficialsService can analyze crew tendencies for totals/spreads
-        # Note: Officials data requires referee assignments from external source
-        # When wired, use: OfficialsService.get_adjustment(sport, lead_official, ...)
-        # For now, this is a placeholder until referee assignments are fetched
         if is_game_pick and OFFICIALS_SERVICE_AVAILABLE:
-            # Check if officials data is available in the game context
-            # This would come from an external API that provides referee assignments
-            officials_data = None  # Placeholder - would be passed in when available
+            # Try to find officials for this game from RotoWire data
+            officials_data = None
+            if referee_lookup:
+                # Try multiple key formats for matching
+                game_key = f"{away_team}@{home_team}".lower() if away_team and home_team else ""
+                officials_data = referee_lookup.get(game_key)
+                # Fallback: try by home team name
+                if not officials_data and home_team:
+                    officials_data = referee_lookup.get(home_team.lower())
+                # Fallback: try by away team name
+                if not officials_data and away_team:
+                    officials_data = referee_lookup.get(away_team.lower())
+
             if officials_data and officials_data.get("lead_official"):
                 try:
                     officials_adj = OfficialsService.get_adjustment(

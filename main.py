@@ -97,8 +97,8 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.61"  # Complete 8 Pillars: +Prop Correlation +Volume Discipline
-API_VERSION = "14.5"
+ENGINE_VERSION = "v10.62"  # RotoWire API: Referee assignments + Officials pillar activated
+API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 
 

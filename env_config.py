@@ -75,6 +75,9 @@ class Config:
     # Planetary Hours
     PLANETARY_HOURS_API_URL = get_env("EXPO_PUBLIC_PLANETARY_HOURS_API_URL", "PLANETARY_HOURS_API_URL")
 
+    # RotoWire API (referee assignments, lineups, injuries)
+    ROTOWIRE_API_KEY = get_env("ROTOWIRE_API_KEY", "EXPO_PUBLIC_ROTOWIRE_API_KEY")
+
     # Auth
     API_AUTH_ENABLED = get_env_bool("API_AUTH_ENABLED", False)
     API_AUTH_KEY = get_env("API_AUTH_KEY")
@@ -91,6 +94,7 @@ class Config:
             "astro": bool(cls.ASTRONOMY_API_ID and cls.ASTRONOMY_API_SECRET),
             "noaa": bool(cls.NOAA_BASE_URL),
             "planetary": bool(cls.PLANETARY_HOURS_API_URL),
+            "rotowire": bool(cls.ROTOWIRE_API_KEY),
             "auth": cls.API_AUTH_ENABLED
         }
 
