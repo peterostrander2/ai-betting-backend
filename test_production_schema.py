@@ -466,6 +466,12 @@ def main():
     if not run_sport_test(base_url, "nhl"):
         all_passed = False
 
+    # Test NFL (playoffs only in Jan)
+    if not run_sport_test(base_url, "nfl"):
+        all_passed = False
+
+    # MLB skipped - off-season (March-November)
+
     # Summary
     print(f"\n{'='*60}")
     if all_passed:
