@@ -2428,3 +2428,99 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" -H 
 - **Production URL:** https://web-production-7b2a.up.railway.app
 
 ---
+
+## Complete API Stack (v10.68)
+
+**All 8 data sources are active and feeding the scoring pipeline.**
+
+### Core Betting APIs (PAID - Fully Utilized)
+
+| API | Status | Endpoints | Purpose |
+|-----|--------|-----------|---------|
+| **Odds API** | ✅ Online | 7 | Live odds, player props (46+ markets), scores, alt lines, team totals, historical odds, market discovery |
+| **Playbook API** | ✅ Online | 9 | Betting splits, sharp money, injuries, lines (for RLM), teams, schedule, games, usage |
+
+### Free APIs
+
+| API | Status | Features | Integration |
+|-----|--------|----------|-------------|
+| **ESPN** | ✅ Online | Starting lineups, officials, referee tendencies | Referee adjustment pillar (+/-0.2 for totals) |
+| **BallDontLie** | ✅ Online | NBA player stats | Backup data source |
+| **NOAA** | ✅ Online | Space weather | Schumann resonance for esoteric |
+
+### Alternative Data APIs (Edge Signals)
+
+| API | Status | Purpose | Scoring Integration |
+|-----|--------|---------|---------------------|
+| **Twitter** | ✅ Online | Breaking injury alerts, beat reporter news | Hospital Fade pillar boost (+0.25 to +0.5) |
+| **Finnhub** | ✅ Online | Sportsbook stock sentiment (DKNG, FLTR) | Alternative sharp signal (+1.0 to +1.5) |
+| **SerpAPI** | ✅ Online | Google News aggregation, trending injuries | Supplementary injury detection |
+| **FRED** | ✅ Online | Economic indicators, consumer confidence | Esoteric alt data component (+/-0.3) |
+
+### Railway Environment Variables
+
+```bash
+# Core APIs (CRITICAL)
+ODDS_API_KEY=xxx              # The Odds API
+PLAYBOOK_API_KEY=xxx          # Playbook Sports API
+
+# Alternative Data APIs
+TWITTER_BEARER=xxx            # Twitter/X API
+FINNHUB_KEY=xxx               # Finnhub stock data
+SERPAPI_KEY=xxx               # SerpAPI (Google Search)
+FRED_API_KEY=xxx              # Federal Reserve data
+
+# Other APIs
+WEATHER_API_KEY=xxx           # Game day weather
+ASTRONOMY_API_ID=xxx          # Moon phases, planetary hours
+ASTRONOMY_API_SECRET=xxx      # Astronomy auth
+
+# Platform
+API_AUTH_ENABLED=true
+API_AUTH_KEY=xxx              # Backend auth key
+DATABASE_URL=xxx              # Postgres connection
+```
+
+### API Health Check
+
+```bash
+# Quick status check
+curl "https://web-production-7b2a.up.railway.app/live/api-coverage" \
+  -H "X-API-Key: YOUR_KEY" | jq '{
+    version: .version,
+    odds_api: .odds_api.configured,
+    playbook_api: .playbook_api.configured,
+    espn: .espn_integration.configured,
+    alt_data: [.alternative_data_apis | to_entries[] | {(.key): .value.configured}]
+  }'
+```
+
+### Data Flow Summary
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    DATA SOURCES (v10.68)                    │
+├─────────────────────────────────────────────────────────────┤
+│  PAID APIs                                                  │
+│    ├── Odds API ──────→ Odds, Props, Scores, Alt Lines     │
+│    └── Playbook API ──→ Splits, Sharp Money, Injuries, RLM │
+├─────────────────────────────────────────────────────────────┤
+│  FREE APIs                                                  │
+│    ├── ESPN ──────────→ Lineups, Officials, Ref Tendencies │
+│    ├── BallDontLie ───→ NBA Stats (backup)                 │
+│    └── NOAA ──────────→ Space Weather (esoteric)           │
+├─────────────────────────────────────────────────────────────┤
+│  ALTERNATIVE DATA                                           │
+│    ├── Twitter ───────→ Breaking Injury News               │
+│    ├── Finnhub ───────→ Sportsbook Stock Sentiment         │
+│    ├── SerpAPI ───────→ Google News Aggregation            │
+│    └── FRED ──────────→ Economic Indicators                │
+├─────────────────────────────────────────────────────────────┤
+│                           ↓                                 │
+│              SCORING PIPELINE (8 Pillars)                   │
+│                           ↓                                 │
+│              BEST-BETS OUTPUT (GOLD_STAR, EDGE_LEAN)        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
