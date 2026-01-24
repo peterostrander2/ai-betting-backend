@@ -6774,9 +6774,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                             is_home_pick = (pick_name == home_team) if market_key != "totals" else False
 
                             # Calculate score with full esoteric integration (v10.9)
+                            # v10.57: Raise base_ai to 6.0 for parity with props
                             score_data = calculate_pick_score(
                                 game_str,
                                 sharp_signal,
+                                base_ai=6.0,  # v10.57: Parity with props (was 5.8)
                                 player_name="",  # Empty = game pick flag
                                 home_team=home_team,
                                 away_team=away_team,
@@ -6895,9 +6897,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             is_home_sharp = signal.get("side") == "HOME"
 
             # Calculate score with v10.9 additive scoring
+            # v10.57: Raise base_ai to 6.0 for parity with props
             score_data = calculate_pick_score(
                 game_str,
                 signal,
+                base_ai=6.0,  # v10.57: Parity with props (was 5.8)
                 player_name="",
                 home_team=home_team,
                 away_team=away_team,
