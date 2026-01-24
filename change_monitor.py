@@ -32,6 +32,9 @@ class ChangeType(str, Enum):
     TIER_CHANGE = "TIER_CHANGE"    # Pick tier upgraded/downgraded
     PICK_REMOVED = "PICK_REMOVED"  # Pick no longer qualifies
     PICK_ADDED = "PICK_ADDED"      # New pick qualified
+    # NHL-specific
+    PROP_LINE_MOVE = "PROP_LINE_MOVE"      # NHL prop line moved >= 0.5 (shots/goals/points/saves)
+    GOALIE_STATUS_CHANGE = "GOALIE_STATUS_CHANGE"  # NHL goalie starter confirmed/changed
 
 
 @dataclass
@@ -226,6 +229,54 @@ def compare_tier(old_tier: str, new_tier: str) -> Optional[Change]:
     return None
 
 
+def compare_nhl_prop_line(old_line: float, new_line: float, prop_type: str) -> Optional[Change]:
+    """
+    Check if NHL prop line moved >= 0.5.
+
+    NHL props: shots_on_goal, goals, points, assists, saves
+    """
+    diff = abs(old_line - new_line)
+
+    if diff >= 0.5:
+        severity = "alert" if diff >= 1.0 else "warning"
+        return Change(
+            change_type=ChangeType.PROP_LINE_MOVE,
+            pick_id="",
+            description=f"NHL {prop_type} line moved from {old_line} to {new_line}",
+            old_value=str(old_line),
+            new_value=str(new_line),
+            severity=severity
+        )
+    return None
+
+
+def check_goalie_status_change(old_pick: Dict, new_pick: Dict) -> Optional[Change]:
+    """
+    Check if NHL goalie starter status changed.
+    """
+    old_goalie = old_pick.get("goalie_starter") or old_pick.get("starter")
+    new_goalie = new_pick.get("goalie_starter") or new_pick.get("starter")
+
+    if old_goalie and new_goalie and old_goalie != new_goalie:
+        return Change(
+            change_type=ChangeType.GOALIE_STATUS_CHANGE,
+            pick_id="",
+            description=f"Goalie changed from {old_goalie} to {new_goalie}",
+            old_value=str(old_goalie),
+            new_value=str(new_goalie),
+            severity="alert"
+        )
+    return None
+
+
+# NHL prop types that should use prop line comparison
+NHL_PROP_TYPES = [
+    "player_shots_on_goal", "player_goals", "player_points",
+    "player_assists", "goalie_saves", "player_blocked_shots",
+    "player_power_play_points", "shots_on_goal", "goals", "points", "saves"
+]
+
+
 def diff_snapshots(old_snapshot: Dict, new_picks: List[Dict], sport: str) -> ChangeReport:
     """
     Compare old snapshot with new picks and detect changes.
@@ -301,6 +352,29 @@ def diff_snapshots(old_snapshot: Dict, new_picks: List[Dict], sport: str) -> Cha
                     changes.append(line_change)
             except:
                 pass
+
+        # NHL-specific: Prop line changes for shots/goals/points/saves
+        if sport.lower() == "nhl":
+            prop_type = old_pick.get("stat_type") or old_pick.get("prop_type") or ""
+            if prop_type.lower() in [p.lower() for p in NHL_PROP_TYPES]:
+                old_prop_line = old_pick.get("line") or old_pick.get("point")
+                new_prop_line = new_pick.get("line") or new_pick.get("point")
+                if old_prop_line is not None and new_prop_line is not None:
+                    try:
+                        prop_change = compare_nhl_prop_line(
+                            float(old_prop_line), float(new_prop_line), prop_type
+                        )
+                        if prop_change:
+                            prop_change.pick_id = pick_id
+                            changes.append(prop_change)
+                    except:
+                        pass
+
+            # NHL-specific: Goalie status change
+            goalie_change = check_goalie_status_change(old_pick, new_pick)
+            if goalie_change:
+                goalie_change.pick_id = pick_id
+                changes.append(goalie_change)
 
     # Count by severity
     alerts_count = sum(1 for c in changes if c.severity == "alert")

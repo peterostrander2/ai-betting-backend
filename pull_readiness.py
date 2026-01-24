@@ -166,13 +166,17 @@ PULL_WINDOWS = {
     },
     "nhl": {
         "weekday": [
-            PullWindow("17:30", "18:00", "primary", "nhl", "weekday"),
+            PullWindow("15:45", "16:15", "early", "nhl", "weekday"),
+            PullWindow("18:10", "18:40", "prime", "nhl", "weekday"),
         ],
         "saturday": [
-            PullWindow("17:30", "18:00", "primary", "nhl", "saturday"),
+            PullWindow("12:45", "13:15", "early", "nhl", "saturday"),
+            PullWindow("15:45", "16:15", "mid", "nhl", "saturday"),
+            PullWindow("18:10", "18:40", "prime", "nhl", "saturday"),
         ],
         "sunday": [
-            PullWindow("17:30", "18:00", "primary", "nhl", "sunday"),
+            PullWindow("14:10", "14:40", "day", "nhl", "sunday"),
+            PullWindow("18:10", "18:40", "prime", "nhl", "sunday"),
         ],
     },
 }
@@ -183,7 +187,14 @@ TIME_TO_START_CONFIG = {
     "ncaab": {"min": 90, "max": 360},    # 1.5 to 6 hours before
     "nfl": {"min": 90, "max": 240},      # 1.5 to 4 hours before
     "mlb": {"min": 60, "max": 300},      # 1 to 5 hours before
-    "nhl": {"min": 90, "max": 300},      # 1.5 to 5 hours before
+    "nhl": {"min": 60, "max": 360},      # 1 to 6 hours before puck drop
+}
+
+# NHL-specific injury thresholds (minutes)
+# READY: <=120, WARN: 121-240, FAIL: >240
+NHL_INJURY_THRESHOLDS = {
+    "ready": 120,
+    "warn": 240,
 }
 
 
@@ -203,19 +214,26 @@ def check_injury_gate(
     - NBA: Update within last 90 minutes
     - NFL: Sunday inactives must be available on game day
     - NCAAB: Less formal, 120 minute threshold
+    - NHL: READY <=120m, WARN 121-240m, FAIL >240m
     """
     now = datetime.now(EST)
 
-    # Freshness thresholds (minutes)
+    # Freshness thresholds (minutes) for PASS status
     thresholds = {
         "nba": 90,
         "ncaab": 120,
         "nfl": 90,
         "mlb": 120,
-        "nhl": 90,
+        "nhl": 120,  # NHL uses 120m for READY
+    }
+
+    # FAIL thresholds (only NHL has explicit FAIL threshold)
+    fail_thresholds = {
+        "nhl": 240,  # NHL FAIL if >240m
     }
 
     threshold = thresholds.get(sport.lower(), 120)
+    fail_threshold = fail_thresholds.get(sport.lower())
 
     if last_update is None:
         return GateResult(
@@ -233,6 +251,14 @@ def check_injury_gate(
             status=GateStatus.PASS,
             reason=f"Injury data fresh ({int(age_minutes)}m old, threshold {threshold}m)",
             details={"age_minutes": int(age_minutes), "threshold_minutes": threshold}
+        )
+    elif fail_threshold and age_minutes > fail_threshold:
+        # NHL-specific: FAIL if >240m
+        return GateResult(
+            gate_name="INJURY_FRESHNESS",
+            status=GateStatus.FAIL,
+            reason=f"Injury data too stale ({int(age_minutes)}m old, max {fail_threshold}m)",
+            details={"age_minutes": int(age_minutes), "fail_threshold": fail_threshold}
         )
     else:
         return GateResult(
@@ -377,10 +403,15 @@ def check_time_to_start_gate(
     """
     Check if we're in the optimal window before game start.
 
-    Target: 90-360 minutes before first game (varies by sport)
+    Target: 60-360 minutes before first game (varies by sport)
+    NHL-specific: READY 60-360, WARN 30-59 or 361-480, FAIL <30 or >480
     """
     now = datetime.now(EST)
     config = TIME_TO_START_CONFIG.get(sport.lower(), {"min": 90, "max": 360})
+
+    # NHL has specific FAIL thresholds
+    nhl_fail_early = 30   # FAIL if <30 minutes
+    nhl_fail_late = 480   # FAIL if >480 minutes
 
     if not games or len(games) == 0:
         return GateResult(
@@ -422,7 +453,26 @@ def check_time_to_start_gate(
             reason=f"First game already started ({abs(int(minutes_to_start))}m ago)",
             details={"minutes_to_start": int(minutes_to_start), "first_game": earliest_start.strftime("%I:%M %p ET")}
         )
-    elif minutes_to_start < config["min"]:
+
+    # NHL-specific: FAIL if <30 minutes (too close to puck drop)
+    if sport.lower() == "nhl" and minutes_to_start < nhl_fail_early:
+        return GateResult(
+            gate_name="TIME_TO_START",
+            status=GateStatus.FAIL,
+            reason=f"Too close to puck drop ({int(minutes_to_start)}m, min {nhl_fail_early}m)",
+            details={"minutes_to_start": int(minutes_to_start), "nhl_fail_early": nhl_fail_early}
+        )
+
+    # NHL-specific: FAIL if >480 minutes (too early)
+    if sport.lower() == "nhl" and minutes_to_start > nhl_fail_late:
+        return GateResult(
+            gate_name="TIME_TO_START",
+            status=GateStatus.FAIL,
+            reason=f"Too early for NHL ({int(minutes_to_start)}m, max {nhl_fail_late}m)",
+            details={"minutes_to_start": int(minutes_to_start), "nhl_fail_late": nhl_fail_late}
+        )
+
+    if minutes_to_start < config["min"]:
         return GateResult(
             gate_name="TIME_TO_START",
             status=GateStatus.WARN,

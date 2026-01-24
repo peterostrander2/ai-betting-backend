@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.73"  # Pull Readiness System: Data gates, engine audit, change monitoring
+ENGINE_VERSION = "v10.74"  # NHL Full Support: Pull windows, readiness gates, change monitoring
 API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 
