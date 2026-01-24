@@ -4548,6 +4548,20 @@ async def get_playbook_games(sport: str, date: str = None):
 # v10.65: API COVERAGE SUMMARY ENDPOINT
 # ============================================================================
 
+@router.get("/env-check")
+async def env_check():
+    """Debug endpoint to check environment variable loading."""
+    import os
+    return {
+        "twitter_bearer_set": bool(os.getenv("TWITTER_BEARER")),
+        "twitter_bearer_len": len(os.getenv("TWITTER_BEARER", "")),
+        "finnhub_key_set": bool(os.getenv("FINNHUB_KEY")),
+        "serpapi_key_set": bool(os.getenv("SERPAPI_KEY")),
+        "fred_api_key_set": bool(os.getenv("FRED_API_KEY")),
+        "alt_data_available": ALT_DATA_AVAILABLE,
+        "alt_data_status": get_alt_data_status() if ALT_DATA_AVAILABLE else "not_loaded"
+    }
+
 @router.get("/api-coverage")
 async def get_api_coverage():
     """
