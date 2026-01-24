@@ -4141,6 +4141,472 @@ async def get_available_markets(sport: str, event_id: str):
     return {"sport": sport.upper(), "event_id": event_id, "source": "none", "markets": []}
 
 
+@router.get("/period-markets/{sport}")
+async def get_period_markets(sport: str, period: str = "q1"):
+    """
+    v10.65: Get first quarter/half betting markets.
+
+    Period options:
+    - q1, q2, q3, q4: Quarter markets (NBA, NFL)
+    - h1, h2: Half markets (all sports)
+    - p1, p2, p3: Period markets (NHL)
+    - 1st_5_innings: First 5 innings (MLB)
+
+    Response includes h2h, spreads, and totals for the specified period.
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Validate period
+    valid_periods = {
+        "nba": ["q1", "q2", "q3", "q4", "h1", "h2"],
+        "nfl": ["q1", "q2", "q3", "q4", "h1", "h2"],
+        "mlb": ["h1", "1st_5_innings"],
+        "nhl": ["p1", "p2", "p3", "h1", "h2"]
+    }
+    allowed = valid_periods.get(sport_lower, ["h1", "h2"])
+    if period not in allowed:
+        return {"sport": sport.upper(), "error": f"Invalid period '{period}'. Valid: {allowed}"}
+
+    cache_key = f"period_markets:{sport_lower}:{period}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    if not ODDS_API_KEY:
+        return {"sport": sport.upper(), "source": "none", "data": [], "message": "API key not configured"}
+
+    # Build period market keys
+    period_markets = []
+    if period.startswith("q"):
+        period_markets = [f"h2h_{period}", f"spreads_{period}", f"totals_{period}"]
+    elif period.startswith("h"):
+        period_markets = [f"h2h_{period}", f"spreads_{period}", f"totals_{period}"]
+    elif period.startswith("p"):
+        period_markets = [f"h2h_{period}", f"spreads_{period}", f"totals_{period}"]
+    elif period == "1st_5_innings":
+        period_markets = ["h2h_1st_5_innings", "spreads_1st_5_innings", "totals_1st_5_innings"]
+
+    data = []
+
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": ",".join(period_markets),
+                "oddsFormat": "american"
+            }
+        )
+
+        if resp and resp.status_code == 200:
+            games = resp.json()
+
+            for game in games:
+                game_data = {
+                    "game_id": game.get("id"),
+                    "home_team": game.get("home_team"),
+                    "away_team": game.get("away_team"),
+                    "commence_time": game.get("commence_time"),
+                    "period": period,
+                    "h2h": [],
+                    "spreads": [],
+                    "totals": []
+                }
+
+                for bm in game.get("bookmakers", []):
+                    book = bm.get("key")
+                    for market in bm.get("markets", []):
+                        market_key = market.get("key", "")
+                        for outcome in market.get("outcomes", []):
+                            entry = {
+                                "team": outcome.get("name"),
+                                "point": outcome.get("point"),
+                                "price": outcome.get("price"),
+                                "book": book
+                            }
+                            if "h2h" in market_key:
+                                game_data["h2h"].append(entry)
+                            elif "spreads" in market_key:
+                                game_data["spreads"].append(entry)
+                            elif "totals" in market_key:
+                                game_data["totals"].append(entry)
+
+                if game_data["h2h"] or game_data["spreads"] or game_data["totals"]:
+                    data.append(game_data)
+
+            logger.info("Period markets (%s) for %s: %d games", period, sport, len(data))
+
+        elif resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Period markets fetch failed for %s: %s", sport, e)
+
+    result = {
+        "sport": sport.upper(),
+        "period": period,
+        "source": "odds_api" if data else "none",
+        "count": len(data),
+        "data": data,
+        "available_periods": allowed
+    }
+    api_cache.set(cache_key, result, ttl=300)
+    return result
+
+
+@router.get("/playbook/teams/{sport}")
+async def get_playbook_teams(sport: str, include_injuries: bool = False):
+    """
+    v10.65: Get full team metadata from Playbook API.
+
+    Includes team info, abbreviations, and optionally injury data.
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    cache_key = f"playbook_teams:{sport_lower}:{include_injuries}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    if not PLAYBOOK_API_KEY:
+        return {"sport": sport.upper(), "source": "none", "data": [], "message": "Playbook API key not configured"}
+
+    try:
+        teams_url = f"{PLAYBOOK_API_BASE}/teams"
+        params = {
+            "league": sport_config['playbook'],
+            "api_key": PLAYBOOK_API_KEY
+        }
+        if include_injuries:
+            params["injuries"] = "true"
+
+        resp = await fetch_with_retries("GET", teams_url, params=params)
+
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            teams = data if isinstance(data, list) else data.get("data", data.get("teams", []))
+
+            result = {
+                "sport": sport.upper(),
+                "source": "playbook",
+                "count": len(teams),
+                "data": teams,
+                "includes_injuries": include_injuries
+            }
+            api_cache.set(cache_key, result, ttl=600)  # 10 min cache (teams don't change often)
+            logger.info("Playbook teams for %s: %d teams", sport, len(teams))
+            return result
+
+        elif resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Playbook teams fetch failed for %s: %s", sport, e)
+
+    return {"sport": sport.upper(), "source": "none", "data": []}
+
+
+@router.get("/playbook/splits-history/{sport}")
+async def get_playbook_splits_history(sport: str, date: str = None):
+    """
+    v10.65: Get historical betting splits from Playbook API.
+
+    Useful for backtesting and analyzing historical sharp action.
+
+    Args:
+        sport: Sport key
+        date: Date in YYYY-MM-DD format (defaults to yesterday)
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Default to yesterday
+    if not date:
+        yesterday = datetime.now() - timedelta(days=1)
+        date = yesterday.strftime("%Y-%m-%d")
+
+    cache_key = f"splits_history:{sport_lower}:{date}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    if not PLAYBOOK_API_KEY:
+        return {"sport": sport.upper(), "source": "none", "data": [], "message": "Playbook API key not configured"}
+
+    try:
+        url = f"{PLAYBOOK_API_BASE}/splits-history"
+        params = {
+            "league": sport_config['playbook'],
+            "date": date,
+            "api_key": PLAYBOOK_API_KEY
+        }
+
+        resp = await fetch_with_retries("GET", url, params=params)
+
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            splits = data if isinstance(data, list) else data.get("data", data.get("splits", []))
+
+            # Analyze sharp action from historical splits
+            sharp_games = []
+            for game in splits:
+                money_pct = game.get("money_pct", game.get("moneyPct", 50))
+                ticket_pct = game.get("ticket_pct", game.get("ticketPct", 50))
+                diff = abs(money_pct - ticket_pct)
+
+                if diff >= 10:
+                    game["sharp_detected"] = True
+                    game["sharp_side"] = "HOME" if money_pct > ticket_pct else "AWAY"
+                    game["sharp_strength"] = "STRONG" if diff >= 20 else "MODERATE"
+                    sharp_games.append(game)
+
+            result = {
+                "sport": sport.upper(),
+                "date": date,
+                "source": "playbook",
+                "count": len(splits),
+                "data": splits,
+                "sharp_games_count": len(sharp_games),
+                "sharp_games": sharp_games
+            }
+            # Long cache for historical data (doesn't change)
+            api_cache.set(cache_key, result, ttl=3600)
+            logger.info("Playbook splits history for %s on %s: %d games, %d sharp", sport, date, len(splits), len(sharp_games))
+            return result
+
+        elif resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
+        elif resp and resp.status_code == 404:
+            return {"sport": sport.upper(), "date": date, "source": "none", "data": [], "message": "No data for this date"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Playbook splits history fetch failed for %s: %s", sport, e)
+
+    return {"sport": sport.upper(), "date": date, "source": "none", "data": []}
+
+
+@router.get("/playbook/schedule/{sport}")
+async def get_playbook_schedule(sport: str):
+    """
+    v10.65: Get lightweight game schedule from Playbook API.
+
+    Uses /odds-games endpoint for fast schedule with gameIds.
+    Useful for getting event IDs without full odds data.
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    cache_key = f"playbook_schedule:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    if not PLAYBOOK_API_KEY:
+        return {"sport": sport.upper(), "source": "none", "data": [], "message": "Playbook API key not configured"}
+
+    try:
+        url = f"{PLAYBOOK_API_BASE}/odds-games"
+        params = {
+            "league": sport_config['playbook'],
+            "api_key": PLAYBOOK_API_KEY
+        }
+
+        resp = await fetch_with_retries("GET", url, params=params)
+
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            games = data if isinstance(data, list) else data.get("data", data.get("games", []))
+
+            result = {
+                "sport": sport.upper(),
+                "source": "playbook",
+                "count": len(games),
+                "data": games,
+                "timestamp": datetime.now().isoformat()
+            }
+            api_cache.set(cache_key, result, ttl=300)
+            logger.info("Playbook schedule for %s: %d games", sport, len(games))
+            return result
+
+        elif resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Playbook schedule fetch failed for %s: %s", sport, e)
+
+    return {"sport": sport.upper(), "source": "none", "data": []}
+
+
+@router.get("/playbook/games/{sport}")
+async def get_playbook_games(sport: str, date: str = None):
+    """
+    v10.65: Get detailed game objects from Playbook API.
+
+    More detailed than /schedule, includes game context.
+
+    Args:
+        sport: Sport key
+        date: Date in YYYY-MM-DD format (defaults to today)
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Default to today
+    if not date:
+        date = datetime.now().strftime("%Y-%m-%d")
+
+    cache_key = f"playbook_games:{sport_lower}:{date}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    if not PLAYBOOK_API_KEY:
+        return {"sport": sport.upper(), "source": "none", "data": [], "message": "Playbook API key not configured"}
+
+    try:
+        url = f"{PLAYBOOK_API_BASE}/games"
+        params = {
+            "league": sport_config['playbook'],
+            "date": date,
+            "api_key": PLAYBOOK_API_KEY
+        }
+
+        resp = await fetch_with_retries("GET", url, params=params)
+
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            games = data if isinstance(data, list) else data.get("data", data.get("games", []))
+
+            result = {
+                "sport": sport.upper(),
+                "date": date,
+                "source": "playbook",
+                "count": len(games),
+                "data": games
+            }
+            api_cache.set(cache_key, result, ttl=300)
+            logger.info("Playbook games for %s on %s: %d games", sport, date, len(games))
+            return result
+
+        elif resp and resp.status_code == 429:
+            raise HTTPException(status_code=503, detail="Playbook rate limited (429). Try again later.")
+        elif resp and resp.status_code == 404:
+            return {"sport": sport.upper(), "date": date, "source": "none", "data": [], "message": "No games for this date"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Playbook games fetch failed for %s: %s", sport, e)
+
+    return {"sport": sport.upper(), "date": date, "source": "none", "data": []}
+
+
+# ============================================================================
+# v10.65: API COVERAGE SUMMARY ENDPOINT
+# ============================================================================
+
+@router.get("/api-coverage")
+async def get_api_coverage():
+    """
+    v10.65: Summary of all API endpoints and data sources being utilized.
+
+    Shows what data we're pulling from each paid API subscription.
+    """
+    return {
+        "version": "v10.65",
+        "odds_api": {
+            "configured": bool(ODDS_API_KEY),
+            "endpoints_used": [
+                {"endpoint": "/sports", "purpose": "List sports", "cost": "FREE"},
+                {"endpoint": "/sports/{sport}/events", "purpose": "Event list", "cost": "FREE"},
+                {"endpoint": "/sports/{sport}/odds", "purpose": "Live odds", "cost": "1 credit/market/region"},
+                {"endpoint": "/sports/{sport}/scores", "purpose": "Game scores for grading", "cost": "FREE (live), 2 credits (historical)"},
+                {"endpoint": "/sports/{sport}/events/{id}/odds", "purpose": "Single event odds + props", "cost": "1 credit/market/region"},
+                {"endpoint": "/sports/{sport}/events/{id}/markets", "purpose": "Discover available markets", "cost": "1 credit"},
+                {"endpoint": "/historical/sports/{sport}/odds", "purpose": "Opening lines for RLM", "cost": "10 credits/market/region"},
+            ],
+            "markets_pulled": {
+                "main": ["h2h", "spreads", "totals"],
+                "alternate": ["alternate_spreads", "alternate_totals"],
+                "team": ["team_totals"],
+                "period": ["h2h_q1", "spreads_q1", "totals_q1", "h2h_h1", "spreads_h1", "totals_h1"],
+                "player_props": {
+                    "nba": ["player_points", "player_rebounds", "player_assists", "player_threes", "player_blocks", "player_steals", "player_turnovers", "player_points_rebounds_assists", "player_double_double", "player_first_basket"],
+                    "nfl": ["player_pass_tds", "player_pass_yds", "player_rush_yds", "player_reception_yds", "player_receptions", "player_anytime_td", "player_rush_attempts", "player_tackles_assists", "player_sacks"],
+                    "mlb": ["batter_total_bases", "batter_hits", "batter_rbis", "batter_home_runs", "batter_runs_scored", "pitcher_strikeouts", "pitcher_hits_allowed"],
+                    "nhl": ["player_points", "player_goals", "player_assists", "player_shots_on_goal", "player_power_play_points", "goalie_saves"]
+                }
+            }
+        },
+        "playbook_api": {
+            "configured": bool(PLAYBOOK_API_KEY),
+            "endpoints_used": [
+                {"endpoint": "/health", "purpose": "API health check"},
+                {"endpoint": "/me", "purpose": "Usage monitoring"},
+                {"endpoint": "/splits", "purpose": "Betting splits (sharp detection)"},
+                {"endpoint": "/splits-history", "purpose": "Historical splits for backtesting"},
+                {"endpoint": "/lines", "purpose": "Opening/current lines for RLM"},
+                {"endpoint": "/injuries", "purpose": "Injury reports"},
+                {"endpoint": "/teams", "purpose": "Team metadata"},
+                {"endpoint": "/odds-games", "purpose": "Lightweight schedule"},
+                {"endpoint": "/games", "purpose": "Detailed game objects"},
+            ]
+        },
+        "free_apis": [
+            {"name": "ESPN", "purpose": "Box scores, player stats, injuries", "cost": "FREE"},
+            {"name": "BallDontLie", "purpose": "NBA player stats backup", "cost": "FREE"},
+            {"name": "NOAA", "purpose": "Space weather (Schumann resonance)", "cost": "FREE"},
+        ],
+        "optional_apis": [
+            {"name": "RotoWire", "env_var": "ROTOWIRE_API_KEY", "purpose": "Referee assignments, starting lineups, injury news"},
+            {"name": "Weather", "env_var": "WEATHER_API_KEY", "purpose": "Game day weather for outdoor sports"},
+        ],
+        "backend_endpoints": {
+            "scores": "/live/scores/{sport}",
+            "props": "/live/props/{sport}",
+            "lines": "/live/lines/{sport}",
+            "splits": "/live/splits/{sport}",
+            "sharp": "/live/sharp/{sport}",
+            "alternate_lines": "/live/alternate-lines/{sport}",
+            "team_totals": "/live/team-totals/{sport}",
+            "period_markets": "/live/period-markets/{sport}?period=q1",
+            "historical_odds": "/live/historical-odds/{sport}?date=YYYY-MM-DDTHH:MM:SSZ",
+            "available_markets": "/live/available-markets/{sport}/{event_id}",
+            "playbook_teams": "/live/playbook/teams/{sport}",
+            "playbook_schedule": "/live/playbook/schedule/{sport}",
+            "playbook_games": "/live/playbook/games/{sport}",
+            "playbook_splits_history": "/live/playbook/splits-history/{sport}?date=YYYY-MM-DD",
+        }
+    }
+
+
 # ============================================================================
 # v10.45: ODDS DIAGNOSTIC ENDPOINT
 # Deep debug output for game odds fetching with fallback cache
