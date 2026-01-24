@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.86"  # v10.86: TITANIUM_SMASH, confidence normalization, badge filtering
+    ENGINE_VERSION = "v10.87"  # v10.87: Added debug_trace object for troubleshooting
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 

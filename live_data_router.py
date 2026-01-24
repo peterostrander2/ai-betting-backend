@@ -873,6 +873,24 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict 
     raw_badges = pick.get("badges", [])
     pick["badges"] = filter_tier_badges(raw_badges, pick["tier"])
 
+    # =========================================================================
+    # v10.87: Debug trace object for troubleshooting
+    # =========================================================================
+    pick["debug_trace"] = {
+        "ai_score": pick.get("ai_score", 0.0),
+        "research_score": pick.get("scoring_breakdown", {}).get("research_score", 0.0),
+        "esoteric_score": pick.get("scoring_breakdown", {}).get("esoteric_score", 0.0),
+        "jarvis_score": pick.get("jarvis_rs", 0.0),
+        "jason_sim_boost": pick.get("jason_sim_boost", 0.0),
+        "confluence_boost": pick.get("confluence_boost", 0.0),
+        "final_score": pick.get("final_score", 0.0),
+        "tier_before_downgrade": pick.get("original_tier", pick.get("tier")),
+        "tier_after_downgrade": pick.get("tier"),
+        "applied_downgrades": pick.get("debug_flags", []),
+        "engines_missing": pick.get("engines_missing", []),
+        "score_source": pick.get("score_total_source", "UNKNOWN"),
+    }
+
     return pick
 
 
