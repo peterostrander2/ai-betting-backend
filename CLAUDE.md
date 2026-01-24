@@ -9,7 +9,7 @@
 ## Project Overview
 
 **Bookie-o-em** - AI Sports Prop Betting Backend
-**Version:** v14.2 PRODUCTION HARDENED
+**Version:** v14.6 / Engine v10.65 PRODUCTION HARDENED
 **Stack:** Python 3.11+, FastAPI, Railway deployment
 **Frontend:** bookie-member-app (separate repo)
 **Production URL:** https://web-production-7b2a.up.railway.app
@@ -32,7 +32,7 @@
 2. You get approval before implementing
 3. There's a clear benefit over what we're already paying for
 
-### Playbook API v1 Endpoints
+### Playbook API v1 Endpoints (9 Total)
 
 **Base URL:** `https://api.playbook-api.com/v1`
 **Auth:** `api_key` query parameter (NOT Bearer header)
@@ -44,11 +44,27 @@
 | `/me` | Plan + usage info | `api_key` |
 | `/teams` | Team metadata + injuries | `league`, `api_key` |
 | `/injuries` | Injury report by team | `league`, `api_key` |
-| `/splits` | Public betting splits | `league`, `api_key` |
+| `/splits` | Public betting splits (ticket% vs money%) | `league`, `api_key` |
 | `/splits-history` | Historical splits | `league`, `date`, `api_key` |
 | `/odds-games` | Schedule + gameId list | `league`, `api_key` |
-| `/lines` | Current spread/total/ML | `league`, `api_key` |
-| `/games` | Game objects from splits | `league`, `date`, `api_key` |
+| `/lines` | Current + opening lines (for true RLM) | `league`, `api_key` |
+| `/games` | Detailed game objects | `league`, `date`, `api_key` |
+| `/schedule` | Lightweight schedule | `league`, `api_key` |
+
+### Odds API v4 Endpoints (7 Total)
+
+**Base URL:** `https://api.the-odds-api.com/v4`
+**Auth:** `apiKey` query parameter
+
+| Endpoint | Purpose | Credits |
+|----------|---------|---------|
+| `/sports/{sport}/odds` | Live odds (spreads, totals, ML) | 1/call |
+| `/sports/{sport}/events/{id}/odds` | Player props (46+ markets) | 1/call |
+| `/sports/{sport}/scores` | Live & final scores | 1/call |
+| `/sports/{sport}/odds?markets=alternate_*` | Alternate lines (hooks) | 1/call |
+| `/sports/{sport}/odds?markets=team_totals` | Team over/unders | 1/call |
+| `/historical/sports/{sport}/odds` | Opening lines | 10/call |
+| `/sports/{sport}/events/{id}/markets` | Available markets | 1/call |
 
 ### API Usage Monitoring
 
@@ -1578,6 +1594,161 @@ Expected: At least 1-3 EDGE_LEAN or GOLD_STAR props returned.
 
 ---
 
+## Complete API Coverage (v10.65)
+
+### Summary
+
+We pay for **Odds API** and **Playbook API**. As of v10.65, we utilize ALL available features from both subscriptions.
+
+### Odds API Endpoints (7 Total)
+
+| Endpoint | Purpose | Credits | Used In |
+|----------|---------|---------|---------|
+| `/v4/sports/{sport}/odds` | Live odds from 15+ books | 1/call | `/live/lines`, `/live/best-bets` |
+| `/v4/sports/{sport}/events/{id}/odds?markets=` | Player props (46+ markets) | 1/call | `/live/props`, `/live/best-bets` |
+| `/v4/sports/{sport}/scores` | Live & final scores | 1/call | `/live/scores` (auto-grading) |
+| `/v4/sports/{sport}/odds?oddsFormat=american&markets=alternate_spreads,alternate_totals` | Alternate lines (hooks) | 1/call | `/live/alternate-lines` |
+| `/v4/sports/{sport}/odds?markets=team_totals` | Team over/unders | 1/call | `/live/team-totals` |
+| `/v4/historical/sports/{sport}/odds` | Opening lines | 10/call | `/live/historical-odds` |
+| `/v4/sports/{sport}/events/{id}/markets` | Available markets | 1/call | `/live/available-markets` |
+
+### Player Prop Markets by Sport (46+ Total)
+
+**NBA (13 markets):**
+```
+player_points, player_rebounds, player_assists, player_threes,
+player_blocks, player_steals, player_turnovers,
+player_points_rebounds_assists, player_points_rebounds,
+player_points_assists, player_rebounds_assists,
+player_double_double, player_first_basket
+```
+
+**NFL (14 markets):**
+```
+player_pass_tds, player_pass_yds, player_pass_completions, player_pass_attempts,
+player_pass_interceptions, player_rush_yds, player_rush_attempts,
+player_reception_yds, player_receptions, player_anytime_td,
+player_kicking_points, player_field_goals_made,
+player_tackles_assists, player_sacks
+```
+
+**MLB (11 markets):**
+```
+batter_hits, batter_total_bases, batter_rbis, batter_runs_scored,
+batter_walks, batter_strikeouts, batter_stolen_bases,
+pitcher_strikeouts, pitcher_hits_allowed, pitcher_walks,
+pitcher_outs
+```
+
+**NHL (8 markets):**
+```
+player_points, player_assists, player_shots_on_goal,
+player_blocked_shots, player_power_play_points,
+goalie_saves, player_anytime_goalscorer,
+player_first_goalscorer
+```
+
+### Playbook API Endpoints (9 Total)
+
+| Endpoint | Purpose | Used In |
+|----------|---------|---------|
+| `/v1/splits` | Betting splits (ticket% vs money%) | `/live/splits`, `/live/sharp` |
+| `/v1/lines` | Current + opening lines | True RLM detection |
+| `/v1/injuries` | Injury reports | `/live/injuries` |
+| `/v1/odds-games` | Game schedule with IDs | `/live/slate` |
+| `/v1/teams` | Team metadata | `/live/playbook/teams` |
+| `/v1/splits-history` | Historical splits | `/live/playbook/splits-history` |
+| `/v1/games` | Detailed game objects | `/live/playbook/games` |
+| `/v1/schedule` | Lightweight schedule | `/live/playbook/schedule` |
+| `/v1/me` | Plan + usage info | `/live/playbook/usage` |
+
+### Additional Data Sources
+
+**RotoWire API (Optional):**
+- Starting lineups
+- Referee assignments
+- Injury news
+
+**Free APIs (Fallback):**
+- ESPN (player stats for grading)
+- BallDontLie (NBA backup)
+- NOAA (space weather for esoteric)
+
+### New Endpoints Added (v10.63-v10.65)
+
+| Version | Endpoint | Purpose |
+|---------|----------|---------|
+| v10.64 | `GET /live/scores/{sport}` | Live/final scores for auto-grading |
+| v10.64 | `GET /live/alternate-lines/{sport}` | Hook shopping (alt spreads/totals) |
+| v10.64 | `GET /live/team-totals/{sport}` | Individual team over/unders |
+| v10.64 | `GET /live/historical-odds/{sport}` | Opening lines (10 credits) |
+| v10.64 | `GET /live/available-markets/{sport}/{event_id}` | Discover markets per game |
+| v10.65 | `GET /live/period-markets/{sport}?period=q1` | First quarter/half betting |
+| v10.65 | `GET /live/playbook/teams/{sport}` | Team metadata |
+| v10.65 | `GET /live/playbook/schedule/{sport}` | Lightweight schedule |
+| v10.65 | `GET /live/playbook/games/{sport}` | Detailed game objects |
+| v10.65 | `GET /live/playbook/splits-history/{sport}?date=` | Historical splits |
+| v10.65 | `GET /api-coverage` | Full API inventory summary |
+
+### True RLM Detection (v10.63)
+
+**What Changed:**
+- Now fetch Playbook `/lines` endpoint in parallel with `/splits`
+- Extract `opening_line` and `current_line` from lines data
+- Calculate `line_movement = current - opening`
+- Detect true RLM when public betting one way but line moved opposite
+
+**Sharp Signal Response:**
+```json
+{
+  "game_id": "abc123",
+  "sharp_direction": "HOME",
+  "money_pct": 63,
+  "ticket_pct": 45,
+  "rlm_detected": true,
+  "line_movement": -1.5,
+  "opening_line": -3.5,
+  "current_line": -5.0
+}
+```
+
+**RLM Pillar Scoring:**
+```python
+if rlm_detected and line_movement >= 0.5:
+    movement_factor = min(2.0, 1.0 + (line_movement / 2.0))  # 1.0-2.0 based on movement
+    boost = movement_factor * mw_rlm
+    research_reasons.append(f"RESEARCH: RLM Confirmed ({opening_line:.1f}→{current_line:.1f}) +{boost:.2f}")
+```
+
+### API Coverage Summary Endpoint
+
+Check what APIs are configured and being used:
+
+```bash
+curl "https://web-production-7b2a.up.railway.app/api-coverage"
+```
+
+Response:
+```json
+{
+  "odds_api": {
+    "configured": true,
+    "endpoints": ["odds", "events", "scores", "alternate_lines", "team_totals", "historical_odds", "available_markets"],
+    "prop_markets": { "nba": 13, "nfl": 14, "mlb": 11, "nhl": 8, "total": 46 }
+  },
+  "playbook_api": {
+    "configured": true,
+    "endpoints": ["splits", "lines", "injuries", "odds-games", "teams", "splits-history", "games", "schedule", "me"]
+  },
+  "rotowire_api": {
+    "configured": false,
+    "features": ["starting_lineups", "referee_assignments", "injury_news"]
+  }
+}
+```
+
+---
+
 ## Session Log: January 23, 2026 - v10.48 Tier A/B Split + Action Leans
 
 ### What Was Done
@@ -1674,5 +1845,129 @@ curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/all?debug=1" 
 # Run safety tests
 python test_api.py
 ```
+
+---
+
+## Session Log: January 23, 2026 - v10.63-v10.65 Complete API Coverage
+
+### Goal
+
+Maximize value from paid API subscriptions (Odds API and Playbook API) by ensuring ALL available features are utilized.
+
+### What Was Done
+
+**v10.63 - True RLM Detection**
+
+The problem: Line history via Odds API was already implemented in legacy code (`playbook_api_service.py`) but not wired to current scoring.
+
+The fix:
+- Fetch Playbook `/lines` endpoint in parallel with `/splits` using `asyncio.gather()`
+- Extract `opening_line` and `current_line` from lines data
+- Calculate `line_movement = current - opening`
+- Detect true RLM when public betting one way but line moved opposite
+- Updated RLM pillar in `calculate_pick_score()` to use movement_factor scaling (1.0-2.0x)
+
+New fields in sharp signals:
+- `rlm_detected`: boolean
+- `line_movement`: float (points moved)
+- `opening_line`: float
+- `current_line`: float
+
+**v10.64 - Full Odds API Utilization**
+
+Added endpoints for all Odds API features we're paying for:
+
+| Endpoint | Purpose | Notes |
+|----------|---------|-------|
+| `GET /live/scores/{sport}` | Live & final scores | **CRITICAL** for auto-grading picks |
+| `GET /live/alternate-lines/{sport}` | Hook shopping | alternate_spreads, alternate_totals |
+| `GET /live/team-totals/{sport}` | Individual team O/U | Prop correlation |
+| `GET /live/historical-odds/{sport}` | Opening lines | 10 credits/market (use sparingly) |
+| `GET /live/available-markets/{sport}/{event_id}` | Market discovery | Know what's available per game |
+
+Expanded player prop markets from ~16 to 46+:
+- NBA: 13 markets (added blocks, steals, turnovers, combos, first basket)
+- NFL: 14 markets (added tackles/assists, sacks, interceptions)
+- MLB: 11 markets (added walks, strikeouts, stolen bases, pitcher outs)
+- NHL: 8 markets (added blocked shots, power play points, anytime/first goalscorer)
+
+**v10.65 - Complete API Coverage**
+
+Added remaining Playbook API endpoints:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /live/period-markets/{sport}?period=q1` | First quarter/half betting |
+| `GET /live/playbook/teams/{sport}` | Team metadata |
+| `GET /live/playbook/schedule/{sport}` | Lightweight schedule |
+| `GET /live/playbook/games/{sport}` | Detailed game objects |
+| `GET /live/playbook/splits-history/{sport}?date=` | Historical splits |
+| `GET /api-coverage` | Full API inventory summary |
+
+Period market support:
+- NBA/NCAAB: q1, q2, q3, q4, h1, h2
+- NFL: q1, q2, q3, q4, h1, h2
+- MLB: 1st_5_innings, 1st_3_innings
+- NHL: p1, p2, p3
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - ~1000+ lines added for new endpoints)
+main.py               (MODIFIED - ENGINE_VERSION = "v10.65")
+```
+
+### Commits
+
+| Hash | Message |
+|------|---------|
+| b97637d | v10.63: True RLM detection using Playbook /lines |
+| 58cf70a | v10.64: Full Odds API utilization (scores, props, alt lines) |
+| 14aab2c | v10.65: Complete API coverage (period markets, Playbook full) |
+
+### Testing
+
+```bash
+# Test API coverage summary
+curl "https://web-production-7b2a.up.railway.app/api-coverage"
+
+# Test scores endpoint (for auto-grading)
+curl "https://web-production-7b2a.up.railway.app/live/scores/nba" -H "X-API-Key: YOUR_KEY"
+
+# Test period markets
+curl "https://web-production-7b2a.up.railway.app/live/period-markets/nba?period=q1" -H "X-API-Key: YOUR_KEY"
+
+# Test Playbook teams
+curl "https://web-production-7b2a.up.railway.app/live/playbook/teams/nba" -H "X-API-Key: YOUR_KEY"
+```
+
+### API Coverage Summary
+
+After v10.65, we now utilize:
+
+**Odds API (7 endpoints, 46+ prop markets):**
+- ✅ Live odds (spreads, totals, moneylines)
+- ✅ Player props (all 46 markets)
+- ✅ Scores (live + final)
+- ✅ Alternate lines (hook shopping)
+- ✅ Team totals
+- ✅ Historical odds (opening lines)
+- ✅ Available markets (per-game discovery)
+
+**Playbook API (9 endpoints):**
+- ✅ Splits (ticket% vs money%)
+- ✅ Lines (opening + current for true RLM)
+- ✅ Injuries
+- ✅ Odds-games (schedule with IDs)
+- ✅ Teams (metadata)
+- ✅ Schedule (lightweight)
+- ✅ Games (detailed objects)
+- ✅ Splits-history (historical)
+- ✅ Me (usage/quota)
+
+**Optional (RotoWire):**
+- ⏳ Starting lineups (not configured)
+- ⏳ Referee assignments (not configured)
+- ⏳ Injury news (not configured)
 
 ---
