@@ -97,7 +97,7 @@ async def root():
     }
 
 # Centralized version info - updated with each major change
-ENGINE_VERSION = "v10.62"  # RotoWire API: Referee assignments + Officials pillar activated
+ENGINE_VERSION = "v10.63"  # True RLM: opening_line vs current_line from Playbook /lines API
 API_VERSION = "14.6"
 BUILD_COMMIT = "db87159"  # Updated on deploy
 

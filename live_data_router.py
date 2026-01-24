@@ -2993,17 +2993,54 @@ async def get_sharp_money(sport: str):
     data = []
 
     # Derive sharp signals from Playbook splits data (sharp = money% differs significantly from ticket%)
+    # v10.63: Also fetch /lines to get opening_line vs current_line for true RLM detection
     if PLAYBOOK_API_KEY:
         try:
-            playbook_url = f"{PLAYBOOK_API_BASE}/splits"
-            resp = await fetch_with_retries(
-                "GET", playbook_url,
-                params={"league": sport_config['playbook'], "api_key": PLAYBOOK_API_KEY}
+            # Fetch splits and lines in parallel
+            splits_url = f"{PLAYBOOK_API_BASE}/splits"
+            lines_url = f"{PLAYBOOK_API_BASE}/lines"
+
+            splits_resp, lines_resp = await asyncio.gather(
+                fetch_with_retries("GET", splits_url, params={"league": sport_config['playbook'], "api_key": PLAYBOOK_API_KEY}),
+                fetch_with_retries("GET", lines_url, params={"league": sport_config['playbook'], "api_key": PLAYBOOK_API_KEY}),
+                return_exceptions=True
             )
 
-            if resp and resp.status_code == 200:
+            # Build lines lookup: game_id -> {opening_line, current_line, line_movement}
+            lines_lookup = {}
+            if lines_resp and not isinstance(lines_resp, Exception) and lines_resp.status_code == 200:
                 try:
-                    json_body = resp.json()
+                    lines_json = lines_resp.json()
+                    lines_data = lines_json if isinstance(lines_json, list) else lines_json.get("data", lines_json.get("lines", []))
+                    for line_game in lines_data:
+                        game_id = line_game.get("id", line_game.get("gameId", line_game.get("game_id")))
+                        if not game_id:
+                            continue
+                        # Extract opening and current lines (try multiple field names)
+                        opening = line_game.get("opening_line", line_game.get("openingLine", line_game.get("open_spread")))
+                        current = line_game.get("current_line", line_game.get("currentLine", line_game.get("spread")))
+                        if opening is not None and current is not None:
+                            try:
+                                opening_f = float(opening)
+                                current_f = float(current)
+                                movement = abs(current_f - opening_f)
+                                lines_lookup[game_id] = {
+                                    "opening_line": opening_f,
+                                    "current_line": current_f,
+                                    "line_movement": round(movement, 1),
+                                    "movement_direction": "TOWARD_HOME" if current_f < opening_f else "TOWARD_AWAY" if current_f > opening_f else "NONE"
+                                }
+                            except (ValueError, TypeError):
+                                pass
+                    if lines_lookup:
+                        logger.info("v10.63: Built lines lookup with %d games for RLM detection", len(lines_lookup))
+                except Exception as e:
+                    logger.warning("Failed to parse Playbook lines: %s", e)
+
+            # Process splits data
+            if splits_resp and not isinstance(splits_resp, Exception) and splits_resp.status_code == 200:
+                try:
+                    json_body = splits_resp.json()
                     splits = json_body if isinstance(json_body, list) else json_body.get("data", json_body.get("games", []))
 
                     # Derive sharp signals: when money% differs from ticket% by 10%+
@@ -3015,8 +3052,10 @@ async def get_sharp_money(sport: str):
                         if diff >= 10:  # 10%+ difference indicates sharp action
                             # v10.14: Uppercase for consistency with directional correlation
                             sharp_side = "HOME" if money_pct > ticket_pct else "AWAY"
-                            data.append({
-                                "game_id": game.get("id", game.get("gameId")),
+                            game_id = game.get("id", game.get("gameId"))
+
+                            signal = {
+                                "game_id": game_id,
                                 "home_team": game.get("home_team", game.get("homeTeam")),
                                 "away_team": game.get("away_team", game.get("awayTeam")),
                                 "sharp_side": sharp_side,
@@ -3025,10 +3064,35 @@ async def get_sharp_money(sport: str):
                                 "ticket_pct": ticket_pct,
                                 "signal_strength": "STRONG" if diff >= 20 else "MODERATE",
                                 "source": "playbook_splits"
-                            })
+                            }
+
+                            # v10.63: Add line movement data for RLM if available
+                            if game_id and game_id in lines_lookup:
+                                line_info = lines_lookup[game_id]
+                                signal["opening_line"] = line_info["opening_line"]
+                                signal["current_line"] = line_info["current_line"]
+                                signal["line_movement"] = line_info["line_movement"]
+                                signal["line_variance"] = line_info["line_movement"]  # Alias for RLM pillar
+                                signal["movement_direction"] = line_info["movement_direction"]
+
+                                # v10.63: True RLM detection - line moved AGAINST public
+                                public_on_home = ticket_pct > 50
+                                line_toward_home = line_info["movement_direction"] == "TOWARD_HOME"
+                                # RLM = public on one side, but line moved opposite direction
+                                if public_on_home and not line_toward_home:
+                                    signal["rlm_detected"] = True
+                                    signal["rlm_side"] = "HOME"  # Sharps on home despite public
+                                elif not public_on_home and line_toward_home:
+                                    signal["rlm_detected"] = True
+                                    signal["rlm_side"] = "AWAY"  # Sharps on away despite public
+                                else:
+                                    signal["rlm_detected"] = False
+
+                            data.append(signal)
 
                     if data:
-                        logger.info("Playbook sharp signals derived for %s: %d signals", sport, len(data))
+                        rlm_count = sum(1 for s in data if s.get("rlm_detected"))
+                        logger.info("Playbook sharp signals for %s: %d signals, %d RLM detected", sport, len(data), rlm_count)
                         result = {"sport": sport.upper(), "source": "playbook", "count": len(data), "data": data, "movements": data}
                         api_cache.set(cache_key, result)
                         return result
@@ -5723,18 +5787,38 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             research_reasons.append(f"RESEARCH: Sharp Split (GAME {direction_label} x{scope_mult * direction_mult:.2f}) +{boost:.2f}")
 
         # Pillar 2: Reverse Line Movement (RLM) - direction-gated for props
-        line_variance = sharp_signal.get("line_variance", 0) or 0
-        if line_variance > 1.0:
+        # v10.63: True RLM detection using opening_line vs current_line from Playbook
+        rlm_detected = sharp_signal.get("rlm_detected", False)
+        line_movement = sharp_signal.get("line_movement", 0) or sharp_signal.get("line_variance", 0) or 0
+        opening_line = sharp_signal.get("opening_line")
+        current_line = sharp_signal.get("current_line")
+
+        # True RLM: line moved against public betting action
+        if rlm_detected and line_movement >= 0.5:
+            mw_rlm = get_mw("PILLAR_RLM")
+            # Stronger boost for confirmed RLM with significant movement
+            movement_factor = min(2.0, 1.0 + (line_movement / 2.0))  # 1.0-2.0 based on movement
+            if is_game_pick:
+                boost = movement_factor * mw_rlm
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: RLM Confirmed ({opening_line:.1f}→{current_line:.1f}) +{boost:.2f}")
+            else:
+                # Props use scoped/directional multiplier
+                boost = BASE_RLM_BOOST * movement_factor * scope_mult * direction_mult * mw_rlm
+                pillar_boost += boost
+                research_reasons.append(f"RESEARCH: RLM Confirmed (GAME {direction_label} x{scope_mult * direction_mult:.2f}) +{boost:.2f}")
+        elif line_movement > 1.0:
+            # Fallback: significant line variance across books (legacy behavior)
             mw_rlm = get_mw("PILLAR_RLM")
             if is_game_pick:
                 boost = 1.0 * mw_rlm
                 pillar_boost += boost
-                research_reasons.append(f"RESEARCH: Reverse Line Move +{boost:.2f}")
+                research_reasons.append(f"RESEARCH: Line Movement +{boost:.2f}")
             else:
                 # v10.13: Props use BASE_RLM_BOOST = 1.0 with transparent math
                 boost = BASE_RLM_BOOST * scope_mult * direction_mult * mw_rlm
                 pillar_boost += boost
-                research_reasons.append(f"RESEARCH: Reverse Line Move (GAME {direction_label} x{scope_mult * direction_mult:.2f}) +{boost:.2f}")
+                research_reasons.append(f"RESEARCH: Line Movement (GAME {direction_label} x{scope_mult * direction_mult:.2f}) +{boost:.2f}")
 
         # Pillar 3: Public Fade (v10.20: directional with >= 65 threshold)
         # +0.5 when fading heavy public, -0.5 when riding with heavy public
