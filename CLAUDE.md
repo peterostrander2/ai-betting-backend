@@ -9,7 +9,7 @@
 ## Project Overview
 
 **Bookie-o-em** - AI Sports Prop Betting Backend
-**Version:** v14.6 / Engine v10.66 PRODUCTION HARDENED
+**Version:** v14.6 / Engine v10.67 PRODUCTION HARDENED
 **Stack:** Python 3.11+, FastAPI, Railway deployment
 **Frontend:** bookie-member-app (separate repo)
 **Production URL:** https://web-production-7b2a.up.railway.app
@@ -2225,10 +2225,63 @@ WHOP_API_KEY=xxx
 
 ### System Status
 
-- **Engine Version:** v10.66
+- **Engine Version:** v10.67
 - **All Core APIs:** ✅ Configured
 - **All Alternative Data APIs:** ✅ Configured
 - **Scoring Pipeline:** ✅ Fully operational
 - **Production URL:** https://web-production-7b2a.up.railway.app
+
+---
+
+## Session Log: January 23, 2026 - v10.67 Time Gate Status Messaging
+
+### What Was Done
+
+**Added status messaging when no picks are available**
+
+The `/best-bets/all` endpoint now returns a clear `status_message` explaining why `all_picks` is empty.
+
+**Scenarios Handled:**
+
+| Scenario | Message |
+|----------|---------|
+| All games started | "All {N} game(s) have already started. Check back tomorrow for new picks." |
+| No games today | "No games scheduled for today. {N} game(s) are scheduled for other days." |
+| No games found | "No games found across any sport. This may be an off-day or API issue." |
+| Generic fallback | "No picks available at this time." |
+
+**Response Fields Added:**
+
+```json
+{
+  "status_message": "All 3 game(s) have already started...",
+  "all_picks": {
+    "count": 0,
+    "picks": [],
+    "message": "All 3 game(s) have already started..."
+  }
+}
+```
+
+**Why This Was Needed:**
+
+The time gate correctly filters out games that have already started. But when all games have started (late at night), `all_picks` returns empty with no explanation. Frontend users were confused why picks showed in `by_sport` but not in `all_picks`.
+
+Now the frontend can display the status message to explain the situation.
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - Added status_message logic)
+CLAUDE.md             (MODIFIED - Updated version + session log)
+```
+
+### Testing
+
+```bash
+# Test status message (late night when games have started)
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/all" \
+  -H "X-API-Key: YOUR_KEY" | jq '{status_message, "all_picks.count": .all_picks.count}'
+```
 
 ---
