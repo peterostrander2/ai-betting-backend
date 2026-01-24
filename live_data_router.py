@@ -6439,7 +6439,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
                 # Build the prop pick object
                 prop_pick = {
                     "sport": sport.upper(),  # v10.57: Required for validators
-                    "game_id": game.get("id", ""),  # v10.57: Required for validators
+                    "game_id": game.get("game_id", game.get("id", "")),  # v10.57: Required for validators
                     "player": player,
                     "player_name": player,  # Alias for frontend compatibility
                     "market": market,
@@ -6855,7 +6855,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
                             game_picks.append({
                                 "sport": sport.upper(),  # v10.57: For consistency with props
-                                "game_id": game.get("id", ""),  # v10.57: For consistency
+                                "game_id": game.get("game_id", game.get("id", "")),  # v10.57: For consistency
                                 "pick_type": pick_type,
                                 "pick": display,
                                 "team": pick_name if market_key != "totals" else None,
