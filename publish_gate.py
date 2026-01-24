@@ -250,7 +250,7 @@ def apply_correlation_penalty(picks: List[Dict[str, Any]]) -> Tuple[List[Dict[st
 # ============================================================================
 
 # v10.57: Game picks use fixed threshold (no escalation from props)
-GAME_PICK_EDGE_LEAN_THRESHOLD = 6.85  # Lower than props to allow game picks through
+GAME_PICK_EDGE_LEAN_THRESHOLD = 6.5  # Lower than props to allow game picks through
 
 
 def apply_quality_gate(
