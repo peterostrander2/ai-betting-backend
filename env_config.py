@@ -78,6 +78,21 @@ class Config:
     # RotoWire API (referee assignments, lineups, injuries)
     ROTOWIRE_API_KEY = get_env("ROTOWIRE_API_KEY", "EXPO_PUBLIC_ROTOWIRE_API_KEY")
 
+    # FRED API (Federal Reserve Economic Data - economic indicators, sentiment)
+    FRED_API_KEY = get_env("FRED_API_KEY")
+
+    # Finnhub API (Stock/financial data - sportsbook stocks, market sentiment)
+    FINNHUB_KEY = get_env("FINNHUB_KEY", "FINNHUB_API_KEY")
+
+    # SerpAPI (Search engine results - news aggregation, trending topics)
+    SERPAPI_KEY = get_env("SERPAPI_KEY", "SERP_API_KEY")
+
+    # Whop API (Membership/payment platform - user management)
+    WHOP_API_KEY = get_env("WHOP_API_KEY")
+
+    # Twitter/X API (Breaking news, injury reports, sentiment)
+    TWITTER_BEARER = get_env("TWITTER_BEARER", "TWITTER_BEARER_TOKEN")
+
     # Auth
     API_AUTH_ENABLED = get_env_bool("API_AUTH_ENABLED", False)
     API_AUTH_KEY = get_env("API_AUTH_KEY")
@@ -95,6 +110,11 @@ class Config:
             "noaa": bool(cls.NOAA_BASE_URL),
             "planetary": bool(cls.PLANETARY_HOURS_API_URL),
             "rotowire": bool(cls.ROTOWIRE_API_KEY),
+            "fred": bool(cls.FRED_API_KEY),
+            "finnhub": bool(cls.FINNHUB_KEY),
+            "serpapi": bool(cls.SERPAPI_KEY),
+            "whop": bool(cls.WHOP_API_KEY),
+            "twitter": bool(cls.TWITTER_BEARER),
             "auth": cls.API_AUTH_ENABLED
         }
 

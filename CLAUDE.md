@@ -338,24 +338,103 @@ return result
 
 ## Environment Variables
 
-### Required
+### Required (Core Betting APIs)
 ```bash
-ODDS_API_KEY=xxx          # The Odds API
-PLAYBOOK_API_KEY=xxx      # Playbook Sports API
+ODDS_API_KEY=xxx          # The Odds API - Live odds, props, scores
+PLAYBOOK_API_KEY=xxx      # Playbook Sports API - Splits, sharp money, injuries
 ```
 
-### Optional
+### Sports Data APIs
 ```bash
+WEATHER_API_KEY=xxx       # Weather API - Game day weather (outdoor sports)
+ASTRONOMY_API_ID=xxx      # Astronomy API - Moon phases, planetary hours (esoteric)
+ASTRONOMY_API_SECRET=xxx  # Astronomy API secret
+ROTOWIRE_API_KEY=xxx      # RotoWire - Starting lineups, referee assignments
+```
+
+### Alternative Data APIs
+```bash
+FRED_API_KEY=xxx          # Federal Reserve Economic Data - Economic indicators
+FINNHUB_KEY=xxx           # Finnhub - Stock data, sportsbook sentiment
+SERPAPI_KEY=xxx           # SerpAPI - Search results, news aggregation
+TWITTER_BEARER=xxx        # Twitter/X API - Breaking news, injury reports
+```
+
+### Platform/Auth APIs
+```bash
+WHOP_API_KEY=xxx          # Whop - Membership/payment platform
 API_AUTH_ENABLED=true     # Enable X-API-Key auth
 API_AUTH_KEY=xxx          # Required if auth enabled
-ODDS_API_BASE=xxx         # Override API URL
-PLAYBOOK_API_BASE=xxx     # Override API URL
+```
+
+### Overrides
+```bash
+ODDS_API_BASE=xxx         # Override Odds API URL
+PLAYBOOK_API_BASE=xxx     # Override Playbook API URL
 ```
 
 ### Railway Auto-Set
 ```bash
 PORT=8000                 # Read via os.environ.get("PORT", 8000)
 ```
+
+---
+
+## All Available API Keys & Use Cases
+
+### Core Betting APIs (CRITICAL)
+
+| Key | Service | Purpose | Integration Status |
+|-----|---------|---------|-------------------|
+| `ODDS_API_KEY` | The Odds API | Live odds, player props, scores from 15+ books | ✅ Fully integrated |
+| `PLAYBOOK_API_KEY` | Playbook API | Betting splits, sharp money, injuries, RLM | ✅ Fully integrated |
+
+### Sports Data APIs
+
+| Key | Service | Purpose | Integration Status |
+|-----|---------|---------|-------------------|
+| `WEATHER_API_KEY` | WeatherAPI | Game day weather for outdoor sports (MLB, NFL) | ✅ Integrated |
+| `ASTRONOMY_API_ID` | Astronomy API | Moon phases, void moon, planetary positions | ✅ Esoteric engine |
+| `ASTRONOMY_API_SECRET` | Astronomy API | Auth secret for astronomy data | ✅ Esoteric engine |
+| `ROTOWIRE_API_KEY` | RotoWire | Starting lineups, referee assignments, injuries | ⏳ Ready (needs key) |
+
+### Alternative Data APIs (Edge Signals)
+
+| Key | Service | Purpose | Potential Use |
+|-----|---------|---------|---------------|
+| `FRED_API_KEY` | Federal Reserve | Economic indicators, consumer sentiment | Economic cycle correlation with betting patterns |
+| `FINNHUB_KEY` | Finnhub | Stock market data, company financials | Track DraftKings/FanDuel stock as sentiment proxy |
+| `SERPAPI_KEY` | SerpAPI | Google search results | News aggregation, trending injury stories |
+| `TWITTER_BEARER` | Twitter/X | Social media posts | Breaking news from beat reporters, injury alerts |
+
+### Platform APIs
+
+| Key | Service | Purpose | Integration Status |
+|-----|---------|---------|-------------------|
+| `WHOP_API_KEY` | Whop | Membership/payments | User subscription management |
+
+### Alternative Data Integration Ideas
+
+**FRED API (Economic Data):**
+- Track Consumer Sentiment Index - correlates with public betting behavior
+- Monitor unemployment data - affects discretionary spending on betting
+- Interest rates impact on sportsbook stocks
+
+**Finnhub API (Financial Data):**
+- Track $DKNG (DraftKings) and $FLTR (Flutter/FanDuel) stock prices
+- Large stock drops = potential operational issues
+- Earnings reports affect odds accuracy
+
+**SerpAPI (Search/News):**
+- Aggregate injury news from Google News
+- Monitor trending player names (breakout games)
+- Track "upset" searches before games
+
+**Twitter API (Social Signals):**
+- Follow beat reporters for each team
+- Breaking injury news (often 15-30 min before official)
+- Player mood/confidence from social posts
+- Public sentiment analysis on matchups
 
 ---
 
