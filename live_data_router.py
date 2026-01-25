@@ -11930,6 +11930,183 @@ async def clear_jsonl_grading_data(
     }
 
 
+@router.post("/grader/backfill-fields")
+async def backfill_pick_fields(
+    config: Dict[str, Any] = None,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v11.0: Backfill missing market/line/side fields from selection string.
+
+    Fixes old picks that were saved before these fields were added.
+    Parses selection like "Miami Heat -7.0" to extract:
+    - market: "spreads"
+    - line: -7.0
+    - side: based on team position in matchup
+
+    Request body:
+    {
+        "date": "2026-01-24",  # Required: Date to backfill
+        "sport": "NBA",        # Optional: Specific sport
+        "dry_run": true        # Optional: Preview without saving (default: false)
+    }
+    """
+    import re
+
+    if not DATABASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    config = config or {}
+    date_str = config.get("date")
+    sport = config.get("sport")
+    dry_run = config.get("dry_run", False)
+
+    if not date_str:
+        raise HTTPException(status_code=400, detail="'date' field required (YYYY-MM-DD)")
+
+    try:
+        from database import get_db, PickLedger
+        from datetime import date as dt_date
+
+        target_date = dt_date.fromisoformat(date_str)
+
+        updates = []
+        errors = []
+
+        with get_db() as db:
+            if db is None:
+                raise HTTPException(status_code=503, detail="Database connection failed")
+
+            # Query picks with missing fields
+            query = db.query(PickLedger).filter(
+                PickLedger.created_date_et == date_str
+            )
+            if sport:
+                query = query.filter(PickLedger.sport == sport.upper())
+
+            picks = query.all()
+
+            for pick in picks:
+                selection = pick.selection or ""
+                matchup = pick.matchup or ""
+                current_market = pick.market
+                current_line = pick.line
+                current_side = pick.side
+
+                new_market = current_market
+                new_line = current_line
+                new_side = current_side
+                new_home = pick.home_team
+                new_away = pick.away_team
+
+                # Parse matchup for home/away if missing
+                if not new_home or not new_away:
+                    # Format: "Team A vs Team B" or "Team A @ Team B"
+                    if " vs " in matchup:
+                        parts = matchup.split(" vs ")
+                        if len(parts) == 2:
+                            new_away = parts[0].strip()
+                            new_home = parts[1].strip()
+                    elif " @ " in matchup:
+                        parts = matchup.split(" @ ")
+                        if len(parts) == 2:
+                            new_away = parts[0].strip()
+                            new_home = parts[1].strip()
+
+                # Detect spread picks: "Team Name +/-X.X"
+                spread_match = re.match(r'^(.+?)\s+([+-]?\d+\.?\d*)$', selection)
+                if spread_match and not current_market:
+                    team_name = spread_match.group(1).strip()
+                    spread_value = float(spread_match.group(2))
+                    new_market = "spreads"
+                    new_line = spread_value
+                    # Determine side based on which team
+                    if new_home and team_name.lower() in new_home.lower():
+                        new_side = "HOME"
+                    elif new_away and team_name.lower() in new_away.lower():
+                        new_side = "AWAY"
+
+                # Detect Over/Under props: "Player Over/Under X.X Stat"
+                over_match = re.search(r'Over\s+(\d+\.?\d*)', selection, re.IGNORECASE)
+                under_match = re.search(r'Under\s+(\d+\.?\d*)', selection, re.IGNORECASE)
+
+                if over_match and not current_side:
+                    new_side = "OVER"
+                    if not current_line:
+                        new_line = float(over_match.group(1))
+                elif under_match and not current_side:
+                    new_side = "UNDER"
+                    if not current_line:
+                        new_line = float(under_match.group(1))
+
+                # Check if any updates needed
+                needs_update = (
+                    (new_market and new_market != current_market) or
+                    (new_line is not None and new_line != current_line) or
+                    (new_side and new_side != current_side) or
+                    (new_home and new_home != pick.home_team) or
+                    (new_away and new_away != pick.away_team)
+                )
+
+                if needs_update:
+                    update_info = {
+                        "pick_uid": pick.pick_uid,
+                        "selection": selection,
+                        "changes": {}
+                    }
+
+                    if new_market and new_market != current_market:
+                        update_info["changes"]["market"] = {"old": current_market, "new": new_market}
+                        if not dry_run:
+                            pick.market = new_market
+
+                    if new_line is not None and new_line != current_line:
+                        update_info["changes"]["line"] = {"old": current_line, "new": new_line}
+                        if not dry_run:
+                            pick.line = new_line
+
+                    if new_side and new_side != current_side:
+                        update_info["changes"]["side"] = {"old": current_side, "new": new_side}
+                        if not dry_run:
+                            pick.side = new_side
+
+                    if new_home and new_home != pick.home_team:
+                        update_info["changes"]["home_team"] = {"old": pick.home_team, "new": new_home}
+                        if not dry_run:
+                            pick.home_team = new_home
+
+                    if new_away and new_away != pick.away_team:
+                        update_info["changes"]["away_team"] = {"old": pick.away_team, "new": new_away}
+                        if not dry_run:
+                            pick.away_team = new_away
+
+                    updates.append(update_info)
+
+            if not dry_run:
+                db.commit()
+
+        return {
+            "status": "backfill_complete" if not dry_run else "dry_run",
+            "date": date_str,
+            "sport": sport or "ALL",
+            "picks_scanned": len(picks),
+            "picks_updated": len(updates),
+            "updates": updates[:20],  # Limit output
+            "errors": errors if errors else None,
+            "timestamp": datetime.now().isoformat(),
+            "next_steps": [
+                f"1. Reset picks to PENDING: POST /live/grader/reset-picks",
+                f"2. Re-grade: POST /live/grader/grade/{{sport}}?date={date_str}"
+            ] if not dry_run else ["Run again with dry_run=false to apply changes"]
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {e}")
+    except Exception as e:
+        logger.exception("Backfill failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/grader/bias/{sport}")
 async def get_prediction_bias(sport: str, stat_type: str = "all", days_back: int = 1):
     """
