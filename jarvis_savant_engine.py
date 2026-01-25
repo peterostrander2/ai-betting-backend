@@ -283,6 +283,81 @@ class JarvisSavantEngine:
             "variance_factor": variance_factor,
         }
 
+    # =========================================================================
+    # STUB METHODS FOR BACKWARDS COMPATIBILITY
+    # These are called by live_data_router.py but were simplified in v7.9
+    # =========================================================================
+    def calculate_gematria_signal(self, player: str, team: str, opponent: str) -> Dict[str, Any]:
+        """Calculate gematria signal for player/team combo."""
+        combined = f"{player} {team} {opponent}"
+        value = calculate_gematria(combined)
+        return {
+            "value": value,
+            "digital_root": calculate_digital_root(value),
+            "is_power": value in self.power_numbers,
+            "signal_strength": min(value / 100, 1.0),
+        }
+
+    def calculate_public_fade_signal(self, public_pct: float) -> Dict[str, Any]:
+        """Calculate public fade signal - stub (lives in Research Engine)."""
+        return {"active": False, "fade_direction": None, "strength": 0}
+
+    def calculate_mid_spread_signal(self, spread: float) -> Dict[str, Any]:
+        """Calculate mid-spread (Goldilocks) signal."""
+        abs_spread = abs(spread) if spread else 0
+        in_zone = 4 <= abs_spread <= 9
+        return {
+            "in_goldilocks": in_zone,
+            "spread": abs_spread,
+            "boost": 0.2 if in_zone else 0,
+        }
+
+    def calculate_large_spread_trap(self, spread: float, total: float) -> Dict[str, Any]:
+        """Calculate trap gate signal for large spreads."""
+        abs_spread = abs(spread) if spread else 0
+        is_trap = abs_spread > 15
+        return {
+            "is_trap": is_trap,
+            "spread": abs_spread,
+            "penalty": -0.2 if is_trap else 0,
+        }
+
+    def calculate_fibonacci_alignment(self, value: float) -> Dict[str, Any]:
+        """Check Fibonacci alignment - stub."""
+        fibs = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144]
+        is_fib = int(value) in fibs if value else False
+        return {"is_fibonacci": is_fib, "value": value}
+
+    def calculate_vortex_pattern(self, value: int) -> Dict[str, Any]:
+        """Check vortex (3-6-9) pattern."""
+        if not value:
+            return {"is_vortex": False, "value": 0}
+        root = calculate_digital_root(value)
+        is_vortex = root in self.tesla_numbers
+        return {"is_vortex": is_vortex, "digital_root": root, "value": value}
+
+    def calculate_confluence(self, **kwargs) -> Dict[str, Any]:
+        """Calculate confluence level - simplified stub."""
+        return {
+            "level": "MODERATE",
+            "score": 5.0,
+            "factors_aligned": 2,
+        }
+
+    def determine_bet_tier(self, score: float, confluence: Dict) -> Dict[str, Any]:
+        """Determine bet tier from score."""
+        if score >= 9.0:
+            tier = "TITANIUM_SMASH"
+        elif score >= 7.5:
+            tier = "GOLD_STAR"
+        elif score >= 6.5:
+            tier = "EDGE_LEAN"
+        elif score >= 5.5:
+            tier = "MONITOR"
+        else:
+            tier = "PASS"
+        return {"tier": tier, "score": score}
+
     def validate_2178(self) -> Dict[str, Any]:
         """Validate 2178 as THE IMMORTAL number."""
         n = 2178
