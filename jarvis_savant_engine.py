@@ -412,13 +412,20 @@ class VedicAstroEngine:
 
 class EsotericLearningLoop:
     """
-    v10.92 Learning Loop - Fused with GrowthLedger.
+    v10.93 Learning Loop - Fused with GrowthLedger (Production Hardened).
 
     Every result. Every upgrade. Every learning step.
     Every Boss instinct call. All growth fused.
+
+    Production Hardening:
+    - Atomic JSONL writes with file locking
+    - Idempotent grading (no double-grading)
+    - Grading job lifecycle tracking
+    - Health heartbeat monitoring
+    - ET timezone daily boundary
     """
     def __init__(self):
-        self.version = "v10.92"
+        self.version = "v10.93"
         self._growth_ledger = None
         logger.info("EsotericLearningLoop initialized")
 

@@ -11290,6 +11290,37 @@ async def get_learning_history(limit: int = 50):
         }
 
 
+@router.get("/growth/health")
+async def get_growth_health():
+    """
+    v10.93: Learning loop health heartbeat.
+
+    Returns timestamps for all key events to detect stuck states:
+    - If last_pick_logged exists but last_pick_graded is old → grading stuck
+    - If last_pick_graded exists but last_weight_adjusted is old → learning stuck
+    - If grading_started but no grading_finished → job may have crashed
+
+    Use this endpoint to monitor that the learning loop is actually learning,
+    not just logging.
+    """
+    try:
+        from growth_ledger import get_health
+        health = get_health()
+
+        return {
+            "available": True,
+            "health": health,
+            "version": "v10.93",
+            "timestamp": datetime.now().isoformat()
+        }
+    except ImportError:
+        return {
+            "available": False,
+            "error": "Growth ledger not installed",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 # ============================================================================
 # v10.73: PULL READINESS + AUDIT ENDPOINT
 # ============================================================================
