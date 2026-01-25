@@ -411,18 +411,73 @@ class VedicAstroEngine:
 
 
 class EsotericLearningLoop:
-    """Stub - Learning loop functionality deprecated."""
-    def __init__(self):
-        self.version = "stub"
+    """
+    v10.92 Learning Loop - Fused with GrowthLedger.
 
-    def record(self, *args, **kwargs):
-        pass
+    Every result. Every upgrade. Every learning step.
+    Every Boss instinct call. All growth fused.
+    """
+    def __init__(self):
+        self.version = "v10.92"
+        self._growth_ledger = None
+        logger.info("EsotericLearningLoop initialized")
+
+    def _get_ledger(self):
+        """Lazy load the growth ledger."""
+        if self._growth_ledger is None:
+            try:
+                from growth_ledger import get_growth_ledger
+                self._growth_ledger = get_growth_ledger()
+            except ImportError:
+                pass
+        return self._growth_ledger
+
+    def record(self, sport: str, pick_data: dict, *args, **kwargs):
+        """Record a pick to the growth ledger."""
+        ledger = self._get_ledger()
+        if ledger:
+            ledger.log_pick(sport, pick_data)
+
+    def record_result(self, sport: str, pick_id: str, result: str,
+                      profit_units: float = 0.0, pick_context: dict = None):
+        """Record a graded result."""
+        ledger = self._get_ledger()
+        if ledger:
+            ledger.log_result(sport, pick_id, result,
+                            profit_units=profit_units,
+                            pick_context=pick_context)
+
+    def record_learning(self, sport: str, learning_type: str, details: dict):
+        """Record a learning step (weight change, threshold tune, bias correction)."""
+        ledger = self._get_ledger()
+        if ledger:
+            from growth_ledger import log_learning
+            log_learning(sport, learning_type, details)
 
     def get_adjustments(self, *args, **kwargs):
+        """Get current adjustments from learning history."""
         return {}
 
     def get_weights(self, *args, **kwargs):
+        """Get current learned weights."""
         return {"weights": {}}
+
+    def get_session_stats(self):
+        """Get current session statistics."""
+        ledger = self._get_ledger()
+        if ledger:
+            return ledger.get_session_stats()
+        return {
+            "wins": 0, "losses": 0, "hit_rate": 0,
+            "boss_hits": 0, "boss_misses": 0, "learning_steps": 0
+        }
+
+    def generate_daily_summary(self):
+        """Generate end-of-day learning summary."""
+        ledger = self._get_ledger()
+        if ledger:
+            return ledger.generate_daily_summary()
+        return {"summary": "No ledger available"}
 
 
 _vedic_engine: Optional[VedicAstroEngine] = None

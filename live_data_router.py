@@ -11178,6 +11178,119 @@ async def grader_status():
 
 
 # ============================================================================
+# v10.92: GROWTH LEDGER ENDPOINTS
+# ============================================================================
+
+@router.get("/growth/stats")
+async def get_growth_stats():
+    """
+    v10.92: Get current session growth statistics.
+
+    Returns session wins/losses, boss call hit rate, learning steps taken.
+    """
+    try:
+        from growth_ledger import get_session_stats
+        stats = get_session_stats()
+        return {
+            "available": True,
+            "session_stats": stats,
+            "version": "v10.92",
+            "timestamp": datetime.now().isoformat()
+        }
+    except ImportError:
+        return {
+            "available": False,
+            "error": "Growth ledger not installed",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/growth/summary")
+async def get_growth_summary():
+    """
+    v10.92: Generate daily growth summary.
+
+    Every result. Every upgrade. Every learning step.
+    Every Boss instinct call. All growth fused.
+    """
+    try:
+        from growth_ledger import get_daily_summary
+        summary = get_daily_summary()
+        return {
+            "available": True,
+            "daily_summary": summary,
+            "version": "v10.92",
+            "timestamp": datetime.now().isoformat()
+        }
+    except ImportError:
+        return {
+            "available": False,
+            "error": "Growth ledger not installed",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/growth/boss-calls")
+async def get_boss_calls(limit: int = 20):
+    """
+    v10.92: Get recent GOLD_STAR (Boss Call) outcomes.
+
+    These are the high-confidence picks - tracking their hit rate is crucial.
+    """
+    try:
+        from growth_ledger import get_growth_ledger
+        ledger = get_growth_ledger()
+        boss_calls = ledger.get_recent_boss_calls(limit=min(limit, 100))
+        stats = ledger.get_session_stats()
+
+        return {
+            "available": True,
+            "boss_calls": boss_calls,
+            "summary": {
+                "total": stats.get("boss_hits", 0) + stats.get("boss_misses", 0),
+                "hits": stats.get("boss_hits", 0),
+                "misses": stats.get("boss_misses", 0),
+                "hit_rate": stats.get("boss_hit_rate", 0)
+            },
+            "version": "v10.92",
+            "timestamp": datetime.now().isoformat()
+        }
+    except ImportError:
+        return {
+            "available": False,
+            "error": "Growth ledger not installed",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/growth/learning-history")
+async def get_learning_history(limit: int = 50):
+    """
+    v10.92: Get recent learning steps.
+
+    Shows weight adjustments, threshold tuning, bias corrections.
+    """
+    try:
+        from growth_ledger import get_growth_ledger
+        ledger = get_growth_ledger()
+        history = ledger.get_learning_history(limit=min(limit, 200))
+
+        return {
+            "available": True,
+            "learning_steps": len(history),
+            "history": history,
+            "version": "v10.92",
+            "timestamp": datetime.now().isoformat()
+        }
+    except ImportError:
+        return {
+            "available": False,
+            "error": "Growth ledger not installed",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================================
 # v10.73: PULL READINESS + AUDIT ENDPOINT
 # ============================================================================
 
