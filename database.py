@@ -1368,6 +1368,56 @@ def _update_pick_result_impl(
         return False
 
 
+def reset_picks_to_pending(
+    target_date: date,
+    sport: Optional[str] = None,
+    db: Session = None
+) -> int:
+    """
+    v10.96: Reset all graded picks for a date back to PENDING status.
+    Used when grading logic was incorrect and needs to be re-run.
+
+    Returns count of picks reset.
+    """
+    if db is None:
+        with get_db() as db:
+            if db is None:
+                return 0
+            return _reset_picks_to_pending_impl(target_date, sport, db)
+    else:
+        return _reset_picks_to_pending_impl(target_date, sport, db)
+
+
+def _reset_picks_to_pending_impl(target_date: date, sport: Optional[str], db: Session) -> int:
+    """Internal implementation."""
+    try:
+        date_str = target_date.isoformat()
+
+        query = db.query(PickLedger).filter(
+            PickLedger.game_date_et == date_str,
+            PickLedger.result != PickResult.PENDING  # Only reset graded picks
+        )
+
+        if sport:
+            query = query.filter(PickLedger.sport == sport.upper())
+
+        picks = query.all()
+        count = 0
+        for pick in picks:
+            pick.result = PickResult.PENDING
+            pick.settled_at = None
+            pick.profit_units = 0.0
+            pick.actual_value = None
+            count += 1
+
+        db.flush()
+        logger.info(f"Reset {count} picks to PENDING for {date_str}" + (f" ({sport.upper()})" if sport else ""))
+        return count
+    except Exception as e:
+        logger.exception(f"Failed to reset picks to PENDING: {e}")
+        return 0
+
+
 # ============================================================================
 # v10.32 MICRO-WEIGHTS HELPERS
 # ============================================================================

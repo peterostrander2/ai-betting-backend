@@ -801,9 +801,39 @@ class JSONLGradingJob:
                                 pick_result = PickResult.PUSH
                                 profit = 0.0
                         else:
-                            # For spreads/ML, assume actual_value is margin
-                            pick_result = PickResult.WIN if actual_value > 0 else PickResult.LOSS
-                            profit = recommended_units * self._get_profit_mult(odds) if pick_result == PickResult.WIN else -recommended_units
+                            # v10.96: Fixed spread/ML grading logic
+                            # actual_value = margin from perspective of picked team (positive = team won)
+                            # line = spread (negative for favorite, e.g., -7 means need to win by >7)
+                            market = (pick.get("market") or "").lower()
+
+                            if market in ("spreads", "spread"):
+                                # For spreads: team must cover the spread
+                                # Example: Heat -7 (line=-7), wins by 10 (actual=10)
+                                #   → 10 + (-7) = 3 > 0 → WIN (covered)
+                                # Example: Heat -7 (line=-7), wins by 5 (actual=5)
+                                #   → 5 + (-7) = -2 < 0 → LOSS (didn't cover)
+                                adjusted_margin = actual_value + line
+                                if adjusted_margin > 0:
+                                    pick_result = PickResult.WIN
+                                    profit = recommended_units * self._get_profit_mult(odds)
+                                elif adjusted_margin < 0:
+                                    pick_result = PickResult.LOSS
+                                    profit = -recommended_units
+                                else:
+                                    pick_result = PickResult.PUSH
+                                    profit = 0.0
+                            else:
+                                # For moneylines (h2h): just need to win outright
+                                if actual_value > 0:
+                                    pick_result = PickResult.WIN
+                                    profit = recommended_units * self._get_profit_mult(odds)
+                                elif actual_value < 0:
+                                    pick_result = PickResult.LOSS
+                                    profit = -recommended_units
+                                else:
+                                    # Tie (rare in most sports)
+                                    pick_result = PickResult.PUSH
+                                    profit = 0.0
 
                         # Update Postgres
                         if update_pick_result(pick.get("pick_uid"), pick_result, profit, actual_value):

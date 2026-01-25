@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.95"  # v10.95: Fix SQLAlchemy session binding in grader endpoints
+    ENGINE_VERSION = "v10.96"  # v10.96: Fix spread grading logic - check if margin covers spread
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 

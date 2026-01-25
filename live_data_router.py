@@ -11773,6 +11773,83 @@ async def run_grader_audit(audit_config: Dict[str, Any] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/grader/reset-weights")
+async def reset_grader_weights(reset_config: Dict[str, Any] = None):
+    """
+    v10.96: Reset weights to factory defaults.
+    Use when grading was incorrect and weight adjustments need to be reverted.
+
+    Request body (optional):
+    {
+        "sport": "NBA"  # Specific sport to reset, or omit for ALL sports
+    }
+    """
+    if not AUTO_GRADER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+    try:
+        grader = get_grader()
+        config = reset_config or {}
+        sport = config.get("sport")
+
+        result = grader.reset_weights_to_factory(sport)
+
+        return {
+            "status": "weights_reset",
+            **result,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.exception("Weight reset failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/grader/reset-picks")
+async def reset_picks_to_pending_endpoint(reset_config: Dict[str, Any] = None):
+    """
+    v10.96: Reset graded picks back to PENDING status.
+    Use when grading logic was incorrect and picks need to be re-graded.
+
+    Request body:
+    {
+        "date": "2026-01-24",  # Required: Date to reset (YYYY-MM-DD)
+        "sport": "NBA"         # Optional: Specific sport, or omit for all sports
+    }
+    """
+    if not DATABASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    try:
+        from database import reset_picks_to_pending
+        from datetime import date as dt_date
+
+        config = reset_config or {}
+        date_str = config.get("date")
+        sport = config.get("sport")
+
+        if not date_str:
+            raise HTTPException(status_code=400, detail="'date' field required (YYYY-MM-DD)")
+
+        target_date = dt_date.fromisoformat(date_str)
+        count = reset_picks_to_pending(target_date, sport)
+
+        return {
+            "status": "picks_reset",
+            "date": date_str,
+            "sport": sport or "ALL",
+            "picks_reset": count,
+            "timestamp": datetime.now().isoformat(),
+            "note": "Picks have been reset to PENDING. Run grading again to re-grade."
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {e}")
+    except Exception as e:
+        logger.exception("Pick reset failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/grader/bias/{sport}")
 async def get_prediction_bias(sport: str, stat_type: str = "all", days_back: int = 1):
     """

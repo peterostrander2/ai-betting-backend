@@ -142,12 +142,12 @@ class AutoGrader:
             "NHL": ["goals", "assists", "points", "shots", "saves", "blocks"],
             "NCAAB": ["points", "rebounds", "assists", "threes"]
         }
-        
+
         for sport in self.SUPPORTED_SPORTS:
             self.weights[sport] = {}
             for stat in stat_types.get(sport, ["points"]):
                 self.weights[sport][stat] = WeightConfig()
-                
+
                 # Sport-specific default adjustments
                 if sport == "MLB":
                     self.weights[sport][stat].park_factor = 0.15
@@ -156,6 +156,69 @@ class AutoGrader:
                     self.weights[sport][stat].vacuum = 0.22  # Injuries huge in NFL
                 elif sport == "NHL":
                     self.weights[sport][stat].pace = 0.18  # Pace matters in hockey
+
+    def reset_weights_to_factory(self, sport: str = None) -> Dict:
+        """
+        v10.96: Reset weights to factory defaults.
+        Use when grading was incorrect and weight adjustments need to be reverted.
+
+        Args:
+            sport: Specific sport to reset, or None for all sports
+
+        Returns:
+            Dict with reset status
+        """
+        import shutil
+        from datetime import datetime
+
+        # Backup current weights before reset
+        weights_file = os.path.join(self.storage_path, "weights.json")
+        if os.path.exists(weights_file):
+            backup_file = os.path.join(
+                self.storage_path,
+                f"weights_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            )
+            try:
+                shutil.copy2(weights_file, backup_file)
+                print(f"✅ Backed up weights to {backup_file}")
+            except Exception as e:
+                print(f"⚠️ Could not backup weights: {e}")
+
+        if sport:
+            # Reset specific sport only
+            sport = sport.upper()
+            if sport in self.weights:
+                stat_types = {
+                    "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "pra"],
+                    "NFL": ["passing_yards", "rushing_yards", "receiving_yards", "receptions", "touchdowns"],
+                    "MLB": ["hits", "runs", "rbis", "strikeouts", "total_bases", "walks"],
+                    "NHL": ["goals", "assists", "points", "shots", "saves", "blocks"],
+                    "NCAAB": ["points", "rebounds", "assists", "threes"]
+                }
+                for stat in stat_types.get(sport, ["points"]):
+                    self.weights[sport][stat] = WeightConfig()
+                    # Sport-specific defaults
+                    if sport == "MLB":
+                        self.weights[sport][stat].park_factor = 0.15
+                        self.weights[sport][stat].pace = 0.08
+                    elif sport == "NFL":
+                        self.weights[sport][stat].vacuum = 0.22
+                    elif sport == "NHL":
+                        self.weights[sport][stat].pace = 0.18
+                print(f"✅ Reset {sport} weights to factory defaults")
+        else:
+            # Reset all sports
+            self._initialize_weights()
+            print("✅ Reset ALL weights to factory defaults")
+
+        # Save the reset weights
+        self._save_state()
+
+        return {
+            "reset": True,
+            "sport": sport or "ALL",
+            "message": f"Weights reset to factory defaults for {sport or 'ALL sports'}"
+        }
     
     def _load_state(self):
         """Load persisted weights and prediction history."""
