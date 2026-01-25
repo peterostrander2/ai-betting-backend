@@ -2789,10 +2789,114 @@ curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" 
 
 ---
 
-## Final API Status (v10.71) - All Systems Live
+## Session Log: January 25, 2026 - v7.9.1 Game Status Tracking & Engine Fixes
 
-**Last Updated:** January 24, 2026
-**Engine Version:** v10.71 (Jason Sim Auto-Population)
+### What Was Done
+
+**1. Engine Separation Refactor (v7.9)**
+
+Refactored the scoring engines for clean separation per user audit:
+
+| Engine | File | Purpose |
+|--------|------|---------|
+| **Jarvis** | `jarvis_savant_engine.py` | Gematria, sacred triggers (2178, 201, 33, 47, 88, 93, 322), mid-spread amplifier |
+| **Esoteric Edge** | `esoteric_edge_engine.py` | Vedic, moon phases, Fibonacci, vortex, weather (NON-Jarvis) |
+| **Research** | `live_data_router.py` | Public fade, sharp money, RLM |
+| **AI** | `advanced_ml_backend.py` | 8 AI models + 8 pillars |
+
+**2. Game Status Tracking (v7.9.1)**
+
+Modified `apply_time_gate()` to add status fields to every pick:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `game_status` | string | "PREGAME" or "LIVE" |
+| `is_already_started` | bool | True if game has started |
+| `live_bet_only` | bool | True for started games |
+| `start_time_est` | string | Formatted EST time |
+
+**Key change:** Already-started games are NO LONGER removed. They are kept but marked as `game_status: "LIVE"` and `live_bet_only: true`.
+
+**3. Production Bug Fixes**
+
+| Issue | Fix |
+|-------|-----|
+| `check_jarvis_trigger` not found | Renamed to `check_jarvis_triggers` (4 occurrences) |
+| `get_vedic_engine` import error | Added stub class for backwards compatibility |
+| `get_learning_loop` import error | Added stub class for backwards compatibility |
+| Missing Jarvis methods | Added 8 stub methods (calculate_gematria_signal, etc.) |
+| `removed_already_started` key error | Changed to `count_live` in status message logic |
+
+### Files Changed
+
+```
+jarvis_savant_engine.py     (MODIFIED - v7.9 standalone + stub methods)
+esoteric_edge_engine.py     (NEW - NON-Jarvis esoteric scoring)
+live_data_router.py         (MODIFIED - time gate, method names, status messages)
+test_engine_separation.py   (NEW - 27 tests for engine separation)
+tiering.py                  (VERIFIED - single source of truth)
+```
+
+### Commits
+
+| Hash | Message |
+|------|---------|
+| `747644a` | v7.9.1: Add game status tracking to picks |
+| `7e7a148` | fix: Update status message to use new time gate field names |
+| `e8b20b3` | fix: Correct method name and add missing stubs |
+| `1ad8e07` | fix: Add missing stub methods to JarvisSavantEngine |
+
+### Testing
+
+All 27 tests pass:
+
+```bash
+source venv/bin/activate && python -m pytest test_engine_separation.py -v
+```
+
+| Test Class | Tests | Status |
+|------------|-------|--------|
+| TestJarvisEngine | 6 | ✅ Pass |
+| TestEsotericEdgeEngine | 5 | ✅ Pass |
+| TestTieringModule | 9 | ✅ Pass |
+| TestEngineSeparation | 3 | ✅ Pass |
+| TestGameStatusTracking | 5 | ✅ Pass |
+
+### Verification
+
+```bash
+# Test best-bets endpoint
+curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba" -H "X-API-Key: YOUR_KEY"
+
+# Check pick has game status fields
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
+  -H "X-API-Key: YOUR_KEY" | jq '.game_picks.picks[0] | {game_status, is_already_started, live_bet_only, start_time_est}'
+```
+
+### Pick Output Schema (Updated)
+
+Every pick now includes:
+
+```json
+{
+  "player_name": "LeBron James",
+  "game": "Lakers @ Celtics",
+  "game_status": "PREGAME",
+  "is_already_started": false,
+  "live_bet_only": false,
+  "start_time_est": "7:30 PM EST",
+  "tier": "GOLD_STAR",
+  "smash_score": 7.8,
+  "...": "other fields"
+}
+```
+
+---
+
+## Final API Status (v10.76) - All Systems Live
+
+**Last Updated:** January 25, 2026
+**Engine Version:** v10.76 (Game Status Tracking)
 
 ### All 11 APIs Online ✅
 
