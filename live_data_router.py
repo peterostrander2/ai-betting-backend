@@ -10843,6 +10843,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     }
 
     # v10.75: Apply time status to all picks before normalization
+    # v10.97: Also add frontend-expected fields (game_status, is_today_et, is_started)
     for pick in top_props + top_game_picks:
         if not pick.get("status_time"):
             game_time_iso = pick.get("game_time") or pick.get("commence_time", "")
@@ -10851,6 +10852,33 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             pick["status_time"] = time_status
             pick["start_time_et"] = time_status.get("start_time_et")
             pick["pulled_at_et"] = time_status.get("pulled_at_et")
+
+        # v10.97: Add frontend-expected fields based on time status
+        # This mirrors what apply_time_gate does in /best-bets/all
+        if "game_status" not in pick:
+            ts = pick.get("status_time", {})
+            state = ts.get("state", "UNKNOWN")
+
+            if state in ("STARTED", "LOCKED"):
+                pick["game_status"] = "LIVE"
+                pick["is_started"] = True
+                pick["is_already_started"] = True
+                pick["live_bet_only"] = True
+            elif state == "FINAL":
+                pick["game_status"] = "FINAL"
+                pick["is_started"] = True
+                pick["is_already_started"] = True
+                pick["live_bet_only"] = True
+            else:
+                # PREGAME or UNKNOWN
+                pick["game_status"] = "PREGAME"
+                pick["is_started"] = False
+                pick["is_already_started"] = False
+                pick["live_bet_only"] = False
+
+            # is_today_et: All picks from this endpoint are for today
+            # since they went through the today-only filtering earlier
+            pick["is_today_et"] = True
 
     # v10.72: Normalize ALL picks to canonical PickCard format
     # This ensures consistent output regardless of pick type (spread/ML/total/prop)
