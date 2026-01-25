@@ -50,6 +50,14 @@ except ImportError:
     SEASON_GATING_AVAILABLE = False
     logger.warning("Sport season gating not available")
 
+# v11.00: Time filters for today-only grading
+try:
+    from time_filters import get_today_et, get_grading_window, is_today_et
+    TIME_FILTERS_AVAILABLE = True
+except ImportError:
+    TIME_FILTERS_AVAILABLE = False
+    logger.warning("Time filters not available - using basic date filtering")
+
 # v10.32: Redis for distributed locking
 try:
     import redis

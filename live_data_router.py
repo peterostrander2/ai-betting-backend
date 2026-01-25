@@ -918,6 +918,117 @@ def enrich_picks_batch(picks: List[Dict[str, Any]], sport: str, injuries_data: D
     return enriched
 
 
+def build_explain_object(pick: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    v11.00: Build explain breakdown for a pick.
+
+    Returns a debug object showing exactly how the score was computed,
+    including all four engine contributions and confluence factors.
+    """
+    # Extract AI components from ai_breakdown
+    ai_breakdown = pick.get("ai_breakdown", {})
+    ai_components = {
+        "ensemble": ai_breakdown.get("ensemble", 5.0) - 5.0,  # Convert to delta from base
+        "lstm": ai_breakdown.get("lstm", 5.0) - 5.0,
+        "monte_carlo": ai_breakdown.get("monte_carlo", 5.0) - 5.0,
+        "line_movement": ai_breakdown.get("line_movement", 5.0) - 5.0,
+        "rest_fatigue": ai_breakdown.get("rest_fatigue", 5.0) - 5.0,
+        "injury_impact": ai_breakdown.get("injury_impact", 5.0) - 5.0,
+        "matchup_model": ai_breakdown.get("matchup_model", 5.0) - 5.0,
+        "edge_calculator": ai_breakdown.get("edge_calculator", 5.0) - 5.0,
+    }
+
+    # Extract research components from reasons
+    research_components = {}
+    for reason in pick.get("reasons", []):
+        if "RESEARCH:" in reason:
+            # Parse "RESEARCH: Sharp Split +1.2" format
+            try:
+                parts = reason.replace("RESEARCH:", "").strip()
+                if "+" in parts or "-" in parts:
+                    name_part = parts.rsplit("+", 1)[0].rsplit("-", 1)[0].strip()
+                    value_part = parts.replace(name_part, "").strip()
+                    key = name_part.lower().replace(" ", "_").replace("(", "").replace(")", "")
+                    research_components[key] = float(value_part) if value_part else 0.0
+            except:
+                pass
+
+    # Extract esoteric components
+    esoteric_breakdown = pick.get("esoteric_breakdown", {})
+    esoteric_components = {
+        "vedic": esoteric_breakdown.get("astro", 0.0),
+        "phi_alignment": esoteric_breakdown.get("fibonacci", 0.0),
+        "vortex": esoteric_breakdown.get("vortex", 0.0),
+        "daily_edge": esoteric_breakdown.get("daily_edge", 0.0),
+        "external_micro": esoteric_breakdown.get("external_micro", 0.0),
+    }
+
+    # Extract jarvis components
+    jarvis_components = {
+        "gematria": 0.0,
+        "sacred_triggers": [],
+        "mid_spread_amp": 0.0,
+        "jarvis_trap_gate": 0.0,
+    }
+
+    jarvis_triggers = pick.get("jarvis_triggers", [])
+    if jarvis_triggers:
+        jarvis_components["sacred_triggers"] = [str(t.get("number", t)) for t in jarvis_triggers]
+        jarvis_components["gematria"] = sum(t.get("boost", 0.4) for t in jarvis_triggers)
+
+    for reason in pick.get("reasons", []):
+        if "JARVIS:" in reason:
+            try:
+                if "mid_spread" in reason.lower() or "mid-spread" in reason.lower():
+                    value = reason.split("+")[-1].split("-")[-1].strip()
+                    jarvis_components["mid_spread_amp"] = float(value) if value else 0.0
+                elif "trap" in reason.lower():
+                    value = reason.split("-")[-1].strip()
+                    jarvis_components["jarvis_trap_gate"] = -float(value) if value else 0.0
+            except:
+                pass
+
+    # Get scoring breakdown
+    scoring = pick.get("scoring_breakdown", {})
+    engine_breakdown = pick.get("engine_breakdown", {})
+
+    return {
+        "ai_components": ai_components,
+        "ai_score": scoring.get("ai_score", pick.get("ai_score", 5.0)),
+        "research_components": research_components,
+        "research_score": scoring.get("research_score", pick.get("research_score", 5.0)),
+        "esoteric_components": esoteric_components,
+        "esoteric_score": scoring.get("esoteric_score", pick.get("esoteric_score", 5.0)),
+        "jarvis_components": jarvis_components,
+        "jarvis_score": pick.get("jarvis_rs", 5.0),
+        "confluence_boost": pick.get("confluence_boost", 0.0),
+        "jason_sim_boost": pick.get("jason_sim_boost", 0.0),
+        "final_math": {
+            "formula": "FINAL = (AI × 0.35) + (Research × 0.35) + (Esoteric × 0.10) + (Jarvis × 0.20) + Confluence + JasonSim",
+            "ai_contrib": engine_breakdown.get("ai", {}).get("contribution", 0.0),
+            "research_contrib": engine_breakdown.get("research", {}).get("contribution", 0.0),
+            "esoteric_contrib": engine_breakdown.get("esoteric", {}).get("contribution", 0.0),
+            "jarvis_contrib": engine_breakdown.get("jarvis", {}).get("contribution", 0.0),
+            "confluence_boost": pick.get("confluence_boost", 0.0),
+            "jason_sim_boost": pick.get("jason_sim_boost", 0.0),
+            "final_score": pick.get("final_score", pick.get("smash_score", 0.0)),
+        },
+        "confidence_flags": {
+            "injury_verified": pick.get("injury_verified", True),
+            "player_prop_listed": pick.get("player_prop_listed", True),
+            "book_valid": pick.get("book") is not None,
+            "today_only": pick.get("is_today_et", True),
+        },
+    }
+
+
+def add_explain_to_picks(picks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """v11.00: Add explain object to each pick."""
+    for pick in picks:
+        pick["explain"] = build_explain_object(pick)
+    return picks
+
+
 def filter_valid_picks(picks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """v10.83: Filter out invalid picks (status != VALID)."""
     return [p for p in picks if p.get("status", "VALID") == "VALID"]
@@ -7102,7 +7213,7 @@ async def get_best_bets_all(debug: int = 0):
 
 
 @router.get("/best-bets/{sport}")
-async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, min_confidence: str = "C"):
+async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, min_confidence: str = "C", explain: int = 0):
     """
     Get best bets using full 8 AI Models + 8 Pillars + JARVIS + Esoteric scoring.
     Returns TWO categories: props (player props) and game_picks (spreads, totals, ML).
@@ -7112,6 +7223,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     - include_conflicts=1: Include filtered CONFLICT and NEUTRAL picks in separate arrays
     - min_confidence=A|B|C: Filter to only return picks >= this confidence grade (default: C = all picks)
       A = Top confluence + tight alignment, B = JARVIS_MODERATE + moderate alignment, C = Everything
+    - explain=1: Include per-pick debug breakdown showing exactly how score was computed
 
     Scoring Formula (v10.21):
     FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
@@ -10802,6 +10914,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     # v10.83: Filter out invalid picks (market sanity, injury exclusions)
     top_props = filter_valid_picks(top_props)
     top_game_picks = filter_valid_picks(top_game_picks)
+
+    # v11.00: Add explain breakdown when explain=1
+    if explain == 1:
+        top_props = add_explain_to_picks(top_props)
+        top_game_picks = add_explain_to_picks(top_game_picks)
 
     # v10.82: Generate ET timestamp for response
     from zoneinfo import ZoneInfo

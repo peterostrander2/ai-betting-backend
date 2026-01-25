@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.99"  # v10.99: Bulletproof get_weights() - try/except guards on all learning.get_weights() calls
+    ENGINE_VERSION = "v11.00"  # v11.00: Production clean - explain mode, time_filters.py, prop_validation.py, standardized schema
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 
