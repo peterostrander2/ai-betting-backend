@@ -11850,6 +11850,86 @@ async def reset_picks_to_pending_endpoint(reset_config: Dict[str, Any] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/grader/clear-jsonl")
+async def clear_jsonl_grading_data(
+    config: Dict[str, Any] = None,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v11.0: Clear JSONL grading data for a specific date/sport.
+
+    Use this when you need to fully re-grade picks after fixing grading logic.
+    This clears BOTH the prediction log AND the graded log for the date.
+
+    Request body:
+    {
+        "date": "2026-01-24",  # Required: Date to clear (YYYY-MM-DD)
+        "sport": "NBA"         # Optional: Specific sport, or omit for all sports
+    }
+
+    After clearing JSONL, also call /grader/reset-picks to reset Postgres,
+    then /grader/grade/{sport}?date=YYYY-MM-DD to re-grade.
+    """
+    import os
+
+    if not AUTO_GRADER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+    config = config or {}
+    date_str = config.get("date")
+    sport = config.get("sport")
+
+    if not date_str:
+        raise HTTPException(status_code=400, detail="'date' field required (YYYY-MM-DD)")
+
+    # Validate date format
+    try:
+        from datetime import date as dt_date
+        dt_date.fromisoformat(date_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {date_str}. Use YYYY-MM-DD")
+
+    grader = get_grader()
+    storage_path = grader.storage_path  # Usually ./grader_data
+
+    sports_to_clear = [sport.upper()] if sport else ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
+    files_deleted = []
+    errors = []
+
+    for s in sports_to_clear:
+        # Clear prediction log
+        pred_path = os.path.join(storage_path, s, "predictions", f"{date_str}.jsonl")
+        if os.path.exists(pred_path):
+            try:
+                os.remove(pred_path)
+                files_deleted.append(pred_path)
+            except Exception as e:
+                errors.append(f"Failed to delete {pred_path}: {e}")
+
+        # Clear graded log
+        graded_path = os.path.join(storage_path, s, "graded", f"{date_str}.jsonl")
+        if os.path.exists(graded_path):
+            try:
+                os.remove(graded_path)
+                files_deleted.append(graded_path)
+            except Exception as e:
+                errors.append(f"Failed to delete {graded_path}: {e}")
+
+    return {
+        "status": "jsonl_cleared",
+        "date": date_str,
+        "sport": sport or "ALL",
+        "files_deleted": len(files_deleted),
+        "files": files_deleted,
+        "errors": errors if errors else None,
+        "timestamp": datetime.now().isoformat(),
+        "next_steps": [
+            f"1. Reset Postgres: POST /live/grader/reset-picks with date={date_str}",
+            f"2. Re-grade: POST /live/grader/grade/{{sport}}?date={date_str}"
+        ]
+    }
+
+
 @router.get("/grader/bias/{sport}")
 async def get_prediction_bias(sport: str, stat_type: str = "all", days_back: int = 1):
     """
