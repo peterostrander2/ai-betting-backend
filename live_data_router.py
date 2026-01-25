@@ -8365,7 +8365,7 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         if jarvis:
             # --- JARVIS TRIGGERS (v10.58: collected here, applied in Jarvis RS only) ---
             # NOTE: Triggers are NO LONGER added to esoteric_reasons - they only affect Jarvis RS
-            trigger_result = jarvis.check_jarvis_trigger(game_str)
+            trigger_result = jarvis.check_jarvis_triggers(game_str)
             for trig in trigger_result.get("triggers_hit", []):
                 jarvis_triggers_hit.append({
                     "number": trig["number"],
@@ -13598,9 +13598,9 @@ async def check_trigger(value: str):
     # Try to parse as number first
     try:
         numeric_value = int(value)
-        return jarvis.check_jarvis_trigger(numeric_value)
+        return jarvis.check_jarvis_triggers(numeric_value)
     except ValueError:
-        return jarvis.check_jarvis_trigger(value)
+        return jarvis.check_jarvis_triggers(value)
 
 
 @router.get("/confluence/{sport}")
@@ -13654,7 +13654,7 @@ async def get_confluence_analysis(
 
     # Check for JARVIS triggers in player/team names
     game_str = f"{player}{team}{opponent}"
-    trigger_result = jarvis.check_jarvis_trigger(game_str)
+    trigger_result = jarvis.check_jarvis_triggers(game_str)
     jarvis_triggered = len(trigger_result.get("triggers_hit", [])) > 0
     immortal_detected = any(t["number"] == 2178 for t in trigger_result.get("triggers_hit", []))
 

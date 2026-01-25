@@ -320,6 +320,51 @@ def get_jarvis_engine() -> JarvisSavantEngine:
 
 
 # =============================================================================
+# STUB CLASSES FOR BACKWARDS COMPATIBILITY
+# These were removed in v7.9 refactor but live_data_router still imports them
+# =============================================================================
+class VedicAstroEngine:
+    """Stub - Vedic functionality moved to esoteric_edge_engine.py"""
+    def __init__(self):
+        self.version = "stub"
+
+    def get_vedic_signal(self, *args, **kwargs):
+        return {"signal": None, "active": False}
+
+
+class EsotericLearningLoop:
+    """Stub - Learning loop functionality deprecated."""
+    def __init__(self):
+        self.version = "stub"
+
+    def record(self, *args, **kwargs):
+        pass
+
+    def get_adjustments(self, *args, **kwargs):
+        return {}
+
+
+_vedic_engine: Optional[VedicAstroEngine] = None
+_learning_loop: Optional[EsotericLearningLoop] = None
+
+
+def get_vedic_engine() -> VedicAstroEngine:
+    """Get stub VedicAstroEngine instance."""
+    global _vedic_engine
+    if _vedic_engine is None:
+        _vedic_engine = VedicAstroEngine()
+    return _vedic_engine
+
+
+def get_learning_loop() -> EsotericLearningLoop:
+    """Get stub EsotericLearningLoop instance."""
+    global _learning_loop
+    if _learning_loop is None:
+        _learning_loop = EsotericLearningLoop()
+    return _learning_loop
+
+
+# =============================================================================
 # CONVENIENCE FUNCTION FOR LIVE_DATA_ROUTER
 # =============================================================================
 def compute_jarvis_score(
