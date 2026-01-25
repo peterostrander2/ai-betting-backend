@@ -10920,6 +10920,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         top_props = add_explain_to_picks(top_props)
         top_game_picks = add_explain_to_picks(top_game_picks)
 
+    # v11.00: Update props_result with final top_props (after enrich/filter/explain)
+    props_result["picks"] = top_props
+    props_result["count"] = len(top_props)
+
     # v10.82: Generate ET timestamp for response
     from zoneinfo import ZoneInfo
     ET = ZoneInfo(Config.TIMEZONE)
