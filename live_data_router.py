@@ -6664,11 +6664,17 @@ async def get_props(sport: str, debug: bool = False):
 
                 logger.info("[PROPS_DEBUG] %s: Fetched event %s, status=%s", sport, event_id[:8], event_resp.status_code if event_resp else "None")
 
+                if debug_trace:
+                    debug_trace["steps"].append(f"Props fetch for {event_id[:8]}: status={event_resp.status_code if event_resp else 'None'}")
+
                 if event_resp and event_resp.status_code == 200:
                     try:
                         event_data = event_resp.json()
                         bookmakers_count = len(event_data.get("bookmakers", []))
                         logger.info("[PROPS_DEBUG] %s: Event %s has %d bookmakers", sport, event_id[:8], bookmakers_count)
+
+                        if debug_trace:
+                            debug_trace["steps"].append(f"Event {event_id[:8]}: {bookmakers_count} bookmakers")
 
                         game_props = {
                             "game_id": event_data.get("id"),
@@ -6706,6 +6712,9 @@ async def get_props(sport: str, debug: bool = False):
                                         })
 
                         logger.info("[PROPS_DEBUG] %s: Event %s parsed %d props", sport, event_id[:8], len(game_props["props"]))
+
+                        if debug_trace:
+                            debug_trace["steps"].append(f"Event {event_id[:8]}: parsed {len(game_props['props'])} props")
 
                         if game_props["props"]:
                             data.append(game_props)
