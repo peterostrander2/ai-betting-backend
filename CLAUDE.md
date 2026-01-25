@@ -2937,9 +2937,9 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba" -H "X-API-K
 
 ### System Health
 
-- **Engine Version:** v10.76
+- **Engine Version:** v10.94
 - **All Core APIs:** ✅ Online
-- **All Alt Data APIs:** ✅ Online
+- **Alt Data APIs:** ✅ Online (Twitter degraded - requires paid tier for search)
 - **All Esoteric APIs:** ✅ Online
 - **Database:** ✅ Connected
 - **Production URL:** https://web-production-7b2a.up.railway.app
@@ -2972,5 +2972,94 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba" -H "X-API-K
 **Impact:** Game matching may fail when team names are null.
 
 **Workaround:** Fall back to Odds API for game data when Playbook returns nulls.
+
+---
+
+## Session Log: January 25, 2026 - v10.94 Debug Endpoints & Production Fixes
+
+### What Was Done
+
+**1. Debug Endpoints Added (v10.94)**
+
+Two new endpoints for scoring transparency:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /live/debug/scoring?sport=nba` | Full breakdown of engine contributions, pillars fired, signals, blocks |
+| `GET /live/debug/today-slate?sport=nba` | Shows today's games with filter decisions and time gate status |
+
+**2. Twitter API Fix**
+
+Twitter API v2 search requires paid tier ($100/mo Basic or higher). Fixed the repeated warning logs:
+
+- Added `_auth_failed` flag to skip future API calls after first 401/403
+- Changed log level from `warning` to `info` (less alarming)
+- Only logs once per session to reduce noise
+- System continues running fine without Twitter data (SerpAPI + ESPN provide backup)
+
+**Note:** Flag is in-memory, resets on Railway restart. Acceptable behavior - fails once, flips flag, stops.
+
+**3. Safer get_weights() Pattern**
+
+Updated two locations in `live_data_router.py` to use safer pattern:
+
+```python
+# Before (could throw KeyError or AttributeError)
+esoteric_weights = learning.get_weights()["weights"] if learning else {}
+
+# After (safe)
+esoteric_weights = {}
+if learning and hasattr(learning, "get_weights"):
+    esoteric_weights = learning.get_weights().get("weights", {})
+```
+
+**4. get_weights() Stub Fix**
+
+Updated `EsotericLearningLoop.get_weights()` to return actual weights if set:
+
+```python
+def get_weights(self, *args, **kwargs):
+    return {"weights": getattr(self, "weights", {})}
+```
+
+### Commits
+
+| Hash | Message |
+|------|---------|
+| `8e9b373` | v10.94: Add debug endpoints for scoring transparency |
+| `162e4b4` | fix: Gracefully handle Twitter API free tier limitation |
+| `c8e98fc` | fix: get_weights returns actual weights if set |
+| `c7a56cf` | fix: Safer get_weights() access with hasattr check |
+
+### System Status
+
+- **Engine Version:** v10.94
+- **All Core APIs:** ✅ Online
+- **Twitter:** ⚠️ Configured but search requires paid tier (gracefully degraded)
+- **All Other Alt Data APIs:** ✅ Online (Finnhub, SerpAPI, FRED, ESPN)
+- **Production URL:** https://web-production-7b2a.up.railway.app
+
+### Tested Endpoints
+
+```bash
+# Debug scoring - working
+curl "https://web-production-7b2a.up.railway.app/live/debug/scoring?sport=nba" -H "X-API-Key: YOUR_KEY"
+
+# Debug today slate - working
+curl "https://web-production-7b2a.up.railway.app/live/debug/today-slate?sport=nba" -H "X-API-Key: YOUR_KEY"
+
+# Best bets NBA - working (1 EDGE_LEAN game pick)
+curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba" -H "X-API-Key: YOUR_KEY"
+
+# Best bets NHL - working (3 game picks)
+curl "https://web-production-7b2a.up.railway.app/live/best-bets/nhl" -H "X-API-Key: YOUR_KEY"
+```
+
+### Tomorrow: Grading Review
+
+Next session will focus on:
+- Auto-grader review and optimization
+- Grading picks from today's games
+- Learning loop verification
 
 ---
