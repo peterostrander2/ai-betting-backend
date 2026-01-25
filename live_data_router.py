@@ -6620,10 +6620,11 @@ async def get_props(sport: str, debug: bool = False):
                     "pitcher_earned_runs", "pitcher_outs"
                 ])
             elif sport_lower == "nhl":
+                # v11.03: Removed goalie_saves (invalid market name)
                 prop_markets = ",".join([
                     "player_points", "player_goals", "player_assists",
                     "player_shots_on_goal", "player_blocked_shots",
-                    "player_power_play_points", "goalie_saves"
+                    "player_power_play_points"
                 ])
             else:
                 prop_markets = "player_points,player_rebounds,player_assists"
