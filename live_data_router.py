@@ -6547,7 +6547,7 @@ async def get_odds_metrics(auth: bool = Depends(verify_api_key)):
 
 
 @router.get("/props/{sport}")
-async def get_props(sport: str):
+async def get_props(sport: str, debug: bool = False):
     """
     Get player props for a sport.
 
@@ -6563,10 +6563,13 @@ async def get_props(sport: str):
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
+    # v11.03: Debug trace for props fetching
+    debug_trace = {"steps": [], "errors": []} if debug else None
+
     # Check cache first
     cache_key = f"props:{sport_lower}"
     cached = api_cache.get(cache_key)
-    if cached:
+    if cached and not debug:
         return cached
 
     sport_config = SPORT_MAPPINGS[sport_lower]
@@ -6581,9 +6584,14 @@ async def get_props(sport: str):
             params={"apiKey": ODDS_API_KEY}
         )
 
+        if debug_trace:
+            debug_trace["steps"].append(f"Events API status: {events_resp.status_code if events_resp else 'None'}")
+
         if events_resp and events_resp.status_code == 200:
             events = events_resp.json()
             logger.info("[PROPS_DEBUG] Found %d events for %s props", len(events), sport)
+            if debug_trace:
+                debug_trace["events_found"] = len(events)
 
             # Step 2: Fetch props for each event
             # v10.64: Expanded prop markets - use ALL available player props from Odds API
@@ -6633,6 +6641,9 @@ async def get_props(sport: str):
                 event_commence = event.get("commence_time", "")
                 is_today = is_game_today(event_commence)
                 logger.info("[PROPS_DEBUG] %s: Event %s commence=%s is_today=%s", sport, event_id[:8], event_commence, is_today)
+
+                if debug_trace:
+                    debug_trace["steps"].append(f"Event {event_id[:8]}: commence={event_commence}, is_today={is_today}")
 
                 if not is_today:
                     continue
@@ -6713,9 +6724,13 @@ async def get_props(sport: str):
             logger.info("Props data retrieved from Odds API for %s: %d games with props", sport, len(data))
         else:
             logger.warning("Odds API events returned %s for %s, trying Playbook API", events_resp.status_code if events_resp else "no response", sport)
+            if debug_trace:
+                debug_trace["errors"].append(f"Events API returned {events_resp.status_code if events_resp else 'None'}")
 
     except Exception as e:
         logger.warning("Odds API props failed for %s: %s, trying Playbook API", sport, e)
+        if debug_trace:
+            debug_trace["errors"].append(f"Exception: {str(e)}")
 
     # Fallback to Playbook API for props if Odds API failed or returned no data
     if not data and PLAYBOOK_API_KEY:
@@ -6762,8 +6777,15 @@ async def get_props(sport: str):
         logger.warning("No props data available for %s from any API source", sport)
 
     result = {"sport": sport.upper(), "source": "odds_api" if data else "none", "count": len(data), "data": data}
+
+    # v11.03: Add debug trace if requested
+    if debug_trace:
+        debug_trace["final_data_count"] = len(data)
+        result["debug_trace"] = debug_trace
+
     # 8-hour TTL for props - refreshed via scheduler at 10am and 6pm
-    api_cache.set(cache_key, result, ttl=28800)
+    if not debug:  # Don't cache debug responses
+        api_cache.set(cache_key, result, ttl=28800)
     return result
 
 
