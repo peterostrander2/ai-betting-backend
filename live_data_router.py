@@ -12256,6 +12256,12 @@ async def grader_audit(
                 else:
                     breakdown[pick_type]["pending"] += 1
 
+                # v10.97: Handle both datetime objects and ISO strings
+                created_at = p.get("created_at")
+                graded_at = p.get("graded_at")
+                timestamp_str = created_at.isoformat() if hasattr(created_at, 'isoformat') else created_at
+                graded_at_str = graded_at.isoformat() if hasattr(graded_at, 'isoformat') else graded_at
+
                 all_picks.append({
                     "source": "postgres",
                     "id": p.get("pick_uid"),
@@ -12273,8 +12279,8 @@ async def grader_audit(
                     "tier": p.get("tier"),
                     "score_at_pick_time": p.get("smash_score") or p.get("final_score"),
                     "final_score": p.get("final_score"),
-                    "timestamp": p.get("created_at").isoformat() if p.get("created_at") else None,
-                    "graded_at": p.get("graded_at").isoformat() if p.get("graded_at") else None
+                    "timestamp": timestamp_str,
+                    "graded_at": graded_at_str
                 })
 
     # Fetch from JSONL (if available and no Postgres)
