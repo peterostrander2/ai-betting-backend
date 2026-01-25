@@ -6604,11 +6604,12 @@ async def get_props(sport: str, debug: bool = False):
                     "player_double_double", "player_first_basket"
                 ])
             elif sport_lower == "nfl":
+                # v11.03: Fixed market name - player_field_goals (not player_field_goals_made)
                 prop_markets = ",".join([
                     "player_pass_tds", "player_pass_yds", "player_pass_completions", "player_pass_attempts",
                     "player_pass_interceptions", "player_rush_yds", "player_rush_attempts",
                     "player_reception_yds", "player_receptions", "player_anytime_td",
-                    "player_kicking_points", "player_field_goals_made",
+                    "player_kicking_points", "player_field_goals",
                     "player_tackles_assists", "player_sacks"
                 ])
             elif sport_lower == "mlb":
