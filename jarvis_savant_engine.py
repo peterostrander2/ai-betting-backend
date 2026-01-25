@@ -406,6 +406,9 @@ class VedicAstroEngine:
     def get_vedic_signal(self, *args, **kwargs):
         return {"signal": None, "active": False}
 
+    def calculate_astro_score(self, *args, **kwargs):
+        return {"overall_score": 50}
+
 
 class EsotericLearningLoop:
     """Stub - Learning loop functionality deprecated."""
