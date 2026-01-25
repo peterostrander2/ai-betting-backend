@@ -4123,6 +4123,7 @@ async def get_sharp_money(sport: str):
             )
 
             # Build lines lookup: game_id -> {opening_line, current_line, line_movement}
+            # v11.03: Fixed to handle Playbook nested structure (lines.spread.home)
             lines_lookup = {}
             if lines_resp and not isinstance(lines_resp, Exception) and lines_resp.status_code == 200:
                 try:
@@ -4132,24 +4133,42 @@ async def get_sharp_money(sport: str):
                         game_id = line_game.get("id", line_game.get("gameId", line_game.get("game_id")))
                         if not game_id:
                             continue
-                        # Extract opening and current lines (try multiple field names)
+
+                        # v11.03: Handle Playbook nested structure (lines.spread.home)
+                        nested_lines = line_game.get("lines", {})
+                        nested_spread = nested_lines.get("spread", {})
+
+                        # Try nested structure first, then flat
+                        current = nested_spread.get("home") if nested_spread else None
+                        if current is None:
+                            current = line_game.get("current_line", line_game.get("currentLine", line_game.get("spread")))
+
+                        # Playbook doesn't provide opening lines - use current as placeholder
+                        # True RLM detection will rely on Odds API historical if needed
                         opening = line_game.get("opening_line", line_game.get("openingLine", line_game.get("open_spread")))
-                        current = line_game.get("current_line", line_game.get("currentLine", line_game.get("spread")))
-                        if opening is not None and current is not None:
+
+                        # Store current line even without opening (useful for other analysis)
+                        if current is not None:
                             try:
-                                opening_f = float(opening)
                                 current_f = float(current)
-                                movement = abs(current_f - opening_f)
+                                opening_f = float(opening) if opening is not None else None
+
                                 lines_lookup[game_id] = {
-                                    "opening_line": opening_f,
                                     "current_line": current_f,
-                                    "line_movement": round(movement, 1),
-                                    "movement_direction": "TOWARD_HOME" if current_f < opening_f else "TOWARD_AWAY" if current_f > opening_f else "NONE"
+                                    "opening_line": opening_f,
+                                    "line_movement": round(abs(current_f - opening_f), 1) if opening_f else None,
+                                    "movement_direction": (
+                                        "TOWARD_HOME" if opening_f and current_f < opening_f else
+                                        "TOWARD_AWAY" if opening_f and current_f > opening_f else "NONE"
+                                    ),
+                                    "total": nested_lines.get("total"),
+                                    "moneyline_home": nested_lines.get("moneyline", {}).get("home"),
+                                    "moneyline_away": nested_lines.get("moneyline", {}).get("away"),
                                 }
                             except (ValueError, TypeError):
                                 pass
                     if lines_lookup:
-                        logger.info("v10.63: Built lines lookup with %d games for RLM detection", len(lines_lookup))
+                        logger.info("v11.03: Built lines lookup with %d games (current lines)", len(lines_lookup))
                 except Exception as e:
                     logger.warning("Failed to parse Playbook lines: %s", e)
 
@@ -5713,9 +5732,9 @@ async def get_api_coverage():
                 "period": ["h2h_q1", "spreads_q1", "totals_q1", "h2h_h1", "spreads_h1", "totals_h1"],
                 "player_props": {
                     "nba": ["player_points", "player_rebounds", "player_assists", "player_threes", "player_blocks", "player_steals", "player_turnovers", "player_points_rebounds_assists", "player_double_double", "player_first_basket"],
-                    "nfl": ["player_pass_tds", "player_pass_yds", "player_rush_yds", "player_reception_yds", "player_receptions", "player_anytime_td", "player_rush_attempts", "player_tackles_assists", "player_sacks"],
+                    "nfl": ["player_pass_tds", "player_pass_yds", "player_rush_yds", "player_reception_yds", "player_receptions", "player_anytime_td", "player_rush_attempts", "player_tackles_assists", "player_sacks", "player_field_goals", "player_kicking_points"],
                     "mlb": ["batter_total_bases", "batter_hits", "batter_rbis", "batter_home_runs", "batter_runs_scored", "pitcher_strikeouts", "pitcher_hits_allowed"],
-                    "nhl": ["player_points", "player_goals", "player_assists", "player_shots_on_goal", "player_power_play_points", "goalie_saves"]
+                    "nhl": ["player_points", "player_goals", "player_assists", "player_shots_on_goal", "player_power_play_points", "player_blocked_shots"]
                 }
             }
         },
