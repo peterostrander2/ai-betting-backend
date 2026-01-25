@@ -33,6 +33,12 @@ TWITTER_API_BASE = "https://api.twitter.com/2"
 _cache: Dict[str, Dict[str, Any]] = {}
 CACHE_TTL_SECONDS = 900
 
+# Track auth failures to avoid repeated API calls
+# Twitter API v2 search requires paid tier (Basic $100/mo or higher)
+# Free tier only supports posting, not searching
+_auth_failed = False
+_auth_fail_logged = False
+
 # Beat reporters by team (curated list of reliable injury sources)
 BEAT_REPORTERS = {
     # NBA
@@ -87,8 +93,17 @@ def _set_cached(key: str, data: Any):
 
 
 def is_twitter_configured() -> bool:
-    """Check if Twitter API is configured."""
-    return bool(TWITTER_BEARER)
+    """Check if Twitter API is configured and working."""
+    return bool(TWITTER_BEARER) and not _auth_failed
+
+
+def get_twitter_status() -> Dict[str, Any]:
+    """Get Twitter API status for diagnostics."""
+    return {
+        "configured": bool(TWITTER_BEARER),
+        "auth_working": not _auth_failed,
+        "note": "Search requires paid tier ($100/mo+)" if _auth_failed else "OK"
+    }
 
 
 async def get_twitter_injury_alerts(
@@ -119,6 +134,8 @@ async def get_twitter_injury_alerts(
             "tweets_analyzed": int
         }
     """
+    global _auth_failed, _auth_fail_logged
+
     default_response = {
         "available": False,
         "alerts": [],
@@ -129,6 +146,10 @@ async def get_twitter_injury_alerts(
 
     if not TWITTER_BEARER:
         logger.debug("TWITTER_BEARER not configured")
+        return default_response
+
+    # Skip API call if we already know auth will fail (free tier doesn't support search)
+    if _auth_failed:
         return default_response
 
     cache_key = f"twitter_injuries:{sport}:{'-'.join(teams or [])}"
@@ -182,16 +203,22 @@ async def get_twitter_injury_alerts(
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(url, params=params, headers=headers)
 
-            if resp.status_code == 401:
-                logger.warning("Twitter API auth failed")
+            if resp.status_code == 401 or resp.status_code == 403:
+                # Twitter API v2 search requires paid tier ($100/mo Basic or higher)
+                # Free tier only supports posting, not searching
+                # This is expected - silently skip future calls
+                _auth_failed = True
+                if not _auth_fail_logged:
+                    _auth_fail_logged = True
+                    logger.info("Twitter API: Search requires paid tier (skipping - system runs fine without)")
                 return default_response
 
             if resp.status_code == 429:
-                logger.warning("Twitter API rate limited")
+                logger.debug("Twitter API rate limited (will retry next cycle)")
                 return default_response
 
             if resp.status_code != 200:
-                logger.warning(f"Twitter API error: {resp.status_code}")
+                logger.debug(f"Twitter API returned {resp.status_code}")
                 return default_response
 
             data = resp.json()
