@@ -467,7 +467,7 @@ class EsotericLearningLoop:
 
     def get_weights(self, *args, **kwargs):
         """Get current learned weights."""
-        return {"weights": {}}
+        return {"weights": getattr(self, "weights", {})}
 
     def get_session_stats(self):
         """Get current session statistics."""
