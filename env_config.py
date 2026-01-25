@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.91"  # v10.91: Lower sharp threshold 10%→7% to detect more signals
+    ENGINE_VERSION = "v10.94"  # v10.94: Debug endpoints for scoring transparency
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 
