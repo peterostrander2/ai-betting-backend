@@ -994,7 +994,12 @@ class JSONLGradingJob:
         return None
 
     async def _fetch_game_result(self, sport: str, pred: dict, game_date) -> Optional[float]:
-        """Fetch game result for game picks (spreads, totals, ML)."""
+        """
+        Fetch game result for game picks (spreads, totals, ML).
+
+        v10.96: CRITICAL FIX - Returns margin from PICKED team's perspective, not home/away.
+        For spreads/ML: positive = picked team won, negative = picked team lost.
+        """
         try:
             from grading_engine import fetch_odds_api_scores, _parse_odds_api_game
         except ImportError:
@@ -1008,10 +1013,26 @@ class JSONLGradingJob:
         if not games:
             return None
 
-        # Find matching game
-        game_str = pred.get("game", "")
+        # v10.96: Parse picked team from selection string
+        # Examples: "Miami Heat -7.0", "Lakers +3.5", "Over 220.5"
+        picked_team = ""
+        if selection and "total" not in market.lower():
+            # Remove the line from selection to get team name
+            # Handle formats like "Miami Heat -7.0" or "Heat -7"
+            import re
+            team_match = re.match(r'^(.+?)\s*[+-]?\d+\.?\d*$', selection.strip())
+            if team_match:
+                picked_team = team_match.group(1).strip().lower()
+            else:
+                picked_team = selection.strip().lower()
+
+        # Find matching game using BOTH teams (regardless of stored home/away order)
         home_team = pred.get("home_team", "")
         away_team = pred.get("away_team", "")
+
+        # v10.96: Also try to match using just the two team names, ignoring stored home/away
+        team1 = home_team.lower() if home_team else ""
+        team2 = away_team.lower() if away_team else ""
 
         for game in games:
             if not game.get("completed"):
@@ -1020,11 +1041,16 @@ class JSONLGradingJob:
             game_home = (game.get("home_team") or "").lower()
             game_away = (game.get("away_team") or "").lower()
 
-            # Match by team names
-            home_match = home_team.lower() in game_home or game_home in home_team.lower()
-            away_match = away_team.lower() in game_away or game_away in away_team.lower()
+            # v10.96: Match if both teams appear in the game (in either order)
+            # This handles cases where stored home/away are reversed
+            teams_in_game = [game_home, game_away]
 
-            if home_match and away_match:
+            # Check if team1 matches either game team
+            team1_match = any(team1 in gt or gt in team1 for gt in teams_in_game if team1)
+            # Check if team2 matches either game team
+            team2_match = any(team2 in gt or gt in team2 for gt in teams_in_game if team2)
+
+            if team1_match and team2_match:
                 parsed = _parse_odds_api_game(game)
                 home_score = parsed.get("home_score")
                 away_score = parsed.get("away_score")
@@ -1033,9 +1059,28 @@ class JSONLGradingJob:
                     # For totals, return total points
                     if "total" in market.lower():
                         return home_score + away_score
-                    # For spreads/ML, return margin (positive = home won)
+
+                    # v10.96: For spreads/ML, return margin from PICKED team's perspective
+                    # positive = picked team won, negative = picked team lost
                     else:
-                        return home_score - away_score
+                        game_margin = home_score - away_score  # From actual home's perspective
+
+                        # Determine if picked team is the actual home or away
+                        picked_is_home = (picked_team in game_home or game_home in picked_team) if picked_team else False
+                        picked_is_away = (picked_team in game_away or game_away in picked_team) if picked_team else False
+
+                        if picked_is_home:
+                            # Picked team was home, margin is correct as-is
+                            logger.debug(f"[GRADING] {selection}: picked={picked_team} is HOME, margin={game_margin}")
+                            return game_margin
+                        elif picked_is_away:
+                            # Picked team was away, flip the margin
+                            logger.debug(f"[GRADING] {selection}: picked={picked_team} is AWAY, margin={-game_margin}")
+                            return -game_margin
+                        else:
+                            # Couldn't determine picked team, fall back to home perspective
+                            logger.warning(f"[GRADING] Couldn't determine picked team from '{selection}', using home perspective")
+                            return game_margin
 
         return None
 
