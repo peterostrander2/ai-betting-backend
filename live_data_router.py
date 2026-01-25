@@ -6583,7 +6583,7 @@ async def get_props(sport: str):
 
         if events_resp and events_resp.status_code == 200:
             events = events_resp.json()
-            logger.info("Found %d events for %s props", len(events), sport)
+            logger.info("[PROPS_DEBUG] Found %d events for %s props", len(events), sport)
 
             # Step 2: Fetch props for each event
             # v10.64: Expanded prop markets - use ALL available player props from Odds API
@@ -6619,15 +6619,25 @@ async def get_props(sport: str):
             else:
                 prop_markets = "player_points,player_rebounds,player_assists"
 
+            events_processed = 0
+            events_today = 0
+            events_with_props = 0
+
             for event in events:  # Fetch ALL games - don't miss any smash picks
                 event_id = event.get("id")
                 if not event_id:
+                    logger.debug("[PROPS_DEBUG] %s: Skipping event with no ID", sport)
                     continue
 
                 # v10.50: Only process TODAY's games (skip future dates)
                 event_commence = event.get("commence_time", "")
-                if not is_game_today(event_commence):
+                is_today = is_game_today(event_commence)
+                logger.info("[PROPS_DEBUG] %s: Event %s commence=%s is_today=%s", sport, event_id[:8], event_commence, is_today)
+
+                if not is_today:
                     continue
+
+                events_today += 1
 
                 # Fetch props for this specific event
                 event_odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/events/{event_id}/odds"
@@ -6641,9 +6651,14 @@ async def get_props(sport: str):
                     }
                 )
 
+                logger.info("[PROPS_DEBUG] %s: Fetched event %s, status=%s", sport, event_id[:8], event_resp.status_code if event_resp else "None")
+
                 if event_resp and event_resp.status_code == 200:
                     try:
                         event_data = event_resp.json()
+                        bookmakers_count = len(event_data.get("bookmakers", []))
+                        logger.info("[PROPS_DEBUG] %s: Event %s has %d bookmakers", sport, event_id[:8], bookmakers_count)
+
                         game_props = {
                             "game_id": event_data.get("id"),
                             "home_team": event_data.get("home_team"),
@@ -6679,15 +6694,22 @@ async def get_props(sport: str):
                                             "book": bm.get("key")
                                         })
 
+                        logger.info("[PROPS_DEBUG] %s: Event %s parsed %d props", sport, event_id[:8], len(game_props["props"]))
+
                         if game_props["props"]:
                             data.append(game_props)
+                            events_with_props += 1
                             logger.info("Got %d props for %s vs %s", len(game_props["props"]), game_props["away_team"], game_props["home_team"])
 
                     except ValueError as e:
-                        logger.warning("Failed to parse event %s props: %s", event_id, e)
+                        logger.warning("[PROPS_DEBUG] Failed to parse event %s props: %s", event_id, e)
                 else:
-                    logger.debug("No props for event %s (status %s)", event_id, event_resp.status_code if event_resp else "no response")
+                    logger.warning("[PROPS_DEBUG] %s: No props for event %s (status %s)", sport, event_id[:8], event_resp.status_code if event_resp else "no response")
 
+                events_processed += 1
+
+            logger.info("[PROPS_DEBUG] %s SUMMARY: processed=%d today=%d with_props=%d data_len=%d",
+                       sport, events_processed, events_today, events_with_props, len(data))
             logger.info("Props data retrieved from Odds API for %s: %d games with props", sport, len(data))
         else:
             logger.warning("Odds API events returned %s for %s, trying Playbook API", events_resp.status_code if events_resp else "no response", sport)
