@@ -515,10 +515,14 @@ class EsotericLearningLoop:
         """
         Get current learned weights.
 
-        v10.97: Safe method that never crashes - returns defaults if unavailable.
+        v10.99: Bulletproof - required by live_data_router.get_best_bets().
+        Must always return a stable structure even if weights are missing.
         """
         try:
-            return {"weights": getattr(self, "weights", {})}
+            w = getattr(self, "weights", None)
+            if not isinstance(w, dict):
+                w = {}
+            return {"weights": w}
         except Exception:
             return {"weights": {}}
 

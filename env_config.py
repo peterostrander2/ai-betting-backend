@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.98"  # v10.98: Add game_status, is_today_et, is_started fields to single-sport endpoint props
+    ENGINE_VERSION = "v10.99"  # v10.99: Bulletproof get_weights() - try/except guards on all learning.get_weights() calls
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 

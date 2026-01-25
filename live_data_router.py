@@ -7407,8 +7407,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
     # Get learned weights for esoteric scoring
     esoteric_weights = {}
-    if learning and hasattr(learning, "get_weights"):
-        esoteric_weights = learning.get_weights().get("weights", {})
+    if learning:
+        try:
+            esoteric_weights = (learning.get_weights() or {}).get("weights", {})
+        except Exception:
+            esoteric_weights = {}
 
     # ========================================================================
     # v10.28: CONFLUENCE LADDER (tier-safe, capped at 0.75) + Debug Diagnostics
@@ -14583,8 +14586,11 @@ async def get_confluence_analysis(
         raise HTTPException(status_code=503, detail="Esoteric engines not available")
 
     esoteric_weights = {}
-    if learning and hasattr(learning, "get_weights"):
-        esoteric_weights = learning.get_weights().get("weights", {})
+    if learning:
+        try:
+            esoteric_weights = (learning.get_weights() or {}).get("weights", {})
+        except Exception:
+            esoteric_weights = {}
 
     # Calculate all signals
     gematria = jarvis.calculate_gematria_signal(player, team, opponent)
