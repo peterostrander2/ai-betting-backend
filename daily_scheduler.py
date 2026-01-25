@@ -677,9 +677,19 @@ class JSONLGradingJob:
             date_et: Optional date in YYYY-MM-DD format (defaults to yesterday in ET)
         """
         sport = sport.upper()
+        # v10.97: Dual-source reporting (JSONL + Postgres) for transparency
         result = {
             "sport": sport,
             "date": date_et,
+            # v10.97: Source counts for transparency
+            "jsonl_found_count": 0,
+            "postgres_found_count": 0,
+            "total_found_count": 0,
+            # v10.97: Graded counts per source
+            "jsonl_graded_count": 0,
+            "postgres_graded_count": 0,
+            "total_graded_count": 0,
+            # Legacy fields (kept for backwards compat)
             "ungraded_count": 0,
             "graded": 0,
             "wins": 0,
@@ -687,7 +697,8 @@ class JSONLGradingJob:
             "pushes": 0,
             "no_action": 0,
             "postgres_updated": 0,
-            "weights_adjusted": False
+            "weights_adjusted": False,
+            "weights_delta": None
         }
 
         # v10.54: Import database functions for Postgres grading
@@ -714,6 +725,8 @@ class JSONLGradingJob:
         # Get ungraded predictions from JSONL
         ungraded = self.auto_grader.get_ungraded_predictions(sport, date_et=date_et)
         result["ungraded_count"] = len(ungraded)
+        # v10.97: Dual-source reporting
+        result["jsonl_found_count"] = len(ungraded)
 
         # v10.54: Also get PENDING picks from Postgres for syncing
         postgres_pending = []
@@ -725,6 +738,10 @@ class JSONLGradingJob:
                 logger.info(f"[{sport}] Found {len(postgres_pending)} PENDING picks in Postgres for {date_et}")
             except Exception as e:
                 logger.warning(f"[{sport}] Failed to fetch Postgres pending picks: {e}")
+
+        # v10.97: Dual-source reporting
+        result["postgres_found_count"] = len(postgres_pending)
+        result["total_found_count"] = len(ungraded) + len(postgres_pending)
 
         if not ungraded and not postgres_pending:
             logger.info(f"[{sport}] No ungraded predictions found (JSONL or Postgres)")
@@ -749,6 +766,8 @@ class JSONLGradingJob:
             result["wins"] = grade_result.get("wins", 0)
             result["losses"] = grade_result.get("losses", 0)
             result["pushes"] = grade_result.get("pushes", 0)
+            # v10.97: Dual-source reporting
+            result["jsonl_graded_count"] = grade_result.get("graded", 0)
 
         # v10.54: Update Postgres PickLedger with graded results
         # v10.95: postgres_pending is now a list of dicts (not ORM objects)
@@ -849,19 +868,33 @@ class JSONLGradingJob:
                     logger.warning(f"[{sport}] Failed to update Postgres pick {pick.get('pick_uid')}: {e}")
 
             result["postgres_updated"] = postgres_updated
+            # v10.97: Dual-source reporting
+            result["postgres_graded_count"] = postgres_updated
+            result["total_graded_count"] = result.get("jsonl_graded_count", 0) + postgres_updated
             logger.info(f"[{sport}] Updated {postgres_updated} picks in Postgres")
 
-        # Adjust weights if we have enough graded predictions
+        # v10.97: Weight adjustment with sample-size threshold
+        # SAFETY: Do NOT adjust weights unless total_graded_count >= 30
+        MIN_SAMPLE_FOR_WEIGHT_ADJUSTMENT = 30
         grading_stats = self.auto_grader.get_grading_stats(sport, days_back=7)
-        if grading_stats.get("total_graded", 0) >= 30:
-            logger.info(f"[{sport}] Enough data for weight adjustment ({grading_stats['total_graded']} graded)")
+        total_graded_7d = grading_stats.get("total_graded", 0)
+
+        if total_graded_7d >= MIN_SAMPLE_FOR_WEIGHT_ADJUSTMENT:
+            logger.info(f"[{sport}] Enough data for weight adjustment ({total_graded_7d} graded in 7d, min={MIN_SAMPLE_FOR_WEIGHT_ADJUSTMENT})")
             # Trigger weight adjustment
             try:
+                old_weights = self.auto_grader.get_weights(sport).copy() if hasattr(self.auto_grader, 'get_weights') else {}
                 for stat_type in ["points", "rebounds", "assists"]:
                     self.auto_grader.adjust_weights(sport, stat_type, days_back=7, apply_changes=True)
                 result["weights_adjusted"] = True
+                # v10.97: Track delta
+                new_weights = self.auto_grader.get_weights(sport) if hasattr(self.auto_grader, 'get_weights') else {}
+                if old_weights and new_weights:
+                    result["weights_delta"] = {k: round(new_weights.get(k, 0) - old_weights.get(k, 0), 4) for k in new_weights}
             except Exception as e:
                 logger.warning(f"[{sport}] Weight adjustment failed: {e}")
+        else:
+            logger.info(f"[{sport}] Skipping weight adjustment: only {total_graded_7d} graded in 7d (need {MIN_SAMPLE_FOR_WEIGHT_ADJUSTMENT})")
 
         return result
 

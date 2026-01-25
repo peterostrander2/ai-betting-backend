@@ -5861,16 +5861,21 @@ def apply_time_gate(picks: List[Dict[str, Any]], grace_seconds: int = 180) -> tu
             continue
 
         # Today's game - determine status
+        # v10.97: Always set is_today_et for frontend
+        pick["is_today_et"] = True  # Only reaches here if it's today
+
         if reason == "already_started":
             # Game has started - mark as LIVE
             pick["game_status"] = "LIVE"
             pick["is_already_started"] = True
+            pick["is_started"] = True  # v10.97: Alias for frontend
             pick["live_bet_only"] = True
             debug["count_live"] += 1
         else:
             # Game not started yet - PREGAME
             pick["game_status"] = "PREGAME"
             pick["is_already_started"] = False
+            pick["is_started"] = False  # v10.97: Alias for frontend
             pick["live_bet_only"] = False
             debug["count_pregame"] += 1
 
@@ -12166,6 +12171,161 @@ async def adjust_sport_weights(sport: str, adjust_config: Dict[str, Any] = None)
     return {
         "status": "adjustment_complete" if apply_changes else "preview",
         "result": result,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/grader/audit")
+async def grader_audit(
+    date: str,
+    sport: Optional[str] = None,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v10.97: Grader audit endpoint with pick-level details.
+
+    Returns comprehensive grading audit for transparency:
+    - total_picks_found
+    - sources_used: ["jsonl", "postgres"]
+    - picks: list with id, market_type, selection, result, scores
+    - breakdown by pick type (props vs spreads vs totals vs ml)
+
+    Query Parameters:
+        date: Date to audit in YYYY-MM-DD format (required)
+        sport: Optional sport filter (NBA, NFL, etc.)
+
+    Example:
+        GET /live/grader/audit?date=2026-01-24&sport=NBA
+    """
+    from datetime import date as dt_date
+
+    try:
+        target_date = dt_date.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {date}. Use YYYY-MM-DD")
+
+    # Import database functions
+    try:
+        from database import get_picks_for_date, DB_ENABLED
+        db_available = DB_ENABLED
+    except ImportError:
+        db_available = False
+
+    # Also check JSONL
+    jsonl_available = AUTO_GRADER_AVAILABLE
+    grader = get_grader() if AUTO_GRADER_AVAILABLE else None
+
+    sources_used = []
+    all_picks = []
+    breakdown = {
+        "props": {"total": 0, "wins": 0, "losses": 0, "pending": 0},
+        "spreads": {"total": 0, "wins": 0, "losses": 0, "pending": 0},
+        "totals": {"total": 0, "wins": 0, "losses": 0, "pending": 0},
+        "moneyline": {"total": 0, "wins": 0, "losses": 0, "pending": 0},
+        "other": {"total": 0, "wins": 0, "losses": 0, "pending": 0}
+    }
+
+    # Fetch from Postgres
+    if db_available:
+        sources_used.append("postgres")
+        sports_to_query = [sport.upper()] if sport else ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
+
+        for s in sports_to_query:
+            picks = get_picks_for_date(target_date, s)
+            for p in picks:
+                market = (p.get("market") or "").lower()
+                result_str = p.get("result") or "PENDING"
+
+                # Categorize pick type
+                if p.get("player_name"):
+                    pick_type = "props"
+                elif "spread" in market:
+                    pick_type = "spreads"
+                elif "total" in market:
+                    pick_type = "totals"
+                elif market in ("h2h", "moneyline", "ml"):
+                    pick_type = "moneyline"
+                else:
+                    pick_type = "other"
+
+                breakdown[pick_type]["total"] += 1
+                if result_str == "WIN":
+                    breakdown[pick_type]["wins"] += 1
+                elif result_str == "LOSS":
+                    breakdown[pick_type]["losses"] += 1
+                else:
+                    breakdown[pick_type]["pending"] += 1
+
+                all_picks.append({
+                    "source": "postgres",
+                    "id": p.get("pick_uid"),
+                    "sport": s,
+                    "market_type": pick_type,
+                    "market": market,
+                    "selection": p.get("selection"),
+                    "player_name": p.get("player_name"),
+                    "matchup": p.get("matchup"),
+                    "line": p.get("line"),
+                    "odds": p.get("odds"),
+                    "result": result_str,
+                    "actual_value": p.get("actual_value"),
+                    "profit_units": p.get("profit_units"),
+                    "tier": p.get("tier"),
+                    "score_at_pick_time": p.get("smash_score") or p.get("final_score"),
+                    "final_score": p.get("final_score"),
+                    "timestamp": p.get("created_at").isoformat() if p.get("created_at") else None,
+                    "graded_at": p.get("graded_at").isoformat() if p.get("graded_at") else None
+                })
+
+    # Fetch from JSONL (if available and no Postgres)
+    if jsonl_available and grader and not db_available:
+        sources_used.append("jsonl")
+        sports_to_query = [sport.upper()] if sport else ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
+
+        for s in sports_to_query:
+            jsonl_picks = grader.get_ungraded_predictions(s, date_et=date)
+            for p in jsonl_picks:
+                market = (p.get("market") or "").lower()
+                pick_type = "props" if p.get("player_name") else ("spreads" if "spread" in market else "other")
+
+                breakdown[pick_type]["total"] += 1
+                breakdown[pick_type]["pending"] += 1
+
+                all_picks.append({
+                    "source": "jsonl",
+                    "id": p.get("event_id"),
+                    "sport": s,
+                    "market_type": pick_type,
+                    "selection": p.get("selection"),
+                    "player_name": p.get("player_name"),
+                    "line": p.get("line"),
+                    "result": "PENDING",
+                    "timestamp": p.get("timestamp")
+                })
+
+    # Calculate totals
+    total_picks = len(all_picks)
+    total_graded = sum(1 for p in all_picks if p.get("result") in ["WIN", "LOSS", "PUSH"])
+    total_wins = sum(1 for p in all_picks if p.get("result") == "WIN")
+    total_losses = sum(1 for p in all_picks if p.get("result") == "LOSS")
+    total_pending = sum(1 for p in all_picks if p.get("result") == "PENDING")
+    hit_rate = round((total_wins / (total_wins + total_losses)) * 100, 1) if (total_wins + total_losses) > 0 else 0.0
+
+    return {
+        "status": "success",
+        "date": date,
+        "sport": sport.upper() if sport else "ALL",
+        "sources_used": sources_used,
+        "total_picks_found": total_picks,
+        "total_graded": total_graded,
+        "total_pending": total_pending,
+        "record": {
+            "wins": total_wins,
+            "losses": total_losses,
+            "hit_rate": hit_rate
+        },
+        "breakdown_by_type": breakdown,
+        "picks": all_picks,
         "timestamp": datetime.now().isoformat()
     }
 

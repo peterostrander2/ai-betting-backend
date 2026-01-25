@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.96"  # v10.96: Fixed spread grading - margin now from picked team's perspective
+    ENGINE_VERSION = "v10.97"  # v10.97: Production hardening - dual-source grading, tiering consolidation, learning loop safety
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 

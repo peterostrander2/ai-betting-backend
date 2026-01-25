@@ -89,9 +89,14 @@ CORRELATION_PENALTIES = {
 }
 MAX_CORRELATION_PENALTY = -0.20
 
-# Dynamic threshold escalation steps
-EDGE_LEAN_THRESHOLDS = [7.05, 7.15, 7.25, 7.35]
-GOLD_STAR_THRESHOLDS = [7.50, 7.70, 7.85]
+# Import tier thresholds from single source of truth
+from tiering import DEFAULT_TIERS
+
+# Dynamic threshold escalation steps (for volume control, start above base thresholds)
+_BASE_EDGE_LEAN = DEFAULT_TIERS["EDGE_LEAN"]  # 6.5
+_BASE_GOLD_STAR = DEFAULT_TIERS["GOLD_STAR"]  # 7.5
+EDGE_LEAN_THRESHOLDS = [_BASE_EDGE_LEAN + 0.55, _BASE_EDGE_LEAN + 0.65, _BASE_EDGE_LEAN + 0.75, _BASE_EDGE_LEAN + 0.85]
+GOLD_STAR_THRESHOLDS = [_BASE_GOLD_STAR, _BASE_GOLD_STAR + 0.20, _BASE_GOLD_STAR + 0.35]
 
 # Target pick count (heuristic for "too many")
 TARGET_MAX_PICKS = 20
@@ -250,7 +255,8 @@ def apply_correlation_penalty(picks: List[Dict[str, Any]]) -> Tuple[List[Dict[st
 # ============================================================================
 
 # v10.57: Game picks use fixed threshold (no escalation from props)
-GAME_PICK_EDGE_LEAN_THRESHOLD = 6.5  # Lower than props to allow game picks through
+# References tiering.py single source of truth
+GAME_PICK_EDGE_LEAN_THRESHOLD = DEFAULT_TIERS["EDGE_LEAN"]  # 6.5
 
 
 def apply_quality_gate(

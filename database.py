@@ -23,6 +23,13 @@ except ImportError:
     ET_TZ = None
     UTC_TZ = None
 
+# v10.97: Import tier thresholds from single source of truth
+try:
+    from tiering import DEFAULT_TIERS
+    _TIER_THRESHOLDS = DEFAULT_TIERS.copy()
+except ImportError:
+    _TIER_THRESHOLDS = {"GOLD_STAR": 7.5, "EDGE_LEAN": 6.5, "MONITOR": 5.5, "PASS": 0.0}
+
 logger = logging.getLogger("database")
 
 
@@ -704,15 +711,11 @@ DEFAULT_MICRO_WEIGHTS = {
     "CORRELATION_ALIGNED": 1.00,
 }
 
+# v10.97: Tier thresholds now come from tiering.py (single source of truth)
 FACTORY_SPORT_PROFILES = {
     "NBA": {
         "weights": {"research": 0.67, "esoteric": 0.33},
-        "tiers": {
-            "GOLD_STAR": 7.5,
-            "EDGE_LEAN": 6.5,
-            "MONITOR": 5.5,
-            "PASS": 0.0
-        },
+        "tiers": _TIER_THRESHOLDS.copy(),
         "limits": {"props": 10, "game_picks": 10},
         "conflict_policy": {"exclude_conflicts": True},
         "market_biases": {},
@@ -720,12 +723,7 @@ FACTORY_SPORT_PROFILES = {
     },
     "NFL": {
         "weights": {"research": 0.67, "esoteric": 0.33},
-        "tiers": {
-            "GOLD_STAR": 7.5,
-            "EDGE_LEAN": 6.5,
-            "MONITOR": 5.5,
-            "PASS": 0.0
-        },
+        "tiers": _TIER_THRESHOLDS.copy(),
         "limits": {"props": 10, "game_picks": 10},
         "conflict_policy": {"exclude_conflicts": True},
         "market_biases": {},
@@ -733,12 +731,7 @@ FACTORY_SPORT_PROFILES = {
     },
     "MLB": {
         "weights": {"research": 0.67, "esoteric": 0.33},
-        "tiers": {
-            "GOLD_STAR": 7.5,
-            "EDGE_LEAN": 6.5,
-            "MONITOR": 5.5,
-            "PASS": 0.0
-        },
+        "tiers": _TIER_THRESHOLDS.copy(),
         "limits": {"props": 10, "game_picks": 10},
         "conflict_policy": {"exclude_conflicts": True},
         "market_biases": {},
@@ -746,12 +739,7 @@ FACTORY_SPORT_PROFILES = {
     },
     "NHL": {
         "weights": {"research": 0.67, "esoteric": 0.33},
-        "tiers": {
-            "GOLD_STAR": 7.5,
-            "EDGE_LEAN": 6.5,
-            "MONITOR": 5.5,
-            "PASS": 0.0
-        },
+        "tiers": _TIER_THRESHOLDS.copy(),
         "limits": {"props": 10, "game_picks": 10},
         "conflict_policy": {"exclude_conflicts": True},
         "market_biases": {"ml_dog_boost": 0.5},
@@ -759,12 +747,7 @@ FACTORY_SPORT_PROFILES = {
     },
     "NCAAB": {
         "weights": {"research": 0.67, "esoteric": 0.33},
-        "tiers": {
-            "GOLD_STAR": 7.5,
-            "EDGE_LEAN": 6.5,
-            "MONITOR": 5.5,
-            "PASS": 0.0
-        },
+        "tiers": _TIER_THRESHOLDS.copy(),
         "limits": {"props": 10, "game_picks": 10},
         "conflict_policy": {"exclude_conflicts": True},
         "market_biases": {},
