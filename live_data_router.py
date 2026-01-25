@@ -5802,7 +5802,10 @@ def is_today_and_not_started(game_time_iso: str, grace_seconds: int = 180) -> tu
 
 def apply_time_gate(picks: List[Dict[str, Any]], grace_seconds: int = 180) -> tuple:
     """
-    Filter picks to only include games that are today (ET) and not started.
+    Add game status fields to all picks and filter to today's games only.
+
+    v7.9 UPDATE: No longer removes already-started games. Instead marks them
+    as LIVE status with is_already_started=True. Only removes games not on today.
 
     Args:
         picks: List of pick dictionaries (must have game_time field)
@@ -5810,6 +5813,12 @@ def apply_time_gate(picks: List[Dict[str, Any]], grace_seconds: int = 180) -> tu
 
     Returns:
         tuple: (filtered_picks, time_gate_debug)
+
+    Each pick gets these fields added:
+        - game_status: "PREGAME" | "LIVE" | "FINAL"
+        - is_already_started: bool
+        - start_time_est: formatted ET time string
+        - live_bet_only: bool (True if game already started)
     """
     now_et = get_now_et()
 
@@ -5819,7 +5828,8 @@ def apply_time_gate(picks: List[Dict[str, Any]], grace_seconds: int = 180) -> tu
         "candidates_before_time_gate": len(picks),
         "candidates_after_time_gate": 0,
         "removed_not_today": 0,
-        "removed_already_started": 0,
+        "count_pregame": 0,
+        "count_live": 0,
         "removed_missing_time": 0
     }
 
@@ -5835,19 +5845,36 @@ def apply_time_gate(picks: List[Dict[str, Any]], grace_seconds: int = 180) -> tu
 
         is_valid, reason, dt_et = is_today_and_not_started(game_time_iso, grace_seconds)
 
-        if is_valid:
-            # Enrich pick with ET time for display
-            if dt_et:
-                pick["game_time_et"] = format_et_display(dt_et)
-            filtered.append(pick)
+        # Always add status fields
+        if dt_et:
+            pick["start_time_est"] = format_et_display(dt_et)
+            pick["game_time_et"] = format_et_display(dt_et)
+
+        if reason == "missing_time":
+            # Can't determine status without time - skip
+            debug["removed_missing_time"] += 1
+            continue
+
+        if reason == "not_today":
+            # Not today's game - remove
+            debug["removed_not_today"] += 1
+            continue
+
+        # Today's game - determine status
+        if reason == "already_started":
+            # Game has started - mark as LIVE
+            pick["game_status"] = "LIVE"
+            pick["is_already_started"] = True
+            pick["live_bet_only"] = True
+            debug["count_live"] += 1
         else:
-            # Track removal reason
-            if reason == "not_today":
-                debug["removed_not_today"] += 1
-            elif reason == "already_started":
-                debug["removed_already_started"] += 1
-            elif reason == "missing_time":
-                debug["removed_missing_time"] += 1
+            # Game not started yet - PREGAME
+            pick["game_status"] = "PREGAME"
+            pick["is_already_started"] = False
+            pick["live_bet_only"] = False
+            debug["count_pregame"] += 1
+
+        filtered.append(pick)
 
     debug["candidates_after_time_gate"] = len(filtered)
 
