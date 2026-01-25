@@ -751,59 +751,62 @@ class JSONLGradingJob:
             result["pushes"] = grade_result.get("pushes", 0)
 
         # v10.54: Update Postgres PickLedger with graded results
+        # v10.95: postgres_pending is now a list of dicts (not ORM objects)
         if db_available and postgres_pending:
             postgres_updated = 0
             for pick in postgres_pending:
                 try:
                     # Try to find matching graded result
                     grade_info = await self._grade_single_prediction(sport, {
-                        "pick_type": "prop" if pick.player_name else "game",
-                        "player_name": pick.player_name or "",
-                        "stat_type": pick.market,
-                        "event_id": pick.event_id,
-                        "game": pick.matchup,
-                        "market": pick.market,
-                        "selection": pick.selection,
-                        "line": pick.line,
-                        "side": pick.side,
-                        "home_team": pick.home_team,
-                        "away_team": pick.away_team,
+                        "pick_type": "prop" if pick.get("player_name") else "game",
+                        "player_name": pick.get("player_name") or "",
+                        "stat_type": pick.get("market"),
+                        "event_id": pick.get("event_id"),
+                        "game": pick.get("matchup"),
+                        "market": pick.get("market"),
+                        "selection": pick.get("selection"),
+                        "line": pick.get("line"),
+                        "side": pick.get("side"),
+                        "home_team": pick.get("home_team"),
+                        "away_team": pick.get("away_team"),
                         "date_et": date_et
                     })
 
                     if grade_info and grade_info.get("actual") is not None:
                         actual_value = grade_info["actual"]
-                        line = pick.line or 0
-                        side = (pick.side or "").upper()
+                        line = pick.get("line") or 0
+                        side = (pick.get("side") or "").upper()
+                        recommended_units = pick.get("recommended_units") or 0.5
+                        odds = pick.get("odds") or -110
 
                         # Determine result based on actual vs line
                         if side == "OVER":
                             if actual_value > line:
                                 pick_result = PickResult.WIN
-                                profit = pick.recommended_units * self._get_profit_mult(pick.odds)
+                                profit = recommended_units * self._get_profit_mult(odds)
                             elif actual_value < line:
                                 pick_result = PickResult.LOSS
-                                profit = -pick.recommended_units
+                                profit = -recommended_units
                             else:
                                 pick_result = PickResult.PUSH
                                 profit = 0.0
                         elif side == "UNDER":
                             if actual_value < line:
                                 pick_result = PickResult.WIN
-                                profit = pick.recommended_units * self._get_profit_mult(pick.odds)
+                                profit = recommended_units * self._get_profit_mult(odds)
                             elif actual_value > line:
                                 pick_result = PickResult.LOSS
-                                profit = -pick.recommended_units
+                                profit = -recommended_units
                             else:
                                 pick_result = PickResult.PUSH
                                 profit = 0.0
                         else:
                             # For spreads/ML, assume actual_value is margin
                             pick_result = PickResult.WIN if actual_value > 0 else PickResult.LOSS
-                            profit = pick.recommended_units * self._get_profit_mult(pick.odds) if pick_result == PickResult.WIN else -pick.recommended_units
+                            profit = recommended_units * self._get_profit_mult(odds) if pick_result == PickResult.WIN else -recommended_units
 
                         # Update Postgres
-                        if update_pick_result(pick.pick_uid, pick_result, profit, actual_value):
+                        if update_pick_result(pick.get("pick_uid"), pick_result, profit, actual_value):
                             postgres_updated += 1
                             if pick_result == PickResult.WIN:
                                 result["wins"] += 1
@@ -813,7 +816,7 @@ class JSONLGradingJob:
                                 result["pushes"] += 1
 
                 except Exception as e:
-                    logger.warning(f"[{sport}] Failed to update Postgres pick {pick.pick_uid}: {e}")
+                    logger.warning(f"[{sport}] Failed to update Postgres pick {pick.get('pick_uid')}: {e}")
 
             result["postgres_updated"] = postgres_updated
             logger.info(f"[{sport}] Updated {postgres_updated} picks in Postgres")

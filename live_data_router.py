@@ -12019,19 +12019,20 @@ async def get_daily_community_report(days_back: int = 1):
 
         for sport in ["NBA", "NFL", "MLB", "NHL"]:
             # v10.54: Query Postgres using ET date bucketing
+            # v10.95: Now returns dicts to avoid SQLAlchemy session binding issues
             picks = get_picks_for_date(target_date, sport)
 
-            # Filter to settled picks only
-            settled = [p for p in picks if p.result in [PickResult.WIN, PickResult.LOSS, PickResult.PUSH]]
+            # Filter to settled picks only (comparing against string values now)
+            settled = [p for p in picks if p.get("result") in ["WIN", "LOSS", "PUSH"]]
 
             if settled:
-                wins = sum(1 for p in settled if p.result == PickResult.WIN)
-                losses = sum(1 for p in settled if p.result == PickResult.LOSS)
+                wins = sum(1 for p in settled if p.get("result") == "WIN")
+                losses = sum(1 for p in settled if p.get("result") == "LOSS")
                 total = len(settled)
                 hit_rate = wins / (wins + losses) if (wins + losses) > 0 else 0
 
                 # Calculate net units
-                net_units = sum(p.profit_units or 0 for p in settled)
+                net_units = sum(p.get("profit_units") or 0 for p in settled)
 
                 sports_data[sport] = {
                     "picks": total,
@@ -12176,25 +12177,25 @@ async def get_v1031_daily_report(sport: str, date_str: str = None):
                 "timestamp": datetime.now().isoformat()
             }
 
-        # Calculate summary stats
-        wins = sum(1 for p in picks if p.result == PickResult.WIN)
-        losses = sum(1 for p in picks if p.result == PickResult.LOSS)
-        pushes = sum(1 for p in picks if p.result == PickResult.PUSH)
-        pending = sum(1 for p in picks if p.result == PickResult.PENDING)
-        net_units = sum(p.profit_units or 0 for p in picks if p.result in [PickResult.WIN, PickResult.LOSS, PickResult.PUSH])
+        # v10.95: Calculate summary stats (picks are now dicts)
+        wins = sum(1 for p in picks if p.get("result") == "WIN")
+        losses = sum(1 for p in picks if p.get("result") == "LOSS")
+        pushes = sum(1 for p in picks if p.get("result") == "PUSH")
+        pending = sum(1 for p in picks if p.get("result") == "PENDING")
+        net_units = sum(p.get("profit_units") or 0 for p in picks if p.get("result") in ["WIN", "LOSS", "PUSH"])
 
         # Calculate ROI (total units wagered)
-        settled_picks = [p for p in picks if p.result in [PickResult.WIN, PickResult.LOSS, PickResult.PUSH]]
-        total_wagered = sum(p.recommended_units or 0.5 for p in settled_picks)
+        settled_picks = [p for p in picks if p.get("result") in ["WIN", "LOSS", "PUSH"]]
+        total_wagered = sum(p.get("recommended_units") or 0.5 for p in settled_picks)
         roi = (net_units / total_wagered * 100) if total_wagered > 0 else 0
 
         # Breakdown by tier
         tier_breakdown = {}
         for tier in ["GOLD_STAR", "EDGE_LEAN", "MONITOR"]:
-            tier_picks = [p for p in settled_picks if p.tier == tier]
+            tier_picks = [p for p in settled_picks if p.get("tier") == tier]
             if tier_picks:
-                tier_wins = sum(1 for p in tier_picks if p.result == PickResult.WIN)
-                tier_units = sum(p.profit_units or 0 for p in tier_picks)
+                tier_wins = sum(1 for p in tier_picks if p.get("result") == "WIN")
+                tier_units = sum(p.get("profit_units") or 0 for p in tier_picks)
                 tier_breakdown[tier] = {
                     "picks": len(tier_picks),
                     "wins": tier_wins,
@@ -12206,10 +12207,10 @@ async def get_v1031_daily_report(sport: str, date_str: str = None):
         # Breakdown by confidence grade
         confidence_breakdown = {}
         for grade in ["A", "B", "C"]:
-            grade_picks = [p for p in settled_picks if p.confidence_grade == grade]
+            grade_picks = [p for p in settled_picks if p.get("confidence_grade") == grade]
             if grade_picks:
-                grade_wins = sum(1 for p in grade_picks if p.result == PickResult.WIN)
-                grade_units = sum(p.profit_units or 0 for p in grade_picks)
+                grade_wins = sum(1 for p in grade_picks if p.get("result") == "WIN")
+                grade_units = sum(p.get("profit_units") or 0 for p in grade_picks)
                 confidence_breakdown[grade] = {
                     "picks": len(grade_picks),
                     "wins": grade_wins,
@@ -12219,30 +12220,30 @@ async def get_v1031_daily_report(sport: str, date_str: str = None):
 
         # Get top picks (by profit_units, top 5)
         top_picks = sorted(
-            [p for p in picks if p.result in [PickResult.WIN, PickResult.LOSS]],
-            key=lambda p: p.profit_units or 0,
+            [p for p in picks if p.get("result") in ["WIN", "LOSS"]],
+            key=lambda p: p.get("profit_units") or 0,
             reverse=True
         )[:5]
 
         top_picks_data = [
             {
-                "selection": p.selection,
-                "matchup": p.matchup,
-                "tier": p.tier,
-                "confidence_grade": p.confidence_grade,
-                "result": p.result.value if p.result else "PENDING",
-                "profit_units": round(p.profit_units or 0, 2),
-                "odds": p.odds
+                "selection": p.get("selection"),
+                "matchup": p.get("matchup"),
+                "tier": p.get("tier"),
+                "confidence_grade": p.get("confidence_grade"),
+                "result": p.get("result", "PENDING"),
+                "profit_units": round(p.get("profit_units") or 0, 2),
+                "odds": p.get("odds")
             }
             for p in top_picks
         ]
 
-        # Get config changes for the date
+        # Get config changes for the date (v10.95: now returns dicts)
         changes = get_config_changes(sport_upper, days_back=1)
         config_changes = [
             {
-                "timestamp": c.timestamp.isoformat() if c.timestamp else None,
-                "reason": c.reason
+                "timestamp": c.get("timestamp"),
+                "reason": c.get("reason")
             }
             for c in changes
         ]

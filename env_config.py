@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v10.94"  # v10.94: Debug endpoints for scoring transparency
+    ENGINE_VERSION = "v10.95"  # v10.95: Fix SQLAlchemy session binding in grader endpoints
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 

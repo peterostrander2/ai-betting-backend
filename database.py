@@ -1071,16 +1071,23 @@ def _upsert_pick_impl(pick_data: Dict[str, Any], db: Session) -> bool:
 def get_pending_picks_for_date(
     target_date: date,
     sport: Optional[str] = None,
-    db: Session = None
-) -> List[PickLedger]:
-    """Get all PENDING picks for a specific date."""
+    db: Session = None,
+    as_dict: bool = True
+) -> List[Dict[str, Any]]:
+    """
+    Get all PENDING picks for a specific date.
+
+    v10.95: Returns dicts by default to avoid SQLAlchemy session binding issues.
+    """
     if db is None:
         with get_db() as db:
             if db is None:
                 return []
-            return _get_pending_picks_impl(target_date, sport, db)
+            picks = _get_pending_picks_impl(target_date, sport, db)
+            return [p.to_dict() for p in picks]
     else:
-        return _get_pending_picks_impl(target_date, sport, db)
+        picks = _get_pending_picks_impl(target_date, sport, db)
+        return [p.to_dict() for p in picks] if as_dict else picks
 
 
 def _get_pending_picks_impl(target_date: date, sport: Optional[str], db: Session) -> List[PickLedger]:
@@ -1102,16 +1109,23 @@ def _get_pending_picks_impl(target_date: date, sport: Optional[str], db: Session
 def get_settled_picks(
     sport: str,
     days_back: int = 7,
-    db: Session = None
-) -> List[PickLedger]:
-    """Get settled picks for a sport within the rolling window."""
+    db: Session = None,
+    as_dict: bool = True
+) -> List[Dict[str, Any]]:
+    """
+    Get settled picks for a sport within the rolling window.
+
+    v10.95: Returns dicts by default to avoid SQLAlchemy session binding issues.
+    """
     if db is None:
         with get_db() as db:
             if db is None:
                 return []
-            return _get_settled_picks_impl(sport, days_back, db)
+            picks = _get_settled_picks_impl(sport, days_back, db)
+            return [p.to_dict() for p in picks]
     else:
-        return _get_settled_picks_impl(sport, days_back, db)
+        picks = _get_settled_picks_impl(sport, days_back, db)
+        return [p.to_dict() for p in picks] if as_dict else picks
 
 
 def _get_settled_picks_impl(sport: str, days_back: int, db: Session) -> List[PickLedger]:
@@ -1128,16 +1142,25 @@ def _get_settled_picks_impl(sport: str, days_back: int, db: Session) -> List[Pic
 def get_picks_for_date(
     target_date: date,
     sport: Optional[str] = None,
-    db: Session = None
-) -> List[PickLedger]:
-    """Get all picks for a specific date (any status)."""
+    db: Session = None,
+    as_dict: bool = True
+) -> List[Dict[str, Any]]:
+    """
+    Get all picks for a specific date (any status).
+
+    v10.95: Returns dicts by default to avoid SQLAlchemy session binding issues.
+    Set as_dict=False if you need ORM objects (must provide open db session).
+    """
     if db is None:
         with get_db() as db:
             if db is None:
                 return []
-            return _get_picks_for_date_impl(target_date, sport, db)
+            picks = _get_picks_for_date_impl(target_date, sport, db)
+            # Convert to dicts within session context to avoid detached object issues
+            return [p.to_dict() for p in picks]
     else:
-        return _get_picks_for_date_impl(target_date, sport, db)
+        picks = _get_picks_for_date_impl(target_date, sport, db)
+        return [p.to_dict() for p in picks] if as_dict else picks
 
 
 def _get_picks_for_date_impl(target_date: date, sport: Optional[str], db: Session) -> List[PickLedger]:
@@ -1273,16 +1296,23 @@ def _get_performance_stats_impl(days_back: int, sport: Optional[str], db: Sessio
 def get_config_changes(
     sport: str,
     days_back: int = 7,
-    db: Session = None
-) -> List[ConfigChangeLog]:
-    """Get recent config changes for a sport."""
+    db: Session = None,
+    as_dict: bool = True
+) -> List[Dict[str, Any]]:
+    """
+    Get recent config changes for a sport.
+
+    v10.95: Returns dicts by default to avoid SQLAlchemy session binding issues.
+    """
     if db is None:
         with get_db() as db:
             if db is None:
                 return []
-            return _get_config_changes_impl(sport, days_back, db)
+            changes = _get_config_changes_impl(sport, days_back, db)
+            return [c.to_dict() for c in changes]
     else:
-        return _get_config_changes_impl(sport, days_back, db)
+        changes = _get_config_changes_impl(sport, days_back, db)
+        return [c.to_dict() for c in changes] if as_dict else changes
 
 
 def _get_config_changes_impl(sport: str, days_back: int, db: Session) -> List[ConfigChangeLog]:
