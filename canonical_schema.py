@@ -22,6 +22,9 @@ from enum import Enum
 import hashlib
 from zoneinfo import ZoneInfo
 
+# v10.96: Import from tiering.py single source of truth
+from tiering import tier_from_score, TIER_CONFIG, DEFAULT_TIERS
+
 # =============================================================================
 # ENUMS
 # =============================================================================
@@ -390,37 +393,20 @@ def compute_tier(
     titanium_smash: bool = False
 ) -> Tier:
     """
-    Compute tier from final score using tiering.py thresholds.
-
-    GOLD_STAR >= 7.5
-    EDGE_LEAN >= 6.5
-    MONITOR >= 5.5
-    PASS < 5.5
-
-    If titanium_smash and final_score >= 7.5: TITANIUM_SMASH
+    v10.96: Compute tier using tiering.py single source of truth.
+    No duplicate threshold logic - imports from tiering.py.
     """
-    if titanium_smash and final_score >= 7.5:
-        return Tier.TITANIUM_SMASH
-    elif final_score >= 7.5:
-        return Tier.GOLD_STAR
-    elif final_score >= 6.5:
-        return Tier.EDGE_LEAN
-    elif final_score >= 5.5:
-        return Tier.MONITOR
-    else:
-        return Tier.PASS
+    tier_str = tier_from_score(final_score, titanium_triggered=titanium_smash)
+    return Tier(tier_str)
 
 
 def compute_units(tier: Tier) -> float:
-    """Compute recommended bet units from tier."""
-    units_map = {
-        Tier.TITANIUM_SMASH: 2.5,
-        Tier.GOLD_STAR: 2.0,
-        Tier.EDGE_LEAN: 1.0,
-        Tier.MONITOR: 0.0,
-        Tier.PASS: 0.0
-    }
-    return units_map.get(tier, 0.0)
+    """
+    v10.96: Compute recommended bet units using tiering.py TIER_CONFIG.
+    No duplicate units mapping - imports from tiering.py.
+    """
+    tier_config = TIER_CONFIG.get(tier.value, {})
+    return tier_config.get("units", 0.0)
 
 
 # =============================================================================

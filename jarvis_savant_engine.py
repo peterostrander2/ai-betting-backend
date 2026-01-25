@@ -27,6 +27,9 @@ Author: Built with Boss through grind – standalone Jarvis.
 import logging
 from typing import Dict, List, Any, Union, Optional
 
+# v10.96: Import from tiering.py single source of truth
+from tiering import tier_from_score, TIER_CONFIG
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -323,18 +326,28 @@ class JarvisSavantEngine:
         }
 
     def calculate_fibonacci_alignment(self, value: float) -> Dict[str, Any]:
-        """Check Fibonacci alignment - stub."""
-        fibs = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144]
+        """
+        Check Fibonacci alignment for esoteric engine.
+        v10.96: Added 'modifier' key for proper integration.
+        """
+        fibs = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233]
         is_fib = int(value) in fibs if value else False
-        return {"is_fibonacci": is_fib, "value": value}
+        # Return modifier for esoteric scoring
+        modifier = 0.3 if is_fib else 0.0
+        return {"is_fibonacci": is_fib, "value": value, "modifier": modifier}
 
     def calculate_vortex_pattern(self, value: int) -> Dict[str, Any]:
-        """Check vortex (3-6-9) pattern."""
+        """
+        Check vortex (3-6-9) pattern for esoteric engine.
+        v10.96: Added 'modifier' key for proper integration.
+        """
         if not value:
-            return {"is_vortex": False, "value": 0}
+            return {"is_vortex": False, "value": 0, "digital_root": 0, "modifier": 0.0}
         root = calculate_digital_root(value)
         is_vortex = root in self.tesla_numbers
-        return {"is_vortex": is_vortex, "digital_root": root, "value": value}
+        # Return modifier for esoteric scoring
+        modifier = 0.25 if is_vortex else 0.0
+        return {"is_vortex": is_vortex, "digital_root": root, "value": value, "modifier": modifier}
 
     def calculate_confluence(self, **kwargs) -> Dict[str, Any]:
         """Calculate confluence level - simplified stub."""
@@ -345,18 +358,19 @@ class JarvisSavantEngine:
         }
 
     def determine_bet_tier(self, score: float, confluence: Dict) -> Dict[str, Any]:
-        """Determine bet tier from score."""
-        if score >= 9.0:
-            tier = "TITANIUM_SMASH"
-        elif score >= 7.5:
-            tier = "GOLD_STAR"
-        elif score >= 6.5:
-            tier = "EDGE_LEAN"
-        elif score >= 5.5:
-            tier = "MONITOR"
-        else:
-            tier = "PASS"
-        return {"tier": tier, "score": score}
+        """
+        v10.96: Determine bet tier using tiering.py single source of truth.
+        No duplicate threshold logic.
+        """
+        titanium_triggered = confluence.get("titanium_triggered", False)
+        tier = tier_from_score(score, titanium_triggered=titanium_triggered)
+        config = TIER_CONFIG.get(tier, {})
+        return {
+            "tier": tier,
+            "score": score,
+            "units": config.get("units", 0.0),
+            "action": config.get("action", "SKIP")
+        }
 
     def validate_2178(self) -> Dict[str, Any]:
         """Validate 2178 as THE IMMORTAL number."""
@@ -399,15 +413,47 @@ def get_jarvis_engine() -> JarvisSavantEngine:
 # These were removed in v7.9 refactor but live_data_router still imports them
 # =============================================================================
 class VedicAstroEngine:
-    """Stub - Vedic functionality moved to esoteric_edge_engine.py"""
+    """
+    v10.96: Vedic Astro stub with basic planetary day scoring.
+    Returns meaningful values based on day of week (planetary rulers).
+    """
+    # Planetary rulers for each weekday with betting favorability
+    PLANETARY_DAYS = {
+        0: {"ruler": "Moon", "favorability": 55},      # Monday
+        1: {"ruler": "Mars", "favorability": 60},      # Tuesday - action
+        2: {"ruler": "Mercury", "favorability": 50},   # Wednesday - neutral
+        3: {"ruler": "Jupiter", "favorability": 65},   # Thursday - expansion
+        4: {"ruler": "Venus", "favorability": 55},     # Friday
+        5: {"ruler": "Saturn", "favorability": 45},    # Saturday - caution
+        6: {"ruler": "Sun", "favorability": 60},       # Sunday - confidence
+    }
+
     def __init__(self):
-        self.version = "stub"
+        self.version = "v10.96-stub"
 
     def get_vedic_signal(self, *args, **kwargs):
-        return {"signal": None, "active": False}
+        """Get Vedic signal based on planetary day."""
+        from datetime import datetime
+        weekday = datetime.now().weekday()
+        day_info = self.PLANETARY_DAYS.get(weekday, {"ruler": "Unknown", "favorability": 50})
+        active = day_info["favorability"] >= 55  # Active if favorable
+        return {
+            "signal": day_info["ruler"],
+            "active": active,
+            "favorability": day_info["favorability"],
+            "weekday": weekday
+        }
 
     def calculate_astro_score(self, *args, **kwargs):
-        return {"overall_score": 50}
+        """Calculate astro score based on planetary day."""
+        from datetime import datetime
+        weekday = datetime.now().weekday()
+        day_info = self.PLANETARY_DAYS.get(weekday, {"ruler": "Unknown", "favorability": 50})
+        return {
+            "overall_score": day_info["favorability"],
+            "ruler": day_info["ruler"],
+            "modifier": (day_info["favorability"] - 50) / 50  # -0.1 to +0.3
+        }
 
 
 class EsotericLearningLoop:

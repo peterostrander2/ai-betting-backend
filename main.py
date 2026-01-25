@@ -94,7 +94,7 @@ async def root():
             "noosphere": "/live/noosphere/status",
             "gann_physics": "/live/gann-physics-status"
         },
-        "sports": ["nba", "nfl", "mlb", "nhl"]
+        "sports": ["nba", "nfl", "mlb", "nhl", "ncaab"]
     }
 
 # Centralized version info - imported from env_config (single source of truth)
