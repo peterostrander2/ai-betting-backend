@@ -12393,7 +12393,14 @@ async def get_v1031_daily_report(sport: str, date_str: str = None, full: bool = 
                 "confidence_grade": p.get("confidence_grade"),
                 "result": p.get("result", "PENDING"),
                 "profit_units": round(p.get("profit_units") or 0, 2),
-                "odds": p.get("odds")
+                "odds": p.get("odds"),
+                # v11.0: Debug fields for grading analysis
+                "line": p.get("line"),
+                "side": p.get("side"),
+                "market": p.get("market"),
+                "actual_value": p.get("actual_value"),
+                "home_team": p.get("home_team"),
+                "away_team": p.get("away_team")
             }
             for p in top_picks
         ]
