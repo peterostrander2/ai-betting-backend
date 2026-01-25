@@ -12291,17 +12291,19 @@ Whether we win or lose, we're always improving! 💪
 
 
 @router.get("/daily-report/{sport}")
-async def get_v1031_daily_report(sport: str, date_str: str = None):
+async def get_v1031_daily_report(sport: str, date_str: str = None, full: bool = False):
     """
     v10.31: Get daily report for a sport from PickLedger.
     v10.54: Updated to use ET date bucketing.
+    v11.0: Added full=true to return all picks.
 
     Query Parameters:
     - date: YYYY-MM-DD format (default: yesterday in ET)
+    - full: If true, return all picks instead of just top 5
 
     Returns:
     - Performance summary (W-L-P, net_units, ROI)
-    - Top picks with results
+    - Top picks with results (or all picks if full=true)
     - Breakdown by tier and confidence grade
     - Config changes made that day
     """
@@ -12375,12 +12377,13 @@ async def get_v1031_daily_report(sport: str, date_str: str = None):
                     "hit_rate": round(grade_wins / len(grade_picks) * 100, 1) if grade_picks else 0
                 }
 
-        # Get top picks (by profit_units, top 5)
-        top_picks = sorted(
+        # Get top picks (by profit_units, top 5 unless full=true)
+        all_settled = sorted(
             [p for p in picks if p.get("result") in ["WIN", "LOSS"]],
             key=lambda p: p.get("profit_units") or 0,
             reverse=True
-        )[:5]
+        )
+        top_picks = all_settled if full else all_settled[:5]
 
         top_picks_data = [
             {
