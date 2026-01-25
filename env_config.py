@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v11.00"  # v11.00: Production clean - explain mode, time_filters.py, prop_validation.py, standardized schema
+    ENGINE_VERSION = "v11.02"  # v11.02: Contract compliance - 4-engine prefix fix, grader UPCOMING-only filter
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 

@@ -45,18 +45,23 @@ SIGNAL_PATTERNS = {
     r"RESEARCH:\s*High\s*Total": "SIGNAL_HIGH_TOTAL",
     r"RESEARCH:\s*Multi-Pillar": "SIGNAL_MULTI_PILLAR",
 
-    # ESOTERIC signals
-    r"ESOTERIC:\s*Gematria": "ESOTERIC_GEMATRIA",
-    r"ESOTERIC:\s*Jarvis\s*Trigger": "ESOTERIC_JARVIS_TRIGGER",
-    r"ESOTERIC:\s*Jarvis": "ESOTERIC_JARVIS_TRIGGER",
+    # JARVIS signals (Gematria + Sacred Triggers - STANDALONE ENGINE)
+    r"JARVIS:\s*Trigger": "JARVIS_TRIGGER",
+    r"JARVIS:\s*Gematria": "JARVIS_GEMATRIA",
+    r"JARVIS:\s*Sacred": "JARVIS_SACRED_TRIGGER",
+    r"JARVIS:\s*Mid-Spread": "JARVIS_MID_SPREAD",
+    r"JARVIS:\s*Immortal": "JARVIS_IMMORTAL",
+
+    # ESOTERIC signals (NON-Jarvis environment signals only)
     r"ESOTERIC:\s*Astrology": "ESOTERIC_ASTRO",
     r"ESOTERIC:\s*Astro": "ESOTERIC_ASTRO",
+    r"ESOTERIC:\s*Vedic": "ESOTERIC_VEDIC",
     r"ESOTERIC:\s*Fibonacci": "ESOTERIC_FIBONACCI",
-    r"ESOTERIC:\s*Numerology": "ESOTERIC_NUMEROLOGY",
+    r"ESOTERIC:\s*Vortex": "ESOTERIC_VORTEX",
     r"ESOTERIC:\s*Moon": "ESOTERIC_MOON_PHASE",
-    r"ESOTERIC:\s*Tesla": "ESOTERIC_TESLA",
     r"ESOTERIC:\s*Daily\s*Energy": "ESOTERIC_DAILY_ENERGY",
-    r"ESOTERIC:\s*Power\s*Number": "ESOTERIC_POWER_NUMBER",
+    r"ESOTERIC:\s*Weather": "ESOTERIC_WEATHER",
+    r"ESOTERIC:\s*Schumann": "ESOTERIC_SCHUMANN",
 
     # CONFLUENCE signals
     r"CONFLUENCE:": "CONFLUENCE_BONUS",

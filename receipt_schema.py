@@ -398,7 +398,7 @@ def generate_sample_receipts() -> Dict[str, PickReceipt]:
         "reasons": [
             "RESEARCH: Sharp Split +2.0",
             "RESEARCH: RLM +1.5",
-            "ESOTERIC: Jarvis 33 +0.5",
+            "JARVIS: Trigger 33 +0.5",
             "CONFLUENCE: Perfect +0.35"
         ]
     }

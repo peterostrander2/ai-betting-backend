@@ -83,6 +83,17 @@ from time_status import (
     TimeState, Recommendation, LiveBand
 )
 
+# v11.00: Import debug proof module for production-ready debug output
+try:
+    from debug_proof import (
+        build_debug_object, save_official_card, load_official_card,
+        get_official_card_pick_ids, get_time_status as debug_get_time_status,
+        generate_pick_id, PILLARS, SIGNALS
+    )
+    DEBUG_PROOF_AVAILABLE = True
+except ImportError:
+    DEBUG_PROOF_AVAILABLE = False
+
 # Import MasterPredictionSystem for comprehensive AI scoring
 try:
     from advanced_ml_backend import MasterPredictionSystem
@@ -1877,11 +1888,13 @@ def order_reasons(reasons: list) -> list:
     1. RESEARCH: (sharp, RLM, pillars, prop-independent boosts)
     2. MAPPING: (team resolver result - part of research phase)
     3. CORRELATION: (ALIGNED/NEUTRAL/CONFLICT/NO_SIGNAL - part of research phase)
-    4. ESOTERIC: (Jarvis, Gematria, etc)
-    5. CONFLUENCE: (alignment bonuses)
-    6. SMASH: (smash spot confirmation - v10.19)
-    7. RESOLVER: (deduplication notes)
-    8. GOVERNOR: (volume cap notes)
+    4. JARVIS: (Gematria, Sacred Triggers 2178/201/33/93/322 - STANDALONE)
+    5. ESOTERIC: (Vedic, Moon Phase, Fibonacci, Vortex, Daily Energy - NON-Jarvis)
+    6. CONFLUENCE: (alignment bonuses)
+    7. JASON_SIM: (post-pick simulation confluence - DOES NOT affect base scores)
+    8. SMASH: (smash spot confirmation - v10.19)
+    9. RESOLVER: (deduplication notes)
+    10. GOVERNOR: (volume cap notes)
 
     v10.18: RESEARCH reasons must come FIRST (before MAPPING/CORRELATION).
     v10.19: SMASH category added after CONFLUENCE.
@@ -11216,31 +11229,45 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
     # ================================================================
     # v10.38: LOG PICKS TO AUTO-GRADER (JSONL format with deduplication)
-    # This enables the feedback loop - grader can grade picks and adjust weights
+    # v11.01: CRITICAL FIX - Only log UPCOMING picks (not STARTED/LIVE)
+    # This ensures grading only grades picks that were on official_card
     # ================================================================
     grader_logged = 0
     grader_duplicates = 0
     grader_errors = 0
+    grader_skipped_started = 0
 
     if AUTO_GRADER_AVAILABLE:
         try:
             grader = get_grader()
 
-            # Log prop picks
-            if top_props:
-                props_result_log = grader.log_picks_batch(top_props, sport, pick_type="prop")
+            # v11.01: Filter to UPCOMING only before logging
+            # This matches official_card filtering to ensure grading consistency
+            upcoming_props = [
+                p for p in top_props
+                if p.get("game_status") == "PREGAME" or not p.get("is_already_started", False)
+            ]
+            upcoming_games = [
+                g for g in top_game_picks
+                if g.get("game_status") == "PREGAME" or not g.get("is_already_started", False)
+            ]
+            grader_skipped_started = (len(top_props) - len(upcoming_props)) + (len(top_game_picks) - len(upcoming_games))
+
+            # Log prop picks (UPCOMING only)
+            if upcoming_props:
+                props_result_log = grader.log_picks_batch(upcoming_props, sport, pick_type="prop")
                 grader_logged += props_result_log.get("logged", 0)
                 grader_duplicates += props_result_log.get("duplicates", 0)
                 grader_errors += props_result_log.get("errors", 0)
 
-            # Log game picks
-            if top_game_picks:
-                games_result_log = grader.log_picks_batch(top_game_picks, sport, pick_type="game")
+            # Log game picks (UPCOMING only)
+            if upcoming_games:
+                games_result_log = grader.log_picks_batch(upcoming_games, sport, pick_type="game")
                 grader_logged += games_result_log.get("logged", 0)
                 grader_duplicates += games_result_log.get("duplicates", 0)
                 grader_errors += games_result_log.get("errors", 0)
 
-            logger.info(f"grader_log sport={sport.upper()} logged={grader_logged} duplicates={grader_duplicates} errors={grader_errors}")
+            logger.info(f"grader_log sport={sport.upper()} logged={grader_logged} duplicates={grader_duplicates} skipped_started={grader_skipped_started}")
 
         except Exception as e:
             logger.warning(f"Grader logging failed: {e}")
@@ -11251,10 +11278,66 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         result["debug"]["grader_logged"] = grader_logged
         result["debug"]["grader_duplicates"] = grader_duplicates
         result["debug"]["grader_errors"] = grader_errors
+        result["debug"]["grader_skipped_started"] = grader_skipped_started  # v11.01: STARTED games not logged
         result["debug"]["grader_available"] = AUTO_GRADER_AVAILABLE
 
     # Update top-level field for visibility
     result["predictions_logged"] = grader_logged
+
+    # ================================================================
+    # v11.00: OFFICIAL CARD PERSISTENCE + DEBUG PROOF OUTPUT
+    # Save UPCOMING picks to official_card.jsonl for grading
+    # When debug=1, include full proof objects per pick
+    # ================================================================
+    official_card_saved = 0
+    official_card_path = None
+
+    if DEBUG_PROOF_AVAILABLE:
+        try:
+            # Save only UPCOMING picks to official card
+            from time_filters import get_now_et
+            now_et = get_now_et()
+
+            # Combine all picks for official card consideration
+            all_picks_for_card = top_props + top_game_picks
+
+            # Save to official card (function filters to UPCOMING only)
+            official_card_saved = save_official_card(all_picks_for_card, now_et)
+
+            # Get path for reporting
+            from debug_proof import get_official_card_path
+            official_card_path = get_official_card_path(now_et)
+
+            logger.info(f"official_card_save sport={sport.upper()} saved={official_card_saved} path={official_card_path}")
+
+        except Exception as e:
+            logger.warning(f"Official card save failed: {e}")
+
+    # v11.00: Enhanced debug output with full proof objects
+    if debug == 1:
+        result["debug"]["official_card_saved"] = official_card_saved
+        result["debug"]["official_card_path"] = official_card_path
+        result["debug"]["debug_proof_available"] = DEBUG_PROOF_AVAILABLE
+
+        # Build full debug proof objects for each pick
+        if DEBUG_PROOF_AVAILABLE:
+            from time_filters import get_now_et
+            now_et = get_now_et()
+
+            debug_proof_objects = []
+            for pick in (top_props + top_game_picks)[:10]:  # Limit to 10 for response size
+                try:
+                    debug_obj = build_debug_object(pick, now_et)
+                    debug_proof_objects.append(debug_obj)
+                except Exception as e:
+                    logger.warning(f"Debug object build failed: {e}")
+
+            result["debug"]["pick_proofs"] = debug_proof_objects
+            result["debug"]["pick_proofs_count"] = len(debug_proof_objects)
+
+            # Include pillar and signal definitions for reference
+            result["debug"]["pillar_definitions"] = PILLARS
+            result["debug"]["signal_definitions"] = SIGNALS
 
     api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
     return result
@@ -11737,6 +11820,140 @@ async def debug_today_slate(
         "timestamp": now_et.isoformat(),
         "version": "v10.94"
     }
+
+
+# ============================================================================
+# v11.03: DEBUG PROPS TRACE ENDPOINT
+# ============================================================================
+
+@router.get("/debug/props/{sport}")
+async def debug_props_trace(sport: str):
+    """
+    v11.03: Debug endpoint to trace props fetching step by step.
+
+    Returns detailed info about:
+    - Events found from Odds API
+    - Which events pass is_game_today filter
+    - Props fetched for each event
+    - Any errors encountered
+    """
+    import pytz
+    sport_lower = sport.lower()
+    et_tz = pytz.timezone('America/New_York')
+    now_et = datetime.now(et_tz)
+
+    if sport_lower not in SPORT_MAPPINGS:
+        return {"error": f"Unsupported sport: {sport}"}
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+    trace = {
+        "sport": sport.upper(),
+        "timestamp": now_et.isoformat(),
+        "steps": [],
+        "events_found": 0,
+        "events_today": 0,
+        "events_with_props": 0,
+        "total_props": 0,
+        "errors": []
+    }
+
+    # Step 1: Fetch events
+    try:
+        events_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/events"
+        events_resp = await fetch_with_retries(
+            "GET", events_url,
+            params={"apiKey": ODDS_API_KEY}
+        )
+
+        if events_resp and events_resp.status_code == 200:
+            events = events_resp.json()
+            trace["events_found"] = len(events)
+            trace["steps"].append(f"Step 1: Found {len(events)} events from Odds API")
+
+            # Define prop markets
+            if sport_lower == "nfl":
+                prop_markets = "player_pass_yds,player_rush_yds,player_reception_yds,player_anytime_td"
+            elif sport_lower == "nba":
+                prop_markets = "player_points,player_rebounds,player_assists"
+            else:
+                prop_markets = "player_points"
+
+            trace["prop_markets_requested"] = prop_markets
+
+            # Step 2: Filter by today
+            event_details = []
+            for event in events:
+                event_id = event.get("id")
+                event_commence = event.get("commence_time", "")
+                home = event.get("home_team", "")
+                away = event.get("away_team", "")
+
+                is_today = is_game_today(event_commence)
+
+                event_info = {
+                    "event_id": event_id,
+                    "matchup": f"{away} @ {home}",
+                    "commence_time": event_commence,
+                    "is_today": is_today,
+                    "props_count": 0,
+                    "props_status": "not_fetched",
+                    "bookmakers_in_response": 0
+                }
+
+                if is_today:
+                    trace["events_today"] += 1
+
+                    # Step 3: Fetch props for this event
+                    event_odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/events/{event_id}/odds"
+                    props_resp = await fetch_with_retries(
+                        "GET", event_odds_url,
+                        params={
+                            "apiKey": ODDS_API_KEY,
+                            "regions": "us",
+                            "markets": prop_markets,
+                            "oddsFormat": "american"
+                        }
+                    )
+
+                    if props_resp:
+                        event_info["props_http_status"] = props_resp.status_code
+                        if props_resp.status_code == 200:
+                            props_data = props_resp.json()
+                            bookmakers = props_data.get("bookmakers", [])
+                            event_info["bookmakers_in_response"] = len(bookmakers)
+
+                            props_count = 0
+                            if bookmakers:
+                                for bm in bookmakers[:1]:
+                                    for market in bm.get("markets", []):
+                                        market_key = market.get("key", "")
+                                        if "player" in market_key:
+                                            props_count += len(market.get("outcomes", []))
+
+                            event_info["props_count"] = props_count
+                            event_info["props_status"] = "success" if props_count > 0 else "no_props_in_response"
+                            trace["total_props"] += props_count
+                            if props_count > 0:
+                                trace["events_with_props"] += 1
+                        else:
+                            event_info["props_status"] = f"http_error_{props_resp.status_code}"
+                    else:
+                        event_info["props_status"] = "no_response"
+
+                event_details.append(event_info)
+
+            trace["event_details"] = event_details
+            trace["steps"].append(f"Step 2: {trace['events_today']} events pass is_game_today filter")
+            trace["steps"].append(f"Step 3: {trace['events_with_props']} events have props ({trace['total_props']} total)")
+        else:
+            status = events_resp.status_code if events_resp else "no_response"
+            trace["errors"].append(f"Events API returned status: {status}")
+            trace["steps"].append(f"Step 1: FAILED - Events API returned {status}")
+    except Exception as e:
+        trace["errors"].append(f"Exception: {str(e)}")
+        trace["steps"].append(f"Step 1: EXCEPTION - {str(e)}")
+
+    return trace
 
 
 # ============================================================================
