@@ -418,6 +418,9 @@ class EsotericLearningLoop:
     def get_adjustments(self, *args, **kwargs):
         return {}
 
+    def get_weights(self, *args, **kwargs):
+        return {"weights": {}}
+
 
 _vedic_engine: Optional[VedicAstroEngine] = None
 _learning_loop: Optional[EsotericLearningLoop] = None
