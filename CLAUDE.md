@@ -9,7 +9,7 @@
 ## Project Overview
 
 **Bookie-o-em** - AI Sports Prop Betting Backend
-**Version:** v14.6 / Engine v10.71 PRODUCTION HARDENED
+**Version:** v14.9 / Engine v10.95 PRODUCTION HARDENED
 **Stack:** Python 3.11+, FastAPI, Railway deployment
 **Frontend:** bookie-member-app (separate repo)
 **Production URL:** https://web-production-7b2a.up.railway.app
@@ -3055,11 +3055,77 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba" -H "X-API-K
 curl "https://web-production-7b2a.up.railway.app/live/best-bets/nhl" -H "X-API-Key: YOUR_KEY"
 ```
 
-### Tomorrow: Grading Review
+---
 
-Next session will focus on:
-- Auto-grader review and optimization
-- Grading picks from today's games
-- Learning loop verification
+## Session Log: January 25, 2026 - v10.95 SQLAlchemy Session Fix & Grading
+
+### The Problem
+
+Grader endpoints (`/grader/daily-report`, `/grader/grade/{sport}`, `/daily-report/{sport}`) were failing with:
+```
+Instance <PickLedger at 0x...> is not bound to a Session; attribute refresh operation cannot proceed
+```
+
+### Root Cause
+
+Database helper functions (`get_picks_for_date`, `get_pending_picks_for_date`, `get_settled_picks`, `get_config_changes`) returned SQLAlchemy ORM objects. When the session context manager closed, the objects became "detached" and accessing their attributes failed.
+
+### The Fix
+
+Modified all affected database functions to return dictionaries by default:
+
+```python
+# Before (returned ORM objects that could get detached)
+def get_picks_for_date(target_date, sport, db=None) -> List[PickLedger]:
+    with get_db() as db:
+        return query.all()  # Detached when context closes
+
+# After (returns dicts - safe to use after session closes)
+def get_picks_for_date(target_date, sport, db=None, as_dict=True) -> List[Dict]:
+    with get_db() as db:
+        picks = query.all()
+        return [p.to_dict() for p in picks]  # Converted within session
+```
+
+### Files Changed
+
+| File | Changes |
+|------|---------|
+| `database.py` | Updated 4 functions to return dicts by default |
+| `live_data_router.py` | Updated endpoints to use dictionary access (`.get("key")`) |
+| `daily_scheduler.py` | Updated `_grade_sport` to use dictionary access |
+| `env_config.py` | ENGINE_VERSION = "v10.95" |
+
+### Commit
+
+`4570440` - v10.95: Fix SQLAlchemy session binding errors in grader endpoints
+
+### Grading Results (January 24, 2026)
+
+After fix, ran grading for all sports:
+
+| Sport | Record | Hit Rate | Net Units |
+|-------|--------|----------|-----------|
+| **NBA** | 15-29 | 34.1% | -7.27u |
+| **NHL** | 6-11 | 35.3% | -1.33u |
+| **NCAAB** | 8-1 | 88.9% | (not tracked in report) |
+| **Total** | 21-40 | 34.4% | -8.60u |
+
+**NBA Tier Breakdown:**
+- GOLD_STAR: 13-20 (39.4%), -3.64u
+- EDGE_LEAN: 0-5 (0%), -2.5u
+- MONITOR: 2-4 (33.3%), -1.12u
+
+**Action Items:**
+- Weights auto-adjusted after poor performance
+- EDGE_LEAN tier (5 picks, 0 wins) needs investigation
+- NCAAB outperformed (88.9%) but picks not appearing in Postgres report
+
+### System Status
+
+- **Engine Version:** v10.95
+- **Grader Endpoints:** ✅ All working
+- **Database:** ✅ Postgres grading active
+- **Weights Adjustment:** ✅ Auto-triggered after 34.4% hit rate
 
 ---
