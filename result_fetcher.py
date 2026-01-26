@@ -199,15 +199,127 @@ async def fetch_completed_games(sport: str, days_back: int = 1) -> List[GameResu
 
 
 # =============================================================================
-# BALLDONTLIE API - NBA PLAYER STATS
+# PLAYBOOK API - PLAYER STATS (PRIMARY SOURCE)
 # =============================================================================
 
-# Get API key from environment
+PLAYBOOK_API_KEY = os.getenv("PLAYBOOK_API_KEY", "")
+PLAYBOOK_API_BASE = os.getenv("PLAYBOOK_API_BASE", "https://api.playbook-api.com/v1")
+
+# Sport mappings for Playbook API
+PLAYBOOK_SPORTS = {
+    "NBA": "NBA",
+    "NFL": "NFL",
+    "MLB": "MLB",
+    "NHL": "NHL",
+    "NCAAB": "CFB"
+}
+
+
+async def fetch_player_stats_playbook(
+    sport: str,
+    player_names: List[str],
+    date: str
+) -> List[PlayerStatline]:
+    """
+    Fetch player stats from Playbook API game logs.
+
+    Args:
+        sport: Sport code (NBA, NFL, etc.)
+        player_names: List of player names to fetch
+        date: Date string in YYYY-MM-DD format
+
+    Returns:
+        List of PlayerStatline objects
+    """
+    if not PLAYBOOK_API_KEY:
+        logger.warning("PLAYBOOK_API_KEY not set")
+        return []
+
+    sport_key = PLAYBOOK_SPORTS.get(sport.upper(), sport.upper())
+    all_stats = []
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            for player_name in player_names:
+                url = f"{PLAYBOOK_API_BASE}/players/{sport_key}/gamelog"
+                params = {
+                    "player": player_name,
+                    "api_key": PLAYBOOK_API_KEY
+                }
+
+                resp = await client.get(url, params=params)
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    games = data.get("games", data.get("data", []))
+
+                    # Find the game matching our date
+                    for game in games:
+                        game_date = game.get("date", game.get("game_date", ""))[:10]
+                        if game_date == date:
+                            # Extract stats based on sport
+                            if sport.upper() == "NBA":
+                                pts = float(game.get("pts", game.get("points", 0)) or 0)
+                                reb = float(game.get("reb", game.get("rebounds", 0)) or 0)
+                                ast = float(game.get("ast", game.get("assists", 0)) or 0)
+                                stl = float(game.get("stl", game.get("steals", 0)) or 0)
+                                blk = float(game.get("blk", game.get("blocks", 0)) or 0)
+                                tov = float(game.get("tov", game.get("turnovers", 0)) or 0)
+                                fg3m = float(game.get("fg3m", game.get("three_pointers_made", 0)) or 0)
+
+                                statline = PlayerStatline(
+                                    player_name=player_name,
+                                    team=game.get("team", ""),
+                                    game_id=str(game.get("game_id", "")),
+                                    sport=sport.upper(),
+                                    points=pts,
+                                    rebounds=reb,
+                                    assists=ast,
+                                    steals=stl,
+                                    blocks=blk,
+                                    turnovers=tov,
+                                    three_pointers_made=fg3m,
+                                    stats={
+                                        "points": pts,
+                                        "rebounds": reb,
+                                        "assists": ast,
+                                        "pra": pts + reb + ast,
+                                        "pr": pts + reb,
+                                        "pa": pts + ast,
+                                        "ra": reb + ast,
+                                        "steals": stl,
+                                        "blocks": blk,
+                                        "turnovers": tov,
+                                        "three_pointers_made": fg3m,
+                                    }
+                                )
+                                all_stats.append(statline)
+                                logger.debug("Found stats for %s: %d pts", player_name, pts)
+                            break
+
+                elif resp.status_code == 404:
+                    logger.debug("Player not found in Playbook: %s", player_name)
+                else:
+                    logger.warning("Playbook API error for %s: %d", player_name, resp.status_code)
+
+        logger.info("Fetched %d player stats from Playbook for %s", len(all_stats), date)
+        return all_stats
+
+    except Exception as e:
+        logger.error("Error fetching Playbook stats: %s", e)
+        return []
+
+
+# =============================================================================
+# BALLDONTLIE API - NBA PLAYER STATS (BACKUP)
+# =============================================================================
+
 BALLDONTLIE_API_KEY = os.getenv("BALLDONTLIE_API_KEY", "")
+
 
 async def fetch_nba_player_stats(date: str) -> List[PlayerStatline]:
     """
-    Fetch NBA player stats from balldontlie.io API.
+    Fetch NBA player stats - tries Playbook first, then balldontlie, then ESPN.
 
     Args:
         date: Date string in YYYY-MM-DD format
@@ -215,11 +327,11 @@ async def fetch_nba_player_stats(date: str) -> List[PlayerStatline]:
     Returns:
         List of PlayerStatline objects
     """
-    # balldontlie.io API - requires API key
+    # balldontlie.io API - backup source
     url = "https://api.balldontlie.io/stats"
 
     if not BALLDONTLIE_API_KEY:
-        logger.warning("BALLDONTLIE_API_KEY not set - trying ESPN backup")
+        logger.info("No BALLDONTLIE_API_KEY - using ESPN backup")
         return await fetch_nba_stats_espn(date)
 
     # Need to paginate through results
@@ -624,18 +736,35 @@ async def auto_grade_picks(
     all_games: Dict[str, List[GameResult]] = {}
     all_player_stats: Dict[str, List[PlayerStatline]] = {}
 
+    # Collect player names from prop picks for targeted Playbook lookup
+    prop_players_by_sport: Dict[str, List[str]] = {}
+    for pick in pending_picks:
+        if pick.player_name:
+            sport = pick.sport.upper()
+            if sport not in prop_players_by_sport:
+                prop_players_by_sport[sport] = []
+            if pick.player_name not in prop_players_by_sport[sport]:
+                prop_players_by_sport[sport].append(pick.player_name)
+
     for sport in sports:
         games = await fetch_completed_games(sport, days_back=2)
         all_games[sport] = games
         results["games_fetched"] += len(games)
 
         # Fetch player stats for prop grading
-        if sport == "NBA":
-            # Try balldontlie first, then ESPN as backup
-            stats = await fetch_nba_player_stats(date)
-            if not stats:
-                stats = await fetch_nba_stats_espn(date)
-            all_player_stats["NBA"] = stats
+        player_names = prop_players_by_sport.get(sport, [])
+        if player_names:
+            # Try Playbook API first (we already pay for it)
+            stats = await fetch_player_stats_playbook(sport, player_names, date)
+
+            # Fallback to balldontlie/ESPN for NBA if Playbook didn't return data
+            if not stats and sport == "NBA":
+                logger.info("Playbook returned no stats, trying balldontlie/ESPN")
+                stats = await fetch_nba_player_stats(date)
+                if not stats:
+                    stats = await fetch_nba_stats_espn(date)
+
+            all_player_stats[sport] = stats
             results["stats_fetched"] += len(stats)
 
     # Grade each pending pick
