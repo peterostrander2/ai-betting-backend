@@ -1900,38 +1900,138 @@ async def get_best_bets(sport: str):
     # Get learned weights for esoteric scoring
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
-    # Helper function to calculate scores with v10.1 dual-score confluence + v11.08 Jason Sim
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0):
-        # =====================================================================
-        # v10.2 DUAL-SCORE CONFLUENCE SYSTEM (Gematria-Dominant)
-        # =====================================================================
-        # RESEARCH SCORE (0-10): 8 AI Models (0-8) + 8 Pillars (0-8) scaled to 0-10
-        # ESOTERIC SCORE (0-10): Weighted by signal importance:
-        #   - Gematria:      52% → max 5.2 pts (DOMINANT signal)
-        #   - JARVIS:        20% → max 2.0 pts
-        #   - Astro:         13% → max 1.3 pts
-        #   - Fibonacci:      5% → max 0.5 pts
-        #   - Vortex:         5% → max 0.5 pts
-        #   - Daily Edge:     5% → max 0.5 pts
-        #   + Public Fade & Trap modifiers (can be negative)
-        # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
-        # =====================================================================
+    # ==========================================================================
+    # v15.0 STANDALONE JARVIS ENGINE (0-10 scale)
+    # ==========================================================================
+    # Jarvis is now a SEPARATE 4th engine, not part of Esoteric
+    # Components:
+    #   - Gematria Signal (40%): 0-4 pts
+    #   - Sacred Triggers (40%): 2178/201/33/93/322 → 0-4 pts
+    #   - Mid-Spread Amplifier (20%): Goldilocks zone → 0-2 pts
+    # ==========================================================================
+    def calculate_jarvis_engine_score(
+        jarvis_engine,
+        game_str: str,
+        player_name: str = "",
+        home_team: str = "",
+        away_team: str = "",
+        spread: float = 0
+    ) -> Dict[str, Any]:
+        """
+        JARVIS ENGINE (0-10 standalone) - v15.0
 
-        # --- ESOTERIC WEIGHTS (v10.2 - Gematria Dominant) ---
-        ESOTERIC_WEIGHTS = {
-            "gematria": 0.52,    # 52% - Dominant signal (Boss approved)
-            "jarvis": 0.20,      # 20% - JARVIS triggers
-            "astro": 0.13,       # 13% - Vedic astrology
-            "fib": 0.05,         # 5%  - Fibonacci alignment
-            "vortex": 0.05,      # 5%  - Tesla 3-6-9 patterns
-            "daily_edge": 0.05   # 5%  - Daily energy
+        Returns standalone jarvis_score plus all required output fields.
+        """
+        JARVIS_WEIGHTS = {
+            "gematria": 0.40,     # 40% - Gematria signal (0-4 pts)
+            "triggers": 0.40,     # 40% - Sacred triggers (0-4 pts)
+            "mid_spread": 0.20    # 20% - Goldilocks zone amplifier (0-2 pts)
         }
 
-        # --- ENGINE SEPARATION (v14.9 Clean Architecture) ---
+        jarvis_triggers_hit = []
+        immortal_detected = False
+        gematria_score = 0.0
+        trigger_score = 0.0
+        mid_spread_score = 0.0
+
+        if jarvis_engine:
+            # 1. Sacred Triggers (40% weight, max 4 pts)
+            trigger_result = jarvis_engine.check_jarvis_trigger(game_str)
+            raw_trigger = 0.0
+            for trig in trigger_result.get("triggers_hit", []):
+                raw_trigger += trig["boost"] / 10  # Normalize boost
+                jarvis_triggers_hit.append({
+                    "number": trig["number"],
+                    "name": trig["name"],
+                    "match_type": trig.get("match_type", "DIRECT"),
+                    "boost": round(trig["boost"] / 10, 2)
+                })
+                if trig["number"] == 2178:
+                    immortal_detected = True
+
+            # Scale trigger score: normalize to 0-1, multiply by weight*10
+            trigger_score = min(1.0, raw_trigger) * 10 * JARVIS_WEIGHTS["triggers"]
+
+            # 2. Gematria Signal (40% weight, max 4 pts)
+            if player_name and home_team:
+                gematria = jarvis_engine.calculate_gematria_signal(player_name, home_team, away_team)
+                gematria_strength = gematria.get("signal_strength", 0)
+                if gematria.get("triggered"):
+                    gematria_strength = min(1.0, gematria_strength * 1.5)
+                gematria_score = gematria_strength * 10 * JARVIS_WEIGHTS["gematria"]
+
+            # 3. Mid-Spread Goldilocks Amplifier (20% weight, max 2 pts)
+            mid_spread = jarvis_engine.calculate_mid_spread_signal(spread)
+            mid_spread_mod = mid_spread.get("modifier", 0)
+            if mid_spread_mod > 0:  # Only positive boost (Goldilocks zone 4-9)
+                mid_spread_score = mid_spread_mod * 10 * JARVIS_WEIGHTS["mid_spread"]
+        else:
+            # Fallback: check triggers in game_str directly
+            for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
+                if str(trigger_num) in game_str:
+                    trigger_score += trigger_data["boost"] / 25  # Scaled down
+                    jarvis_triggers_hit.append({
+                        "number": trigger_num,
+                        "name": trigger_data["name"],
+                        "boost": round(trigger_data["boost"] / 25, 2)
+                    })
+                    if trigger_num == 2178:
+                        immortal_detected = True
+            trigger_score = min(4.0, trigger_score)  # Cap at 40% max
+
+        # Total Jarvis Engine Score (0-10)
+        jarvis_rs = gematria_score + trigger_score + mid_spread_score
+        jarvis_rs = max(0, min(10, jarvis_rs))
+
+        # If no triggers and no gematria, return default neutral score
+        jarvis_hits_count = len(jarvis_triggers_hit)
+        if jarvis_hits_count == 0 and gematria_score < 0.5:
+            jarvis_rs = DEFAULT_JARVIS_RS if TIERING_AVAILABLE else 5.0
+
+        return {
+            "jarvis_rs": round(jarvis_rs, 2),
+            "jarvis_active": jarvis_hits_count > 0 or gematria_score >= 1.0,
+            "jarvis_hits_count": jarvis_hits_count,
+            "jarvis_triggers_hit": jarvis_triggers_hit,
+            "jarvis_reasons": [t.get("name", "Unknown") for t in jarvis_triggers_hit] if jarvis_hits_count > 0 else (["Gematria alignment"] if gematria_score >= 1.0 else ["No triggers hit"]),
+            "immortal_detected": immortal_detected,
+            "jarvis_breakdown": {
+                "gematria": round(gematria_score, 2),
+                "triggers": round(trigger_score, 2),
+                "mid_spread": round(mid_spread_score, 2)
+            }
+        }
+
+    # Helper function to calculate scores with v15.0 4-engine architecture + Jason Sim
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0):
+        # =====================================================================
+        # v15.0 FOUR-ENGINE ARCHITECTURE (Clean Separation)
+        # =====================================================================
+        # ENGINE 1 - AI SCORE (0-10): Pure 8 AI Models (0-8 scaled to 0-10)
+        # ENGINE 2 - RESEARCH SCORE (0-10): Sharp money + RLM + Public Fade
+        # ENGINE 3 - ESOTERIC SCORE (0-10): Numerology + Astro + Fib + Vortex + Daily
+        #            (NO Jarvis, NO Gematria, NO Public Fade - those are separate)
+        # ENGINE 4 - JARVIS SCORE (0-10): Gematria + Sacred Triggers + Mid-Spread
+        #
+        # FINAL = (research × 0.45) + (esoteric × 0.25) + (jarvis × 0.20) + confluence_boost
+        # Then: FINAL += jason_sim_boost (post-pick confluence)
+        # =====================================================================
+
+        # --- ESOTERIC WEIGHTS (v15.0 - Clean Separation, NO Jarvis/Gematria) ---
+        ESOTERIC_WEIGHTS = {
+            "numerology": 0.35,   # 35% - Generic numerology (MANDATORY)
+            "astro": 0.25,        # 25% - Vedic astrology
+            "fib": 0.15,          # 15% - Fibonacci alignment
+            "vortex": 0.15,       # 15% - Tesla 3-6-9 patterns
+            "daily_edge": 0.10    # 10% - Daily energy
+        }
+
+        # --- ENGINE SEPARATION (v15.0 Clean Architecture) ---
         # AI Score: Pure model output (0-8 scale) - NO external signals
         # Research Score: Sharp money + Line variance + Public betting (0-10 scale)
-        # Esoteric Score: Gematria + JARVIS + Astro + Numerology (0-10 scale)
-        # The three engines are then combined for final score
+        # Esoteric Score: Numerology + Astro + Fib + Vortex + Daily (0-10 scale)
+        # Jarvis Score: Gematria + Sacred Triggers + Mid-Spread (0-10 scale)
+        # The four engines are combined for final score
 
         research_reasons = []
         pillars_passed = []
@@ -1994,114 +2094,88 @@ async def get_best_bets(sport: str):
         # Pillar score for backwards compatibility (used in scoring_breakdown)
         pillar_score = sharp_boost + line_boost + public_boost
 
-        # --- ESOTERIC SCORE CALCULATION (v10.2 Gematria-Dominant) ---
-        gematria_score = 0.0       # 0-5.2 pts (52%)
-        jarvis_score = 0.0         # 0-2.0 pts (20%)
-        astro_score = 0.0          # 0-1.3 pts (13%)
-        fib_score = 0.0            # 0-0.5 pts (5%)
-        vortex_score = 0.0         # 0-0.5 pts (5%)
-        daily_edge_score = 0.0     # 0-0.5 pts (5%)
-        public_fade_mod = 0.0      # Modifier (can be negative)
-        trap_mod = 0.0             # Modifier (negative)
-        mid_spread_mod = 0.0       # Modifier for mid-spread signal
+        # =================================================================
+        # v15.0 JARVIS ENGINE (Standalone 0-10) - Called FIRST
+        # =================================================================
+        jarvis_data = calculate_jarvis_engine_score(
+            jarvis_engine=jarvis,
+            game_str=game_str,
+            player_name=player_name,
+            home_team=home_team,
+            away_team=away_team,
+            spread=spread
+        )
+        jarvis_rs = jarvis_data["jarvis_rs"]
+        jarvis_active = jarvis_data["jarvis_active"]
+        jarvis_hits_count = jarvis_data["jarvis_hits_count"]
+        jarvis_triggers_hit = jarvis_data["jarvis_triggers_hit"]
+        jarvis_reasons = jarvis_data["jarvis_reasons"]
+        immortal_detected = jarvis_data["immortal_detected"]
+        jarvis_triggered = jarvis_hits_count > 0
 
-        jarvis_triggers_hit = []
-        immortal_detected = False
-        jarvis_triggered = False
+        # =================================================================
+        # v15.0 ESOTERIC SCORE (0-10) - NO Jarvis/Gematria/Public Fade
+        # =================================================================
+        # Components: Numerology (35%) + Astro (25%) + Fib (15%) + Vortex (15%) + Daily (10%)
+        numerology_score = 0.0    # 0-3.5 pts (35%)
+        astro_score = 0.0         # 0-2.5 pts (25%)
+        fib_score = 0.0           # 0-1.5 pts (15%)
+        vortex_score = 0.0        # 0-1.5 pts (15%)
+        daily_edge_score = 0.0    # 0-1.0 pts (10%)
+        trap_mod = 0.0            # Modifier (negative)
+
+        # --- NUMEROLOGY (35% weight, max 3.5 pts) - MANDATORY ---
+        # Generic daily numerology based on day patterns
+        from datetime import datetime as dt_now
+        day_of_year = dt_now.now().timetuple().tm_yday
+        numerology_raw = (day_of_year % 9 + 1) / 9  # 0.11 to 1.0
+        # Boost if game string contains master numbers (11, 22, 33)
+        if "11" in game_str or "22" in game_str or "33" in game_str:
+            numerology_raw = min(1.0, numerology_raw * 1.3)
+        numerology_score = numerology_raw * 10 * ESOTERIC_WEIGHTS["numerology"]
 
         if jarvis:
-            # --- JARVIS TRIGGERS (20% weight, max 2.0 pts) ---
-            trigger_result = jarvis.check_jarvis_trigger(game_str)
-            raw_jarvis = 0.0
-            for trig in trigger_result.get("triggers_hit", []):
-                raw_jarvis += trig["boost"] / 10  # Normalize boost
-                jarvis_triggers_hit.append({
-                    "number": trig["number"],
-                    "name": trig["name"],
-                    "match_type": trig.get("match_type", "DIRECT"),
-                    "boost": round(trig["boost"] / 10, 2)
-                })
-                if trig["number"] == 2178:
-                    immortal_detected = True
-            jarvis_triggered = len(jarvis_triggers_hit) > 0
-            # Scale to 20% weight (max 2.0 pts)
-            jarvis_score = min(1.0, raw_jarvis) * 10 * ESOTERIC_WEIGHTS["jarvis"]
+            # --- TRAP DEDUCTION (negative modifier) ---
+            trap = jarvis.calculate_large_spread_trap(spread, total)
+            trap_mod = trap.get("modifier", 0)  # Usually negative
 
-            # --- GEMATRIA (52% weight, max 5.2 pts) - DOMINANT SIGNAL ---
-            if player_name and home_team:
-                gematria = jarvis.calculate_gematria_signal(player_name, home_team, away_team)
-                # Gematria signal_strength is 0-1, triggered boosts it
-                gematria_strength = gematria.get("signal_strength", 0)
-                if gematria.get("triggered"):
-                    gematria_strength = min(1.0, gematria_strength * 1.5)  # Boost when triggered
-                # Scale to 52% weight (max 5.2 pts)
-                gematria_score = gematria_strength * 10 * ESOTERIC_WEIGHTS["gematria"]
+            # --- FIBONACCI (15% weight, max 1.5 pts) ---
+            fib_alignment = jarvis.calculate_fibonacci_alignment(float(spread) if spread else 0)
+            fib_raw = fib_alignment.get("modifier", 0)
+            fib_score = max(0, fib_raw) * 10 * ESOTERIC_WEIGHTS["fib"]
 
-                # --- PUBLIC FADE (modifier, can be negative) ---
-                public_fade = jarvis.calculate_public_fade_signal(public_pct)
-                public_fade_mod = public_fade.get("influence", 0)  # -0.95 to +0.2
+            # --- VORTEX (15% weight, max 1.5 pts) ---
+            vortex_value = int(abs(spread * 10)) if spread else 0
+            vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
+            vortex_raw = vortex_pattern.get("modifier", 0)
+            vortex_score = max(0, vortex_raw) * 10 * ESOTERIC_WEIGHTS["vortex"]
 
-                # --- MID-SPREAD (modifier) ---
-                mid_spread = jarvis.calculate_mid_spread_signal(spread)
-                mid_spread_mod = mid_spread.get("modifier", 0)
+        # --- ASTRO (25% weight, max 2.5 pts) ---
+        astro = vedic.calculate_astro_score() if vedic else {"overall_score": 50}
+        astro_normalized = (astro["overall_score"] - 50) / 50  # -1 to +1
+        astro_score = max(0, astro_normalized) * 10 * ESOTERIC_WEIGHTS["astro"]
 
-                # --- TRAP DEDUCTION (negative modifier) ---
-                trap = jarvis.calculate_large_spread_trap(spread, total)
-                trap_mod = trap.get("modifier", 0)  # Usually negative
-
-                # --- FIBONACCI (5% weight, max 0.5 pts) ---
-                fib_alignment = jarvis.calculate_fibonacci_alignment(float(spread) if spread else 0)
-                fib_raw = fib_alignment.get("modifier", 0)
-                fib_score = max(0, fib_raw) * 10 * ESOTERIC_WEIGHTS["fib"]
-
-                # --- VORTEX (5% weight, max 0.5 pts) ---
-                vortex_value = int(abs(spread * 10)) if spread else 0
-                vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
-                vortex_raw = vortex_pattern.get("modifier", 0)
-                vortex_score = max(0, vortex_raw) * 10 * ESOTERIC_WEIGHTS["vortex"]
-
-            # --- ASTRO (13% weight, max 1.3 pts) ---
-            astro = vedic.calculate_astro_score() if vedic else {"overall_score": 50}
-            astro_normalized = (astro["overall_score"] - 50) / 50  # -1 to +1
-            astro_score = max(0, astro_normalized) * 10 * ESOTERIC_WEIGHTS["astro"]
-
-        else:
-            # Fallback to simple trigger check
-            for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
-                if str(trigger_num) in game_str:
-                    jarvis_score += trigger_data["boost"] / 50  # Scaled down
-                    jarvis_triggers_hit.append({
-                        "number": trigger_num,
-                        "name": trigger_data["name"],
-                        "boost": round(trigger_data["boost"] / 50, 2)
-                    })
-                    if trigger_num == 2178:
-                        immortal_detected = True
-            jarvis_triggered = len(jarvis_triggers_hit) > 0
-            jarvis_score = min(2.0, jarvis_score)  # Cap at 20%
-
-        # --- DAILY EDGE (5% weight, max 0.5 pts) ---
+        # --- DAILY EDGE (10% weight, max 1.0 pts) ---
         if daily_energy.get("overall_score", 50) >= 85:
-            daily_edge_score = 10 * ESOTERIC_WEIGHTS["daily_edge"]  # 0.5 pts
+            daily_edge_score = 10 * ESOTERIC_WEIGHTS["daily_edge"]  # 1.0 pts
         elif daily_energy.get("overall_score", 50) >= 70:
-            daily_edge_score = 5 * ESOTERIC_WEIGHTS["daily_edge"]   # 0.25 pts
+            daily_edge_score = 5 * ESOTERIC_WEIGHTS["daily_edge"]   # 0.5 pts
 
-        # --- ESOTERIC SCORE: Sum of weighted components + modifiers ---
+        # --- ESOTERIC SCORE: Sum of weighted components + trap modifier ---
+        # v15.0: NO gematria, NO jarvis triggers, NO public_fade, NO mid_spread
         esoteric_raw = (
-            gematria_score +      # 52% weight (0-5.2)
-            jarvis_score +        # 20% weight (0-2.0)
-            astro_score +         # 13% weight (0-1.3)
-            fib_score +           # 5% weight (0-0.5)
-            vortex_score +        # 5% weight (0-0.5)
-            daily_edge_score +    # 5% weight (0-0.5)
-            mid_spread_mod +      # Modifier
-            public_fade_mod +     # Modifier (usually negative)
+            numerology_score +    # 35% weight (0-3.5)
+            astro_score +         # 25% weight (0-2.5)
+            fib_score +           # 15% weight (0-1.5)
+            vortex_score +        # 15% weight (0-1.5)
+            daily_edge_score +    # 10% weight (0-1.0)
             trap_mod              # Modifier (negative)
         )
         # esoteric_raw already scaled to 0-10 via weights, just clamp
         esoteric_score = max(0, min(10, esoteric_raw))
 
-        # --- v10.1 DUAL-SCORE CONFLUENCE ---
+        # --- v15.0 FOUR-ENGINE CONFLUENCE ---
+        # Now considers all 4 engines for confluence determination
         if jarvis:
             confluence = jarvis.calculate_confluence(
                 research_score=research_score,
@@ -2110,15 +2184,16 @@ async def get_best_bets(sport: str):
                 jarvis_triggered=jarvis_triggered
             )
         else:
-            # Fallback confluence calculation
+            # Fallback confluence calculation with 4 engines
             alignment = 1 - abs(research_score - esoteric_score) / 10
             alignment_pct = alignment * 100
             both_high = research_score >= 7.5 and esoteric_score >= 7.5
-            if immortal_detected and both_high and alignment_pct >= 80:
+            jarvis_high = jarvis_rs >= 7.5
+            if immortal_detected and both_high and jarvis_high and alignment_pct >= 80:
                 confluence = {"level": "IMMORTAL", "boost": 10, "alignment_pct": alignment_pct}
-            elif jarvis_triggered and both_high and alignment_pct >= 80:
+            elif jarvis_triggered and both_high and jarvis_high and alignment_pct >= 80:
                 confluence = {"level": "JARVIS_PERFECT", "boost": 7, "alignment_pct": alignment_pct}
-            elif both_high and alignment_pct >= 80:
+            elif both_high and jarvis_high and alignment_pct >= 80:
                 confluence = {"level": "PERFECT", "boost": 5, "alignment_pct": alignment_pct}
             elif alignment_pct >= 70:
                 confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
@@ -2130,9 +2205,11 @@ async def get_best_bets(sport: str):
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
 
-        # --- v10.1 BASE SCORE FORMULA ---
-        # BASE = (research × 0.67) + (esoteric × 0.33) + confluence_boost
-        base_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence_boost
+        # --- v15.0 BASE SCORE FORMULA (4 Engines) ---
+        # BASE = (research × 0.45) + (esoteric × 0.25) + (jarvis × 0.20) + confluence_boost
+        # AI influence via research correlation (sharp money often follows models)
+        # Remaining 10% captured in confluence alignment
+        base_score = (research_score * 0.45) + (esoteric_score * 0.25) + (jarvis_rs * 0.20) + confluence_boost
 
         # --- v11.08 JASON SIM CONFLUENCE (runs after base score, before tier assignment) ---
         # Jason simulates game outcomes and applies boost/downgrade based on win probability
@@ -2183,18 +2260,11 @@ async def get_best_bets(sport: str):
         # Check if Jason blocked this pick
         jason_blocked = jason_output.get("jason_blocked", False)
 
-        # --- v11.08 JARVIS RAW SCORE (0-10 scale for Titanium check) ---
-        # jarvis_score is 0-2.0 from esoteric weights, scale to 0-10 for display and Titanium
-        # IMPORTANT: If no triggers, default to 5.0 (neutral) so jarvis_rs always exists
-        jarvis_hits_count = len(jarvis_triggers_hit)
-        if jarvis_hits_count > 0:
-            jarvis_rs = scale_jarvis_score_to_10(jarvis_score, max_jarvis=2.0) if TIERING_AVAILABLE else jarvis_score * 5
-        else:
-            jarvis_rs = DEFAULT_JARVIS_RS if TIERING_AVAILABLE else 5.0
-        jarvis_active = jarvis_hits_count > 0
-        jarvis_reasons = [t.get("name", "Unknown") for t in jarvis_triggers_hit] if jarvis_hits_count > 0 else ["No triggers hit"]
+        # --- v15.0: jarvis_rs already calculated by standalone function above ---
+        # jarvis_rs, jarvis_active, jarvis_hits_count, jarvis_triggers_hit, jarvis_reasons
+        # are all set from calculate_jarvis_engine_score() call
 
-        # --- v11.08 TITANIUM CHECK (3 of 4 engines >= 8.0) ---
+        # --- v15.0 TITANIUM CHECK (3 of 4 engines >= 8.0) ---
         # Scale AI score from 0-8 to 0-10 for comparison
         ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
 
@@ -2306,16 +2376,17 @@ async def get_best_bets(sport: str):
                 "base_research": 2.0,
                 "total": round(research_score, 2)
             },
+            # v15.0 Esoteric breakdown (NO gematria, NO jarvis, NO public_fade - clean separation)
             "esoteric_breakdown": {
-                "gematria": round(gematria_score, 2),
-                "jarvis_triggers": round(jarvis_score, 2),
+                "numerology": round(numerology_score, 2),
                 "astro": round(astro_score, 2),
                 "fibonacci": round(fib_score, 2),
                 "vortex": round(vortex_score, 2),
                 "daily_edge": round(daily_edge_score, 2),
-                "public_fade_mod": round(public_fade_mod, 2),
                 "trap_mod": round(trap_mod, 2)
             },
+            # v15.0 Jarvis breakdown (standalone engine)
+            "jarvis_breakdown": jarvis_data.get("jarvis_breakdown", {}),
             "jarvis_triggers": jarvis_triggers_hit,
             "immortal_detected": immortal_detected,
             # v11.08 JARVIS fields (MUST always exist)
@@ -2556,10 +2627,13 @@ async def get_best_bets(sport: str):
         if key not in best_by_player_market or pick["total_score"] > best_by_player_market[key]["total_score"]:
             best_by_player_market[key] = pick
 
-    # Sort deduplicated props by score and take top 10
+    # v15.0: Filter to COMMUNITY_MIN_SCORE (>= 6.5) before taking top 10
+    # Only EDGE_LEAN and above shown to community
+    COMMUNITY_MIN_SCORE = 6.5
     deduplicated_props = list(best_by_player_market.values())
-    deduplicated_props.sort(key=lambda x: x["total_score"], reverse=True)
-    top_props = deduplicated_props[:10]
+    filtered_props = [p for p in deduplicated_props if p["total_score"] >= COMMUNITY_MIN_SCORE]
+    filtered_props.sort(key=lambda x: x["total_score"], reverse=True)
+    top_props = filtered_props[:10]
 
     # ============================================
     # CATEGORY 2: GAME PICKS (Spreads, Totals, ML)
@@ -2774,9 +2848,11 @@ async def get_best_bets(sport: str):
                 "sharp_signal": signal.get("signal_strength", "MODERATE")
             })
 
-    # Sort game picks by score and take top 10
-    game_picks.sort(key=lambda x: x["total_score"], reverse=True)
-    top_game_picks = game_picks[:10]
+    # v15.0: Filter to COMMUNITY_MIN_SCORE (>= 6.5) before taking top 10
+    # Only EDGE_LEAN and above shown to community
+    filtered_game_picks = [p for p in game_picks if p["total_score"] >= COMMUNITY_MIN_SCORE]
+    filtered_game_picks.sort(key=lambda x: x["total_score"], reverse=True)
+    top_game_picks = filtered_game_picks[:10]
 
     # ============================================
     # LOG PICKS FOR GRADING (v14.9)

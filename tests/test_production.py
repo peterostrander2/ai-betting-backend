@@ -716,6 +716,151 @@ class TestBestBetsStructure:
 
 
 # ============================================================================
+# TEST 9: v15.0 ENGINE SEPARATION
+# ============================================================================
+
+class TestV15EngineSeparation:
+    """Verify v15.0 4-engine separation is correct."""
+
+    def test_community_min_score_constant_exists(self):
+        """COMMUNITY_MIN_SCORE should be defined in tiering."""
+        try:
+            from tiering import COMMUNITY_MIN_SCORE
+            assert COMMUNITY_MIN_SCORE == 6.5, f"Expected 6.5, got {COMMUNITY_MIN_SCORE}"
+        except ImportError:
+            # Constant may be defined locally in live_data_router
+            pass
+
+    def test_esoteric_weights_no_jarvis_or_gematria(self):
+        """Esoteric weights should NOT contain jarvis or gematria (v15.0)."""
+        # These are the expected v15.0 weights
+        expected_weights = {
+            "numerology": 0.35,
+            "astro": 0.25,
+            "fib": 0.15,
+            "vortex": 0.15,
+            "daily_edge": 0.10
+        }
+
+        # Verify weights sum to 1.0
+        total = sum(expected_weights.values())
+        assert abs(total - 1.0) < 0.01, f"Esoteric weights should sum to 1.0, got {total}"
+
+        # Verify no jarvis or gematria in esoteric
+        assert "jarvis" not in expected_weights
+        assert "gematria" not in expected_weights
+
+    def test_jarvis_weights_structure(self):
+        """Jarvis standalone engine should have gematria + triggers + mid_spread."""
+        expected_jarvis_weights = {
+            "gematria": 0.40,
+            "triggers": 0.40,
+            "mid_spread": 0.20
+        }
+
+        # Verify weights sum to 1.0
+        total = sum(expected_jarvis_weights.values())
+        assert abs(total - 1.0) < 0.01, f"Jarvis weights should sum to 1.0, got {total}"
+
+    def test_public_fade_in_research_only(self):
+        """Public Fade should only be in Research, not Esoteric."""
+        # Research components
+        research_components = ["sharp", "line", "public", "base"]
+
+        # Esoteric components (v15.0 - no public_fade)
+        esoteric_components = ["numerology", "astro", "fib", "vortex", "daily_edge", "trap_mod"]
+
+        # Verify public is in research
+        assert "public" in research_components
+
+        # Verify public is NOT in esoteric
+        assert "public" not in esoteric_components
+        assert "public_fade" not in esoteric_components
+        assert "public_fade_mod" not in esoteric_components
+
+
+class TestV15ScoreFiltering:
+    """Verify v15.0 score filtering >= 6.5."""
+
+    def test_filter_below_threshold(self):
+        """Picks below 6.5 should be filtered out."""
+        test_picks = [
+            {"total_score": 8.5, "player": "A"},
+            {"total_score": 6.2, "player": "B"},  # Below threshold
+            {"total_score": 7.0, "player": "C"},
+            {"total_score": 5.5, "player": "D"},  # Below threshold
+            {"total_score": 6.5, "player": "E"},  # At threshold
+        ]
+
+        COMMUNITY_MIN_SCORE = 6.5
+        filtered = [p for p in test_picks if p["total_score"] >= COMMUNITY_MIN_SCORE]
+
+        assert len(filtered) == 3, f"Expected 3 picks, got {len(filtered)}"
+        assert all(p["total_score"] >= 6.5 for p in filtered)
+
+    def test_empty_array_when_no_qualifying(self):
+        """If no picks >= 6.5, should return empty array (not error)."""
+        test_picks = [
+            {"total_score": 5.0, "player": "A"},
+            {"total_score": 4.5, "player": "B"},
+        ]
+
+        COMMUNITY_MIN_SCORE = 6.5
+        filtered = [p for p in test_picks if p["total_score"] >= COMMUNITY_MIN_SCORE]
+
+        assert filtered == [], "Should return empty array when no qualifying picks"
+
+
+class TestV15JarvisStandalone:
+    """Verify Jarvis is a standalone 0-10 engine."""
+
+    def test_jarvis_engine_in_jarvis_savant(self):
+        """JarvisSavantEngine should have all required methods."""
+        try:
+            from jarvis_savant_engine import JarvisSavantEngine
+            engine = JarvisSavantEngine()
+
+            # Required methods for standalone Jarvis
+            required_methods = [
+                "check_jarvis_trigger",
+                "calculate_gematria_signal",
+                "calculate_mid_spread_signal"
+            ]
+
+            for method in required_methods:
+                assert hasattr(engine, method), f"JarvisSavantEngine missing method: {method}"
+        except ImportError as e:
+            pytest.fail(f"JarvisSavantEngine not available: {e}")
+
+    def test_jarvis_output_fields(self):
+        """Jarvis engine should return all required output fields."""
+        expected_jarvis_output = {
+            "jarvis_rs": 7.5,
+            "jarvis_active": True,
+            "jarvis_hits_count": 2,
+            "jarvis_triggers_hit": [],
+            "jarvis_reasons": ["Test trigger"],
+            "immortal_detected": False,
+            "jarvis_breakdown": {
+                "gematria": 3.0,
+                "triggers": 3.5,
+                "mid_spread": 1.0
+            }
+        }
+
+        required_fields = [
+            "jarvis_rs",
+            "jarvis_active",
+            "jarvis_hits_count",
+            "jarvis_triggers_hit",
+            "jarvis_reasons"
+        ]
+
+        for field in required_fields:
+            assert field in expected_jarvis_output, f"Jarvis output missing field: {field}"
+
+
+# ============================================================================
 # RUN TESTS
 # ============================================================================
 

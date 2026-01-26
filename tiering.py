@@ -31,6 +31,11 @@ TITANIUM_MIN_ENGINES = 3  # Minimum engines meeting threshold (out of 4)
 TITANIUM_REQUIRES_JARVIS = True  # Prefer Jarvis as one of the qualifying engines
 
 # =============================================================================
+# COMMUNITY FILTERING THRESHOLD
+# =============================================================================
+COMMUNITY_MIN_SCORE = 6.5  # Only picks >= this value shown to community endpoints
+
+# =============================================================================
 # TIER CONFIGURATION - SINGLE SOURCE OF TRUTH
 # =============================================================================
 TIER_CONFIG = {
