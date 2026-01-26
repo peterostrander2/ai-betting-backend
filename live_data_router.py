@@ -127,6 +127,19 @@ except ImportError:
     PICK_LOGGER_AVAILABLE = False
     logger.warning("pick_logger module not available - pick persistence disabled")
 
+# Import Result Fetcher - Automatic result fetching and grading (v14.9)
+try:
+    from result_fetcher import (
+        auto_grade_picks,
+        fetch_completed_games,
+        fetch_nba_player_stats,
+        scheduled_auto_grade
+    )
+    RESULT_FETCHER_AVAILABLE = True
+except ImportError:
+    RESULT_FETCHER_AVAILABLE = False
+    logger.warning("result_fetcher module not available - auto-grading disabled")
+
 # Redis import with fallback
 try:
     import redis
@@ -3766,6 +3779,218 @@ async def get_pick_validation_status():
         }
     except Exception as e:
         logger.exception("Failed to get validation status: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# AUTO-GRADING ENDPOINTS (v14.9)
+# =============================================================================
+
+@router.post("/picks/auto-grade")
+async def trigger_auto_grade(
+    date: Optional[str] = None,
+    sports: Optional[str] = None
+):
+    """
+    Trigger automatic grading of picks against actual game results.
+
+    This endpoint:
+    1. Fetches completed game scores from Odds API
+    2. Fetches actual player stats (NBA from balldontlie/ESPN)
+    3. Grades all pending picks for the specified date
+    4. Updates pick_logger with WIN/LOSS/PUSH results
+
+    Query params:
+    - date: Date to grade (default: today in ET). Format: YYYY-MM-DD
+    - sports: Comma-separated sports to grade (default: NBA,NHL,NFL,MLB)
+
+    Returns grading summary with results.
+    """
+    if not RESULT_FETCHER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Result fetcher not available")
+
+    if not PICK_LOGGER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Pick logger not available")
+
+    try:
+        sports_list = sports.split(",") if sports else None
+        result = await auto_grade_picks(date=date, sports=sports_list)
+        return result
+    except Exception as e:
+        logger.exception("Auto-grade failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/picks/grading-summary")
+async def get_grading_summary(date: Optional[str] = None):
+    """
+    Get a summary of grading results for a date.
+
+    Shows:
+    - Total picks graded
+    - Record (wins/losses/pushes)
+    - Hit rate by tier
+    - Units profit/loss
+
+    Query params:
+    - date: Date to summarize (default: today in ET)
+    """
+    if not PICK_LOGGER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Pick logger not available")
+
+    try:
+        pick_logger = get_pick_logger()
+
+        if not date:
+            from datetime import datetime
+            import pytz
+            ET = pytz.timezone("America/New_York")
+            date = datetime.now(ET).strftime("%Y-%m-%d")
+
+        picks = pick_logger.get_picks_for_date(date)
+        graded = [p for p in picks if p.result]
+        pending = [p for p in picks if not p.result]
+
+        # Calculate by tier
+        tier_results = {}
+        for pick in graded:
+            tier = pick.tier or "UNKNOWN"
+            if tier not in tier_results:
+                tier_results[tier] = {"wins": 0, "losses": 0, "pushes": 0, "units_won": 0, "units_lost": 0}
+
+            if pick.result == "WIN":
+                tier_results[tier]["wins"] += 1
+                tier_results[tier]["units_won"] += pick.units or 0
+            elif pick.result == "LOSS":
+                tier_results[tier]["losses"] += 1
+                tier_results[tier]["units_lost"] += pick.units or 0
+            else:
+                tier_results[tier]["pushes"] += 1
+
+        # Overall summary
+        total_wins = sum(t["wins"] for t in tier_results.values())
+        total_losses = sum(t["losses"] for t in tier_results.values())
+        total_pushes = sum(t["pushes"] for t in tier_results.values())
+        units_won = sum(t["units_won"] for t in tier_results.values())
+        units_lost = sum(t["units_lost"] for t in tier_results.values())
+
+        return {
+            "date": date,
+            "total_picks": len(picks),
+            "graded": len(graded),
+            "pending": len(pending),
+            "overall": {
+                "record": f"{total_wins}-{total_losses}-{total_pushes}",
+                "wins": total_wins,
+                "losses": total_losses,
+                "pushes": total_pushes,
+                "hit_rate": f"{(total_wins / (total_wins + total_losses) * 100):.1f}%" if (total_wins + total_losses) > 0 else "N/A",
+                "units_profit": round(units_won - units_lost, 2),
+                "units_won": round(units_won, 2),
+                "units_lost": round(units_lost, 2)
+            },
+            "by_tier": tier_results,
+            "graded_picks": [
+                {
+                    "pick_id": p.pick_id,
+                    "player": p.player_name or "Game",
+                    "matchup": p.matchup,
+                    "line": p.line,
+                    "side": p.side,
+                    "tier": p.tier,
+                    "result": p.result,
+                    "actual_value": p.actual_value,
+                    "units": p.units
+                }
+                for p in graded
+            ],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception("Failed to get grading summary: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/results/completed-games")
+async def get_completed_games(sport: str = "NBA", days_back: int = 1):
+    """
+    Fetch completed games from Odds API.
+
+    Query params:
+    - sport: Sport code (NBA, NFL, NHL, MLB)
+    - days_back: How many days back to fetch (default: 1)
+    """
+    if not RESULT_FETCHER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Result fetcher not available")
+
+    try:
+        games = await fetch_completed_games(sport, days_back)
+        return {
+            "sport": sport.upper(),
+            "days_back": days_back,
+            "count": len(games),
+            "games": [
+                {
+                    "game_id": g.game_id,
+                    "home_team": g.home_team,
+                    "away_team": g.away_team,
+                    "home_score": g.home_score,
+                    "away_score": g.away_score,
+                    "commence_time": g.commence_time
+                }
+                for g in games
+            ],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception("Failed to fetch completed games: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/results/player-stats")
+async def get_player_stats(sport: str = "NBA", date: Optional[str] = None):
+    """
+    Fetch actual player stats from external APIs.
+
+    Query params:
+    - sport: Sport code (currently only NBA supported)
+    - date: Date to fetch stats for (default: today in ET)
+    """
+    if not RESULT_FETCHER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Result fetcher not available")
+
+    if sport.upper() != "NBA":
+        raise HTTPException(status_code=400, detail="Only NBA player stats currently supported")
+
+    try:
+        if not date:
+            import pytz
+            ET = pytz.timezone("America/New_York")
+            date = datetime.now(ET).strftime("%Y-%m-%d")
+
+        stats = await fetch_nba_player_stats(date)
+        return {
+            "sport": sport.upper(),
+            "date": date,
+            "count": len(stats),
+            "players": [
+                {
+                    "player_name": s.player_name,
+                    "team": s.team,
+                    "points": s.points,
+                    "rebounds": s.rebounds,
+                    "assists": s.assists,
+                    "pra": s.points + s.rebounds + s.assists,
+                    "threes": s.three_pointers_made,
+                    "steals": s.steals,
+                    "blocks": s.blocks
+                }
+                for s in stats[:100]  # Limit to 100 for response size
+            ],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception("Failed to fetch player stats: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
