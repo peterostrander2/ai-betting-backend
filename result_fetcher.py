@@ -434,14 +434,15 @@ async def fetch_nba_stats_espn(date: str) -> List[PlayerStatline]:
     Returns:
         List of PlayerStatline objects
     """
-    # ESPN scoreboard endpoint
-    formatted_date = date.replace("-", "")
-    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={formatted_date}"
-
+    # ESPN scoreboard endpoint - fetch without date to get completed games
+    # Then filter by the date we need
     all_stats = []
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
+            # First try with specific date
+            formatted_date = date.replace("-", "")
+            url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={formatted_date}"
             resp = await client.get(url)
 
             if resp.status_code != 200:
@@ -450,6 +451,17 @@ async def fetch_nba_stats_espn(date: str) -> List[PlayerStatline]:
 
             data = resp.json()
             events = data.get("events", [])
+
+            # If no completed games for that date, try fetching recent completed games
+            completed_events = [e for e in events if e.get("status", {}).get("type", {}).get("completed", False)]
+
+            if not completed_events:
+                logger.info("No completed games for %s, trying recent games", date)
+                url_recent = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+                resp_recent = await client.get(url_recent)
+                if resp_recent.status_code == 200:
+                    data_recent = resp_recent.json()
+                    events = data_recent.get("events", [])
 
             for event in events:
                 # Check if game is completed
