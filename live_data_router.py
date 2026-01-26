@@ -2056,6 +2056,72 @@ def implied_prob(odds) -> float:
     return 100.0 / (odds + 100.0)
 
 
+def check_titanium_rule(
+    ai_score: float,
+    research_score: float,
+    esoteric_score: float,
+    jarvis_score: float
+) -> tuple:
+    """
+    v11.10: Check if pick qualifies for TITANIUM_SMASH tier.
+
+    Titanium triggers when >= 3 of 4 engines are >= 8.0
+    Engines: AI, Research, Esoteric, Jarvis
+
+    TITANIUM_SMASH is a real tier (not just a badge).
+    Units: Kelly * 1.25 or fixed 2.5, capped at 2.5 max.
+
+    Args:
+        ai_score: AI Engine score (0-10)
+        research_score: Research Engine score (0-10)
+        esoteric_score: Esoteric Engine score (0-10)
+        jarvis_score: Jarvis Engine score (0-10)
+
+    Returns:
+        Tuple of (titanium_triggered, explanation)
+    """
+    TITANIUM_ENGINE_THRESHOLD = 8.0  # v11.10: 3/4 engines must be >= 8.0
+
+    # Safety: Check for missing/None engines
+    missing_engines = []
+    if ai_score is None:
+        missing_engines.append("AI")
+        ai_score = 0.0
+    if research_score is None:
+        missing_engines.append("Research")
+        research_score = 0.0
+    if esoteric_score is None:
+        missing_engines.append("Esoteric")
+        esoteric_score = 0.0
+    if jarvis_score is None:
+        missing_engines.append("Jarvis")
+        jarvis_score = 0.0
+
+    if missing_engines:
+        return False, f"Titanium blocked: missing {', '.join(missing_engines)}"
+
+    # Count how many engines >= 8.0
+    engines_above = []
+    if ai_score >= TITANIUM_ENGINE_THRESHOLD:
+        engines_above.append(f"AI={ai_score:.1f}")
+    if research_score >= TITANIUM_ENGINE_THRESHOLD:
+        engines_above.append(f"Research={research_score:.1f}")
+    if esoteric_score >= TITANIUM_ENGINE_THRESHOLD:
+        engines_above.append(f"Eso={esoteric_score:.1f}")
+    if jarvis_score >= TITANIUM_ENGINE_THRESHOLD:
+        engines_above.append(f"Jarvis={jarvis_score:.1f}")
+
+    count = len(engines_above)
+    titanium_triggered = count >= 3
+
+    if titanium_triggered:
+        explanation = f"Titanium Rule: {count}/4 engines >= 8.0 ({', '.join(engines_above)})"
+    else:
+        explanation = f"Titanium: {count}/4 engines >= 8.0 (need 3)"
+
+    return titanium_triggered, explanation
+
+
 # v10.20: Market preference order for tiebreaker (lower = preferred)
 # NEW: totals > spreads > moneyline (except NHL ML Dog)
 MARKET_PREFERENCE = {"totals": 0, "spreads": 1, "h2h": 2}
@@ -8929,20 +8995,39 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         if smash_spot:
             smash_reasons.append("SMASH: Confluence locked (score>=8.0, align>=85%, Jarvis active, pillars confirmed)")
 
-        # --- BET TIER DETERMINATION (v10.22: Sport Profile Tiers) ---
+        # --- BET TIER DETERMINATION (v11.10: TITANIUM_SMASH is real tier) ---
         final_score = clamp_score(final_score)
-        tier, badge = tier_from_score(final_score, profile["tiers"])
 
-        # v10.59: Kelly Criterion-enhanced unit sizing
+        # v11.10: Check Titanium Rule (3/4 engines >= 8.0 triggers TITANIUM_SMASH tier)
+        titanium_triggered, titanium_explanation = check_titanium_rule(
+            ai_score=ai_score,
+            research_score=research_score,
+            esoteric_score=esoteric_score,
+            jarvis_score=jarvis_rs
+        )
+        if titanium_triggered:
+            smash_reasons.append(titanium_explanation)
+
+        # v11.10: Pass titanium_triggered to tier_from_score - TITANIUM_SMASH is a real tier
+        tier, badge = tier_from_score(final_score, profile["tiers"], titanium_triggered=titanium_triggered)
+
+        # v11.10: Kelly Criterion-enhanced unit sizing with TITANIUM_SMASH tier
         # Uses edge calculation for actionable tiers, falls back to fixed for others
-        if tier in ("GOLD_STAR", "EDGE_LEAN") and odds:
+        if tier in ("TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN") and odds:
             kelly_units = calculate_kelly_units(final_score, odds, tier)
+            # v11.10: TITANIUM_SMASH gets Kelly * 1.25, others get Kelly as-is
+            if tier == "TITANIUM_SMASH":
+                titanium_kelly = round(kelly_units * 1.25, 2)
+            else:
+                titanium_kelly = kelly_units
             tier_config = {
+                "TITANIUM_SMASH": {"units": titanium_kelly, "action": "SMASH"},
                 "GOLD_STAR": {"units": kelly_units, "action": "SMASH"},
                 "EDGE_LEAN": {"units": kelly_units, "action": "PLAY"},
             }
         else:
             tier_config = {
+                "TITANIUM_SMASH": {"units": 2.5, "action": "SMASH"},
                 "GOLD_STAR": {"units": 2.0, "action": "SMASH"},
                 "EDGE_LEAN": {"units": 1.0, "action": "PLAY"},
             }
@@ -8950,10 +9035,16 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         tier_config["PASS"] = {"units": 0.0, "action": "SKIP"}
 
         config = tier_config.get(tier, {"units": 0.0, "action": "SKIP"})
-        bet_tier = {"tier": tier, "units": config["units"], "action": config["action"]}
+        raw_units = config["units"]
+
+        # v11.10: Hard cap at 2.5 units max (safety cap for all tiers)
+        final_units = min(raw_units, 2.5)
+
+        bet_tier = {"tier": tier, "units": final_units, "action": config["action"]}
 
         # Map to confidence levels for backward compatibility
         confidence_map = {
+            "TITANIUM_SMASH": "SMASH",  # v11.10: Titanium gets SMASH confidence
             "GOLD_STAR": "SMASH",
             "EDGE_LEAN": "HIGH",
             "MONITOR": "MEDIUM",
