@@ -1,279 +1,399 @@
 """
-Time Filters Module v11.00
-==========================
-Single source of truth for TODAY-ONLY ET filtering across all endpoints.
+TIME_FILTERS.PY - TODAY-ONLY SLATE GATING
+==========================================
+v11.08 - Production time filtering for America/New_York timezone
 
-All daily slate pulling, grading, and pick generation MUST use these functions
-to ensure consistent America/New_York timezone handling.
+This module enforces TODAY-only slate gating:
+- Only games between 12:01 AM ET and 11:59 PM ET are valid
+- Ghost games (teams not playing today) are blocked
+- Tomorrow games from APIs are excluded
 
-Daily window: 12:01 AM ET → 11:59 PM ET
+Usage:
+    from time_filters import (
+        is_game_today,
+        is_team_in_slate,
+        validate_today_slate,
+        get_today_range_et,
+        filter_today_games
+    )
 """
 
-from datetime import datetime, date, time, timedelta
-from typing import Tuple, Optional, Dict, Any
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, time as dt_time
+from typing import Dict, List, Any, Optional, Tuple, Set
+import logging
 
-ET = ZoneInfo("America/New_York")
-UTC = ZoneInfo("UTC")
+# Try to import pytz for timezone handling
+try:
+    import pytz
+    PYTZ_AVAILABLE = True
+    ET = pytz.timezone("America/New_York")
+    UTC = pytz.UTC
+except ImportError:
+    PYTZ_AVAILABLE = False
+    ET = None
+    UTC = None
 
+logger = logging.getLogger("time_filters")
+
+
+# =============================================================================
+# TIMEZONE HELPERS
+# =============================================================================
 
 def get_now_et() -> datetime:
-    """Get current datetime in America/New_York timezone."""
-    return datetime.now(ET)
-
-
-def get_today_et() -> date:
-    """Get today's date in America/New_York timezone."""
-    return get_now_et().date()
-
-
-def get_today_et_window() -> Tuple[datetime, datetime]:
     """
-    Get the start and end datetimes for today in America/New_York.
+    Get current datetime in America/New_York timezone.
 
     Returns:
-        Tuple of (start, end) where:
-        - start = 12:01 AM ET today
-        - end = 11:59 PM ET today
+        datetime in ET timezone (or naive datetime if pytz unavailable)
     """
-    today = get_today_et()
-    start = datetime.combine(today, time(0, 1), tzinfo=ET)  # 12:01 AM
-    end = datetime.combine(today, time(23, 59, 59), tzinfo=ET)  # 11:59 PM
+    if PYTZ_AVAILABLE and ET:
+        return datetime.now(ET)
+    else:
+        # Fallback: assume server is in ET or use UTC-5
+        return datetime.now()
+
+
+def get_today_range_et() -> Tuple[datetime, datetime]:
+    """
+    Get today's valid time range in ET.
+
+    Returns:
+        Tuple of (start_of_day, end_of_day) in ET
+        Start: 12:01 AM ET
+        End: 11:59 PM ET
+    """
+    now_et = get_now_et()
+    today = now_et.date()
+
+    if PYTZ_AVAILABLE and ET:
+        start = ET.localize(datetime.combine(today, dt_time(0, 1, 0)))  # 12:01 AM
+        end = ET.localize(datetime.combine(today, dt_time(23, 59, 59)))  # 11:59 PM
+    else:
+        start = datetime.combine(today, dt_time(0, 1, 0))
+        end = datetime.combine(today, dt_time(23, 59, 59))
+
     return start, end
 
 
-def is_today_et(dt: Any) -> bool:
+def parse_game_time(time_str: str) -> Optional[datetime]:
     """
-    Check if a datetime/date is today in ET timezone.
+    Parse game time string to datetime.
 
-    Args:
-        dt: datetime, date, or ISO string
-
-    Returns:
-        True if the date is today ET
-    """
-    if dt is None:
-        return False
-
-    try:
-        # Handle string input
-        if isinstance(dt, str):
-            dt = parse_to_et(dt)
-            if dt is None:
-                return False
-
-        # Handle date input
-        if isinstance(dt, date) and not isinstance(dt, datetime):
-            return dt == get_today_et()
-
-        # Handle datetime input
-        if isinstance(dt, datetime):
-            if dt.tzinfo is None:
-                # Assume UTC if no timezone
-                dt = dt.replace(tzinfo=UTC)
-            dt_et = dt.astimezone(ET)
-            return dt_et.date() == get_today_et()
-
-        return False
-    except Exception:
-        return False
-
-
-def within_today_window(dt: Any, grace_minutes: int = 0) -> bool:
-    """
-    Check if a datetime falls within today's ET window.
-
-    Args:
-        dt: datetime, date, or ISO string
-        grace_minutes: Minutes of grace period before start of day
-
-    Returns:
-        True if within today's window
-    """
-    if dt is None:
-        return False
-
-    try:
-        # Parse to ET datetime
-        if isinstance(dt, str):
-            dt = parse_to_et(dt)
-            if dt is None:
-                return False
-        elif isinstance(dt, date) and not isinstance(dt, datetime):
-            dt = datetime.combine(dt, time(12, 0), tzinfo=ET)
-        elif isinstance(dt, datetime):
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
-            dt = dt.astimezone(ET)
-        else:
-            return False
-
-        start, end = get_today_et_window()
-
-        # Apply grace period
-        if grace_minutes > 0:
-            start = start - timedelta(minutes=grace_minutes)
-
-        return start <= dt <= end
-    except Exception:
-        return False
-
-
-def parse_to_et(time_str: Optional[str]) -> Optional[datetime]:
-    """
-    Parse an ISO time string to ET datetime.
+    Handles ISO format, with or without timezone.
 
     Args:
         time_str: ISO format datetime string
 
     Returns:
-        datetime in ET timezone, or None if parsing fails
+        datetime object or None if parsing fails
     """
     if not time_str:
         return None
 
     try:
-        # Handle various formats
-        if isinstance(time_str, datetime):
-            dt = time_str
-        elif "Z" in time_str:
-            dt = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
-        elif "+" in time_str or time_str.endswith("-00:00"):
+        # Try ISO format with timezone
+        if "Z" in time_str:
+            time_str = time_str.replace("Z", "+00:00")
+
+        # Try parsing with timezone
+        if "+" in time_str or time_str.endswith("Z"):
             dt = datetime.fromisoformat(time_str)
         else:
-            # Assume UTC if no timezone
+            # Naive datetime - assume UTC
             dt = datetime.fromisoformat(time_str)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
+            if PYTZ_AVAILABLE and UTC:
+                dt = UTC.localize(dt)
 
-        return dt.astimezone(ET)
-    except Exception:
+        # Convert to ET
+        if PYTZ_AVAILABLE and ET and dt.tzinfo:
+            dt = dt.astimezone(ET)
+
+        return dt
+    except (ValueError, AttributeError) as e:
+        logger.warning("Failed to parse game time '%s': %s", time_str, e)
         return None
 
 
-def normalize_start_time(game: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalize a game dict to include ET-aware start time fields.
+# =============================================================================
+# GAME TIME VALIDATION
+# =============================================================================
 
-    Adds/updates:
-        - start_time_et: ISO string in ET
-        - is_today_et: bool
-        - is_started: bool
-        - game_status: "scheduled" | "live" | "final"
+def is_game_today(commence_time: str) -> bool:
+    """
+    Check if a game is scheduled for today (ET timezone).
 
     Args:
-        game: Game dictionary with start_time or commence_time
+        commence_time: ISO format datetime string
 
     Returns:
-        Game dict with normalized time fields
+        True if game is today in ET, False otherwise
     """
-    # Get start time from various possible fields
-    start_time_raw = (
-        game.get("start_time") or
-        game.get("commence_time") or
-        game.get("game_time") or
-        ""
-    )
+    game_dt = parse_game_time(commence_time)
+    if not game_dt:
+        logger.warning("Could not parse commence_time: %s - excluding game", commence_time)
+        return False
 
-    dt_et = parse_to_et(start_time_raw)
+    start_et, end_et = get_today_range_et()
+
+    # Make comparison timezone-aware if needed
+    if PYTZ_AVAILABLE and ET:
+        if game_dt.tzinfo is None:
+            game_dt = ET.localize(game_dt)
+        game_dt = game_dt.astimezone(ET)
+
+    is_today = start_et <= game_dt <= end_et
+
+    if not is_today:
+        logger.debug("Game at %s is not today (ET range: %s - %s)",
+                    game_dt, start_et, end_et)
+
+    return is_today
+
+
+def is_game_tomorrow(commence_time: str) -> bool:
+    """
+    Check if a game is scheduled for tomorrow (should be excluded).
+
+    Args:
+        commence_time: ISO format datetime string
+
+    Returns:
+        True if game is tomorrow, False otherwise
+    """
+    game_dt = parse_game_time(commence_time)
+    if not game_dt:
+        return False
+
     now_et = get_now_et()
+    tomorrow = now_et.date() + timedelta(days=1)
 
-    if dt_et:
-        game["start_time_et"] = dt_et.isoformat()
-        game["is_today_et"] = is_today_et(dt_et)
+    # Get game date in ET
+    if PYTZ_AVAILABLE and ET:
+        if game_dt.tzinfo is None:
+            game_dt = ET.localize(game_dt)
+        game_dt = game_dt.astimezone(ET)
 
-        # Determine if started (with 5 min grace)
-        minutes_since_start = (now_et - dt_et).total_seconds() / 60
-        game["is_started"] = minutes_since_start > 5
-
-        # Determine game status
-        existing_status = game.get("status", "").lower()
-        if existing_status in ("final", "finished", "completed", "post"):
-            game["game_status"] = "final"
-        elif game["is_started"] or existing_status in ("live", "in_progress", "in progress"):
-            game["game_status"] = "live"
-        else:
-            game["game_status"] = "scheduled"
-    else:
-        # Can't determine - use safe defaults
-        game["start_time_et"] = None
-        game["is_today_et"] = False
-        game["is_started"] = False
-        game["game_status"] = "unknown"
-
-    return game
+    return game_dt.date() == tomorrow
 
 
-def filter_today_only(games: list, key: str = None) -> list:
+# =============================================================================
+# SLATE VALIDATION
+# =============================================================================
+
+def build_today_slate(games: List[Dict]) -> Set[str]:
     """
-    Filter a list of games/picks to today ET only.
+    Build set of teams playing today from games list.
 
     Args:
-        games: List of game/pick dicts
-        key: Optional key name for the start time field
+        games: List of game dicts with home_team, away_team, commence_time
 
     Returns:
-        Filtered list containing only today's games
+        Set of team names playing today
     """
-    result = []
+    teams = set()
+
     for game in games:
-        # Normalize first
-        normalized = normalize_start_time(game)
-        if normalized.get("is_today_et", False):
-            result.append(normalized)
-    return result
+        commence_time = game.get("commence_time", "")
+        if is_game_today(commence_time):
+            home = game.get("home_team", "")
+            away = game.get("away_team", "")
+            if home:
+                teams.add(home)
+            if away:
+                teams.add(away)
+
+    return teams
 
 
-def get_grading_window(target_date: Optional[date] = None) -> Tuple[datetime, datetime]:
+def is_team_in_slate(team_name: str, slate: Set[str]) -> bool:
     """
-    Get the grading window for a specific date.
-
-    If no date provided, defaults to today ET.
+    Check if a team is in today's slate.
 
     Args:
-        target_date: Specific date to grade, or None for today
+        team_name: Team name to check
+        slate: Set of teams playing today
 
     Returns:
-        Tuple of (start, end) datetimes for the grading window
+        True if team is in slate
     """
-    if target_date is None:
-        target_date = get_today_et()
+    if not team_name:
+        return False
 
-    start = datetime.combine(target_date, time(0, 1), tzinfo=ET)
-    end = datetime.combine(target_date, time(23, 59, 59), tzinfo=ET)
-    return start, end
+    # Direct match
+    if team_name in slate:
+        return True
+
+    # Case-insensitive match
+    team_lower = team_name.lower()
+    for slate_team in slate:
+        if slate_team.lower() == team_lower:
+            return True
+
+    # Partial match (e.g., "Lakers" matches "Los Angeles Lakers")
+    for slate_team in slate:
+        if team_lower in slate_team.lower() or slate_team.lower() in team_lower:
+            return True
+
+    return False
 
 
-def format_et_display(dt: Any) -> str:
+def validate_today_slate(
+    games: List[Dict],
+    log_excluded: bool = True
+) -> Tuple[List[Dict], List[Dict]]:
     """
-    Format a datetime for display in ET.
+    Filter games to only include today's games.
 
     Args:
-        dt: datetime, date, or ISO string
+        games: List of game dicts
+        log_excluded: Whether to log excluded games
 
     Returns:
-        Formatted string like "7:30 PM ET" or "Jan 25, 7:30 PM ET"
+        Tuple of (today_games, excluded_games)
     """
-    if dt is None:
-        return "TBD"
+    today_games = []
+    excluded_games = []
 
-    try:
-        if isinstance(dt, str):
-            dt = parse_to_et(dt)
-        elif isinstance(dt, date) and not isinstance(dt, datetime):
-            return dt.strftime("%b %d")
-        elif isinstance(dt, datetime):
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
-            dt = dt.astimezone(ET)
+    for game in games:
+        commence_time = game.get("commence_time", "")
 
-        if dt is None:
-            return "TBD"
-
-        # Check if today
-        if dt.date() == get_today_et():
-            return dt.strftime("%-I:%M %p ET")
+        if is_game_today(commence_time):
+            today_games.append(game)
         else:
-            return dt.strftime("%b %d, %-I:%M %p ET")
-    except Exception:
+            excluded_games.append(game)
+            if log_excluded:
+                home = game.get("home_team", "")
+                away = game.get("away_team", "")
+                reason = "tomorrow" if is_game_tomorrow(commence_time) else "not today"
+                logger.info("GHOST PREVENTION: Excluding %s @ %s (%s, commence_time=%s)",
+                          away, home, reason, commence_time)
+
+    return today_games, excluded_games
+
+
+def filter_today_games(games: List[Dict]) -> List[Dict]:
+    """
+    Convenience function to filter to today's games only.
+
+    Args:
+        games: List of game dicts
+
+    Returns:
+        List of games scheduled for today only
+    """
+    today_games, _ = validate_today_slate(games)
+    return today_games
+
+
+# =============================================================================
+# PROP VALIDATION
+# =============================================================================
+
+def is_player_in_today_slate(
+    player_name: str,
+    team_name: str,
+    slate: Set[str]
+) -> bool:
+    """
+    Check if a player's team is in today's slate.
+
+    Args:
+        player_name: Player name (for logging)
+        team_name: Player's team
+        slate: Set of teams playing today
+
+    Returns:
+        True if player's team is in today's slate
+    """
+    if not team_name:
+        logger.warning("GHOST PREVENTION: Player %s has no team - cannot validate", player_name)
+        return False
+
+    in_slate = is_team_in_slate(team_name, slate)
+
+    if not in_slate:
+        logger.info("GHOST PREVENTION: Excluding prop for %s (%s not in today's slate)",
+                   player_name, team_name)
+
+    return in_slate
+
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+def get_game_start_time_et(commence_time: str) -> str:
+    """
+    Format game start time in ET for display.
+
+    Args:
+        commence_time: ISO format datetime string
+
+    Returns:
+        Formatted time string like "7:30 PM ET"
+    """
+    game_dt = parse_game_time(commence_time)
+    if not game_dt:
         return "TBD"
+
+    if PYTZ_AVAILABLE and ET:
+        if game_dt.tzinfo is None:
+            game_dt = ET.localize(game_dt)
+        game_dt = game_dt.astimezone(ET)
+
+    return game_dt.strftime("%-I:%M %p ET")
+
+
+def get_today_date_str() -> str:
+    """
+    Get today's date formatted for display.
+
+    Returns:
+        Date string like "January 25, 2026"
+    """
+    now_et = get_now_et()
+    return now_et.strftime("%B %d, %Y")
+
+
+# =============================================================================
+# GHOST DATA DETECTION
+# =============================================================================
+
+def detect_ghost_teams(
+    requested_teams: List[str],
+    slate: Set[str]
+) -> List[str]:
+    """
+    Detect teams that are not in today's slate (ghost teams).
+
+    Args:
+        requested_teams: List of team names from API/request
+        slate: Set of teams actually playing today
+
+    Returns:
+        List of ghost team names
+    """
+    ghost_teams = []
+
+    for team in requested_teams:
+        if not is_team_in_slate(team, slate):
+            ghost_teams.append(team)
+            logger.warning("GHOST DETECTED: %s is not in today's slate", team)
+
+    return ghost_teams
+
+
+def log_slate_summary(slate: Set[str], sport: str) -> None:
+    """
+    Log a summary of today's slate for debugging.
+
+    Args:
+        slate: Set of teams playing today
+        sport: Sport name
+    """
+    logger.info("TODAY'S %s SLATE (%s): %d teams - %s",
+               sport.upper(),
+               get_today_date_str(),
+               len(slate),
+               ", ".join(sorted(slate)) if slate else "NO GAMES")
