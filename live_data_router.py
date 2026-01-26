@@ -2435,25 +2435,39 @@ async def get_best_bets(sport: str):
                 canonical_player_id = None
                 provider_ids = {}
                 player_position = None
+                player_team = None  # Resolved team from identity lookup
                 resolved_injury_status = injury_status
                 prop_blocked = False
                 blocked_reason = None
 
                 if IDENTITY_RESOLVER_AVAILABLE:
                     try:
-                        # Determine team hint from home/away based on player roster
-                        team_hint = home_team  # Default to home team
+                        # Try home team first, then away team for better matching
                         resolved = await resolve_player(
                             sport=sport.upper(),
                             raw_name=player,
-                            team_hint=team_hint,
+                            team_hint=home_team,
                             event_id=game_key
                         )
+
+                        # If low confidence with home team, try away team
+                        if not resolved.is_resolved or resolved.confidence < 0.8:
+                            resolved_away = await resolve_player(
+                                sport=sport.upper(),
+                                raw_name=player,
+                                team_hint=away_team,
+                                event_id=game_key
+                            )
+                            if resolved_away.confidence > resolved.confidence:
+                                resolved = resolved_away
 
                         if resolved.is_resolved:
                             canonical_player_id = resolved.canonical_player_id
                             provider_ids = resolved.provider_ids
                             player_position = resolved.position
+                            # Use resolved team if we got a good match
+                            if resolved.team:
+                                player_team = resolved.team
 
                             # Check injury guard from resolver
                             resolver = get_player_resolver()
@@ -2482,8 +2496,10 @@ async def get_best_bets(sport: str):
 
                 props_picks.append({
                     "sport": sport.upper(),
+                    "event_id": game_key,  # v14.9: For prop availability tracking
                     "player": player,
                     "player_name": player,
+                    "player_team": player_team,  # v14.9: Resolved team
                     # v14.9 CANONICAL PLAYER ID - required for grading
                     "canonical_player_id": canonical_player_id,
                     "provider_ids": provider_ids,
@@ -2495,6 +2511,9 @@ async def get_best_bets(sport: str):
                     "side": side,
                     "over_under": side,
                     "odds": odds,
+                    "book": book_name,  # v14.9: Consistent sportsbook field
+                    "book_key": book_key,
+                    "book_link": book_link,
                     "game": f"{away_team} @ {home_team}",
                     "matchup": f"{away_team} @ {home_team}",
                     "home_team": home_team,
@@ -2571,11 +2590,13 @@ async def get_best_bets(sport: str):
                     start_time_et = get_game_start_time_et(commence_time)
 
                 # Track best odds across books
-                best_odds_by_market = {}  # market_key -> {outcome -> (odds, book_name, book_link)}
+                best_odds_by_market = {}  # market_key -> {outcome -> (odds, book_name, book_key, book_link)}
 
                 for bm in game.get("bookmakers", []):
                     book_name = bm.get("title", "Unknown")
                     book_key = bm.get("key", "")
+                    # Generate affiliate link for this book
+                    bm_link = AFFILIATE_LINKS.get(book_key, "")
 
                     for market in bm.get("markets", []):
                         market_key = market.get("key", "")
@@ -2587,7 +2608,7 @@ async def get_best_bets(sport: str):
 
                             outcome_key = f"{market_key}:{pick_name}:{point}"
                             if outcome_key not in best_odds_by_market or odds > best_odds_by_market[outcome_key][0]:
-                                best_odds_by_market[outcome_key] = (odds, book_name, "")
+                                best_odds_by_market[outcome_key] = (odds, book_name, book_key, bm_link)
 
                 # Now build picks using best odds
                 for bm in game.get("bookmakers", [])[:1]:  # Use first book structure
@@ -2599,8 +2620,8 @@ async def get_best_bets(sport: str):
                             point = outcome.get("point")
 
                             outcome_key = f"{market_key}:{pick_name}:{point}"
-                            best_odds, best_book, best_link = best_odds_by_market.get(
-                                outcome_key, (outcome.get("price", -110), "Unknown", "")
+                            best_odds, best_book, best_book_key, best_link = best_odds_by_market.get(
+                                outcome_key, (outcome.get("price", -110), "Unknown", "", "")
                             )
 
                             # Build display info
@@ -2642,12 +2663,16 @@ async def get_best_bets(sport: str):
 
                             game_picks.append({
                                 "sport": sport.upper(),
+                                "event_id": game_key,  # v14.9: For tracking consistency with props
                                 "pick_type": pick_type,
                                 "pick": display,
                                 "pick_side": pick_side,
                                 "team": pick_name if market_key != "totals" else None,
                                 "line": point,
                                 "odds": best_odds,
+                                "book": best_book,  # v14.9: Consistent sportsbook field
+                                "book_key": best_book_key,
+                                "book_link": best_link,
                                 "game": f"{away_team} @ {home_team}",
                                 "matchup": f"{away_team} @ {home_team}",
                                 "home_team": home_team,
@@ -2691,16 +2716,27 @@ async def get_best_bets(sport: str):
             )
 
             game_picks.append({
+                "sport": sport.upper(),  # v14.9: Consistent field
+                "event_id": signal.get("game_id", ""),  # v14.9: Use game_id from signal if available
                 "pick_type": "SHARP",
                 "pick": f"Sharp on {signal.get('side', 'HOME')}",
                 "team": home_team if signal.get("side") == "HOME" else away_team,
                 "line": signal.get("line_variance", 0),
                 "odds": -110,
+                "book": "",  # v14.9: No book for sharp signals
+                "book_key": "",
+                "book_link": "",
                 "game": f"{away_team} @ {home_team}",
+                "matchup": f"{away_team} @ {home_team}",  # v14.9: Consistent alias
                 "home_team": home_team,
                 "away_team": away_team,
+                "start_time_et": "",  # v14.9: Not available from sharp data
+                "game_status": "UPCOMING",  # v14.9: Default status
+                "is_live_bet_candidate": False,
                 "market": "sharp_money",
                 "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
+                "best_book": "",  # v14.9: Backward compat
+                "best_book_link": "",
                 **score_data,
                 "sharp_signal": signal.get("signal_strength", "MODERATE")
             })
@@ -2762,11 +2798,18 @@ async def get_best_bets(sport: str):
         except Exception as e:
             logger.warning("Failed to get astro status: %s", e)
 
+    # v14.9 Version metadata for frontend
+    build_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:8] or "local"
+    deploy_version = "14.9"
+
     result = {
         "sport": sport.upper(),
         "source": f"jarvis_savant_v{TIERING_VERSION if TIERING_AVAILABLE else '11.08'}",
         "scoring_system": "Phase 1-3 Integrated + Titanium v11.08",
         "engine_version": TIERING_VERSION if TIERING_AVAILABLE else "11.08",
+        "deploy_version": deploy_version,
+        "build_sha": build_sha,
+        "identity_resolver": IDENTITY_RESOLVER_AVAILABLE,
         "props": {
             "count": len(top_props),
             "total_analyzed": len(props_picks),

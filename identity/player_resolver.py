@@ -270,6 +270,7 @@ class PlayerResolver:
                 )
 
         # Strategy 4: API lookup (NBA -> BallDontLie)
+        # For NBA, ALWAYS try to get BallDontLie player ID for accurate grading
         if sport_upper == "NBA":
             bdl_result = await self._lookup_balldontlie(normalized_name, team_hint)
             if bdl_result:
@@ -281,6 +282,8 @@ class PlayerResolver:
                     confidence=0.95,
                     candidates=[]
                 )
+            else:
+                logger.info("BallDontLie lookup returned no results for: %s", normalized_name)
 
         # Strategy 5: Create new record with name-based canonical ID
         canonical_id = self._generate_canonical_id(
