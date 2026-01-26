@@ -3839,13 +3839,14 @@ async def get_grading_summary(date: Optional[str] = None):
         raise HTTPException(status_code=503, detail="Pick logger not available")
 
     try:
+        from datetime import datetime as dt
+        import pytz
+
         pick_logger = get_pick_logger()
 
         if not date:
-            from datetime import datetime
-            import pytz
             ET = pytz.timezone("America/New_York")
-            date = datetime.now(ET).strftime("%Y-%m-%d")
+            date = dt.now(ET).strftime("%Y-%m-%d")
 
         picks = pick_logger.get_picks_for_date(date)
         graded = [p for p in picks if p.result]
@@ -3904,7 +3905,7 @@ async def get_grading_summary(date: Optional[str] = None):
                 }
                 for p in graded
             ],
-            "timestamp": datetime.now().isoformat()
+            "timestamp": dt.now().isoformat()
         }
     except Exception as e:
         logger.exception("Failed to get grading summary: %s", e)
