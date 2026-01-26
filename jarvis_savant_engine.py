@@ -1667,6 +1667,60 @@ class EsotericLearningLoop:
             "timestamp": datetime.now().isoformat()
         }
 
+    def update_weights(self, new_weights: Dict[str, float] = None, learning_rate: float = 0.05) -> Dict[str, Any]:
+        """
+        Update signal weights. If new_weights provided, merge them. Otherwise run adjust_weights().
+
+        This is the public API method required by the production spec.
+
+        Args:
+            new_weights: Optional dict of weight overrides to merge
+            learning_rate: Learning rate for automatic adjustment (default 0.05)
+
+        Returns:
+            Dict with adjustment results and new weights
+        """
+        if new_weights:
+            # Merge provided weights
+            old_weights = dict(self.weights)
+            for key, value in new_weights.items():
+                if key in self.weights:
+                    self.weights[key] = max(0.05, min(0.55, value))
+
+            # Normalize to sum to 1.0
+            total_weight = sum(self.weights.values())
+            if total_weight > 0:
+                for key in self.weights:
+                    self.weights[key] = round(self.weights[key] / total_weight, 4)
+
+            self._save_state()
+
+            return {
+                "method": "manual_update",
+                "old_weights": old_weights,
+                "new_weights": dict(self.weights),
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            # Run automatic adjustment
+            return self.adjust_weights(learning_rate=learning_rate)
+
+    def save_state(self) -> Dict[str, Any]:
+        """
+        Public method to save state. Required by production spec.
+
+        Returns:
+            Dict with save confirmation and timestamp
+        """
+        self._save_state()
+        return {
+            "saved": True,
+            "storage_path": self.STORAGE_PATH,
+            "picks_count": len(self.picks),
+            "weights": dict(self.weights),
+            "timestamp": datetime.now().isoformat()
+        }
+
     def get_recent_picks(self, limit: int = 20) -> List[Dict[str, Any]]:
         """Get recent picks for review."""
         sorted_picks = sorted(self.picks, key=lambda p: p.timestamp, reverse=True)[:limit]

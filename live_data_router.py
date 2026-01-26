@@ -2494,8 +2494,17 @@ async def get_best_bets(sport: str):
                     safe_team = home_team.lower().replace(" ", "_")
                     canonical_player_id = f"{sport.upper()}:NAME:{safe_name}|{safe_team}"
 
+                # v14.9: Build signals_fired array from pillars
+                signals_fired = score_data.get("pillars_passed", []).copy()
+                if sharp_signal.get("signal_strength") in ["STRONG", "MODERATE"]:
+                    signals_fired.append(f"SHARP_{sharp_signal.get('signal_strength')}")
+
+                # v14.9: Determine has_started
+                has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
+
                 props_picks.append({
                     "sport": sport.upper(),
+                    "league": sport.upper(),  # v14.9: Consistent league field
                     "event_id": game_key,  # v14.9: For prop availability tracking
                     "player": player,
                     "player_name": player,
@@ -2509,6 +2518,7 @@ async def get_best_bets(sport: str):
                     "prop_type": market,
                     "line": line,
                     "side": side,
+                    "direction": side.upper(),  # v14.9: Alias for frontend consistency
                     "over_under": side,
                     "odds": odds,
                     "book": book_name,  # v14.9: Consistent sportsbook field
@@ -2520,11 +2530,14 @@ async def get_best_bets(sport: str):
                     "away_team": away_team,
                     "start_time_et": start_time_et,
                     "game_status": game_status,
+                    "has_started": has_started,  # v14.9: Boolean for frontend
                     "is_live_bet_candidate": game_status == "MISSED_START",
                     "recommendation": f"{side.upper()} {line}",
                     "injury_status": resolved_injury_status,
+                    "injury_checked": True,  # v14.9: Injury was checked via identity resolver
                     "best_book": book_name,
                     "best_book_link": book_link,
+                    "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
                     **score_data,
                     "sharp_signal": sharp_signal.get("signal_strength", "NONE")
                 })
@@ -2661,8 +2674,17 @@ async def get_best_bets(sport: str):
                             if TIME_FILTERS_AVAILABLE and commence_time:
                                 game_status = get_game_status(commence_time)
 
+                            # v14.9: Build signals_fired array from pillars
+                            signals_fired = score_data.get("pillars_passed", []).copy()
+                            if sharp_signal.get("signal_strength") in ["STRONG", "MODERATE"]:
+                                signals_fired.append(f"SHARP_{sharp_signal.get('signal_strength')}")
+
+                            # v14.9: Determine has_started
+                            has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
+
                             game_picks.append({
                                 "sport": sport.upper(),
+                                "league": sport.upper(),  # v14.9: Consistent league field
                                 "event_id": game_key,  # v14.9: For tracking consistency with props
                                 "pick_type": pick_type,
                                 "pick": display,
@@ -2679,11 +2701,13 @@ async def get_best_bets(sport: str):
                                 "away_team": away_team,
                                 "start_time_et": start_time_et,
                                 "game_status": game_status,
+                                "has_started": has_started,  # v14.9: Boolean for frontend
                                 "is_live_bet_candidate": game_status == "MISSED_START",
                                 "market": market_key,
                                 "recommendation": display,
                                 "best_book": best_book,
                                 "best_book_link": best_link,
+                                "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
                                 **score_data,
                                 "sharp_signal": sharp_signal.get("signal_strength", "NONE")
                             })
@@ -2715,11 +2739,17 @@ async def get_best_bets(sport: str):
                 prop_line=0
             )
 
+            # v14.9: Build signals_fired array
+            signals_fired = score_data.get("pillars_passed", []).copy()
+            signals_fired.append(f"SHARP_{signal.get('signal_strength', 'MODERATE')}")
+
             game_picks.append({
                 "sport": sport.upper(),  # v14.9: Consistent field
+                "league": sport.upper(),  # v14.9: Consistent league field
                 "event_id": signal.get("game_id", ""),  # v14.9: Use game_id from signal if available
                 "pick_type": "SHARP",
                 "pick": f"Sharp on {signal.get('side', 'HOME')}",
+                "pick_side": f"{signal.get('side', 'HOME')} SHARP",  # v14.9: Consistent field
                 "team": home_team if signal.get("side") == "HOME" else away_team,
                 "line": signal.get("line_variance", 0),
                 "odds": -110,
@@ -2732,11 +2762,13 @@ async def get_best_bets(sport: str):
                 "away_team": away_team,
                 "start_time_et": "",  # v14.9: Not available from sharp data
                 "game_status": "UPCOMING",  # v14.9: Default status
+                "has_started": False,  # v14.9: Boolean for frontend
                 "is_live_bet_candidate": False,
                 "market": "sharp_money",
                 "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
                 "best_book": "",  # v14.9: Backward compat
                 "best_book_link": "",
+                "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
                 **score_data,
                 "sharp_signal": signal.get("signal_strength", "MODERATE")
             })
@@ -2802,6 +2834,10 @@ async def get_best_bets(sport: str):
     build_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:8] or "local"
     deploy_version = "14.9"
 
+    # v14.9: Date and timestamp in ET
+    date_et = get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d")
+    run_timestamp_et = datetime.now().isoformat()
+
     result = {
         "sport": sport.upper(),
         "source": f"jarvis_savant_v{TIERING_VERSION if TIERING_AVAILABLE else '11.08'}",
@@ -2810,6 +2846,8 @@ async def get_best_bets(sport: str):
         "deploy_version": deploy_version,
         "build_sha": build_sha,
         "identity_resolver": IDENTITY_RESOLVER_AVAILABLE,
+        "date_et": date_et,  # v14.9: Today's date in ET
+        "run_timestamp_et": run_timestamp_et,  # v14.9: When this response was generated
         "props": {
             "count": len(top_props),
             "total_analyzed": len(props_picks),
@@ -3371,6 +3409,335 @@ async def debug_pick_breakdown(sport: str):
             "edge_lean_count": sum(1 for p in props_breakdown + game_breakdown if p.get("tier") == "EDGE_LEAN")
         }
     }
+
+
+# ============================================================================
+# DEBUG ENDPOINTS (v14.9 Production Requirements)
+# ============================================================================
+
+@router.get("/debug/pipeline/{sport}")
+async def debug_pipeline(sport: str):
+    """
+    DEBUG ENDPOINT: Full pipeline step-by-step BEFORE final filtering.
+
+    Shows the raw scoring data at each stage of the pipeline:
+    1. Raw API data fetched
+    2. TODAY-only filtering applied
+    3. Engine scores calculated (AI, Research, Esoteric, Jarvis)
+    4. Jason Sim confluence applied
+    5. Tier assignment
+    6. Final filtering (deduplication, injury blocking)
+
+    This helps debug why certain picks may be missing or scored unexpectedly.
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    pipeline_steps = {
+        "step_1_api_fetch": {},
+        "step_2_today_filter": {},
+        "step_3_engine_scores": {},
+        "step_4_jason_confluence": {},
+        "step_5_tier_assignment": {},
+        "step_6_final_filtering": {}
+    }
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    # Step 1: Raw API fetch
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "spreads,h2h,totals",
+                "oddsFormat": "american"
+            }
+        )
+        raw_games = resp.json() if resp and resp.status_code == 200 else []
+        pipeline_steps["step_1_api_fetch"] = {
+            "games_fetched": len(raw_games),
+            "games": [{"home": g.get("home_team"), "away": g.get("away_team"), "commence_time": g.get("commence_time")} for g in raw_games[:10]]
+        }
+    except Exception as e:
+        pipeline_steps["step_1_api_fetch"] = {"error": str(e)}
+
+    # Step 2: TODAY-only filter
+    if TIME_FILTERS_AVAILABLE and raw_games:
+        today_games, excluded = validate_today_slate(raw_games)
+        pipeline_steps["step_2_today_filter"] = {
+            "today_games_count": len(today_games),
+            "excluded_count": len(excluded),
+            "excluded_reasons": [{"game": f"{g.get('away_team')}@{g.get('home_team')}", "time": g.get("commence_time")} for g in excluded[:5]]
+        }
+    else:
+        pipeline_steps["step_2_today_filter"] = {
+            "note": "TIME_FILTERS not available or no games"
+        }
+
+    # Step 3-6: Get from best-bets endpoint
+    try:
+        best_bets = await get_best_bets(sport)
+        pipeline_steps["step_3_engine_scores"] = {
+            "props_scored": best_bets.get("props", {}).get("total_analyzed", 0),
+            "games_scored": best_bets.get("game_picks", {}).get("total_analyzed", 0)
+        }
+        pipeline_steps["step_4_jason_confluence"] = {
+            "jason_available": JASON_SIM_AVAILABLE,
+            "sample_jason_output": best_bets.get("props", {}).get("picks", [{}])[0].get("jason_ran") if best_bets.get("props", {}).get("picks") else None
+        }
+        pipeline_steps["step_5_tier_assignment"] = {
+            "tiering_module_available": TIERING_AVAILABLE,
+            "tier_distribution": {
+                "TITANIUM_SMASH": sum(1 for p in best_bets.get("props", {}).get("picks", []) + best_bets.get("game_picks", {}).get("picks", []) if p.get("tier") == "TITANIUM_SMASH"),
+                "GOLD_STAR": sum(1 for p in best_bets.get("props", {}).get("picks", []) + best_bets.get("game_picks", {}).get("picks", []) if p.get("tier") == "GOLD_STAR"),
+                "EDGE_LEAN": sum(1 for p in best_bets.get("props", {}).get("picks", []) + best_bets.get("game_picks", {}).get("picks", []) if p.get("tier") == "EDGE_LEAN"),
+                "MONITOR": sum(1 for p in best_bets.get("props", {}).get("picks", []) + best_bets.get("game_picks", {}).get("picks", []) if p.get("tier") == "MONITOR"),
+                "PASS": sum(1 for p in best_bets.get("props", {}).get("picks", []) + best_bets.get("game_picks", {}).get("picks", []) if p.get("tier") == "PASS")
+            }
+        }
+        pipeline_steps["step_6_final_filtering"] = {
+            "final_props": best_bets.get("props", {}).get("count", 0),
+            "final_game_picks": best_bets.get("game_picks", {}).get("count", 0),
+            "identity_resolver": best_bets.get("identity_resolver", False)
+        }
+    except Exception as e:
+        pipeline_steps["step_3_engine_scores"] = {"error": str(e)}
+
+    return {
+        "sport": sport.upper(),
+        "pipeline": pipeline_steps,
+        "modules_available": {
+            "tiering": TIERING_AVAILABLE,
+            "time_filters": TIME_FILTERS_AVAILABLE,
+            "jason_sim": JASON_SIM_AVAILABLE,
+            "identity_resolver": IDENTITY_RESOLVER_AVAILABLE,
+            "pick_logger": PICK_LOGGER_AVAILABLE,
+            "auto_grader": AUTO_GRADER_AVAILABLE
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/debug/identity/{player_name}")
+async def debug_identity(player_name: str, sport: str = "nba", team_hint: str = ""):
+    """
+    DEBUG ENDPOINT: Test player identity resolution.
+
+    Returns all resolution attempts and matches for a player name.
+    Useful for debugging why a player prop might be missing or mismatched.
+    """
+    if not IDENTITY_RESOLVER_AVAILABLE:
+        return {
+            "player_name": player_name,
+            "error": "Identity resolver module not available",
+            "fallback_id": f"{sport.upper()}:NAME:{player_name.lower().replace(' ', '_')}",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    try:
+        # Try resolution
+        resolved = await resolve_player(
+            sport=sport.upper(),
+            raw_name=player_name,
+            team_hint=team_hint,
+            event_id=""
+        )
+
+        # Get normalizations
+        normalized_name = normalize_player_name(player_name)
+        normalized_team = normalize_team_name(team_hint) if team_hint else None
+
+        return {
+            "input": {
+                "player_name": player_name,
+                "sport": sport.upper(),
+                "team_hint": team_hint
+            },
+            "normalizations": {
+                "normalized_name": normalized_name,
+                "normalized_team": normalized_team
+            },
+            "resolution_result": {
+                "is_resolved": resolved.is_resolved,
+                "canonical_player_id": resolved.canonical_player_id,
+                "provider_ids": resolved.provider_ids,
+                "confidence": resolved.confidence,
+                "match_method": str(resolved.match_method) if hasattr(resolved, 'match_method') else "unknown",
+                "team": resolved.team,
+                "position": resolved.position,
+                "is_blocked": resolved.is_blocked,
+                "blocked_reason": resolved.blocked_reason
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "player_name": player_name,
+            "error": str(e),
+            "fallback_id": f"{sport.upper()}:NAME:{player_name.lower().replace(' ', '_')}",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/debug/today-games/{sport}")
+async def debug_today_games(sport: str):
+    """
+    DEBUG ENDPOINT: Show raw game list with TODAY-only validation.
+
+    Verifies no tomorrow games are included.
+    Shows each game's commence_time and whether it passes TODAY filter.
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "spreads",
+                "oddsFormat": "american"
+            }
+        )
+
+        if not resp or resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Failed to fetch games from Odds API")
+
+        raw_games = resp.json()
+
+        # Analyze each game
+        game_analysis = []
+        for game in raw_games:
+            commence_time = game.get("commence_time", "")
+            home_team = game.get("home_team", "")
+            away_team = game.get("away_team", "")
+
+            analysis = {
+                "matchup": f"{away_team} @ {home_team}",
+                "commence_time_raw": commence_time,
+                "commence_time_et": get_game_start_time_et(commence_time) if TIME_FILTERS_AVAILABLE else "N/A"
+            }
+
+            if TIME_FILTERS_AVAILABLE:
+                analysis["is_today"] = is_game_today(commence_time)
+                analysis["game_status"] = get_game_status(commence_time)
+                analysis["has_started"] = is_game_started(commence_time)
+            else:
+                analysis["is_today"] = "TIME_FILTERS not available"
+
+            game_analysis.append(analysis)
+
+        # Get today's date info
+        today_info = {}
+        if TIME_FILTERS_AVAILABLE:
+            start_et, end_et = get_today_range_et()
+            today_info = {
+                "today_date_et": get_today_date_str(),
+                "window_start": start_et.isoformat() if hasattr(start_et, 'isoformat') else str(start_et),
+                "window_end": end_et.isoformat() if hasattr(end_et, 'isoformat') else str(end_et)
+            }
+
+        return {
+            "sport": sport.upper(),
+            "total_games_from_api": len(raw_games),
+            "today_filter_available": TIME_FILTERS_AVAILABLE,
+            "today_info": today_info,
+            "games": game_analysis,
+            "summary": {
+                "today_games": sum(1 for g in game_analysis if g.get("is_today") == True),
+                "not_today": sum(1 for g in game_analysis if g.get("is_today") == False),
+                "already_started": sum(1 for g in game_analysis if g.get("has_started") == True)
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/debug/learning/latest")
+async def debug_learning_latest():
+    """
+    DEBUG ENDPOINT: Get latest learning loop status and report.
+
+    Shows:
+    - Current weights for all esoteric signals
+    - Recent performance by signal
+    - Weight adjustment history
+    - Grading statistics
+    """
+    result = {
+        "esoteric_learning": {},
+        "auto_grader": {},
+        "timestamp": datetime.now().isoformat()
+    }
+
+    # Esoteric Learning Loop
+    try:
+        loop = get_esoteric_loop()
+        if loop:
+            result["esoteric_learning"] = {
+                "available": True,
+                "current_weights": loop.get_weights(),
+                "performance_30d": loop.get_performance(days_back=30),
+                "recent_picks": loop.get_recent_picks(limit=5)
+            }
+        else:
+            result["esoteric_learning"] = {"available": False}
+    except Exception as e:
+        result["esoteric_learning"] = {"available": False, "error": str(e)}
+
+    # Auto Grader
+    if AUTO_GRADER_AVAILABLE:
+        try:
+            grader = get_grader()
+            total_predictions = sum(len(p) for p in grader.predictions.values())
+
+            # Get performance for each sport
+            sport_performance = {}
+            for sport in grader.SUPPORTED_SPORTS:
+                try:
+                    perf = grader.get_performance(sport, days_back=7)
+                    sport_performance[sport] = perf
+                except:
+                    sport_performance[sport] = {"error": "Could not fetch"}
+
+            result["auto_grader"] = {
+                "available": True,
+                "total_predictions_logged": total_predictions,
+                "storage_path": grader.storage_path,
+                "sports_tracked": grader.SUPPORTED_SPORTS,
+                "performance_by_sport": sport_performance
+            }
+        except Exception as e:
+            result["auto_grader"] = {"available": False, "error": str(e)}
+    else:
+        result["auto_grader"] = {"available": False}
+
+    # Esoteric Grader (from esoteric_grader.py)
+    try:
+        from esoteric_grader import get_esoteric_grader
+        eso_grader = get_esoteric_grader()
+        result["esoteric_grader"] = {
+            "available": True,
+            "accuracy_stats": eso_grader.get_all_accuracy_stats(),
+            "performance_summary": eso_grader.get_performance_summary(days_back=30)
+        }
+    except Exception as e:
+        result["esoteric_grader"] = {"available": False, "error": str(e)}
+
+    return result
 
 
 @router.get("/lstm/status")
