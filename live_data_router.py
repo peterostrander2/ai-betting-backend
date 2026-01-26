@@ -9077,6 +9077,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "confluence_boost": round(confluence_boost, 2),  # v10.25: Actual boost applied
             "alignment_pct": round(alignment_pct, 1),  # v10.4: alignment percentage
             "smash_spot": smash_spot,  # v10.4: SmashSpot flag
+            "titanium_triggered": titanium_triggered,  # v11.10: True if 3/4 engines >= 8.0
+            "titanium_explanation": titanium_explanation,  # v11.10: Always included for transparency
             "bet_tier": bet_tier,
             "reasons": all_reasons,  # Explainability array
             "ai_score": round(ai_score, 2),  # v10.24: 8 AI Engine score
