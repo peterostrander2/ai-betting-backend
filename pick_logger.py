@@ -469,6 +469,44 @@ class PickLogger:
 
         return picks
 
+    def get_picks_for_date(self, date: str, sport: Optional[str] = None) -> List[PublishedPick]:
+        """
+        Get all picks for a specific date.
+
+        Args:
+            date: Date string in YYYY-MM-DD format
+            sport: Optional sport filter
+
+        Returns:
+            List of PublishedPick objects for that date
+        """
+        picks = self.picks.get(date, [])
+
+        # Also try to load from file if not in memory
+        if not picks:
+            self._load_picks_from_file(date)
+            picks = self.picks.get(date, [])
+
+        if sport:
+            picks = [p for p in picks if p.sport.upper() == sport.upper()]
+
+        return picks
+
+    def _load_picks_from_file(self, date: str):
+        """Load picks from JSONL file for a given date."""
+        log_file = os.path.join(self.log_path, f"picks_{date}.jsonl")
+        if os.path.exists(log_file):
+            picks = []
+            with open(log_file, 'r') as f:
+                for line in f:
+                    try:
+                        data = json.loads(line.strip())
+                        pick = PublishedPick(**data)
+                        picks.append(pick)
+                    except Exception:
+                        continue
+            self.picks[date] = picks
+
     def grade_pick(
         self,
         pick_id: str,
