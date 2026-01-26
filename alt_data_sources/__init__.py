@@ -1,5 +1,5 @@
 """
-Alternative Data Sources Module - v10.68
+Alternative Data Sources Module - v11.10
 ========================================
 Integrates non-traditional data sources for betting edge signals:
 - Twitter: Breaking injury news from beat reporters
@@ -7,6 +7,7 @@ Integrates non-traditional data sources for betting edge signals:
 - SerpAPI: News aggregation and trending topics
 - FRED: Economic indicators and consumer sentiment
 - ESPN: Starting lineups and referee tendencies (FREE)
+- BallDontLie: NBA live game data and context (OPTIONAL)
 """
 
 from .twitter_api import (
@@ -36,6 +37,12 @@ from .espn_lineups import (
     get_game_details,
     get_espn_status
 )
+from .balldontlie import (
+    is_balldontlie_configured,
+    get_balldontlie_status,
+    get_live_games as get_bdl_live_games,
+    get_nba_live_context,
+)
 from .integration import (
     get_alternative_data_context,
     get_alt_data_status
@@ -64,6 +71,11 @@ __all__ = [
     "get_todays_games",
     "get_game_details",
     "get_espn_status",
+    # BallDontLie (NBA Live Context)
+    "is_balldontlie_configured",
+    "get_balldontlie_status",
+    "get_bdl_live_games",
+    "get_nba_live_context",
     # Integration
     "get_alternative_data_context",
     "get_alt_data_status",

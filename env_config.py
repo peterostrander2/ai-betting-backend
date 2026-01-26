@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v11.10"  # v11.10: TITANIUM_SMASH is real tier (3/4 engines >= 8.0), 2.5 max units cap
+    ENGINE_VERSION = "v11.15"  # v11.15: Production-ready (live picks, MISSED_START, Jason Sim fields, BDL support)
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 
@@ -103,6 +103,10 @@ class Config:
     # Twitter/X API (Breaking news, injury reports, sentiment)
     TWITTER_BEARER = get_env("TWITTER_BEARER", "TWITTER_BEARER_TOKEN")
 
+    # BallDontLie API (NBA live context - OPTIONAL)
+    # Set BDL_API_KEY="your_key_here" to enable
+    BDL_API_KEY = get_env("BDL_API_KEY")
+
     # Auth
     API_AUTH_ENABLED = get_env_bool("API_AUTH_ENABLED", False)
     API_AUTH_KEY = get_env("API_AUTH_KEY")
@@ -125,6 +129,7 @@ class Config:
             "serpapi": bool(cls.SERPAPI_KEY),
             "whop": bool(cls.WHOP_API_KEY),
             "twitter": bool(cls.TWITTER_BEARER),
+            "bdl": bool(cls.BDL_API_KEY and cls.BDL_API_KEY != "your_key_here"),  # BallDontLie
             "auth": cls.API_AUTH_ENABLED
         }
 

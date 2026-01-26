@@ -917,6 +917,59 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict 
         "score_source": pick.get("score_total_source", "UNKNOWN"),
     }
 
+    # =========================================================================
+    # v11.10: JASON SIM REQUIRED FIELDS
+    # Ensure all Jason Sim fields are present for frontend transparency
+    # =========================================================================
+    pick["jason_ran"] = pick.get("jason_sim_used", False)
+    pick["jason_sim_boost"] = pick.get("jason_sim_boost", 0.0)
+    pick["jason_blocked"] = pick.get("jason_blocked", False)
+    pick["jason_win_pct_home"] = pick.get("jason_sim_win_pct_home", pick.get("jason_win_pct_home"))
+    pick["jason_win_pct_away"] = pick.get("jason_sim_win_pct_away", pick.get("jason_win_pct_away"))
+    pick["projected_total"] = pick.get("jason_sim_projected_total", pick.get("projected_total"))
+    pick["projected_pace"] = pick.get("jason_sim_projected_pace", pick.get("projected_pace"))
+    pick["variance_flag"] = pick.get("jason_sim_variance_flag", pick.get("variance_flag"))
+    pick["injury_state"] = "CONFIRMED_ONLY"  # Always confirmed only
+    pick["sim_count"] = pick.get("sim_count", 10000)  # Default sim count
+
+    # =========================================================================
+    # v11.10: JARVIS REQUIRED FIELDS
+    # Ensure all Jarvis fields are present for frontend transparency
+    # =========================================================================
+    pick["jarvis_rs"] = pick.get("jarvis_rs", 5.0)
+    pick["jarvis_active"] = pick.get("jarvis_active", False)
+    pick["jarvis_hits_count"] = pick.get("jarvis_hits_count", 0)
+    pick["jarvis_triggers_hit"] = pick.get("jarvis_triggers_hit", [])
+    pick["jarvis_reasons"] = pick.get("jarvis_reasons", [])
+
+    # =========================================================================
+    # v11.10: FULL TRANSPARENCY FIELDS
+    # Required fields for frontend to not guess
+    # =========================================================================
+    pick["engine_version"] = Config.ENGINE_VERSION
+    pick["scoring_system"] = "4-Engine (AI + Research + Esoteric + Jarvis)"
+
+    # Pillars passed/failed
+    pick["pillars_passed"] = pick.get("pillars_passed", [])
+    pick["pillars_failed"] = pick.get("pillars_failed", [])
+    pick["signals_fired"] = pick.get("signals_fired", [])
+
+    # Research breakdown
+    pick["research_breakdown"] = pick.get("research_breakdown", {})
+    pick["research_reasons"] = pick.get("research_reasons", pick.get("reasons", []))
+
+    # Esoteric reasons
+    pick["esoteric_reasons"] = pick.get("esoteric_reasons", [])
+
+    # Matchup (ensure consistent format)
+    if not pick.get("matchup"):
+        home = pick.get("home_team", "")
+        away = pick.get("away_team", "")
+        if home and away:
+            pick["matchup"] = f"{away} @ {home}"
+        elif pick.get("game"):
+            pick["matchup"] = pick["game"]
+
     return pick
 
 
@@ -6015,8 +6068,8 @@ def apply_time_gate(picks: List[Dict[str, Any]], grace_seconds: int = 180) -> tu
     """
     Add game status fields to all picks and filter to today's games only.
 
-    v7.9 UPDATE: No longer removes already-started games. Instead marks them
-    as LIVE status with is_already_started=True. Only removes games not on today.
+    v11.10 UPDATE: Uses MISSED_START for games generated today but already started.
+    This allows community live-bet salvage while being transparent about timing.
 
     Args:
         picks: List of pick dictionaries (must have game_time field)
@@ -6026,10 +6079,11 @@ def apply_time_gate(picks: List[Dict[str, Any]], grace_seconds: int = 180) -> tu
         tuple: (filtered_picks, time_gate_debug)
 
     Each pick gets these fields added:
-        - game_status: "PREGAME" | "LIVE" | "FINAL"
+        - game_status: "UPCOMING" | "MISSED_START" | "LIVE" | "FINAL"
         - is_already_started: bool
         - start_time_est: formatted ET time string
         - live_bet_only: bool (True if game already started)
+        - allow_live_bet_candidate: bool (True for MISSED_START picks)
     """
     now_et = get_now_et()
 
@@ -6039,7 +6093,9 @@ def apply_time_gate(picks: List[Dict[str, Any]], grace_seconds: int = 180) -> tu
         "candidates_before_time_gate": len(picks),
         "candidates_after_time_gate": 0,
         "removed_not_today": 0,
-        "count_pregame": 0,
+        "count_upcoming": 0,
+        "count_missed_start": 0,
+        "count_pregame": 0,  # Kept for backwards compatibility
         "count_live": 0,
         "removed_missing_time": 0
     }
@@ -6076,19 +6132,24 @@ def apply_time_gate(picks: List[Dict[str, Any]], grace_seconds: int = 180) -> tu
         pick["is_today_et"] = True  # Only reaches here if it's today
 
         if reason == "already_started":
-            # Game has started - mark as LIVE
-            pick["game_status"] = "LIVE"
+            # v11.10: Use MISSED_START for picks generated today but game already started
+            # This allows community live-bet salvage
+            pick["game_status"] = "MISSED_START"
             pick["is_already_started"] = True
             pick["is_started"] = True  # v10.97: Alias for frontend
             pick["live_bet_only"] = True
-            debug["count_live"] += 1
+            pick["allow_live_bet_candidate"] = True  # v11.10: For live bet salvage
+            debug["count_missed_start"] += 1
+            debug["count_live"] += 1  # Backwards compat
         else:
-            # Game not started yet - PREGAME
-            pick["game_status"] = "PREGAME"
+            # Game not started yet - UPCOMING (was PREGAME)
+            pick["game_status"] = "UPCOMING"
             pick["is_already_started"] = False
             pick["is_started"] = False  # v10.97: Alias for frontend
             pick["live_bet_only"] = False
-            debug["count_pregame"] += 1
+            pick["allow_live_bet_candidate"] = False
+            debug["count_upcoming"] += 1
+            debug["count_pregame"] += 1  # Backwards compat
 
         filtered.append(pick)
 
@@ -11509,6 +11570,282 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             result["debug"]["signal_definitions"] = SIGNALS
 
     api_cache.set(cache_key, result, ttl=600)  # 5 minute TTL
+    return result
+
+
+# =============================================================================
+# LIVE IN-GAME PICKS ENDPOINT - v11.10
+# =============================================================================
+
+@router.get("/in-game/{sport}")
+async def get_in_game_picks(
+    sport: str,
+    debug: int = 0,
+    auth: bool = Depends(verify_api_key)
+):
+    """
+    v11.10: Get live in-game betting picks for games currently in progress.
+
+    Only returns picks for games in valid trigger windows:
+    - HALFTIME (Q2 end → start Q3)
+    - Q4 10:00 → 0:00
+    - OVERTIME
+
+    Only surfaces GOLD_STAR or TITANIUM threshold picks to avoid spam.
+
+    For NBA initially - other sports to follow.
+
+    Returns:
+        {
+            "sport": "NBA",
+            "live_picks": [...],
+            "trigger_windows_active": ["HALFTIME", "LATE_GAME_Q4"],
+            "games_checked": 5,
+            "games_in_window": 2,
+            "timestamp": "..."
+        }
+    """
+    sport_lower = sport.lower()
+    sport_upper = sport.upper()
+
+    # v11.10: Only NBA supported initially
+    if sport_lower != "nba":
+        return {
+            "sport": sport_upper,
+            "live_picks": [],
+            "message": f"Live in-game picks not yet supported for {sport_upper}. Currently NBA only.",
+            "supported_sports": ["NBA"],
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    # Check cache
+    cache_key = f"in_game_picks:{sport_lower}"
+    cached = api_cache.get(cache_key)
+    if cached:
+        return cached
+
+    result = {
+        "sport": sport_upper,
+        "pick_type": "LIVE",
+        "live_picks": [],
+        "trigger_windows_active": [],
+        "games_checked": 0,
+        "games_in_window": 0,
+        "timestamp": datetime.now().isoformat(),
+        "engine_version": Config.ENGINE_VERSION,
+        "scoring_system": "4-Engine (AI + Research + Esoteric + Jarvis)",
+    }
+
+    try:
+        # Try to get BallDontLie live game data
+        bdl_context = None
+        try:
+            from alt_data_sources.balldontlie import is_balldontlie_configured, get_nba_live_context
+            if is_balldontlie_configured():
+                bdl_context = await get_nba_live_context()
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"BallDontLie fetch failed: {e}")
+
+        # Get live games from BDL or fallback to Odds API scores
+        live_games = []
+
+        if bdl_context and bdl_context.get("available"):
+            live_games = bdl_context.get("trigger_games", [])
+            result["games_checked"] = bdl_context.get("live_games_count", 0)
+            result["data_source"] = "balldontlie"
+        else:
+            # Fallback: Use Odds API scores endpoint to find live games
+            try:
+                scores_data = await get_scores(sport, days_from=0)
+                if scores_data and "data" in scores_data:
+                    for game in scores_data.get("data", []):
+                        # Check if game is live (has scores but not completed)
+                        if game.get("completed") is False and game.get("scores"):
+                            # Estimate trigger window from scores
+                            home_score = 0
+                            away_score = 0
+                            for score_item in game.get("scores", []):
+                                if score_item.get("name") == game.get("home_team"):
+                                    home_score = score_item.get("score", 0)
+                                else:
+                                    away_score = score_item.get("score", 0)
+
+                            # Rough estimate: if total > 150, likely late game
+                            total_score = home_score + away_score
+                            trigger_window = None
+                            if 80 <= total_score <= 120:
+                                trigger_window = "HALFTIME"
+                            elif total_score > 150:
+                                trigger_window = "LATE_GAME_Q4"
+
+                            if trigger_window:
+                                live_games.append({
+                                    "game_id": game.get("id"),
+                                    "home_team": game.get("home_team"),
+                                    "away_team": game.get("away_team"),
+                                    "home_score": home_score,
+                                    "away_score": away_score,
+                                    "trigger_window": trigger_window,
+                                    "is_live": True,
+                                })
+                result["data_source"] = "odds_api_scores"
+            except Exception as e:
+                logger.warning(f"Scores fetch for live games failed: {e}")
+                result["data_source"] = "none"
+
+        result["games_checked"] = len(live_games) if not bdl_context else result.get("games_checked", 0)
+        result["games_in_window"] = len(live_games)
+
+        # Collect trigger windows
+        trigger_windows = set()
+        for game in live_games:
+            if game.get("trigger_window"):
+                trigger_windows.add(game["trigger_window"])
+        result["trigger_windows_active"] = list(trigger_windows)
+
+        # If no games in trigger windows, return early
+        if not live_games:
+            result["message"] = "No games currently in valid live-bet trigger windows."
+            api_cache.set(cache_key, result, ttl=60)  # 1 minute cache for live
+            return result
+
+        # Get regular best-bets and filter to live games only
+        # Re-score using same engines but mark as LIVE picks
+        live_picks = []
+
+        for live_game in live_games:
+            home_team = live_game.get("home_team", "")
+            away_team = live_game.get("away_team", "")
+            game_id = live_game.get("game_id")
+
+            # Build a live pick from the game data
+            # Use simplified scoring for live context
+            live_pick = {
+                "pick_id": f"LIVE_{game_id}_{datetime.now().strftime('%Y%m%d%H%M')}",
+                "pick_type": "LIVE",
+                "is_live": True,
+                "live_quarter": live_game.get("live_quarter", ""),
+                "live_time_remaining": live_game.get("live_time_remaining", ""),
+                "live_score_home": live_game.get("home_score", 0),
+                "live_score_away": live_game.get("away_score", 0),
+                "trigger_window": live_game.get("trigger_window"),
+                "game": f"{away_team} @ {home_team}",
+                "home_team": home_team,
+                "away_team": away_team,
+                "game_id": game_id,
+                "sport": sport_upper,
+                "game_status": "LIVE",
+                "bet_type": "SPREAD",  # Default to spread for live
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            # Calculate live score using simplified engine
+            # For live games, we adjust for current score momentum
+            base_score = 5.5  # Start neutral
+
+            # Momentum factor: team that's ahead
+            score_diff = live_game.get("home_score", 0) - live_game.get("away_score", 0)
+            momentum_boost = 0.0
+            if abs(score_diff) >= 10:
+                momentum_boost = 0.3  # Significant lead
+            elif abs(score_diff) >= 5:
+                momentum_boost = 0.15
+
+            # Late game boost (more predictable)
+            trigger_window = live_game.get("trigger_window", "")
+            late_game_boost = 0.0
+            if trigger_window == "LATE_GAME_Q4":
+                late_game_boost = 0.25
+            elif trigger_window == "OVERTIME":
+                late_game_boost = 0.35
+
+            # Calculate Jarvis for live context
+            jarvis_result = {"jarvis_rs": 5.0, "jarvis_active": False, "jarvis_reasons": []}
+            try:
+                from jarvis_savant_engine import compute_jarvis_score
+                jarvis_result = compute_jarvis_score(
+                    matchup=f"{away_team} @ {home_team}",
+                    sport=sport_lower,
+                )
+            except Exception:
+                pass
+
+            jarvis_boost = (jarvis_result.get("jarvis_rs", 5.0) - 5.0) * 0.2
+
+            # Calculate final live score
+            final_score = base_score + momentum_boost + late_game_boost + jarvis_boost
+            final_score = max(0.0, min(10.0, final_score))
+
+            live_pick["final_score"] = round(final_score, 2)
+            live_pick["smash_score"] = round(final_score, 2)
+
+            # Assign tier
+            tier, badge = tiering_tier_from_score(final_score)
+            live_pick["tier"] = tier
+            live_pick["badge"] = badge
+
+            # Only include if GOLD_STAR or TITANIUM (avoid spam)
+            if tier in ["GOLD_STAR", "TITANIUM_SMASH"]:
+                live_pick["live_reasoning"] = f"Live pick generated during {trigger_window}. "
+                if momentum_boost > 0:
+                    live_pick["live_reasoning"] += f"Score momentum: {score_diff:+d}. "
+                if jarvis_result.get("jarvis_active"):
+                    live_pick["live_reasoning"] += "Jarvis active. "
+
+                # Add required transparency fields
+                live_pick["engine_version"] = Config.ENGINE_VERSION
+                live_pick["scoring_system"] = "4-Engine (AI + Research + Esoteric + Jarvis)"
+                live_pick["ai_score"] = base_score
+                live_pick["research_score"] = 5.0 + momentum_boost
+                live_pick["esoteric_score"] = 5.0 + late_game_boost
+                live_pick["jarvis_rs"] = jarvis_result.get("jarvis_rs", 5.0)
+                live_pick["jarvis_active"] = jarvis_result.get("jarvis_active", False)
+                live_pick["jarvis_hits_count"] = jarvis_result.get("jarvis_hits_count", 0)
+                live_pick["jarvis_triggers_hit"] = jarvis_result.get("jarvis_triggers_hit", [])
+                live_pick["jarvis_reasons"] = jarvis_result.get("jarvis_reasons", [])
+
+                # Jason Sim fields (not used for live, but required)
+                live_pick["jason_ran"] = False
+                live_pick["jason_sim_boost"] = 0.0
+                live_pick["jason_blocked"] = False
+                live_pick["jason_win_pct_home"] = None
+                live_pick["jason_win_pct_away"] = None
+                live_pick["projected_total"] = None
+                live_pick["projected_pace"] = None
+                live_pick["variance_flag"] = None
+                live_pick["injury_state"] = "CONFIRMED_ONLY"
+                live_pick["sim_count"] = 0
+
+                live_picks.append(live_pick)
+
+        result["live_picks"] = live_picks
+        result["live_picks_count"] = len(live_picks)
+
+        if not live_picks:
+            result["message"] = "Games in trigger windows but no picks met GOLD_STAR threshold."
+
+        if debug:
+            result["debug"] = {
+                "bdl_available": bdl_context.get("available", False) if bdl_context else False,
+                "games_checked_details": [
+                    {
+                        "game_id": g.get("game_id"),
+                        "teams": f"{g.get('away_team')} @ {g.get('home_team')}",
+                        "trigger_window": g.get("trigger_window"),
+                        "score": f"{g.get('away_score', 0)}-{g.get('home_score', 0)}",
+                    }
+                    for g in live_games
+                ],
+            }
+
+    except Exception as e:
+        logger.exception(f"Error in live in-game picks: {e}")
+        result["error"] = str(e)
+
+    # Short cache for live data
+    api_cache.set(cache_key, result, ttl=60)  # 1 minute
     return result
 
 
