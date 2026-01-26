@@ -199,8 +199,11 @@ async def fetch_completed_games(sport: str, days_back: int = 1) -> List[GameResu
 
 
 # =============================================================================
-# BALLDONTLIE API - NBA PLAYER STATS (FREE, NO KEY REQUIRED)
+# BALLDONTLIE API - NBA PLAYER STATS
 # =============================================================================
+
+# Get API key from environment
+BALLDONTLIE_API_KEY = os.getenv("BALLDONTLIE_API_KEY", "")
 
 async def fetch_nba_player_stats(date: str) -> List[PlayerStatline]:
     """
@@ -212,8 +215,12 @@ async def fetch_nba_player_stats(date: str) -> List[PlayerStatline]:
     Returns:
         List of PlayerStatline objects
     """
-    # balldontlie.io v1 API - free, no auth required
-    url = "https://api.balldontlie.io/v1/stats"
+    # balldontlie.io API - requires API key
+    url = "https://api.balldontlie.io/stats"
+
+    if not BALLDONTLIE_API_KEY:
+        logger.warning("BALLDONTLIE_API_KEY not set - trying ESPN backup")
+        return await fetch_nba_stats_espn(date)
 
     # Need to paginate through results
     all_stats = []
@@ -229,21 +236,20 @@ async def fetch_nba_player_stats(date: str) -> List[PlayerStatline]:
                 if cursor:
                     params["cursor"] = cursor
 
-                # balldontlie now requires API key in header
-                headers = {}
-                bdl_key = os.getenv("BALLDONTLIE_API_KEY", "")
-                if bdl_key:
-                    headers["Authorization"] = bdl_key
+                # Auth via Authorization header
+                headers = {
+                    "Authorization": BALLDONTLIE_API_KEY
+                }
 
                 resp = await client.get(url, params=params, headers=headers)
 
                 if resp.status_code == 401:
-                    logger.warning("balldontlie requires API key - trying backup")
-                    break
+                    logger.warning("balldontlie auth failed - trying ESPN backup")
+                    return await fetch_nba_stats_espn(date)
 
                 if resp.status_code != 200:
-                    logger.warning("balldontlie API error: %d", resp.status_code)
-                    break
+                    logger.warning("balldontlie API error: %d - trying ESPN backup", resp.status_code)
+                    return await fetch_nba_stats_espn(date)
 
                 data = resp.json()
                 stats_data = data.get("data", [])
