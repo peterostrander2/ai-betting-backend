@@ -101,6 +101,18 @@ except ImportError:
     TIME_FILTERS_AVAILABLE = False
     logger.warning("time_filters module not available - TODAY-only gating disabled")
 
+# Import Jason Sim Confluence - Win probability simulation (v11.08)
+try:
+    from jason_sim_confluence import (
+        run_jason_confluence,
+        get_default_jason_output,
+        get_jason_sim
+    )
+    JASON_SIM_AVAILABLE = True
+except ImportError:
+    JASON_SIM_AVAILABLE = False
+    logger.warning("jason_sim_confluence module not available")
+
 # Redis import with fallback
 try:
     import redis
@@ -1843,8 +1855,8 @@ async def get_best_bets(sport: str):
     # Get learned weights for esoteric scoring
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
-    # Helper function to calculate scores with v10.1 dual-score confluence
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50):
+    # Helper function to calculate scores with v10.1 dual-score confluence + v11.08 Jason Sim
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0):
         # =====================================================================
         # v10.2 DUAL-SCORE CONFLUENCE SYSTEM (Gematria-Dominant)
         # =====================================================================
@@ -1872,17 +1884,40 @@ async def get_best_bets(sport: str):
 
         # --- RESEARCH SCORE CALCULATION ---
         ai_score = base_ai
+        research_reasons = []
+        pillars_passed = []
+        pillars_failed = []
+
         if sharp_signal.get("signal_strength") == "STRONG":
             ai_score += 2.0
+            research_reasons.append("Sharp signal STRONG (+2.0)")
+            pillars_passed.append("Sharp Money Detection")
         elif sharp_signal.get("signal_strength") == "MODERATE":
             ai_score += 1.0
+            research_reasons.append("Sharp signal MODERATE (+1.0)")
+            pillars_passed.append("Sharp Money Detection")
+        else:
+            research_reasons.append("No sharp signal detected")
+            pillars_failed.append("Sharp Money Detection")
+
         ai_score = min(8.0, ai_score)
 
-        pillar_score = 3.0 if sharp_signal.get("line_variance", 0) > 1.0 else 2.0
+        line_variance = sharp_signal.get("line_variance", 0)
+        if line_variance > 1.0:
+            pillar_score = 3.0
+            research_reasons.append(f"Line variance {line_variance:.1f}pts (high)")
+            pillars_passed.append("Reverse Line Movement")
+            pillars_passed.append("Line Value Detection")
+        else:
+            pillar_score = 2.0
+            research_reasons.append(f"Line variance {line_variance:.1f}pts (low)")
+            pillars_failed.append("Reverse Line Movement")
+
         pillar_score = min(8.0, pillar_score)
 
         # Research score: (ai + pillar) / 16 * 10 = normalized to 0-10
         research_score = (ai_score + pillar_score) / 16 * 10
+        research_reasons.append(f"Research: {round(research_score, 2)}/10 (AI:{round(ai_score, 1)} + Pillars:{round(pillar_score, 1)})")
 
         # --- ESOTERIC SCORE CALCULATION (v10.2 Gematria-Dominant) ---
         gematria_score = 0.0       # 0-5.2 pts (52%)
@@ -2019,9 +2054,58 @@ async def get_best_bets(sport: str):
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
 
-        # --- v10.1 FINAL SCORE FORMULA ---
-        # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
-        final_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence_boost
+        # --- v10.1 BASE SCORE FORMULA ---
+        # BASE = (research × 0.67) + (esoteric × 0.33) + confluence_boost
+        base_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence_boost
+
+        # --- v11.08 JASON SIM CONFLUENCE (runs after base score, before tier assignment) ---
+        # Jason simulates game outcomes and applies boost/downgrade based on win probability
+        jason_output = {}
+        if JASON_SIM_AVAILABLE:
+            try:
+                # Determine actual pick_type from context if not provided
+                actual_pick_type = pick_type
+                if player_name and actual_pick_type == "GAME":
+                    actual_pick_type = "PROP"
+
+                jason_output = run_jason_confluence(
+                    base_score=base_score,
+                    pick_type=actual_pick_type,
+                    pick_side=pick_side if pick_side else (player_name if player_name else home_team),
+                    home_team=home_team,
+                    away_team=away_team,
+                    spread=spread,
+                    total=total,
+                    prop_line=prop_line,
+                    player_name=player_name,
+                    injury_state="CONFIRMED_ONLY"
+                )
+            except Exception as e:
+                logger.warning("Jason Sim failed: %s", e)
+                jason_output = get_default_jason_output()
+                jason_output["base_score"] = base_score
+        else:
+            # Default Jason output when module not available
+            jason_output = {
+                "jason_ran": False,
+                "jason_sim_boost": 0.0,
+                "jason_blocked": False,
+                "jason_win_pct_home": 50.0,
+                "jason_win_pct_away": 50.0,
+                "projected_total": total,
+                "projected_pace": "NEUTRAL",
+                "variance_flag": "MED",
+                "injury_state": "UNKNOWN",
+                "confluence_reasons": ["Jason module not available"],
+                "base_score": base_score
+            }
+
+        # FINAL = BASE + JASON_BOOST
+        jason_sim_boost = jason_output.get("jason_sim_boost", 0.0)
+        final_score = base_score + jason_sim_boost
+
+        # Check if Jason blocked this pick
+        jason_blocked = jason_output.get("jason_blocked", False)
 
         # --- v11.08 JARVIS RAW SCORE (0-10 scale for Titanium check) ---
         # jarvis_score is 0-2.0 from esoteric weights, scale to 0-10 for display and Titanium
@@ -2160,10 +2244,26 @@ async def get_best_bets(sport: str):
             "titanium_triggered": titanium_triggered,
             "titanium_explanation": titanium_explanation,
             "smash_reasons": smash_reasons,
+            # v11.08 JASON SIM CONFLUENCE fields (MUST always exist)
+            "jason_ran": jason_output.get("jason_ran", False),
+            "jason_sim_boost": round(jason_sim_boost, 2),
+            "jason_blocked": jason_blocked,
+            "jason_win_pct_home": jason_output.get("jason_win_pct_home", 50.0),
+            "jason_win_pct_away": jason_output.get("jason_win_pct_away", 50.0),
+            "projected_total": jason_output.get("projected_total", total),
+            "projected_pace": jason_output.get("projected_pace", "NEUTRAL"),
+            "variance_flag": jason_output.get("variance_flag", "MED"),
+            "injury_state": jason_output.get("injury_state", "UNKNOWN"),
+            "confluence_reasons": jason_output.get("confluence_reasons", []),
+            "base_score": round(base_score, 2),  # Score before Jason boost
             # v11.08 Stack/Penalty fields
             "penalties": penalties,
-            "stack_complete": True,  # Default - updated by caller if needed
-            "partial_stack_reasons": []  # Default - updated by caller if needed
+            "stack_complete": not jason_blocked,  # Stack incomplete if Jason blocked
+            "partial_stack_reasons": ["Jason blocked pick"] if jason_blocked else [],
+            # v11.08 Research/Pillar tracking
+            "research_reasons": research_reasons,
+            "pillars_passed": pillars_passed,
+            "pillars_failed": pillars_failed
         }
 
     # ============================================
@@ -2217,7 +2317,10 @@ async def get_best_bets(sport: str):
                     away_team=away_team,
                     spread=0,
                     total=220,
-                    public_pct=50
+                    public_pct=50,
+                    pick_type="PROP",
+                    pick_side=side,
+                    prop_line=line
                 )
 
                 # v11.08 INJURY TIER DOWNGRADE: QUESTIONABLE/PROBABLE downgrades tier
@@ -2382,7 +2485,10 @@ async def get_best_bets(sport: str):
                                 away_team=away_team,
                                 spread=point if market_key == "spreads" and point else 0,
                                 total=point if market_key == "totals" and point else 220,
-                                public_pct=50
+                                public_pct=50,
+                                pick_type=pick_type,
+                                pick_side=pick_side,
+                                prop_line=point if point else 0
                             )
 
                             game_picks.append({
@@ -2427,7 +2533,10 @@ async def get_best_bets(sport: str):
                 away_team=away_team,
                 spread=signal.get("line_variance", 0),
                 total=220,
-                public_pct=50
+                public_pct=50,
+                pick_type="SHARP",
+                pick_side=signal.get("side", "HOME"),
+                prop_line=0
             )
 
             game_picks.append({
