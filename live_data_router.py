@@ -113,6 +113,20 @@ except ImportError:
     JASON_SIM_AVAILABLE = False
     logger.warning("jason_sim_confluence module not available")
 
+# Import Pick Logger - Production pick persistence and grading (v14.9)
+try:
+    from pick_logger import (
+        get_pick_logger,
+        log_published_pick,
+        grade_pick as grade_logged_pick,
+        run_daily_audit_report,
+        get_today_picks
+    )
+    PICK_LOGGER_AVAILABLE = True
+except ImportError:
+    PICK_LOGGER_AVAILABLE = False
+    logger.warning("pick_logger module not available - pick persistence disabled")
+
 # Redis import with fallback
 try:
     import redis
@@ -2598,6 +2612,44 @@ async def get_best_bets(sport: str):
     top_game_picks = game_picks[:10]
 
     # ============================================
+    # LOG PICKS FOR GRADING (v14.9)
+    # ============================================
+    if PICK_LOGGER_AVAILABLE:
+        try:
+            pick_logger = get_pick_logger()
+            logged_count = 0
+            validation_warnings = []
+
+            # Log prop picks
+            for pick in top_props:
+                log_result = pick_logger.log_pick(
+                    pick_data=pick,
+                    game_start_time=pick.get("start_time_et", "")
+                )
+                if log_result.get("logged"):
+                    logged_count += 1
+                if log_result.get("validation_errors"):
+                    validation_warnings.extend(log_result["validation_errors"])
+
+            # Log game picks
+            for pick in top_game_picks:
+                log_result = pick_logger.log_pick(
+                    pick_data=pick,
+                    game_start_time=pick.get("start_time_et", "")
+                )
+                if log_result.get("logged"):
+                    logged_count += 1
+                if log_result.get("validation_errors"):
+                    validation_warnings.extend(log_result["validation_errors"])
+
+            if logged_count > 0:
+                logger.info("PICK_LOGGER: Logged %d picks for grading", logged_count)
+            if validation_warnings:
+                logger.warning("PICK_LOGGER: Validation warnings: %s", validation_warnings[:5])
+        except Exception as e:
+            logger.error("PICK_LOGGER: Failed to log picks: %s", e)
+
+    # ============================================
     # BUILD FINAL RESPONSE
     # ============================================
     # Get astro status if available
@@ -3494,6 +3546,226 @@ Whether we win or lose, we're always improving! 💪
 
     except Exception as e:
         logger.exception("Failed to generate daily report: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# PICK LOGGER ENDPOINTS (v14.9) - Production Pick Persistence & Audit
+# ============================================================================
+
+@router.get("/picks/today")
+async def get_logged_picks_today(sport: Optional[str] = None):
+    """
+    Get all picks logged today.
+
+    Used for monitoring what picks have been published.
+    """
+    if not PICK_LOGGER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Pick logger not available")
+
+    try:
+        picks = get_today_picks(sport)
+        return {
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "sport": sport.upper() if sport else "ALL",
+            "count": len(picks),
+            "picks": [
+                {
+                    "pick_id": p.pick_id,
+                    "sport": p.sport,
+                    "player": p.player_name,
+                    "matchup": p.matchup,
+                    "line": p.line,
+                    "side": p.side,
+                    "tier": p.tier,
+                    "final_score": p.final_score,
+                    "already_started": p.already_started,
+                    "book_validated": p.book_validated,
+                    "result": p.result
+                }
+                for p in picks
+            ],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception("Failed to get today's picks: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/picks/grade")
+async def grade_published_pick(grade_data: Dict[str, Any]):
+    """
+    Grade a published pick with actual result.
+
+    Request body:
+    {
+        "pick_id": "abc123def456",
+        "result": "WIN",  // WIN, LOSS, or PUSH
+        "actual_value": 27.5  // Optional: actual stat value for props
+    }
+    """
+    if not PICK_LOGGER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Pick logger not available")
+
+    pick_id = grade_data.get("pick_id")
+    result = grade_data.get("result")
+    actual_value = grade_data.get("actual_value")
+
+    if not pick_id or not result:
+        raise HTTPException(status_code=400, detail="pick_id and result are required")
+
+    if result.upper() not in ("WIN", "LOSS", "PUSH"):
+        raise HTTPException(status_code=400, detail="result must be WIN, LOSS, or PUSH")
+
+    try:
+        grade_result = grade_logged_pick(pick_id, result, actual_value)
+
+        if grade_result:
+            return {
+                "status": "graded",
+                **grade_result,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            raise HTTPException(status_code=404, detail=f"Pick not found: {pick_id}")
+
+    except Exception as e:
+        logger.exception("Failed to grade pick: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/picks/bulk-grade")
+async def bulk_grade_picks(grade_data: Dict[str, Any]):
+    """
+    Grade multiple picks at once.
+
+    Request body:
+    {
+        "grades": [
+            {"pick_id": "abc123", "result": "WIN"},
+            {"pick_id": "def456", "result": "LOSS", "actual_value": 22.5}
+        ]
+    }
+    """
+    if not PICK_LOGGER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Pick logger not available")
+
+    grades = grade_data.get("grades", [])
+    if not grades:
+        raise HTTPException(status_code=400, detail="grades array is required")
+
+    results = []
+    errors = []
+
+    for grade in grades:
+        pick_id = grade.get("pick_id")
+        result = grade.get("result")
+        actual_value = grade.get("actual_value")
+
+        if not pick_id or not result:
+            errors.append({"pick_id": pick_id, "error": "Missing required fields"})
+            continue
+
+        try:
+            grade_result = grade_logged_pick(pick_id, result, actual_value)
+            if grade_result:
+                results.append(grade_result)
+            else:
+                errors.append({"pick_id": pick_id, "error": "Pick not found"})
+        except Exception as e:
+            errors.append({"pick_id": pick_id, "error": str(e)})
+
+    return {
+        "status": "bulk_grade_complete",
+        "graded": len(results),
+        "errors": len(errors),
+        "results": results,
+        "error_details": errors,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/picks/audit-report")
+async def get_pick_audit_report(date: Optional[str] = None):
+    """
+    Generate comprehensive audit report for pick performance.
+
+    Includes:
+    - Record by tier and sport
+    - ROI by tier
+    - Top 10 false positives (high score loses)
+    - Top 10 missed opportunities (low score wins)
+    - Pillar hit-rate breakdown
+    - Jarvis trigger performance
+    - Jason sim accuracy
+
+    Date format: YYYY-MM-DD (defaults to yesterday)
+    """
+    if not PICK_LOGGER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Pick logger not available")
+
+    try:
+        report = run_daily_audit_report(date)
+        return report
+    except Exception as e:
+        logger.exception("Failed to generate audit report: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/picks/validation-status")
+async def get_pick_validation_status():
+    """
+    Get validation status for today's picks.
+
+    Shows:
+    - Total picks logged
+    - Picks with validation errors (injury/book issues)
+    - Already started (late pull) picks
+    """
+    if not PICK_LOGGER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Pick logger not available")
+
+    try:
+        picks = get_today_picks()
+
+        validation_errors = [p for p in picks if p.validation_errors]
+        late_pulls = [p for p in picks if p.already_started]
+        graded = [p for p in picks if p.result is not None]
+
+        return {
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "total_logged": len(picks),
+            "valid_picks": len(picks) - len(validation_errors),
+            "validation_errors": {
+                "count": len(validation_errors),
+                "picks": [
+                    {
+                        "pick_id": p.pick_id,
+                        "player": p.player_name,
+                        "errors": p.validation_errors
+                    }
+                    for p in validation_errors
+                ]
+            },
+            "late_pulls": {
+                "count": len(late_pulls),
+                "picks": [
+                    {
+                        "pick_id": p.pick_id,
+                        "matchup": p.matchup,
+                        "reason": p.late_pull_reason
+                    }
+                    for p in late_pulls
+                ]
+            },
+            "grading_status": {
+                "graded": len(graded),
+                "pending": len(picks) - len(graded)
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception("Failed to get validation status: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
