@@ -481,35 +481,47 @@ async def fetch_nba_stats_espn(date: str) -> List[PlayerStatline]:
                             player_name = player.get("displayName", "")
                             stats_raw = athlete.get("stats", [])
 
-                            # ESPN stat order: MIN, FG, 3PT, FT, OREB, DREB, REB, AST, STL, BLK, TO, PF, +/-, PTS
-                            if len(stats_raw) >= 14:
-                                pts = float(stats_raw[13] or 0)
-                                reb = float(stats_raw[6] or 0)
-                                ast = float(stats_raw[7] or 0)
+                            # ESPN stat order: MIN, PTS, FG, 3PT, FT, REB, AST, TO, STL, BLK, OREB, DREB, PF, +/-
+                            if len(stats_raw) >= 10:
+                                try:
+                                    pts = float(stats_raw[1] or 0)
+                                    reb = float(stats_raw[5] or 0)
+                                    ast = float(stats_raw[6] or 0)
+                                    stl = float(stats_raw[8] or 0)
+                                    blk = float(stats_raw[9] or 0)
+                                    tov = float(stats_raw[7] or 0)
+                                    # 3PT format is "made-attempted"
+                                    fg3m = float(str(stats_raw[3]).split("-")[0]) if stats_raw[3] else 0
 
-                                statline = PlayerStatline(
-                                    player_name=player_name,
-                                    team=team_name,
-                                    game_id=game_id,
-                                    sport="NBA",
-                                    points=pts,
-                                    rebounds=reb,
-                                    assists=ast,
-                                    three_pointers_made=float(stats_raw[2].split("-")[0] if "-" in str(stats_raw[2]) else 0),
-                                    steals=float(stats_raw[8] or 0),
-                                    blocks=float(stats_raw[9] or 0),
-                                    turnovers=float(stats_raw[10] or 0),
-                                    stats={
-                                        "points": pts,
-                                        "rebounds": reb,
-                                        "assists": ast,
-                                        "pra": pts + reb + ast,
-                                        "pr": pts + reb,
-                                        "pa": pts + ast,
-                                        "ra": reb + ast,
-                                    }
-                                )
-                                all_stats.append(statline)
+                                    statline = PlayerStatline(
+                                        player_name=player_name,
+                                        team=team_name,
+                                        game_id=game_id,
+                                        sport="NBA",
+                                        points=pts,
+                                        rebounds=reb,
+                                        assists=ast,
+                                        three_pointers_made=fg3m,
+                                        steals=stl,
+                                        blocks=blk,
+                                        turnovers=tov,
+                                        stats={
+                                            "points": pts,
+                                            "rebounds": reb,
+                                            "assists": ast,
+                                            "pra": pts + reb + ast,
+                                            "pr": pts + reb,
+                                            "pa": pts + ast,
+                                            "ra": reb + ast,
+                                            "steals": stl,
+                                            "blocks": blk,
+                                            "turnovers": tov,
+                                            "three_pointers_made": fg3m,
+                                        }
+                                    )
+                                    all_stats.append(statline)
+                                except (ValueError, IndexError) as e:
+                                    logger.debug("Error parsing stats for %s: %s", player_name, e)
 
         logger.info("Fetched %d NBA player statlines from ESPN for %s", len(all_stats), date)
         return all_stats
