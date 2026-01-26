@@ -94,7 +94,9 @@ try:
         filter_today_games,
         get_game_start_time_et,
         get_today_date_str,
-        log_slate_summary
+        log_slate_summary,
+        is_game_started,
+        get_game_status
     )
     TIME_FILTERS_AVAILABLE = True
 except ImportError:
@@ -2408,6 +2410,11 @@ async def get_best_bets(sport: str):
                             "reason": f"Player is {injury_status}"
                         })
 
+                # v11.15: Determine game status (UPCOMING vs MISSED_START)
+                game_status = "UPCOMING"
+                if TIME_FILTERS_AVAILABLE and commence_time:
+                    game_status = get_game_status(commence_time)
+
                 props_picks.append({
                     "sport": sport.upper(),
                     "player": player,
@@ -2424,6 +2431,8 @@ async def get_best_bets(sport: str):
                     "home_team": home_team,
                     "away_team": away_team,
                     "start_time_et": start_time_et,
+                    "game_status": game_status,
+                    "is_live_bet_candidate": game_status == "MISSED_START",
                     "recommendation": f"{side.upper()} {line}",
                     "injury_status": injury_status,
                     "best_book": book_name,
@@ -2557,6 +2566,11 @@ async def get_best_bets(sport: str):
                                 prop_line=point if point else 0
                             )
 
+                            # v11.15: Determine game status (UPCOMING vs MISSED_START)
+                            game_status = "UPCOMING"
+                            if TIME_FILTERS_AVAILABLE and commence_time:
+                                game_status = get_game_status(commence_time)
+
                             game_picks.append({
                                 "sport": sport.upper(),
                                 "pick_type": pick_type,
@@ -2570,6 +2584,8 @@ async def get_best_bets(sport: str):
                                 "home_team": home_team,
                                 "away_team": away_team,
                                 "start_time_et": start_time_et,
+                                "game_status": game_status,
+                                "is_live_bet_candidate": game_status == "MISSED_START",
                                 "market": market_key,
                                 "recommendation": display,
                                 "best_book": best_book,
@@ -2702,6 +2718,88 @@ async def get_best_bets(sport: str):
     }
     api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
     return result
+
+
+# ============================================================================
+# v11.15: LIVE IN-GAME PICKS ENDPOINT
+# ============================================================================
+
+@router.get("/in-game/{sport}")
+async def get_in_game_picks(sport: str):
+    """
+    v11.15: Live in-game betting picks for games that have already started.
+
+    Returns picks from best-bets that have game_status=MISSED_START,
+    meaning they are candidates for live/in-game betting.
+
+    For NBA, includes BallDontLie live context if configured (BDL_API_KEY).
+
+    Trigger Windows (NBA):
+    - HALFTIME: Between Q2 end and Q3 start
+    - LATE_GAME_Q4: Q4 with 10:00 or less remaining
+    - OVERTIME: Any overtime period
+
+    Response includes:
+    - live_picks: Picks for games that have started
+    - trigger_games: Games currently in valid trigger windows
+    - bdl_context: BallDontLie live data (if available)
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Get best-bets and filter to MISSED_START picks
+    best_bets_result = await get_best_bets(sport)
+
+    # Filter props and game picks to only MISSED_START
+    live_props = [
+        p for p in best_bets_result.get("props", {}).get("picks", [])
+        if p.get("game_status") == "MISSED_START"
+    ]
+    live_game_picks = [
+        p for p in best_bets_result.get("game_picks", {}).get("picks", [])
+        if p.get("game_status") == "MISSED_START"
+    ]
+
+    # Get BallDontLie context for NBA
+    bdl_context = None
+    if sport_lower == "nba":
+        try:
+            from alt_data_sources.balldontlie import (
+                is_balldontlie_configured,
+                get_nba_live_context
+            )
+            if is_balldontlie_configured():
+                bdl_context = await get_nba_live_context()
+        except ImportError:
+            logger.debug("BallDontLie module not available")
+        except Exception as e:
+            logger.warning("Failed to get BallDontLie context: %s", e)
+
+    # Build trigger games list from BDL context
+    trigger_games = []
+    if bdl_context and bdl_context.get("available"):
+        trigger_games = bdl_context.get("trigger_games", [])
+
+    return {
+        "sport": sport.upper(),
+        "source": "live_in_game_v11.15",
+        "live_props": {
+            "count": len(live_props),
+            "picks": live_props
+        },
+        "live_game_picks": {
+            "count": len(live_game_picks),
+            "picks": live_game_picks
+        },
+        "trigger_windows": {
+            "games_in_window": len(trigger_games),
+            "games": trigger_games
+        },
+        "bdl_context": bdl_context,
+        "bdl_configured": bdl_context is not None and bdl_context.get("available", False),
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 # ============================================================================
