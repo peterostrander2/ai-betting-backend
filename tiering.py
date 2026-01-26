@@ -345,3 +345,99 @@ def get_confidence_from_tier(tier: str) -> Tuple[str, int]:
     confidence = CONFIDENCE_MAP.get(tier, "LOW")
     score = CONFIDENCE_SCORE_MAP.get(confidence, 30)
     return confidence, score
+
+
+# =============================================================================
+# INJURY ENFORCEMENT
+# =============================================================================
+
+# Injury statuses that INVALIDATE a prop (must be excluded)
+INVALID_INJURY_STATUSES = {"OUT", "DOUBTFUL", "SUSPENDED", "DNP", "INACTIVE"}
+
+# Injury statuses that DOWNGRADE tier by one level
+DOWNGRADE_INJURY_STATUSES = {"QUESTIONABLE", "PROBABLE", "GTD"}
+
+# Tier downgrade mapping
+TIER_DOWNGRADE_MAP = {
+    "TITANIUM_SMASH": "GOLD_STAR",
+    "GOLD_STAR": "EDGE_LEAN",
+    "EDGE_LEAN": "MONITOR",
+    "MONITOR": "PASS",
+    "PASS": "PASS",
+    "ML_DOG_LOTTO": "MONITOR"
+}
+
+
+def check_injury_validity(injury_status: str) -> Tuple[bool, str]:
+    """
+    Check if a prop is valid based on injury status.
+
+    Args:
+        injury_status: Player's injury status string
+
+    Returns:
+        Tuple of (is_valid: bool, reason: str)
+    """
+    if not injury_status:
+        return True, "HEALTHY"
+
+    status_upper = injury_status.upper().strip()
+
+    if status_upper in INVALID_INJURY_STATUSES:
+        return False, f"INVALID_INJURY: {status_upper}"
+
+    if status_upper in DOWNGRADE_INJURY_STATUSES:
+        return True, f"DOWNGRADE: {status_upper}"
+
+    return True, "HEALTHY"
+
+
+def apply_injury_downgrade(tier: str, injury_status: str) -> Tuple[str, bool]:
+    """
+    Apply tier downgrade if player has QUESTIONABLE/PROBABLE status.
+
+    Args:
+        tier: Current tier
+        injury_status: Player's injury status
+
+    Returns:
+        Tuple of (new_tier: str, was_downgraded: bool)
+    """
+    if not injury_status:
+        return tier, False
+
+    status_upper = injury_status.upper().strip()
+
+    if status_upper in DOWNGRADE_INJURY_STATUSES:
+        new_tier = TIER_DOWNGRADE_MAP.get(tier, tier)
+        return new_tier, new_tier != tier
+
+    return tier, False
+
+
+def is_prop_invalid_injury(injury_status: str) -> bool:
+    """
+    Quick check if prop should be excluded due to injury.
+
+    Args:
+        injury_status: Player's injury status
+
+    Returns:
+        True if prop should be excluded
+    """
+    if not injury_status:
+        return False
+
+    return injury_status.upper().strip() in INVALID_INJURY_STATUSES
+
+
+# =============================================================================
+# DEFAULT VALUES
+# =============================================================================
+
+# Default Jarvis score when no triggers hit (ensures jarvis_rs always exists)
+DEFAULT_JARVIS_RS = 5.0
+
+# Default stack values
+DEFAULT_STACK_COMPLETE = True
+DEFAULT_PARTIAL_STACK_REASONS: List[str] = []

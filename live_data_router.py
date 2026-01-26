@@ -69,15 +69,37 @@ try:
         scale_ai_score_to_10,
         scale_jarvis_score_to_10,
         get_confidence_from_tier,
+        check_injury_validity,
+        apply_injury_downgrade,
+        is_prop_invalid_injury,
         ENGINE_VERSION as TIERING_VERSION,
         TIER_CONFIG,
-        TITANIUM_THRESHOLD
+        TITANIUM_THRESHOLD,
+        DEFAULT_JARVIS_RS
     )
     TIERING_AVAILABLE = True
 except ImportError:
     TIERING_AVAILABLE = False
     TIERING_VERSION = "0.0"
+    DEFAULT_JARVIS_RS = 5.0
     logger.warning("tiering module not available - using legacy tier logic")
+
+# Import Time Filters - TODAY-only slate gating (v11.08)
+try:
+    from time_filters import (
+        is_game_today,
+        is_team_in_slate,
+        validate_today_slate,
+        build_today_slate,
+        filter_today_games,
+        get_game_start_time_et,
+        get_today_date_str,
+        log_slate_summary
+    )
+    TIME_FILTERS_AVAILABLE = True
+except ImportError:
+    TIME_FILTERS_AVAILABLE = False
+    logger.warning("time_filters module not available - TODAY-only gating disabled")
 
 # Redis import with fallback
 try:
@@ -2003,9 +2025,14 @@ async def get_best_bets(sport: str):
 
         # --- v11.08 JARVIS RAW SCORE (0-10 scale for Titanium check) ---
         # jarvis_score is 0-2.0 from esoteric weights, scale to 0-10 for display and Titanium
-        jarvis_rs = scale_jarvis_score_to_10(jarvis_score, max_jarvis=2.0) if TIERING_AVAILABLE else jarvis_score * 5
-        jarvis_active = len(jarvis_triggers_hit) > 0
-        jarvis_reasons = [t.get("name", "Unknown") for t in jarvis_triggers_hit]
+        # IMPORTANT: If no triggers, default to 5.0 (neutral) so jarvis_rs always exists
+        jarvis_hits_count = len(jarvis_triggers_hit)
+        if jarvis_hits_count > 0:
+            jarvis_rs = scale_jarvis_score_to_10(jarvis_score, max_jarvis=2.0) if TIERING_AVAILABLE else jarvis_score * 5
+        else:
+            jarvis_rs = DEFAULT_JARVIS_RS if TIERING_AVAILABLE else 5.0
+        jarvis_active = jarvis_hits_count > 0
+        jarvis_reasons = [t.get("name", "Unknown") for t in jarvis_triggers_hit] if jarvis_hits_count > 0 else ["No triggers hit"]
 
         # --- v11.08 TITANIUM CHECK (3 of 4 engines >= 8.0) ---
         # Scale AI score from 0-8 to 0-10 for comparison
@@ -2067,48 +2094,83 @@ async def get_best_bets(sport: str):
             confidence_score_map = {"SMASH": 95, "HIGH": 80, "MEDIUM": 60, "LOW": 30}
             confidence_score = confidence_score_map.get(confidence, 30)
 
+        # Build smash_reasons for Titanium (which engines cleared 8.0)
+        smash_reasons = []
+        if titanium_triggered:
+            if ai_scaled >= 8.0:
+                smash_reasons.append(f"AI Engine: {round(ai_scaled, 2)}/10")
+            if research_score >= 8.0:
+                smash_reasons.append(f"Research Engine: {round(research_score, 2)}/10")
+            if esoteric_score >= 8.0:
+                smash_reasons.append(f"Esoteric Engine: {round(esoteric_score, 2)}/10")
+            if jarvis_rs >= 8.0:
+                smash_reasons.append(f"Jarvis Engine: {round(jarvis_rs, 2)}/10")
+
+        # Build penalties array from modifiers
+        penalties = []
+        if public_fade_mod < 0:
+            penalties.append({"name": "Public Fade", "magnitude": round(public_fade_mod, 2)})
+        if trap_mod < 0:
+            penalties.append({"name": "Large Spread Trap", "magnitude": round(trap_mod, 2)})
+
         return {
             "total_score": round(final_score, 2),
+            "final_score": round(final_score, 2),  # Alias for frontend
             "confidence": confidence,
-            "confidence_score": confidence_score,  # Numeric version for frontend
+            "confidence_score": confidence_score,
             "confluence_level": confluence_level,
             "bet_tier": bet_tier,
-            "tier": bet_tier.get("tier", "PASS"),  # Direct tier access for frontend
-            "action": bet_tier.get("action", "SKIP"),  # Direct action access
-            "units": bet_tier.get("units", bet_tier.get("unit_size", 0.0)),  # Direct units access
+            "tier": bet_tier.get("tier", "PASS"),
+            "action": bet_tier.get("action", "SKIP"),
+            "units": bet_tier.get("units", bet_tier.get("unit_size", 0.0)),
+            # v11.08 Engine scores (all 0-10 scale)
+            "ai_score": round(ai_scaled, 2),
+            "research_score": round(research_score, 2),
+            "esoteric_score": round(esoteric_score, 2),
+            "jarvis_score": round(jarvis_rs, 2),  # Alias for jarvis_rs
+            # Detailed breakdowns
             "scoring_breakdown": {
                 "research_score": round(research_score, 2),
                 "esoteric_score": round(esoteric_score, 2),
                 "ai_models": round(ai_score, 2),
-                "ai_score": round(ai_scaled, 2),  # Scaled 0-10 for frontend
+                "ai_score": round(ai_scaled, 2),
                 "pillars": round(pillar_score, 2),
                 "confluence_boost": confluence_boost,
                 "alignment_pct": confluence.get("alignment_pct", 0)
             },
             "esoteric_breakdown": {
-                "gematria": round(gematria_score, 2),       # 52% weight
-                "jarvis_triggers": round(jarvis_score, 2),  # 20% weight (raw 0-2)
-                "astro": round(astro_score, 2),             # 13% weight
-                "fibonacci": round(fib_score, 2),           # 5% weight
-                "vortex": round(vortex_score, 2),           # 5% weight
-                "daily_edge": round(daily_edge_score, 2),   # 5% weight
+                "gematria": round(gematria_score, 2),
+                "jarvis_triggers": round(jarvis_score, 2),
+                "astro": round(astro_score, 2),
+                "fibonacci": round(fib_score, 2),
+                "vortex": round(vortex_score, 2),
+                "daily_edge": round(daily_edge_score, 2),
                 "public_fade_mod": round(public_fade_mod, 2),
                 "trap_mod": round(trap_mod, 2)
             },
             "jarvis_triggers": jarvis_triggers_hit,
             "immortal_detected": immortal_detected,
-            # v11.08 JARVIS/TITANIUM fields for frontend
-            "jarvis_rs": round(jarvis_rs, 2),               # Jarvis score 0-10 scale
-            "jarvis_active": jarvis_active,                 # Boolean: any triggers hit
-            "jarvis_reasons": jarvis_reasons,               # List of trigger names
-            "titanium_triggered": titanium_triggered,       # Boolean: 3/4 engines >= 8.0
-            "titanium_explanation": titanium_explanation    # Human-readable explanation
+            # v11.08 JARVIS fields (MUST always exist)
+            "jarvis_rs": round(jarvis_rs, 2),
+            "jarvis_active": jarvis_active,
+            "jarvis_hits_count": jarvis_hits_count,
+            "jarvis_triggers_hit": jarvis_triggers_hit,
+            "jarvis_reasons": jarvis_reasons,
+            # v11.08 TITANIUM fields
+            "titanium_triggered": titanium_triggered,
+            "titanium_explanation": titanium_explanation,
+            "smash_reasons": smash_reasons,
+            # v11.08 Stack/Penalty fields
+            "penalties": penalties,
+            "stack_complete": True,  # Default - updated by caller if needed
+            "partial_stack_reasons": []  # Default - updated by caller if needed
         }
 
     # ============================================
     # CATEGORY 1: PLAYER PROPS
     # ============================================
     props_picks = []
+    invalid_injury_count = 0
     try:
         props_data = await get_props(sport)
         for game in props_data.get("data", []):
@@ -2117,6 +2179,12 @@ async def get_best_bets(sport: str):
             game_key = f"{away_team}@{home_team}"
             game_str = f"{home_team}{away_team}"
             sharp_signal = sharp_lookup.get(game_key, {})
+            commence_time = game.get("commence_time", "")
+
+            # Get start time in ET for display
+            start_time_et = ""
+            if TIME_FILTERS_AVAILABLE and commence_time:
+                start_time_et = get_game_start_time_et(commence_time)
 
             for prop in game.get("props", []):
                 player = prop.get("player", "Unknown")
@@ -2124,8 +2192,19 @@ async def get_best_bets(sport: str):
                 line = prop.get("line", 0)
                 odds = prop.get("odds", -110)
                 side = prop.get("side", "Over")
+                injury_status = prop.get("injury_status", "HEALTHY")
+                book_name = prop.get("book_name", prop.get("bookmaker", "Unknown"))
+                book_key = prop.get("book_key", "")
+                book_link = prop.get("link", prop.get("book_link", ""))
 
                 if side not in ["Over", "Under"]:
+                    continue
+
+                # v11.08 INJURY ENFORCEMENT: Skip OUT/DOUBTFUL/SUSPENDED players
+                if TIERING_AVAILABLE and is_prop_invalid_injury(injury_status):
+                    logger.info("INJURY EXCLUSION: Skipping %s prop for %s (status: %s)",
+                              market, player, injury_status)
+                    invalid_injury_count += 1
                     continue
 
                 # Calculate score with full esoteric integration
@@ -2141,23 +2220,53 @@ async def get_best_bets(sport: str):
                     public_pct=50
                 )
 
+                # v11.08 INJURY TIER DOWNGRADE: QUESTIONABLE/PROBABLE downgrades tier
+                tier = score_data.get("tier", "PASS")
+                was_downgraded = False
+                if TIERING_AVAILABLE and injury_status:
+                    tier, was_downgraded = apply_injury_downgrade(tier, injury_status)
+                    if was_downgraded:
+                        score_data["tier"] = tier
+                        # Update units based on new tier
+                        new_config = get_tier_config(tier)
+                        score_data["units"] = new_config.get("units", 0.0)
+                        score_data["action"] = new_config.get("action", "SKIP")
+                        if "penalties" not in score_data:
+                            score_data["penalties"] = []
+                        score_data["penalties"].append({
+                            "name": "Injury Downgrade",
+                            "magnitude": -1,
+                            "reason": f"Player is {injury_status}"
+                        })
+
                 props_picks.append({
+                    "sport": sport.upper(),
                     "player": player,
-                    "player_name": player,  # Alias for frontend compatibility
+                    "player_name": player,
                     "market": market,
-                    "stat_type": market,    # Alias for frontend compatibility
+                    "stat_type": market,
+                    "prop_type": market,
                     "line": line,
                     "side": side,
+                    "over_under": side,
                     "odds": odds,
                     "game": f"{away_team} @ {home_team}",
+                    "matchup": f"{away_team} @ {home_team}",
                     "home_team": home_team,
                     "away_team": away_team,
+                    "start_time_et": start_time_et,
                     "recommendation": f"{side.upper()} {line}",
+                    "injury_status": injury_status,
+                    "best_book": book_name,
+                    "best_book_link": book_link,
                     **score_data,
                     "sharp_signal": sharp_signal.get("signal_strength", "NONE")
                 })
     except HTTPException:
         logger.warning("Props fetch failed for %s", sport)
+
+    if invalid_injury_count > 0:
+        logger.info("INJURY ENFORCEMENT: Excluded %d props due to OUT/DOUBTFUL/SUSPENDED status", invalid_injury_count)
 
     # DEDUPLICATE: Only keep the best side (Over or Under) per player/market
     # This prevents contradictory picks like "Maxey Over 26.5" AND "Maxey Under 26.5"
@@ -2176,6 +2285,7 @@ async def get_best_bets(sport: str):
     # CATEGORY 2: GAME PICKS (Spreads, Totals, ML)
     # ============================================
     game_picks = []
+    ghost_game_count = 0
     sport_config = SPORT_MAPPINGS[sport_lower]
 
     try:
@@ -2193,14 +2303,33 @@ async def get_best_bets(sport: str):
 
         if resp and resp.status_code == 200:
             games = resp.json()
+
+            # v11.08 TODAY-ONLY FILTER: Exclude tomorrow games
+            if TIME_FILTERS_AVAILABLE:
+                today_games, excluded = validate_today_slate(games)
+                ghost_game_count = len(excluded)
+                games = today_games
+
             for game in games:
                 home_team = game.get("home_team", "")
                 away_team = game.get("away_team", "")
                 game_key = f"{away_team}@{home_team}"
                 game_str = f"{home_team}{away_team}"
                 sharp_signal = sharp_lookup.get(game_key, {})
+                commence_time = game.get("commence_time", "")
 
-                for bm in game.get("bookmakers", [])[:1]:  # Just use first book for now
+                # Get start time in ET for display
+                start_time_et = ""
+                if TIME_FILTERS_AVAILABLE and commence_time:
+                    start_time_et = get_game_start_time_et(commence_time)
+
+                # Track best odds across books
+                best_odds_by_market = {}  # market_key -> {outcome -> (odds, book_name, book_link)}
+
+                for bm in game.get("bookmakers", []):
+                    book_name = bm.get("title", "Unknown")
+                    book_key = bm.get("key", "")
+
                     for market in bm.get("markets", []):
                         market_key = market.get("key", "")
 
@@ -2209,16 +2338,37 @@ async def get_best_bets(sport: str):
                             odds = outcome.get("price", -110)
                             point = outcome.get("point")
 
+                            outcome_key = f"{market_key}:{pick_name}:{point}"
+                            if outcome_key not in best_odds_by_market or odds > best_odds_by_market[outcome_key][0]:
+                                best_odds_by_market[outcome_key] = (odds, book_name, "")
+
+                # Now build picks using best odds
+                for bm in game.get("bookmakers", [])[:1]:  # Use first book structure
+                    for market in bm.get("markets", []):
+                        market_key = market.get("key", "")
+
+                        for outcome in market.get("outcomes", []):
+                            pick_name = outcome.get("name", "")
+                            point = outcome.get("point")
+
+                            outcome_key = f"{market_key}:{pick_name}:{point}"
+                            best_odds, best_book, best_link = best_odds_by_market.get(
+                                outcome_key, (outcome.get("price", -110), "Unknown", "")
+                            )
+
                             # Build display info
                             if market_key == "spreads":
                                 pick_type = "SPREAD"
-                                display = f"{pick_name} {point:+.1f}" if point else pick_name
+                                pick_side = f"{pick_name} {point:+.1f}" if point else pick_name
+                                display = pick_side
                             elif market_key == "h2h":
                                 pick_type = "MONEYLINE"
-                                display = f"{pick_name} ML"
+                                pick_side = f"{pick_name} ML"
+                                display = pick_side
                             elif market_key == "totals":
                                 pick_type = "TOTAL"
-                                display = f"{pick_name} {point}" if point else pick_name
+                                pick_side = f"{pick_name} {point}" if point else pick_name
+                                display = pick_side
                             else:
                                 continue
 
@@ -2236,21 +2386,30 @@ async def get_best_bets(sport: str):
                             )
 
                             game_picks.append({
+                                "sport": sport.upper(),
                                 "pick_type": pick_type,
                                 "pick": display,
+                                "pick_side": pick_side,
                                 "team": pick_name if market_key != "totals" else None,
                                 "line": point,
-                                "odds": odds,
+                                "odds": best_odds,
                                 "game": f"{away_team} @ {home_team}",
+                                "matchup": f"{away_team} @ {home_team}",
                                 "home_team": home_team,
                                 "away_team": away_team,
+                                "start_time_et": start_time_et,
                                 "market": market_key,
                                 "recommendation": display,
+                                "best_book": best_book,
+                                "best_book_link": best_link,
                                 **score_data,
                                 "sharp_signal": sharp_signal.get("signal_strength", "NONE")
                             })
     except Exception as e:
         logger.warning("Game odds fetch failed: %s", e)
+
+    if ghost_game_count > 0:
+        logger.info("GHOST PREVENTION: Excluded %d games not scheduled for today", ghost_game_count)
 
     # Fallback to sharp money if no game picks
     if not game_picks and sharp_data.get("data"):
