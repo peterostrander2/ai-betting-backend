@@ -1,5 +1,5 @@
 """
-Bookie-o-em v14.1 - PRODUCTION HARDENED
+Bookie-o-em v14.7 - TITANIUM TIER SUPPORT
 FastAPI Backend Server
 
 Features:
@@ -7,32 +7,30 @@ Features:
 - Standalone Esoteric Edge (Gematria/Numerology/Astro)
 - v10.4 SCALAR-SAVANT (6 modules)
 - v11.0 OMNI-GLITCH (6 modules)
+- v11.08 TITANIUM SMASH tier (3/4 engines >= 8.0)
 - v13.0 GANN PHYSICS (3 modules)
 - v14.0 NOOSPHERE VELOCITY (3 modules - MAIN MODEL)
 - v14.1 Production hardening (retries, logging, rate-limit handling)
+- v14.7 Single source of truth for tiers (tiering.py)
 
 Total: 18 esoteric modules
 """
 
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from fastapi.responses import Response
 from live_data_router import router as live_router, close_shared_client
 import database
-from env_config import Config  # v10.82: Centralized version constants
-from daily_scheduler import scheduler_router, init_scheduler, get_scheduler, run_daily_cycle
+from daily_scheduler import scheduler_router, init_scheduler, get_scheduler
 from auto_grader import get_grader
 from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILABLE
 
-# v10.55: Jobs router - aliases for scheduler endpoints
-jobs_router = APIRouter(prefix="/jobs", tags=["jobs"])
-
 app = FastAPI(
     title="Bookie-o-em API",
-    description="AI Sports Prop Betting Service - v14.1 PRODUCTION HARDENED",
-    version="14.1"
+    description="AI Sports Prop Betting Service - v14.7 TITANIUM TIER SUPPORT",
+    version="14.7"
 )
 
 # CORS - Allow all origins for development
@@ -44,16 +42,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# v10.55: Jobs router endpoint
-@jobs_router.post("/run_daily_cycle")
-async def jobs_run_daily_cycle():
-    """Alias for /scheduler/run-daily-cycle"""
-    return await run_daily_cycle()
-
 # Include routers
 app.include_router(live_router)
 app.include_router(scheduler_router)
-app.include_router(jobs_router)
 
 # Startup event - initialize database and scheduler
 @app.on_event("startup")
@@ -94,82 +85,13 @@ async def root():
             "noosphere": "/live/noosphere/status",
             "gann_physics": "/live/gann-physics-status"
         },
-        "sports": ["nba", "nfl", "mlb", "nhl", "ncaab"]
+        "sports": ["nba", "nfl", "mlb", "nhl"]
     }
-
-# Centralized version info - imported from env_config (single source of truth)
-ENGINE_VERSION = Config.ENGINE_VERSION
-API_VERSION = Config.API_VERSION
-BUILD_COMMIT = "63a84fa"  # Updated on deploy
-
 
 # Health check at root level (some frontends expect this)
 @app.get("/health")
 async def health():
-    return {
-        "status": "healthy",
-        "version": API_VERSION,
-        "engine_version": ENGINE_VERSION,
-        "database": database.DB_ENABLED,
-        "tiering": "v10.55"  # Single source of truth
-    }
-
-
-# Detailed version/build endpoint for deployment verification
-@app.get("/version")
-async def version():
-    import subprocess
-    from datetime import datetime
-
-    # Try to get actual git commit hash
-    try:
-        git_hash = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            stderr=subprocess.DEVNULL
-        ).decode().strip()[:7]
-    except Exception:
-        git_hash = BUILD_COMMIT
-
-    return {
-        "api_version": API_VERSION,
-        "engine_version": ENGINE_VERSION,
-        "git_commit": git_hash,
-        "build_timestamp": datetime.utcnow().isoformat() + "Z",
-        "scoring_architecture": {
-            "version": "v10.80",
-            "ai_engine": "8-model ensemble (0-8 pts scaled to 0-10)",
-            "research_engine": "Sharp Split, RLM, Public Fade, Hospital Fade, Goldilocks (0-8 pts scaled to 0-10)",
-            "esoteric_engine": "Vedic Astro, Fibonacci, Vortex, Chrome Resonance, Daily Edge (NO Jarvis)",
-            "jarvis_engine": "Gematria, Sacred Triggers (47/88/201/33/93/322/2178), Mid-spread amplifier"
-        },
-        "glitch_protocol": {
-            "version": "v1.0",
-            "modules": ["esoteric", "physics", "hive_mind", "market", "math_glitch"],
-            "titanium_rule": "3-of-4 modules fired = TITANIUM_SMASH",
-            "harmonic_convergence": "AI >= 8.0 AND Esoteric >= 8.0 = +0.75 boost"
-        },
-        "tiering": {
-            "version": "v10.55",
-            "source": "tiering.py (single source of truth)",
-            "thresholds": {
-                "GOLD_STAR": ">= 7.5",
-                "EDGE_LEAN": ">= 6.5",
-                "MONITOR": ">= 5.5",
-                "PASS": "< 5.5"
-            }
-        },
-        "double_counting_rules": [
-            "Public Fade: Research ONLY (not Jarvis, not Esoteric)",
-            "Gematria: Jarvis ONLY (not Esoteric)",
-            "Fibonacci/Vortex: Esoteric ONLY (not Jarvis)",
-            "Mid-spread amplifier: Jarvis ONLY"
-        ],
-        "jason_sim": {
-            "version": "v2.0",
-            "type": "POST-PICK confluence layer",
-            "actions": ["BOOST", "DOWNGRADE", "BLOCK"]
-        }
-    }
+    return {"status": "healthy", "version": "14.2", "database": database.DB_ENABLED}
 
 
 # Database status endpoint
@@ -189,64 +111,6 @@ async def metrics():
 @app.get("/metrics/status")
 async def metrics_status():
     return get_metrics_status()
-
-
-# Public smoke test alert endpoint for UptimeRobot (no auth required)
-@app.api_route("/smoke-test/status", methods=["GET", "HEAD"])
-async def public_smoke_test_status():
-    """
-    Public alert endpoint for external monitoring (UptimeRobot, Cronitor, etc.)
-
-    Returns HTTP 200 if last smoke test passed, HTTP 503 if failed.
-    No authentication required.
-    """
-    import os
-    import json
-    from datetime import datetime, timedelta
-
-    log_dir = "./smoke_test_logs"
-    today = datetime.now().strftime("%Y-%m-%d")
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-
-    # Try today's log first, then yesterday's
-    for date_str in [today, yesterday]:
-        log_path = os.path.join(log_dir, f"smoke_test_{date_str}.json")
-        if os.path.exists(log_path):
-            try:
-                with open(log_path, "r") as f:
-                    results = json.load(f)
-
-                failed = results.get("failed", 0)
-                critical_failures = results.get("critical_failures", [])
-
-                if failed > 0 or len(critical_failures) > 0:
-                    return Response(
-                        content=json.dumps({
-                            "status": "alert",
-                            "failed_tests": failed,
-                            "critical_failures": critical_failures,
-                            "test_date": date_str,
-                            "message": "Smoke test failed"
-                        }),
-                        status_code=503,
-                        media_type="application/json"
-                    )
-                else:
-                    return {
-                        "status": "ok",
-                        "passed_tests": results.get("passed", 0),
-                        "test_date": date_str,
-                        "message": "All systems operational"
-                    }
-            except Exception:
-                pass
-
-    # No smoke test log found - return OK (system just deployed or logs cleared)
-    return {
-        "status": "ok",
-        "message": "No smoke test logs found - system healthy",
-        "next_scheduled": "5:30 AM ET daily"
-    }
 
 # Esoteric today energy (frontend expects this at /esoteric/today-energy)
 @app.get("/esoteric/today-energy")

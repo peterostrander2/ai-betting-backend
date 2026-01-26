@@ -1,179 +1,347 @@
 """
-tiering.py - Single Source of Truth for Tier Assignment
+TIERING.PY - SINGLE SOURCE OF TRUTH FOR BET TIERS
+=================================================
+v11.08 - Production tier system with Titanium support
 
-v11.10: TITANIUM_SMASH is a real tier (3/4 engines >= 8.0).
+This module is the ONLY place tier configurations should be defined.
+All other files should import from here via:
+    from tiering import tier_from_score, get_tier_config, check_titanium_rule
 
-Tier Thresholds (non-overlapping):
-- TITANIUM_SMASH: titanium_triggered=True (3/4 engines >= 8.0)
-- GOLD_STAR: score >= 7.5   (2 units, SMASH)
-- EDGE_LEAN: 6.5 <= score < 7.5   (1 unit, PLAY)
-- MONITOR:   5.5 <= score < 6.5   (0 units, WATCH)
-- PASS:      score < 5.5   (0 units, SKIP)
+TIER HIERARCHY (highest to lowest):
+1. TITANIUM_SMASH - Rare conviction tier (3/4 engines >= 8.0)
+2. GOLD_STAR - Maximum confidence (final_score >= 9.0)
+3. EDGE_LEAN - Strong edge (final_score >= 7.5)
+4. ML_DOG_LOTTO - NHL Dog Protocol special
+5. MONITOR - Track only (final_score >= 6.0)
+6. PASS - No action (final_score < 6.0)
 """
 
-from typing import Tuple, Dict, Optional, List
+from typing import Dict, Any, List, Optional, Tuple
 
 # =============================================================================
-# DEFAULT TIER THRESHOLDS - SINGLE SOURCE OF TRUTH
+# ENGINE VERSION
+# =============================================================================
+ENGINE_VERSION = "11.08"
+
+# =============================================================================
+# TITANIUM THRESHOLD CONFIGURATION
+# =============================================================================
+TITANIUM_THRESHOLD = 8.0  # Score threshold for each engine
+TITANIUM_MIN_ENGINES = 3  # Minimum engines meeting threshold (out of 4)
+TITANIUM_REQUIRES_JARVIS = True  # Prefer Jarvis as one of the qualifying engines
+
+# =============================================================================
+# TIER CONFIGURATION - SINGLE SOURCE OF TRUTH
+# =============================================================================
+TIER_CONFIG = {
+    "TITANIUM_SMASH": {
+        "units": 2.5,           # Base units (or Kelly * 1.25)
+        "kelly_multiplier": 1.25,
+        "action": "SMASH",
+        "badge": "TITANIUM SMASH",
+        "priority": 1,          # Highest priority
+        "threshold": None,      # Special rule: 3/4 engines >= 8.0
+        "description": "Rare conviction - 3 of 4 engines aligned at 8.0+"
+    },
+    "GOLD_STAR": {
+        "units": 2.0,
+        "kelly_multiplier": 1.0,
+        "action": "SMASH",
+        "badge": "GOLD STAR",
+        "priority": 2,
+        "threshold": 9.0,
+        "description": "Maximum confidence - all signals aligned"
+    },
+    "EDGE_LEAN": {
+        "units": 1.0,
+        "kelly_multiplier": 1.0,
+        "action": "PLAY",
+        "badge": "EDGE LEAN",
+        "priority": 3,
+        "threshold": 7.5,
+        "description": "Strong edge - most signals agree"
+    },
+    "ML_DOG_LOTTO": {
+        "units": 0.5,
+        "kelly_multiplier": 1.0,
+        "action": "LOTTO",
+        "badge": "ML DOG LOTTO",
+        "priority": 4,
+        "threshold": None,      # Special rule: NHL Dog Protocol
+        "description": "NHL underdog protocol triggered"
+    },
+    "MONITOR": {
+        "units": 0.0,
+        "kelly_multiplier": 0.0,
+        "action": "WATCH",
+        "badge": "MONITOR",
+        "priority": 5,
+        "threshold": 6.0,
+        "description": "Track but no action recommended"
+    },
+    "PASS": {
+        "units": 0.0,
+        "kelly_multiplier": 0.0,
+        "action": "SKIP",
+        "badge": "PASS",
+        "priority": 6,
+        "threshold": None,      # Everything below MONITOR
+        "description": "Insufficient edge - no action"
+    }
+}
+
+# =============================================================================
+# TIER HELPER FUNCTIONS
 # =============================================================================
 
-DEFAULT_TIERS: Dict[str, float] = {
-    "GOLD_STAR": 7.5,
-    "EDGE_LEAN": 6.5,
-    "MONITOR": 5.5,
-    "PASS": 0.0,  # Explicit floor - anything below MONITOR is PASS
-}
+def get_tier_config(tier: str) -> Dict[str, Any]:
+    """
+    Get full configuration for a tier.
 
-# Tier ordering for downgrade logic (lowest to highest)
-TIER_ORDER: List[str] = ["PASS", "MONITOR", "EDGE_LEAN", "GOLD_STAR", "TITANIUM_SMASH"]
+    Args:
+        tier: Tier name (e.g., "GOLD_STAR", "TITANIUM_SMASH")
 
-# Badges that should NOT appear in badges[] after tier downgrade
-TIER_BADGES: set = {"GOLD_STAR", "EDGE_LEAN", "TITANIUM_SMASH", "MONITOR", "PASS"}
-
-TIER_CONFIG: Dict[str, Dict] = {
-    "TITANIUM_SMASH": {"units": 2.5, "action": "SMASH", "badge": "TITANIUM SMASH"},
-    "GOLD_STAR": {"units": 2.0, "action": "SMASH", "badge": "GOLD STAR"},
-    "EDGE_LEAN": {"units": 1.0, "action": "PLAY", "badge": "EDGE LEAN"},
-    "MONITOR": {"units": 0.0, "action": "WATCH", "badge": "MONITOR"},
-    "PASS": {"units": 0.0, "action": "SKIP", "badge": "PASS"},
-}
+    Returns:
+        Dict with units, action, badge, kelly_multiplier, etc.
+    """
+    return TIER_CONFIG.get(tier, TIER_CONFIG["PASS"])
 
 
-def clamp_score(x) -> float:
-    """Clamp score to 0.0-10.0 range."""
-    try:
-        x = float(x)
-    except (TypeError, ValueError):
-        x = 0.0
-    return max(0.0, min(10.0, x))
+def check_titanium_rule(
+    ai_score: float,
+    research_score: float,
+    esoteric_score: float,
+    jarvis_score: float
+) -> Tuple[bool, str, List[str]]:
+    """
+    Check if Titanium tier is triggered.
+
+    TITANIUM RULE (v11.08):
+    - 3 of 4 engines must score >= 8.0
+    - Engines: AI (0-10 scaled), Research (0-10), Esoteric (0-10), Jarvis (0-10 scaled)
+    - PREFERRED: Jarvis should be one of the 3 qualifying engines
+
+    Args:
+        ai_score: AI model score (0-10 scale)
+        research_score: Research score (0-10 scale)
+        esoteric_score: Esoteric score (0-10 scale)
+        jarvis_score: Jarvis raw score (0-10 scale)
+
+    Returns:
+        Tuple of (triggered: bool, explanation: str, qualifying_engines: List[str])
+    """
+    threshold = TITANIUM_THRESHOLD
+
+    # Check each engine against threshold
+    engines = {
+        "AI": ai_score >= threshold,
+        "Research": research_score >= threshold,
+        "Esoteric": esoteric_score >= threshold,
+        "Jarvis": jarvis_score >= threshold
+    }
+
+    qualifying = [name for name, passed in engines.items() if passed]
+    qualifying_count = len(qualifying)
+
+    # Basic trigger: 3+ engines >= 8.0
+    basic_triggered = qualifying_count >= TITANIUM_MIN_ENGINES
+
+    # Check if Jarvis is among qualifying (preferred but not required)
+    jarvis_qualifies = engines["Jarvis"]
+
+    if basic_triggered:
+        if jarvis_qualifies:
+            explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} (Jarvis active)"
+        else:
+            explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} (Jarvis inactive)"
+        return True, explanation, qualifying
+    else:
+        explanation = f"Titanium: {qualifying_count}/4 engines >= {threshold} (need {TITANIUM_MIN_ENGINES})"
+        return False, explanation, qualifying
 
 
 def tier_from_score(
-    score: float,
-    tiers: Optional[Dict[str, float]] = None,
+    final_score: float,
+    confluence: Dict[str, Any] = None,
+    nhl_dog_protocol: bool = False,
     titanium_triggered: bool = False
-) -> Tuple[str, str]:
+) -> Dict[str, Any]:
     """
-    Return (tier, badge) from score. Single source of truth for tier assignment.
+    Determine bet tier based on final score and special conditions.
+
+    SINGLE SOURCE OF TRUTH for tier determination.
+
+    Priority order:
+    1. Titanium (if titanium_triggered=True)
+    2. NHL Dog Protocol (if nhl_dog_protocol=True)
+    3. Score-based tiers (GOLD_STAR, EDGE_LEAN, MONITOR, PASS)
 
     Args:
-        score: The final score (0.0-10.0)
-        tiers: Optional per-sport tier thresholds. NOT mutated.
-        titanium_triggered: If True, return TITANIUM_SMASH tier
+        final_score: The calculated final score (0-10 scale)
+        confluence: Optional confluence data with level and boost
+        nhl_dog_protocol: Whether NHL dog protocol is triggered
+        titanium_triggered: Whether Titanium rule is triggered (3/4 engines >= 8.0)
 
     Returns:
-        Tuple of (tier_name, badge_text)
-
-    Thresholds (default):
-        - TITANIUM_SMASH: titanium_triggered=True (overrides score-based tier)
-        - GOLD_STAR: >= 7.5
-        - EDGE_LEAN: >= 6.5
-        - MONITOR:   >= 5.5
-        - PASS:      < 5.5
+        Dict with tier, units, action, badge, explanation
     """
-    # Use defaults, merge with custom if provided (don't mutate input)
-    effective_tiers = DEFAULT_TIERS.copy()
-    if tiers is not None:
-        effective_tiers.update(tiers)
+    confluence = confluence or {}
+    confluence_level = confluence.get("level", "DIVERGENT")
 
-    score = clamp_score(score)
-
-    # v11.10: TITANIUM_SMASH is a real tier - triggered by 3/4 engines >= 8.0
+    # PRIORITY 1: Titanium (overrides everything except when explicitly not triggered)
     if titanium_triggered:
-        return ("TITANIUM_SMASH", "TITANIUM SMASH")
-    if score >= effective_tiers.get("GOLD_STAR", 7.5):
-        return ("GOLD_STAR", "GOLD STAR")
-    if score >= effective_tiers.get("EDGE_LEAN", 6.5):
-        return ("EDGE_LEAN", "EDGE LEAN")
-    if score >= effective_tiers.get("MONITOR", 5.5):
-        return ("MONITOR", "MONITOR")
-    return ("PASS", "PASS")
+        config = TIER_CONFIG["TITANIUM_SMASH"]
+        return {
+            "tier": "TITANIUM_SMASH",
+            "unit_size": config["units"],
+            "units": config["units"],
+            "action": config["action"],
+            "badge": config["badge"],
+            "kelly_multiplier": config["kelly_multiplier"],
+            "explanation": f"TITANIUM SMASH - Rare conviction. {config['units']} unit play.",
+            "final_score": round(final_score, 2),
+            "confluence_level": confluence_level,
+            "nhl_dog_protocol": nhl_dog_protocol,
+            "titanium_triggered": True
+        }
+
+    # PRIORITY 2: NHL Dog Protocol
+    if nhl_dog_protocol:
+        config = TIER_CONFIG["ML_DOG_LOTTO"]
+        return {
+            "tier": "ML_DOG_LOTTO",
+            "unit_size": config["units"],
+            "units": config["units"],
+            "action": config["action"],
+            "badge": config["badge"],
+            "kelly_multiplier": config["kelly_multiplier"],
+            "explanation": f"NHL Dog Protocol triggered. {config['units']} unit ML dog lotto play.",
+            "final_score": round(final_score, 2),
+            "confluence_level": confluence_level,
+            "nhl_dog_protocol": True,
+            "titanium_triggered": False
+        }
+
+    # PRIORITY 3: Score-based tiers
+    if final_score >= 9.0:
+        tier = "GOLD_STAR"
+    elif final_score >= 7.5:
+        tier = "EDGE_LEAN"
+    elif final_score >= 6.0:
+        tier = "MONITOR"
+    else:
+        tier = "PASS"
+
+    config = TIER_CONFIG[tier]
+    return {
+        "tier": tier,
+        "unit_size": config["units"],
+        "units": config["units"],
+        "action": config["action"],
+        "badge": config["badge"],
+        "kelly_multiplier": config["kelly_multiplier"],
+        "explanation": f"{config['badge']} - {config['description']}. {config['units']} unit play." if config['units'] > 0 else f"{config['badge']} - {config['description']}.",
+        "final_score": round(final_score, 2),
+        "confluence_level": confluence_level,
+        "nhl_dog_protocol": nhl_dog_protocol,
+        "titanium_triggered": False
+    }
 
 
-def get_tier_config(tier: str) -> Dict:
-    """Get unit sizing and action for a tier."""
-    return TIER_CONFIG.get(tier, TIER_CONFIG["PASS"]).copy()
-
-
-def get_units_for_tier(tier: str) -> float:
-    """Get recommended unit size for a tier."""
-    return TIER_CONFIG.get(tier, {}).get("units", 0.0)
-
-
-def get_action_for_tier(tier: str) -> str:
-    """Get recommended action for a tier."""
-    return TIER_CONFIG.get(tier, {}).get("action", "SKIP")
-
-
-def normalize_confidence(confidence) -> Tuple[str, int]:
+def calculate_kelly_units(
+    base_units: float,
+    tier: str,
+    kelly_bet_size: Optional[float] = None,
+    odds: Optional[int] = None
+) -> float:
     """
-    Normalize confidence to (label, pct) tuple.
+    Calculate final unit size using Kelly criterion if available.
+
+    For TITANIUM_SMASH: Apply 1.25x multiplier to Kelly units
+    For other tiers: Use Kelly units or fall back to tier-based units
 
     Args:
-        confidence: Can be string ("HIGH", "MED", "LOW") or number (0-100)
+        base_units: Default units from tier config
+        tier: The tier name
+        kelly_bet_size: Kelly optimal bet size (0-1 range, e.g., 0.05 = 5%)
+        odds: American odds (for Kelly calculation context)
 
     Returns:
-        Tuple of (confidence_label, confidence_pct)
+        Final unit size
     """
-    # If it's a string label
-    if isinstance(confidence, str):
-        label = confidence.upper()
-        if label in ("HIGH", "SMASH"):
-            return ("HIGH", 80)
-        elif label in ("MED", "MEDIUM", "MODERATE"):
-            return ("MED", 60)
-        elif label in ("LOW",):
-            return ("LOW", 40)
-        else:
-            return ("MED", 50)
+    config = get_tier_config(tier)
 
-    # If it's a number
-    try:
-        pct = int(confidence)
-        pct = max(0, min(100, pct))
-        if pct >= 70:
-            return ("HIGH", pct)
-        elif pct >= 50:
-            return ("MED", pct)
-        else:
-            return ("LOW", pct)
-    except (TypeError, ValueError):
-        return ("MED", 50)
+    if kelly_bet_size is not None and kelly_bet_size > 0:
+        # Convert Kelly percentage to units (assuming 1% bankroll = 0.5 units baseline)
+        kelly_units = kelly_bet_size * 50  # 5% Kelly = 2.5 units base
+
+        # Apply tier-specific multiplier
+        multiplier = config.get("kelly_multiplier", 1.0)
+        final_units = kelly_units * multiplier
+
+        # Cap at reasonable maximum
+        max_units = 5.0 if tier == "TITANIUM_SMASH" else 3.0
+        return min(final_units, max_units)
+
+    # Fallback to tier-based units
+    return base_units
 
 
-def filter_tier_badges(badges: list, current_tier: str) -> list:
+def scale_ai_score_to_10(ai_score: float, max_ai: float = 8.0) -> float:
     """
-    Remove tier-like badges that contradict current tier.
+    Scale AI score from 0-8 range to 0-10 range for Titanium comparison.
 
     Args:
-        badges: List of badge strings
-        current_tier: The actual tier after all downgrades
+        ai_score: Raw AI score (0-8 range)
+        max_ai: Maximum possible AI score (default 8.0)
 
     Returns:
-        Filtered list with only non-tier badges
+        Scaled score (0-10 range)
     """
-    if not badges:
-        return []
-
-    # Remove any tier-like badges
-    filtered = [b for b in badges if b not in TIER_BADGES]
-    return filtered
+    return (ai_score / max_ai) * 10.0
 
 
-def downgrade_tier(current_tier: str, steps: int = 1) -> str:
+def scale_jarvis_score_to_10(jarvis_score: float, max_jarvis: float = 2.0) -> float:
     """
-    Downgrade tier by N steps.
+    Scale Jarvis score from 0-2 range to 0-10 range for Titanium comparison.
 
     Args:
-        current_tier: Current tier name
-        steps: Number of steps to downgrade (default 1)
+        jarvis_score: Raw Jarvis score (0-2 range typically)
+        max_jarvis: Maximum possible Jarvis score (default 2.0)
 
     Returns:
-        New tier name after downgrade
+        Scaled score (0-10 range)
     """
-    if current_tier not in TIER_ORDER:
-        return "PASS"
+    return (jarvis_score / max_jarvis) * 10.0
 
-    current_idx = TIER_ORDER.index(current_tier)
-    new_idx = max(0, current_idx - steps)
-    return TIER_ORDER[new_idx]
+
+# =============================================================================
+# CONFIDENCE MAPPING (backwards compatibility)
+# =============================================================================
+CONFIDENCE_MAP = {
+    "TITANIUM_SMASH": "SMASH",
+    "GOLD_STAR": "SMASH",
+    "EDGE_LEAN": "HIGH",
+    "ML_DOG_LOTTO": "MEDIUM",
+    "MONITOR": "MEDIUM",
+    "PASS": "LOW"
+}
+
+CONFIDENCE_SCORE_MAP = {
+    "SMASH": 95,
+    "HIGH": 80,
+    "MEDIUM": 60,
+    "LOW": 30
+}
+
+
+def get_confidence_from_tier(tier: str) -> Tuple[str, int]:
+    """
+    Get confidence level and score from tier name.
+
+    Returns:
+        Tuple of (confidence_level: str, confidence_score: int)
+    """
+    confidence = CONFIDENCE_MAP.get(tier, "LOW")
+    score = CONFIDENCE_SCORE_MAP.get(confidence, 30)
+    return confidence, score
