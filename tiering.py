@@ -1,10 +1,10 @@
 """
 tiering.py - Single Source of Truth for Tier Assignment
 
-v11.10: TITANIUM_SMASH is a real tier (3/4 engines >= 8.0).
+v10.86: Added TITANIUM_SMASH, confidence normalization, tier ordering.
 
 Tier Thresholds (non-overlapping):
-- TITANIUM_SMASH: titanium_triggered=True (3/4 engines >= 8.0)
+- TITANIUM_SMASH: score >= 9.0 AND titanium_triggered (2.5 units, SMASH)
 - GOLD_STAR: score >= 7.5   (2 units, SMASH)
 - EDGE_LEAN: 6.5 <= score < 7.5   (1 unit, PLAY)
 - MONITOR:   5.5 <= score < 6.5   (0 units, WATCH)
@@ -18,6 +18,7 @@ from typing import Tuple, Dict, Optional, List
 # =============================================================================
 
 DEFAULT_TIERS: Dict[str, float] = {
+    "TITANIUM_SMASH": 9.0,  # Requires titanium_triggered flag too
     "GOLD_STAR": 7.5,
     "EDGE_LEAN": 6.5,
     "MONITOR": 5.5,
@@ -59,13 +60,13 @@ def tier_from_score(
     Args:
         score: The final score (0.0-10.0)
         tiers: Optional per-sport tier thresholds. NOT mutated.
-        titanium_triggered: If True, return TITANIUM_SMASH tier
+        titanium_triggered: If True and score >= 9.0, return TITANIUM_SMASH
 
     Returns:
         Tuple of (tier_name, badge_text)
 
     Thresholds (default):
-        - TITANIUM_SMASH: titanium_triggered=True (overrides score-based tier)
+        - TITANIUM_SMASH: >= 9.0 AND titanium_triggered
         - GOLD_STAR: >= 7.5
         - EDGE_LEAN: >= 6.5
         - MONITOR:   >= 5.5
@@ -78,8 +79,8 @@ def tier_from_score(
 
     score = clamp_score(score)
 
-    # v11.10: TITANIUM_SMASH is a real tier - triggered by 3/4 engines >= 8.0
-    if titanium_triggered:
+    # TITANIUM_SMASH requires both high score AND titanium flag
+    if titanium_triggered and score >= effective_tiers.get("TITANIUM_SMASH", 9.0):
         return ("TITANIUM_SMASH", "TITANIUM SMASH")
     if score >= effective_tiers.get("GOLD_STAR", 7.5):
         return ("GOLD_STAR", "GOLD STAR")
