@@ -1958,6 +1958,7 @@ async def get_best_bets(sport: str):
         daily_edge_score = 0.0     # 0-0.5 pts (5%)
         public_fade_mod = 0.0      # Modifier (can be negative)
         trap_mod = 0.0             # Modifier (negative)
+        mid_spread_mod = 0.0       # Modifier for mid-spread signal
 
         jarvis_triggers_hit = []
         immortal_detected = False
