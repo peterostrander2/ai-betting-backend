@@ -142,6 +142,21 @@ except ImportError:
     RESULT_FETCHER_AVAILABLE = False
     logger.warning("result_fetcher module not available - auto-grading disabled")
 
+# Import Unified Player Identity Resolver (v14.9 - CRITICAL for prop accuracy)
+try:
+    from identity import (
+        resolve_player,
+        get_player_resolver,
+        get_player_index,
+        normalize_player_name,
+        normalize_team_name,
+        ResolvedPlayer,
+    )
+    IDENTITY_RESOLVER_AVAILABLE = True
+except ImportError:
+    IDENTITY_RESOLVER_AVAILABLE = False
+    logger.warning("identity module not available - player resolution disabled")
+
 # Redis import with fallback
 try:
     import redis
@@ -2415,10 +2430,64 @@ async def get_best_bets(sport: str):
                 if TIME_FILTERS_AVAILABLE and commence_time:
                     game_status = get_game_status(commence_time)
 
+                # v14.9 UNIFIED PLAYER IDENTITY RESOLUTION
+                # Resolve player to canonical ID for accurate grading
+                canonical_player_id = None
+                provider_ids = {}
+                player_position = None
+                resolved_injury_status = injury_status
+                prop_blocked = False
+                blocked_reason = None
+
+                if IDENTITY_RESOLVER_AVAILABLE:
+                    try:
+                        # Determine team hint from home/away based on player roster
+                        team_hint = home_team  # Default to home team
+                        resolved = await resolve_player(
+                            sport=sport.upper(),
+                            raw_name=player,
+                            team_hint=team_hint,
+                            event_id=game_key
+                        )
+
+                        if resolved.is_resolved:
+                            canonical_player_id = resolved.canonical_player_id
+                            provider_ids = resolved.provider_ids
+                            player_position = resolved.position
+
+                            # Check injury guard from resolver
+                            resolver = get_player_resolver()
+                            # For TITANIUM tier, don't allow QUESTIONABLE
+                            allow_questionable = score_data.get("tier", "PASS") != "TITANIUM_SMASH"
+                            resolved = await resolver.check_injury_guard(resolved, allow_questionable=allow_questionable)
+
+                            if resolved.is_blocked:
+                                prop_blocked = True
+                                blocked_reason = resolved.blocked_reason
+                                logger.info("PLAYER GUARD: Blocking prop for %s (reason: %s)", player, blocked_reason)
+                    except Exception as e:
+                        logger.warning("Player resolution failed for %s: %s", player, e)
+                        # Generate fallback canonical ID
+                        canonical_player_id = f"{sport.upper()}:NAME:{normalize_player_name(player) if IDENTITY_RESOLVER_AVAILABLE else player.lower().replace(' ', '_')}|{home_team.lower().replace(' ', '_')}"
+
+                # Skip blocked props
+                if prop_blocked:
+                    continue
+
+                # If no canonical ID generated, create fallback
+                if not canonical_player_id:
+                    safe_name = player.lower().replace(" ", "_").replace("'", "").replace(".", "")
+                    safe_team = home_team.lower().replace(" ", "_")
+                    canonical_player_id = f"{sport.upper()}:NAME:{safe_name}|{safe_team}"
+
                 props_picks.append({
                     "sport": sport.upper(),
                     "player": player,
                     "player_name": player,
+                    # v14.9 CANONICAL PLAYER ID - required for grading
+                    "canonical_player_id": canonical_player_id,
+                    "provider_ids": provider_ids,
+                    "position": player_position,
                     "market": market,
                     "stat_type": market,
                     "prop_type": market,
@@ -2434,7 +2503,7 @@ async def get_best_bets(sport: str):
                     "game_status": game_status,
                     "is_live_bet_candidate": game_status == "MISSED_START",
                     "recommendation": f"{side.upper()} {line}",
-                    "injury_status": injury_status,
+                    "injury_status": resolved_injury_status,
                     "best_book": book_name,
                     "best_book_link": book_link,
                     **score_data,

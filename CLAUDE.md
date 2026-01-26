@@ -934,3 +934,194 @@ CLAUDE.md             (MODIFIED - Session log)
 ```
 
 ---
+
+## Session Log: January 26, 2026 - Unified Player ID Resolver + BallDontLie GOAT
+
+### What Was Done
+
+**1. Unified Player Identity Resolver (CRITICAL FIX)**
+
+Created new `identity/` module with 3 core files:
+
+| File | Purpose |
+|------|---------|
+| `identity/name_normalizer.py` | Name standardization (lowercase, accents, suffixes, nicknames) |
+| `identity/player_index_store.py` | In-memory cache with TTL (roster 6h, injuries 30m, props 5m) |
+| `identity/player_resolver.py` | Main resolver with multi-strategy matching |
+
+**Canonical Player ID Format:**
+- NBA with BallDontLie: `NBA:BDL:{player_id}`
+- Fallback: `{SPORT}:NAME:{normalized_name}|{team_hint}`
+
+**Resolver Strategies (in order):**
+1. Provider ID lookup (fastest)
+2. Exact name match in cache
+3. Fuzzy name search
+4. BallDontLie API lookup (NBA only)
+5. Fallback name-based ID
+
+**2. BallDontLie GOAT Tier Integration**
+
+Updated `alt_data_sources/balldontlie.py` with GOAT subscription key:
+```python
+BALLDONTLIE_API_KEY = "1cbb16a0-3060-4caf-ac17-ff11352540bc"
+```
+
+Added new GOAT-tier functions:
+- `search_player()` - Player lookup by name
+- `get_player_season_averages()` - Season stats
+- `get_player_game_stats()` - Box score for specific game
+- `get_box_score()` - Full game box score
+- `grade_nba_prop()` - Direct prop grading function
+
+**3. Live Data Router Integration**
+
+Modified `live_data_router.py`:
+- Added identity resolver import
+- Props now include `canonical_player_id` and `provider_ids`
+- Injury guard uses resolver for blocking OUT/DOUBTFUL players
+- Position data included when available
+
+**4. Result Fetcher Updates**
+
+Modified `result_fetcher.py`:
+- Uses BallDontLie GOAT key for NBA grading
+- Imports identity resolver for player matching
+- Fallback normalizers if identity module unavailable
+
+**5. Tests Added**
+
+Created `tests/test_identity.py` with comprehensive tests:
+- Name normalizer tests (suffixes, accents, nicknames)
+- Team normalizer tests
+- Player index store tests
+- Player resolver tests (exact, fuzzy, ambiguous)
+- Injury guard tests
+- Prop availability guard tests
+
+### Files Created
+
+```
+identity/__init__.py           (NEW - Module exports)
+identity/name_normalizer.py    (NEW - Name standardization)
+identity/player_index_store.py (NEW - Caching layer)
+identity/player_resolver.py    (NEW - Main resolver)
+tests/test_identity.py         (NEW - Unit tests)
+```
+
+### Files Modified
+
+```
+live_data_router.py            (MODIFIED - Identity resolver integration)
+alt_data_sources/balldontlie.py (MODIFIED - GOAT key + grading functions)
+result_fetcher.py              (MODIFIED - GOAT key + identity imports)
+CLAUDE.md                      (MODIFIED - Session log)
+```
+
+### Prop Output Schema (v14.9)
+
+Each prop pick now includes:
+
+```json
+{
+  "player_name": "LeBron James",
+  "canonical_player_id": "NBA:BDL:237",
+  "provider_ids": {
+    "balldontlie": 237,
+    "odds_api": null,
+    "playbook": null
+  },
+  "position": "F",
+  "prop_type": "points",
+  "line": 25.5,
+  "side": "Over",
+  "tier": "GOLD_STAR",
+  "ai_score": 8.2,
+  "research_score": 7.8,
+  "esoteric_score": 7.5,
+  "jarvis_score": 6.0,
+  "final_score": 9.1,
+  "jason_ran": true,
+  "jason_sim_boost": 0.3,
+  ...
+}
+```
+
+### API Keys Required
+
+| API | Key | Purpose |
+|-----|-----|---------|
+| BallDontLie GOAT | `BALLDONTLIE_API_KEY` | NBA stats, grading, player lookup |
+| Odds API | `ODDS_API_KEY` | Odds, lines, props, game scores |
+| Playbook API | `PLAYBOOK_API_KEY` | Splits, injuries, sharp money |
+
+---
+
+## Unified Player ID Resolver (v14.9)
+
+### Overview
+
+The Unified Player ID Resolver prevents:
+- Wrong player props
+- Ghost props
+- Grading mismatches
+- "Player not listed" failures
+- Name collisions (J. Williams, etc.)
+
+### Usage
+
+```python
+from identity import resolve_player, ResolvedPlayer
+
+# Async resolution
+resolved = await resolve_player(
+    sport="NBA",
+    raw_name="LeBron James",
+    team_hint="Lakers",
+    event_id="game_123"
+)
+
+print(resolved.canonical_player_id)  # "NBA:BDL:237"
+print(resolved.confidence)           # 1.0
+print(resolved.match_method)         # MatchMethod.API_LOOKUP
+```
+
+### Injury Guard
+
+```python
+resolver = get_player_resolver()
+
+# Check if player is blocked due to injury
+resolved = await resolver.check_injury_guard(
+    resolved,
+    allow_questionable=False  # For TITANIUM tier
+)
+
+if resolved.is_blocked:
+    print(f"Blocked: {resolved.blocked_reason}")  # "PLAYER_OUT"
+```
+
+### Prop Availability Guard
+
+```python
+# Check if prop exists at books
+resolved = await resolver.check_prop_availability(
+    resolved,
+    prop_type="points",
+    event_id="game_123"
+)
+
+if not resolved.prop_available:
+    print(f"Blocked: {resolved.blocked_reason}")  # "PROP_NOT_LISTED"
+```
+
+### TTL Cache Rules
+
+| Data Type | TTL | Reason |
+|-----------|-----|--------|
+| Roster | 6 hours | Players don't change often |
+| Injuries | 30 minutes | Status can change pre-game |
+| Props availability | 5 minutes | Books update frequently |
+| Live state | 1 minute | Real-time data |
+
+---

@@ -24,6 +24,39 @@ import pytz
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Import identity resolver for canonical player ID matching
+try:
+    from identity import (
+        normalize_player_name,
+        normalize_team_name,
+        get_player_resolver,
+        resolve_player,
+    )
+    IDENTITY_RESOLVER_AVAILABLE = True
+except ImportError:
+    IDENTITY_RESOLVER_AVAILABLE = False
+
+    def normalize_player_name(name):
+        """Fallback normalizer."""
+        return name.lower().replace(".", "").replace("'", "").strip() if name else ""
+
+    def normalize_team_name(name):
+        """Fallback team normalizer."""
+        return name.lower().strip() if name else ""
+
+# Import BallDontLie integration for NBA stats
+try:
+    from alt_data_sources.balldontlie import (
+        get_player_game_stats as bdl_get_player_game_stats,
+        grade_nba_prop as bdl_grade_nba_prop,
+        get_games_by_date as bdl_get_games_by_date,
+        is_balldontlie_configured,
+    )
+    BALLDONTLIE_MODULE_AVAILABLE = True
+except ImportError:
+    BALLDONTLIE_MODULE_AVAILABLE = False
+    logger.warning("balldontlie module not available - using fallback")
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -311,10 +344,15 @@ async def fetch_player_stats_playbook(
 
 
 # =============================================================================
-# BALLDONTLIE API - NBA PLAYER STATS (BACKUP)
+# BALLDONTLIE API - NBA PLAYER STATS (GOAT TIER - PRIMARY FOR NBA)
 # =============================================================================
 
-BALLDONTLIE_API_KEY = os.getenv("BALLDONTLIE_API_KEY", "")
+# GOAT Tier subscription key - premium access for all NBA grading
+BALLDONTLIE_API_KEY = os.getenv(
+    "BALLDONTLIE_API_KEY",
+    "1cbb16a0-3060-4caf-ac17-ff11352540bc"  # GOAT tier key
+)
+BALLDONTLIE_BASE_URL = "https://api.balldontlie.io/v1"
 
 
 async def fetch_nba_player_stats(date: str) -> List[PlayerStatline]:
