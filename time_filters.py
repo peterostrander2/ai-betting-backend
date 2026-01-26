@@ -96,14 +96,12 @@ def parse_game_time(time_str: str) -> Optional[datetime]:
         if "Z" in time_str:
             time_str = time_str.replace("Z", "+00:00")
 
-        # Try parsing with timezone
-        if "+" in time_str or time_str.endswith("Z"):
-            dt = datetime.fromisoformat(time_str)
-        else:
-            # Naive datetime - assume UTC
-            dt = datetime.fromisoformat(time_str)
-            if PYTZ_AVAILABLE and UTC:
-                dt = UTC.localize(dt)
+        # Parse the datetime string
+        dt = datetime.fromisoformat(time_str)
+
+        # If naive datetime, assume UTC and localize
+        if dt.tzinfo is None and PYTZ_AVAILABLE and UTC:
+            dt = UTC.localize(dt)
 
         # Convert to ET
         if PYTZ_AVAILABLE and ET and dt.tzinfo:
