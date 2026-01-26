@@ -473,10 +473,12 @@ async def fetch_nba_stats_espn(date: str) -> List[PlayerStatline]:
                     team_name = team_data.get("team", {}).get("displayName", "")
 
                     for category in team_data.get("statistics", []):
-                        if category.get("name") != "starters" and category.get("name") != "bench":
+                        # Process all categories (starters, bench, or unnamed)
+                        athletes = category.get("athletes", [])
+                        if not athletes:
                             continue
 
-                        for athlete in category.get("athletes", []):
+                        for athlete in athletes:
                             player = athlete.get("athlete", {})
                             player_name = player.get("displayName", "")
                             stats_raw = athlete.get("stats", [])
