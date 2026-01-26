@@ -94,6 +94,7 @@ try:
         filter_today_games,
         get_game_start_time_et,
         get_today_date_str,
+        get_today_range_et,
         log_slate_summary,
         is_game_started,
         get_game_status
