@@ -1864,20 +1864,22 @@ def clamp_score(x: float) -> float:
     return max(0.0, min(10.0, x))
 
 
-def tier_from_score(score: float, tiers: dict = None) -> tuple:
+def tier_from_score(score: float, tiers: dict = None, titanium_triggered: bool = False) -> tuple:
     """
     Return (tier, badge) from score. Single source of truth for tier assignment.
 
     v10.55: Delegates to tiering.py module for consistency.
+    v11.10: TITANIUM_SMASH is a real tier (3/4 engines >= 8.0).
 
     Default Thresholds:
+    - TITANIUM_SMASH: titanium_triggered=True
     - GOLD_STAR: >= 7.5
     - EDGE_LEAN: >= 6.5
     - MONITOR: >= 5.5
     - PASS: < 5.5
     """
     # v10.55: Delegate to tiering module (single source of truth)
-    return tiering_tier_from_score(score, tiers)
+    return tiering_tier_from_score(score, tiers, titanium_triggered=titanium_triggered)
 
 
 def order_reasons(reasons: list) -> list:
