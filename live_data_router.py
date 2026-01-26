@@ -1882,42 +1882,72 @@ async def get_best_bets(sport: str):
             "daily_edge": 0.05   # 5%  - Daily energy
         }
 
-        # --- RESEARCH SCORE CALCULATION ---
-        ai_score = base_ai
+        # --- ENGINE SEPARATION (v14.9 Clean Architecture) ---
+        # AI Score: Pure model output (0-8 scale) - NO external signals
+        # Research Score: Sharp money + Line variance + Public betting (0-10 scale)
+        # Esoteric Score: Gematria + JARVIS + Astro + Numerology (0-10 scale)
+        # The three engines are then combined for final score
+
         research_reasons = []
         pillars_passed = []
         pillars_failed = []
 
+        # --- AI SCORE (Pure Model - 0-8 scale) ---
+        # This is the base AI prediction, not influenced by market signals
+        ai_score = min(8.0, base_ai)
+
+        # --- RESEARCH SCORE (Market Intelligence - 0-10 scale) ---
+        # Pillar 1: Sharp Money Detection (0-3 pts)
+        sharp_boost = 0.0
         if sharp_signal.get("signal_strength") == "STRONG":
-            ai_score += 2.0
-            research_reasons.append("Sharp signal STRONG (+2.0)")
+            sharp_boost = 3.0
+            research_reasons.append("Sharp signal STRONG (+3.0)")
             pillars_passed.append("Sharp Money Detection")
         elif sharp_signal.get("signal_strength") == "MODERATE":
-            ai_score += 1.0
-            research_reasons.append("Sharp signal MODERATE (+1.0)")
+            sharp_boost = 1.5
+            research_reasons.append("Sharp signal MODERATE (+1.5)")
             pillars_passed.append("Sharp Money Detection")
         else:
             research_reasons.append("No sharp signal detected")
             pillars_failed.append("Sharp Money Detection")
 
-        ai_score = min(8.0, ai_score)
-
+        # Pillar 2: Line Movement/Value (0-3 pts)
         line_variance = sharp_signal.get("line_variance", 0)
-        if line_variance > 1.0:
-            pillar_score = 3.0
-            research_reasons.append(f"Line variance {line_variance:.1f}pts (high)")
+        line_boost = 0.0
+        if line_variance > 1.5:
+            line_boost = 3.0
+            research_reasons.append(f"Line variance {line_variance:.1f}pts (strong RLM)")
             pillars_passed.append("Reverse Line Movement")
             pillars_passed.append("Line Value Detection")
+        elif line_variance > 0.5:
+            line_boost = 1.5
+            research_reasons.append(f"Line variance {line_variance:.1f}pts (moderate)")
+            pillars_passed.append("Line Value Detection")
         else:
-            pillar_score = 2.0
-            research_reasons.append(f"Line variance {line_variance:.1f}pts (low)")
+            research_reasons.append(f"Line variance {line_variance:.1f}pts (minimal)")
             pillars_failed.append("Reverse Line Movement")
 
-        pillar_score = min(8.0, pillar_score)
+        # Pillar 3: Public Betting Fade (0-2 pts) - fading heavy public action
+        public_pct_val = sharp_signal.get("public_pct", 50)
+        public_boost = 0.0
+        if public_pct_val >= 75:  # Heavy public on one side = fade potential
+            public_boost = 2.0
+            research_reasons.append(f"Public at {public_pct_val}% (fade signal)")
+            pillars_passed.append("Public Fade Opportunity")
+        elif public_pct_val >= 65:
+            public_boost = 1.0
+            research_reasons.append(f"Public at {public_pct_val}% (mild fade)")
 
-        # Research score: (ai + pillar) / 16 * 10 = normalized to 0-10
-        research_score = (ai_score + pillar_score) / 16 * 10
-        research_reasons.append(f"Research: {round(research_score, 2)}/10 (AI:{round(ai_score, 1)} + Pillars:{round(pillar_score, 1)})")
+        # Pillar 4: Base research floor (2 pts baseline)
+        base_research = 2.0
+
+        # Research score: Sum of pillars normalized to 0-10
+        # Max possible: 3 (sharp) + 3 (line) + 2 (public) + 2 (base) = 10
+        research_score = min(10.0, base_research + sharp_boost + line_boost + public_boost)
+        research_reasons.append(f"Research: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + Base:{base_research})")
+
+        # Pillar score for backwards compatibility (used in scoring_breakdown)
+        pillar_score = sharp_boost + line_boost + public_boost
 
         # --- ESOTERIC SCORE CALCULATION (v10.2 Gematria-Dominant) ---
         gematria_score = 0.0       # 0-5.2 pts (52%)
@@ -2221,6 +2251,14 @@ async def get_best_bets(sport: str):
                 "pillars": round(pillar_score, 2),
                 "confluence_boost": confluence_boost,
                 "alignment_pct": confluence.get("alignment_pct", 0)
+            },
+            # v14.9 Research breakdown (clean engine separation)
+            "research_breakdown": {
+                "sharp_boost": round(sharp_boost, 2),
+                "line_boost": round(line_boost, 2),
+                "public_boost": round(public_boost, 2),
+                "base_research": 2.0,
+                "total": round(research_score, 2)
             },
             "esoteric_breakdown": {
                 "gematria": round(gematria_score, 2),
@@ -2656,7 +2694,7 @@ async def debug_pick_breakdown(sport: str):
 
     # Helper to calculate detailed score with full breakdown
     def calculate_detailed_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, is_prop=True):
-        """Calculate scores with full breakdown for debug output."""
+        """Calculate scores with full breakdown for debug output (v14.9 Clean Architecture)."""
 
         # --- ESOTERIC WEIGHTS (v10.2 - Gematria Dominant) ---
         ESOTERIC_WEIGHTS = {
@@ -2668,33 +2706,55 @@ async def debug_pick_breakdown(sport: str):
             "daily_edge": 0.05
         }
 
-        # --- AI SCORE CALCULATION ---
-        ai_score_raw = base_ai
-        ai_reasons = []
+        # --- AI SCORE (Pure Model - 0-8 scale, NO external signals) ---
+        ai_score = min(8.0, base_ai)
+        ai_reasons = [f"Pure model prediction: {round(ai_score, 2)}/8"]
 
+        # --- RESEARCH SCORE (Market Intelligence - 0-10 scale) ---
+        research_reasons = []
+
+        # Pillar 1: Sharp Money Detection (0-3 pts)
+        sharp_boost = 0.0
         if sharp_signal.get("signal_strength") == "STRONG":
-            ai_score_raw += 2.0
-            ai_reasons.append("Sharp money STRONG signal (+2.0)")
+            sharp_boost = 3.0
+            research_reasons.append("Sharp signal STRONG (+3.0)")
         elif sharp_signal.get("signal_strength") == "MODERATE":
-            ai_score_raw += 1.0
-            ai_reasons.append("Sharp money MODERATE signal (+1.0)")
+            sharp_boost = 1.5
+            research_reasons.append("Sharp signal MODERATE (+1.5)")
+        else:
+            research_reasons.append("No sharp signal detected")
 
-        if not ai_reasons:
-            ai_reasons.append(f"Base AI score: {base_ai}")
+        # Pillar 2: Line Movement/Value (0-3 pts)
+        line_variance = sharp_signal.get("line_variance", 0)
+        line_boost = 0.0
+        if line_variance > 1.5:
+            line_boost = 3.0
+            research_reasons.append(f"Line variance {line_variance:.1f}pts (strong RLM)")
+        elif line_variance > 0.5:
+            line_boost = 1.5
+            research_reasons.append(f"Line variance {line_variance:.1f}pts (moderate)")
+        else:
+            research_reasons.append(f"Line variance {line_variance:.1f}pts (minimal)")
 
-        ai_score = min(8.0, ai_score_raw)
+        # Pillar 3: Public Betting Fade (0-2 pts)
+        public_pct_val = sharp_signal.get("public_pct", public_pct)
+        public_boost = 0.0
+        if public_pct_val >= 75:
+            public_boost = 2.0
+            research_reasons.append(f"Public at {public_pct_val}% (fade signal)")
+        elif public_pct_val >= 65:
+            public_boost = 1.0
+            research_reasons.append(f"Public at {public_pct_val}% (mild fade)")
 
-        # --- PILLAR SCORE ---
-        pillar_score = 3.0 if sharp_signal.get("line_variance", 0) > 1.0 else 2.0
-        pillar_score = min(8.0, pillar_score)
+        # Pillar 4: Base research floor (2 pts baseline)
+        base_research = 2.0
 
-        # --- RESEARCH SCORE ---
-        research_score = (ai_score + pillar_score) / 16 * 10
-        research_reasons = [
-            f"AI models contribution: {round(ai_score, 2)}/8",
-            f"Pillar score: {round(pillar_score, 2)}/8",
-            f"Combined scaled to 0-10: {round(research_score, 2)}"
-        ]
+        # Research score: Sum of pillars normalized to 0-10
+        research_score = min(10.0, base_research + sharp_boost + line_boost + public_boost)
+        research_reasons.append(f"Total: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + Base:{base_research})")
+
+        # Pillar score for backwards compatibility
+        pillar_score = sharp_boost + line_boost + public_boost
 
         # --- ESOTERIC COMPONENTS ---
         gematria_score = 0.0
