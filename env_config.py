@@ -55,7 +55,7 @@ class Config:
     # ============================================================================
     # VERSION CONSTANTS - Single source of truth for API versioning
     # ============================================================================
-    ENGINE_VERSION = "v11.03"  # v11.03: API audit - fixed NFL/NHL markets, Playbook lines parsing
+    ENGINE_VERSION = "v11.10"  # v11.10: TITANIUM_SMASH is real tier (3/4 engines >= 8.0), 2.5 max units cap
     API_VERSION = "14.9"
     TIMEZONE = "America/New_York"
 

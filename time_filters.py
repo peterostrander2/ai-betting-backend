@@ -277,3 +277,203 @@ def format_et_display(dt: Any) -> str:
             return dt.strftime("%b %d, %-I:%M %p ET")
     except Exception:
         return "TBD"
+
+
+# ============================================================================
+# v11.04: SLATE VALIDATION (Ghost Data Prevention)
+# ============================================================================
+
+def validate_today_slate(
+    games: list,
+    sport: str,
+    tz: str = "America/New_York",
+    strict: bool = True
+) -> Dict[str, Any]:
+    """
+    Validate that games are from TODAY's official slate in the specified timezone.
+
+    This is the guard against "ghost data" / "Lakers bug" - ensures a team can
+    ONLY appear in picks if it's in today's official slate from the provider.
+
+    Args:
+        games: List of game dicts from Odds API / Playbook API
+        sport: Sport code (NBA, NFL, NHL, etc.)
+        tz: Timezone for "today" determination (default: America/New_York)
+        strict: If True, reject games with missing/invalid start times
+
+    Returns:
+        Dict with:
+            - valid_games: List of games that pass validation
+            - rejected_games: List of games that failed validation with reasons
+            - teams_in_slate: Set of team names that ARE playing today
+            - validation_summary: Human-readable summary
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    target_tz = ZoneInfo(tz)
+    now = datetime.now(target_tz)
+    today = now.date()
+
+    # Today's window: 12:01 AM → 11:59 PM in target timezone
+    day_start = datetime.combine(today, time(0, 1), tzinfo=target_tz)
+    day_end = datetime.combine(today, time(23, 59, 59), tzinfo=target_tz)
+
+    valid_games = []
+    rejected_games = []
+    teams_in_slate = set()
+
+    for game in games:
+        game_id = game.get("id") or game.get("game_id") or "unknown"
+        home_team = game.get("home_team") or game.get("homeTeam") or ""
+        away_team = game.get("away_team") or game.get("awayTeam") or ""
+
+        # Get start time from various possible field names
+        start_time_raw = (
+            game.get("commence_time") or
+            game.get("start_time") or
+            game.get("game_time") or
+            game.get("startTime") or
+            ""
+        )
+
+        # Validation: Must have start time
+        if not start_time_raw:
+            if strict:
+                rejected_games.append({
+                    "game_id": game_id,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "reason": "MISSING_START_TIME",
+                    "raw_time": None
+                })
+                continue
+            else:
+                # Non-strict mode: include but log warning
+                logger.warning(f"v11.04: Game {game_id} has no start_time - including anyway (non-strict)")
+                valid_games.append(game)
+                if home_team:
+                    teams_in_slate.add(home_team)
+                if away_team:
+                    teams_in_slate.add(away_team)
+                continue
+
+        # Parse start time
+        try:
+            if isinstance(start_time_raw, str):
+                if "Z" in start_time_raw:
+                    game_dt = datetime.fromisoformat(start_time_raw.replace("Z", "+00:00"))
+                elif "+" in start_time_raw or start_time_raw.endswith("-00:00"):
+                    game_dt = datetime.fromisoformat(start_time_raw)
+                else:
+                    # Assume UTC if no timezone
+                    game_dt = datetime.fromisoformat(start_time_raw)
+                    if game_dt.tzinfo is None:
+                        game_dt = game_dt.replace(tzinfo=UTC)
+            elif isinstance(start_time_raw, datetime):
+                game_dt = start_time_raw
+                if game_dt.tzinfo is None:
+                    game_dt = game_dt.replace(tzinfo=UTC)
+            else:
+                raise ValueError(f"Unexpected type: {type(start_time_raw)}")
+
+            # Convert to target timezone
+            game_dt_local = game_dt.astimezone(target_tz)
+
+        except Exception as e:
+            rejected_games.append({
+                "game_id": game_id,
+                "home_team": home_team,
+                "away_team": away_team,
+                "reason": f"PARSE_ERROR: {str(e)}",
+                "raw_time": start_time_raw
+            })
+            continue
+
+        # Validation: Must be within today's window
+        if not (day_start <= game_dt_local <= day_end):
+            rejected_games.append({
+                "game_id": game_id,
+                "home_team": home_team,
+                "away_team": away_team,
+                "reason": "NOT_TODAY",
+                "raw_time": start_time_raw,
+                "parsed_local": game_dt_local.isoformat(),
+                "game_date": game_dt_local.date().isoformat(),
+                "today_date": today.isoformat()
+            })
+            continue
+
+        # Validation passed - add to valid games and teams
+        valid_games.append(game)
+        if home_team:
+            teams_in_slate.add(home_team)
+        if away_team:
+            teams_in_slate.add(away_team)
+
+    # Build summary
+    summary_parts = [
+        f"v11.04 Slate Validation ({sport.upper()})",
+        f"Timezone: {tz}",
+        f"Today: {today.isoformat()}",
+        f"Window: {day_start.strftime('%I:%M %p')} - {day_end.strftime('%I:%M %p')} {tz}",
+        f"Input games: {len(games)}",
+        f"Valid games: {len(valid_games)}",
+        f"Rejected: {len(rejected_games)}",
+        f"Teams in slate: {len(teams_in_slate)}"
+    ]
+
+    if rejected_games:
+        # Log rejection reasons summary
+        rejection_reasons = {}
+        for r in rejected_games:
+            reason = r.get("reason", "UNKNOWN").split(":")[0]
+            rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+        summary_parts.append(f"Rejection breakdown: {rejection_reasons}")
+
+    validation_summary = " | ".join(summary_parts)
+    logger.info(validation_summary)
+
+    return {
+        "valid_games": valid_games,
+        "rejected_games": rejected_games,
+        "teams_in_slate": teams_in_slate,
+        "validation_summary": validation_summary,
+        "today": today.isoformat(),
+        "timezone": tz
+    }
+
+
+def is_team_in_slate(team_name: str, teams_in_slate: set) -> bool:
+    """
+    Check if a team is in today's valid slate.
+
+    This is the final guard against the "Lakers bug" - if Lakers aren't playing
+    today, they cannot appear in any picks.
+
+    Args:
+        team_name: Team name to check
+        teams_in_slate: Set of team names from validate_today_slate()
+
+    Returns:
+        True if team is playing today, False otherwise
+    """
+    if not team_name or not teams_in_slate:
+        return False
+
+    # Exact match
+    if team_name in teams_in_slate:
+        return True
+
+    # Case-insensitive match
+    team_lower = team_name.lower()
+    for slate_team in teams_in_slate:
+        if slate_team.lower() == team_lower:
+            return True
+
+    # Partial match (e.g., "Lakers" in "Los Angeles Lakers")
+    for slate_team in teams_in_slate:
+        if team_lower in slate_team.lower() or slate_team.lower() in team_lower:
+            return True
+
+    return False

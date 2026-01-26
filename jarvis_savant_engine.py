@@ -561,6 +561,110 @@ class EsotericLearningLoop:
         except Exception as e:
             return {"status": "error", "reason": str(e)}
 
+    def log_pick_outcome(
+        self,
+        pick_id: str,
+        hit: bool,
+        edge_reason: str = "",
+        eso_breakdown: dict = None,
+        *args, **kwargs
+    ) -> dict:
+        """
+        v11.04: Log a graded pick outcome for learning.
+
+        Required by the learning loop contract per MASTER CLAUDE PROMPT Task D.
+
+        Args:
+            pick_id: Unique pick identifier
+            hit: True if pick won, False if lost
+            edge_reason: Why we picked this (e.g., "SHARP_MONEY", "JARVIS_TRIGGER")
+            eso_breakdown: Esoteric score breakdown {jarvis_rs, esoteric_score, triggers_hit, etc.}
+
+        Returns:
+            Status dict
+        """
+        try:
+            ledger = self._get_ledger()
+            if ledger:
+                ledger.log_result(
+                    sport=eso_breakdown.get("sport", "unknown") if eso_breakdown else "unknown",
+                    pick_id=pick_id,
+                    result="WIN" if hit else "LOSS",
+                    profit_units=eso_breakdown.get("units", 1.0) if eso_breakdown else 1.0,
+                    pick_context={
+                        "edge_reason": edge_reason,
+                        "hit": hit,
+                        **(eso_breakdown or {})
+                    }
+                )
+                return {"status": "logged", "pick_id": pick_id, "hit": hit}
+
+            # Fallback: store in memory for batch processing
+            if not hasattr(self, "_outcomes"):
+                self._outcomes = []
+            self._outcomes.append({
+                "pick_id": pick_id,
+                "hit": hit,
+                "edge_reason": edge_reason,
+                "eso_breakdown": eso_breakdown or {}
+            })
+            return {"status": "queued", "pick_id": pick_id, "hit": hit}
+        except Exception as e:
+            logger.warning(f"log_pick_outcome failed: {e}")
+            return {"status": "error", "reason": str(e)}
+
+    def adapt_weights(self, graded_picks: list, *args, **kwargs) -> dict:
+        """
+        v11.04: Adapt weights based on graded picks.
+
+        Required by the learning loop contract per MASTER CLAUDE PROMPT Task D.
+        This is an alias that transforms graded_picks into adjust_weights calls.
+
+        Args:
+            graded_picks: List of graded pick dicts with {hit, edge_reason, eso_breakdown}
+
+        Returns:
+            Summary of weight adjustments applied
+        """
+        try:
+            if not graded_picks:
+                return {"status": "no_picks", "adjustments": 0}
+
+            # Calculate adjustments from graded picks
+            adjustments = {}
+            for pick in graded_picks:
+                hit = pick.get("hit", False)
+                edge_reason = pick.get("edge_reason", "")
+                eso = pick.get("eso_breakdown", {})
+
+                # Reward/penalize based on outcome
+                delta = 0.02 if hit else -0.01  # Small incremental learning
+
+                # Track adjustments by edge reason
+                if edge_reason:
+                    key = f"edge_{edge_reason.lower()}"
+                    adjustments[key] = adjustments.get(key, 0) + delta
+
+                # Track by trigger if applicable
+                for trigger in eso.get("jarvis_triggers_hit", []):
+                    trigger_key = f"trigger_{trigger.get('number', 'unknown')}"
+                    adjustments[trigger_key] = adjustments.get(trigger_key, 0) + delta
+
+            # Apply adjustments
+            if adjustments:
+                result = self.adjust_weights(adjustment=adjustments, apply_changes=True)
+                return {
+                    "status": "adapted",
+                    "picks_processed": len(graded_picks),
+                    "adjustments": adjustments,
+                    "result": result
+                }
+
+            return {"status": "no_adjustments", "picks_processed": len(graded_picks)}
+        except Exception as e:
+            logger.warning(f"adapt_weights failed: {e}")
+            return {"status": "error", "reason": str(e)}
+
     def get_session_stats(self):
         """Get current session statistics."""
         ledger = self._get_ledger()

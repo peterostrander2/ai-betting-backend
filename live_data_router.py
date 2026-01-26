@@ -83,6 +83,9 @@ from time_status import (
     TimeState, Recommendation, LiveBand
 )
 
+# v11.04: Import slate validation functions (ghost data prevention)
+from time_filters import validate_today_slate, is_team_in_slate
+
 # v11.00: Import debug proof module for production-ready debug output
 try:
     from debug_proof import (
@@ -722,6 +725,119 @@ def compute_movement(pick: Dict[str, Any], pick_id: str) -> Dict[str, Any]:
     return movement
 
 
+# =============================================================================
+# v11.05: NORMALIZE PICK OUTPUT (Task E - Output Format Consistency)
+# =============================================================================
+def normalize_pick_output(pick: Dict[str, Any], is_prop: bool = None) -> Dict[str, Any]:
+    """
+    v11.05: Normalize pick output to ensure consistent schema.
+
+    MASTER CLAUDE PROMPT Task E requirements:
+    - Every prop pick must have: player_name, stat_type, line, over_under, odds, smash_score, predicted_value, confidence
+    - Every game pick must have: matchup, side, spread, total, odds, smash_score, predicted_value, confidence
+
+    This function validates and fills missing keys with defaults.
+
+    Args:
+        pick: Pick dictionary to normalize
+        is_prop: True if prop pick, False if game pick, None to auto-detect
+
+    Returns:
+        Normalized pick dictionary
+    """
+    # Auto-detect pick type if not specified
+    if is_prop is None:
+        is_prop = bool(pick.get("player_name") or pick.get("player") or pick.get("stat_type"))
+
+    # Common fields for all picks
+    common_defaults = {
+        "smash_score": pick.get("smash_score") or pick.get("final_score") or pick.get("total_score") or 0.0,
+        "predicted_value": pick.get("predicted_value") or pick.get("prediction") or None,
+        "confidence": pick.get("confidence") or pick.get("confidence_level") or "MEDIUM",
+        "odds": pick.get("odds") or pick.get("american_odds") or -110,
+        "tier": pick.get("tier") or "PASS",
+        "units": pick.get("units") or 0.0,
+        "action": pick.get("action") or "SKIP",
+    }
+
+    # Normalize score field names
+    pick["smash_score"] = float(common_defaults["smash_score"])
+    pick["final_score"] = pick["smash_score"]  # Alias
+    pick["total_score"] = pick["smash_score"]  # Alias
+
+    pick["predicted_value"] = common_defaults["predicted_value"]
+    pick["confidence"] = common_defaults["confidence"]
+    pick["odds"] = common_defaults["odds"]
+    pick["tier"] = common_defaults["tier"]
+    pick["units"] = common_defaults["units"]
+    pick["action"] = common_defaults["action"]
+
+    if is_prop:
+        # Prop pick required fields
+        prop_defaults = {
+            "player_name": pick.get("player_name") or pick.get("player") or "",
+            "stat_type": pick.get("stat_type") or pick.get("market") or pick.get("prop_type") or "",
+            "line": pick.get("line") or pick.get("point") or pick.get("handicap") or 0.0,
+            "over_under": pick.get("over_under") or pick.get("selection") or pick.get("direction") or "over",
+        }
+
+        # Ensure player_name is set (not just player)
+        pick["player_name"] = prop_defaults["player_name"]
+        pick["player"] = prop_defaults["player_name"]  # Keep alias
+
+        # Ensure stat_type is set (not just market)
+        pick["stat_type"] = prop_defaults["stat_type"]
+        pick["market"] = prop_defaults["stat_type"]  # Keep alias
+
+        # Ensure line is set
+        pick["line"] = float(prop_defaults["line"]) if prop_defaults["line"] else None
+
+        # Ensure over_under is set (normalize to lowercase)
+        ou = prop_defaults["over_under"]
+        if isinstance(ou, str):
+            ou = ou.lower()
+            if ou not in ("over", "under"):
+                ou = "over" if "over" in ou.lower() else "under" if "under" in ou.lower() else "over"
+        pick["over_under"] = ou
+        pick["selection"] = ou.capitalize()  # Keep alias
+        pick["direction"] = ou.upper()  # Keep alias
+
+        # v11.06: Task G - Ensure injury_status is always present for props
+        if "injury_status" not in pick:
+            pick["injury_status"] = pick.get("player_injury_status", "UNKNOWN")
+
+    else:
+        # Game pick required fields
+        game_defaults = {
+            "matchup": pick.get("matchup") or pick.get("game") or pick.get("display_title") or "",
+            "side": pick.get("side") or pick.get("selection") or pick.get("team") or "",
+            "spread": pick.get("spread") or pick.get("line") or 0.0,
+            "total": pick.get("total") or pick.get("over_under_line") or 0.0,
+        }
+
+        # Ensure matchup is set
+        if not game_defaults["matchup"]:
+            home = pick.get("home_team", "")
+            away = pick.get("away_team", "")
+            if home and away:
+                game_defaults["matchup"] = f"{away} @ {home}"
+        pick["matchup"] = game_defaults["matchup"]
+        pick["game"] = game_defaults["matchup"]  # Keep alias
+        pick["display_title"] = game_defaults["matchup"]  # Keep alias
+
+        # Ensure side is set
+        pick["side"] = game_defaults["side"]
+        pick["selection"] = game_defaults["side"]  # Keep alias
+
+        # Ensure spread is set
+        pick["spread"] = float(game_defaults["spread"]) if game_defaults["spread"] else None
+
+        # Ensure total is set
+        pick["total"] = float(game_defaults["total"]) if game_defaults["total"] else None
+
+    return pick
+
+
 def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict = None) -> Dict[str, Any]:
     """
     v10.83: Enrich a pick with all canonical schema fields + production validations.
@@ -795,6 +911,10 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict 
     pick["engines_missing"] = integrity["engines_missing"]
     pick["score_total_source"] = integrity["score_total_source"]
     pick["engine_integrity_ok"] = integrity["engine_integrity_ok"]
+
+    # v11.04: Add explicit stack_complete flag and partial_stack_reasons for transparency
+    pick["stack_complete"] = integrity["engine_integrity_ok"]
+    pick["partial_stack_reasons"] = integrity["engines_missing"] if integrity["engines_missing"] else []
 
     # =========================================================================
     # v10.83: Tier safety downgrade for incomplete engine stack
@@ -916,6 +1036,9 @@ def enrich_pick_canonical(pick: Dict[str, Any], sport: str, injuries_data: Dict 
         "engines_missing": pick.get("engines_missing", []),
         "score_source": pick.get("score_total_source", "UNKNOWN"),
     }
+
+    # v11.05: Normalize output to ensure consistent schema (Task E)
+    pick = normalize_pick_output(pick)
 
     return pick
 
@@ -1864,20 +1987,88 @@ def clamp_score(x: float) -> float:
     return max(0.0, min(10.0, x))
 
 
-def tier_from_score(score: float, tiers: dict = None) -> tuple:
+def check_titanium_rule(
+    ai_score: float,
+    research_score: float,
+    esoteric_score: float,
+    jarvis_score: float
+) -> Tuple[bool, str]:
+    """
+    v11.10: Check if pick qualifies for TITANIUM_SMASH tier.
+
+    Titanium triggers when >= 3 of 4 engines are >= 8.0
+    Engines: AI, Research, Esoteric, Jarvis
+
+    TITANIUM_SMASH is a real tier (not just a badge).
+    Units: Kelly * 1.25 or fixed 2.5, capped at 2.5 max.
+
+    Args:
+        ai_score: AI Engine score (0-10)
+        research_score: Research Engine score (0-10)
+        esoteric_score: Esoteric Engine score (0-10)
+        jarvis_score: Jarvis Engine score (0-10)
+
+    Returns:
+        Tuple of (titanium_triggered, explanation)
+    """
+    TITANIUM_ENGINE_THRESHOLD = 8.0  # v11.10: Raised from 7.0 to 8.0
+
+    # Safety: Check for missing/None engines
+    missing_engines = []
+    if ai_score is None:
+        missing_engines.append("AI")
+        ai_score = 0.0
+    if research_score is None:
+        missing_engines.append("Research")
+        research_score = 0.0
+    if esoteric_score is None:
+        missing_engines.append("Esoteric")
+        esoteric_score = 0.0
+    if jarvis_score is None:
+        missing_engines.append("Jarvis")
+        jarvis_score = 0.0
+
+    if missing_engines:
+        return False, f"Titanium blocked: missing {', '.join(missing_engines)}"
+
+    # Count how many engines >= 8.0
+    engines_above = []
+    if ai_score >= TITANIUM_ENGINE_THRESHOLD:
+        engines_above.append(f"AI={ai_score:.1f}")
+    if research_score >= TITANIUM_ENGINE_THRESHOLD:
+        engines_above.append(f"Research={research_score:.1f}")
+    if esoteric_score >= TITANIUM_ENGINE_THRESHOLD:
+        engines_above.append(f"Eso={esoteric_score:.1f}")
+    if jarvis_score >= TITANIUM_ENGINE_THRESHOLD:
+        engines_above.append(f"Jarvis={jarvis_score:.1f}")
+
+    count = len(engines_above)
+    titanium_triggered = count >= 3
+
+    if titanium_triggered:
+        explanation = f"Titanium Rule: {count}/4 engines >= 8.0 ({' '.join(engines_above)})"
+    else:
+        explanation = f"Titanium: {count}/4 engines >= 8.0 (need 3)"
+
+    return titanium_triggered, explanation
+
+
+def tier_from_score(score: float, tiers: dict = None, titanium_triggered: bool = False) -> tuple:
     """
     Return (tier, badge) from score. Single source of truth for tier assignment.
 
     v10.55: Delegates to tiering.py module for consistency.
+    v11.10: TITANIUM_SMASH is a real tier (3/4 engines >= 8.0).
 
     Default Thresholds:
+    - TITANIUM_SMASH: titanium_triggered=True
     - GOLD_STAR: >= 7.5
     - EDGE_LEAN: >= 6.5
     - MONITOR: >= 5.5
     - PASS: < 5.5
     """
     # v10.55: Delegate to tiering module (single source of truth)
-    return tiering_tier_from_score(score, tiers)
+    return tiering_tier_from_score(score, tiers, titanium_triggered=titanium_triggered)
 
 
 def order_reasons(reasons: list) -> list:
@@ -8570,6 +8761,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         jarvis_triggers_hit = []
         immortal_detected = False
         jarvis_triggered = False
+        jarvis_rs = 5.0  # v11.04: Initialize Jarvis RS at base (ensures Jarvis ALWAYS runs)
+        jarvis_reasons = []  # v11.04: Initialize Jarvis reasons
 
         if jarvis:
             # --- JARVIS TRIGGERS (v10.58: collected here, applied in Jarvis RS only) ---
@@ -8931,18 +9124,38 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
         # --- BET TIER DETERMINATION (v10.22: Sport Profile Tiers) ---
         final_score = clamp_score(final_score)
-        tier, badge = tier_from_score(final_score, profile["tiers"])
 
-        # v10.59: Kelly Criterion-enhanced unit sizing
+        # v11.10: Check Titanium Rule (3/4 engines >= 8.0 triggers TITANIUM_SMASH tier)
+        # TITANIUM_SMASH is a real tier, not just a badge
+        titanium_triggered, titanium_explanation = check_titanium_rule(
+            ai_score=ai_score,
+            research_score=research_score,
+            esoteric_score=esoteric_score,
+            jarvis_score=jarvis_rs
+        )
+        if titanium_triggered:
+            smash_reasons.append(titanium_explanation)
+
+        # v11.10: Pass titanium_triggered to tier_from_score - TITANIUM_SMASH is a real tier
+        tier, badge = tier_from_score(final_score, profile["tiers"], titanium_triggered=titanium_triggered)
+
+        # v11.10: Kelly Criterion-enhanced unit sizing with TITANIUM_SMASH tier
         # Uses edge calculation for actionable tiers, falls back to fixed for others
-        if tier in ("GOLD_STAR", "EDGE_LEAN") and odds:
+        if tier in ("TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN") and odds:
             kelly_units = calculate_kelly_units(final_score, odds, tier)
+            # v11.10: TITANIUM_SMASH gets Kelly * 1.25, others get Kelly as-is
+            if tier == "TITANIUM_SMASH":
+                titanium_kelly = round(kelly_units * 1.25, 2)
+            else:
+                titanium_kelly = kelly_units
             tier_config = {
+                "TITANIUM_SMASH": {"units": titanium_kelly, "action": "SMASH"},
                 "GOLD_STAR": {"units": kelly_units, "action": "SMASH"},
                 "EDGE_LEAN": {"units": kelly_units, "action": "PLAY"},
             }
         else:
             tier_config = {
+                "TITANIUM_SMASH": {"units": 2.5, "action": "SMASH"},
                 "GOLD_STAR": {"units": 2.0, "action": "SMASH"},
                 "EDGE_LEAN": {"units": 1.0, "action": "PLAY"},
             }
@@ -8950,10 +9163,16 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         tier_config["PASS"] = {"units": 0.0, "action": "SKIP"}
 
         config = tier_config.get(tier, {"units": 0.0, "action": "SKIP"})
-        bet_tier = {"tier": tier, "units": config["units"], "action": config["action"]}
+        raw_units = config["units"]
+
+        # v11.10: Hard cap at 2.5 units max (safety cap for all tiers)
+        final_units = min(raw_units, 2.5)
+
+        bet_tier = {"tier": tier, "units": final_units, "action": config["action"]}
 
         # Map to confidence levels for backward compatibility
         confidence_map = {
+            "TITANIUM_SMASH": "SMASH",  # v11.10: Titanium gets SMASH confidence
             "GOLD_STAR": "SMASH",
             "EDGE_LEAN": "HIGH",
             "MONITOR": "MEDIUM",
@@ -8984,6 +9203,8 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             "confluence_boost": round(confluence_boost, 2),  # v10.25: Actual boost applied
             "alignment_pct": round(alignment_pct, 1),  # v10.4: alignment percentage
             "smash_spot": smash_spot,  # v10.4: SmashSpot flag
+            "titanium_triggered": titanium_triggered,  # v11.09: True if final>=8.0 AND 3/4 engines>=7.0
+            "titanium_explanation": titanium_explanation,  # v11.09: Always included for transparency
             "bet_tier": bet_tier,
             "reasons": all_reasons,  # Explainability array
             "ai_score": round(ai_score, 2),  # v10.24: 8 AI Engine score
@@ -9121,9 +9342,27 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
         player_team_cache = build_player_team_cache(props_data.get("data", []), {}, {})
         logger.info("v10.14: Player team cache built with %d entries", len(player_team_cache))
 
+        # v11.04: Build props slate (teams from today's props data) for ghost data prevention
+        props_teams_in_slate = set()
+        for game in props_data.get("data", []):
+            if game.get("home_team"):
+                props_teams_in_slate.add(game["home_team"])
+            if game.get("away_team"):
+                props_teams_in_slate.add(game["away_team"])
+        logger.info(f"v11.04: {len(props_teams_in_slate)} teams in props slate")
+
         for game in props_data.get("data", []):
             home_team = game.get("home_team", "")
             away_team = game.get("away_team", "")
+
+            # v11.04: Guard against ghost data in props - teams must be in props slate
+            if props_teams_in_slate and not is_team_in_slate(home_team, props_teams_in_slate):
+                logger.warning(f"v11.04 PROPS_GHOST: {home_team} not in props slate, skipping")
+                continue
+            if props_teams_in_slate and not is_team_in_slate(away_team, props_teams_in_slate):
+                logger.warning(f"v11.04 PROPS_GHOST: {away_team} not in props slate, skipping")
+                continue
+
             game_key = f"{away_team}@{home_team}"
             game_str = f"{home_team}{away_team}"
             sharp_signal = sharp_lookup.get(game_key, {})
@@ -9624,6 +9863,10 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
     odds_http_status = None
     odds_fallback_used = False
 
+    # v11.04: Initialize teams_in_slate - this guards against "Lakers bug"
+    # Only teams in this set can appear in any picks
+    teams_in_slate = set()
+
     try:
         # Fetch game odds (spreads, totals, moneylines)
         odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
@@ -9647,6 +9890,11 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
             games, dropped_games, filter_summary = debug_day_filter(games_raw, source=f"OddsAPI_{sport}")
             today_games_count = len(games)
             logger.info(f"v10.77: {filter_summary}")
+
+            # v11.04: Validate slate and build teams_in_slate set (ghost data prevention)
+            slate_validation = validate_today_slate(games, sport_lower, tz="America/New_York", strict=False)
+            teams_in_slate = slate_validation.get("teams_in_slate", set())
+            logger.info(f"v11.04: {len(teams_in_slate)} teams in today's slate: {sorted(list(teams_in_slate))[:10]}...")
 
             # Log dropped games for debugging
             if dropped_games and debug:
@@ -9755,6 +10003,15 @@ async def get_best_bets(sport: str, debug: int = 0, include_conflicts: int = 0, 
 
                 home_team = game.get("home_team", "")
                 away_team = game.get("away_team", "")
+
+                # v11.04: Guard against "Lakers bug" - both teams MUST be in today's slate
+                if teams_in_slate and not is_team_in_slate(home_team, teams_in_slate):
+                    logger.warning(f"v11.04 GHOST_DATA: {home_team} not in slate, skipping game")
+                    continue
+                if teams_in_slate and not is_team_in_slate(away_team, teams_in_slate):
+                    logger.warning(f"v11.04 GHOST_DATA: {away_team} not in slate, skipping game")
+                    continue
+
                 game_key = f"{away_team}@{home_team}"
                 game_str = f"{home_team}{away_team}"
                 sharp_signal = sharp_lookup.get(game_key, {})
@@ -14104,6 +14361,175 @@ SPORTSBOOK_CONFIGS = {
         "logo": "https://upload.wikimedia.org/wikipedia/commons/8/85/BetRivers_logo.svg"
     }
 }
+
+
+# =============================================================================
+# v11.05: SPORTSBOOK SELECTOR (Task F - Multi-book Support)
+# =============================================================================
+class SportsbookSelector:
+    """
+    v11.05: Selects the best line across all sportsbooks for each pick.
+
+    MASTER CLAUDE PROMPT Task F requirements:
+    - Support FanDuel, DraftKings, BetMGM, Caesars, etc.
+    - Find best line across all books for each pick
+    - Add best_book and best_odds fields to picks
+    """
+
+    def __init__(self):
+        self.books = list(SPORTSBOOK_CONFIGS.keys())
+        self._odds_cache: Dict[str, Dict] = {}
+
+    def find_best_odds(
+        self,
+        game_id: str,
+        market_key: str,
+        selection: str,
+        odds_data: Dict = None
+    ) -> Dict[str, Any]:
+        """
+        Find the best odds across all sportsbooks for a given selection.
+
+        Args:
+            game_id: Game identifier
+            market_key: Market type (spreads, h2h, totals, player_points, etc.)
+            selection: Team name or over/under
+            odds_data: Pre-fetched odds data from line shopping endpoint
+
+        Returns:
+            Dict with best_book, best_odds, best_line, and comparison across books
+        """
+        if not odds_data:
+            return {
+                "best_book": "draftkings",  # Default fallback
+                "best_book_name": "DraftKings",
+                "best_odds": -110,
+                "best_line": None,
+                "books_compared": 0,
+                "source": "default"
+            }
+
+        best_book = None
+        best_book_name = None
+        best_odds = -999  # Worst possible American odds
+        best_line = None
+        all_books = []
+
+        # Search through odds data for the best line
+        markets = odds_data.get("markets", {})
+        market_data = markets.get(market_key, {})
+
+        for book_key, book_outcomes in market_data.items():
+            book_config = SPORTSBOOK_CONFIGS.get(book_key, {})
+            book_name = book_config.get("name", book_key)
+
+            for outcome in book_outcomes if isinstance(book_outcomes, list) else [book_outcomes]:
+                outcome_name = outcome.get("name", "")
+                outcome_odds = outcome.get("price", -110)
+                outcome_line = outcome.get("point")
+
+                # Match selection (case-insensitive partial match)
+                if selection.lower() in outcome_name.lower():
+                    all_books.append({
+                        "book": book_key,
+                        "book_name": book_name,
+                        "odds": outcome_odds,
+                        "line": outcome_line
+                    })
+
+                    # Better odds = higher American odds (e.g., -105 > -110, +120 > +110)
+                    if outcome_odds > best_odds:
+                        best_odds = outcome_odds
+                        best_book = book_key
+                        best_book_name = book_name
+                        best_line = outcome_line
+
+        if not best_book:
+            return {
+                "best_book": "draftkings",
+                "best_book_name": "DraftKings",
+                "best_odds": -110,
+                "best_line": None,
+                "books_compared": 0,
+                "source": "fallback"
+            }
+
+        return {
+            "best_book": best_book,
+            "best_book_name": best_book_name,
+            "best_odds": best_odds,
+            "best_line": best_line,
+            "books_compared": len(all_books),
+            "all_books": all_books,
+            "source": "line_shop"
+        }
+
+    def enrich_pick_with_best_odds(
+        self,
+        pick: Dict[str, Any],
+        line_shop_data: Dict = None
+    ) -> Dict[str, Any]:
+        """
+        Enrich a pick with best odds information from multi-book comparison.
+
+        Args:
+            pick: Pick dictionary
+            line_shop_data: Pre-fetched line shopping data for the game
+
+        Returns:
+            Pick with best_book, best_odds, best_book_name fields added
+        """
+        game_id = pick.get("game_id", "")
+        selection = pick.get("selection") or pick.get("side") or pick.get("over_under", "")
+        market_key = pick.get("market_key", pick.get("market", "spreads"))
+
+        # Translate common market names
+        market_map = {
+            "player_points": "player_points",
+            "player_rebounds": "player_rebounds",
+            "player_assists": "player_assists",
+            "spread": "spreads",
+            "moneyline": "h2h",
+            "total": "totals",
+        }
+        market_key = market_map.get(market_key, market_key)
+
+        # Find the game in line shop data
+        game_odds = None
+        if line_shop_data and isinstance(line_shop_data, list):
+            for game in line_shop_data:
+                if game.get("game_id") == game_id:
+                    game_odds = game
+                    break
+
+        result = self.find_best_odds(game_id, market_key, selection, game_odds)
+
+        # Add to pick
+        pick["best_book"] = result["best_book"]
+        pick["best_book_name"] = result["best_book_name"]
+        pick["best_odds"] = result["best_odds"]
+        if result.get("best_line") is not None:
+            pick["best_line"] = result["best_line"]
+        pick["books_compared"] = result["books_compared"]
+
+        # Update the main odds field if we found better
+        if result["source"] != "default" and result["best_odds"] > pick.get("odds", -999):
+            pick["odds"] = result["best_odds"]
+            pick["odds_source"] = f"best_line:{result['best_book']}"
+
+        return pick
+
+
+# Singleton instance
+_sportsbook_selector: Optional[SportsbookSelector] = None
+
+
+def get_sportsbook_selector() -> SportsbookSelector:
+    """Get the singleton SportsbookSelector instance."""
+    global _sportsbook_selector
+    if _sportsbook_selector is None:
+        _sportsbook_selector = SportsbookSelector()
+    return _sportsbook_selector
 
 
 def generate_sportsbook_link(book_key: str, event_id: str, sport: str) -> Dict[str, str]:
