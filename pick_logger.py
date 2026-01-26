@@ -494,7 +494,7 @@ class PickLogger:
 
     def _load_picks_from_file(self, date: str):
         """Load picks from JSONL file for a given date."""
-        log_file = os.path.join(self.log_path, f"picks_{date}.jsonl")
+        log_file = os.path.join(self.storage_path, f"picks_{date}.jsonl")
         if os.path.exists(log_file):
             picks = []
             with open(log_file, 'r') as f:
