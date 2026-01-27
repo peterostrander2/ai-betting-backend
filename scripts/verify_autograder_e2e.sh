@@ -11,12 +11,17 @@
 #
 # Exit codes:
 #   0 = PASS (all validations succeeded)
-#   1 = FAIL (validation errors found)
-#   2 = PENDING (games not yet complete, but picks are valid)
+#   1 = FAIL (validation errors found - unresolved picks or failures)
+#   2 = PENDING (POST mode only: games not yet complete)
 #
 # Usage:
-#   ./scripts/verify_autograder_e2e.sh [date]
-#   ./scripts/verify_autograder_e2e.sh 2026-01-26
+#   ./scripts/verify_autograder_e2e.sh [date] [--mode pre|post]
+#   ./scripts/verify_autograder_e2e.sh 2026-01-26 --mode pre
+#   ./scripts/verify_autograder_e2e.sh --mode post
+#
+# Mode semantics:
+#   pre  (default) - Day-of verification. PASS if failed=0 AND unresolved=0 (pending OK)
+#   post           - Next-day verification. PASS only if all picks graded
 #
 # Environment variables:
 #   API_BASE - API base URL (default: http://localhost:8000)
@@ -27,8 +32,42 @@ set -euo pipefail
 # Configuration
 API_BASE="${API_BASE:-http://localhost:8000}"
 API_KEY="${API_KEY:-}"
-DATE="${1:-$(date +%Y-%m-%d)}"
+MODE="pre"
+DATE=""
 SPORTS=("nba" "nfl" "mlb" "nhl" "ncaab")
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --mode)
+            MODE="$2"
+            shift 2
+            ;;
+        --mode=*)
+            MODE="${1#*=}"
+            shift
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+        *)
+            DATE="$1"
+            shift
+            ;;
+    esac
+done
+
+# Default date to today if not specified
+if [ -z "$DATE" ]; then
+    DATE=$(date +%Y-%m-%d)
+fi
+
+# Validate mode
+if [ "$MODE" != "pre" ] && [ "$MODE" != "post" ]; then
+    echo "Invalid mode: $MODE (must be 'pre' or 'post')"
+    exit 1
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -53,6 +92,10 @@ log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
+log_pending() {
+    echo -e "${YELLOW}[PENDING]${NC} $1"
+}
+
 # Build auth header if API_KEY is set
 AUTH_HEADER=""
 if [ -n "$API_KEY" ]; then
@@ -67,6 +110,7 @@ DRY_RUN_STATUS="UNKNOWN"
 
 log "=== AUTOGRADER E2E VERIFICATION ==="
 log "Date: $DATE"
+log "Mode: $MODE"
 log "API Base: $API_BASE"
 log ""
 
@@ -158,46 +202,70 @@ fi
 # STEP 5: Dry-Run Validation (THE KEY PROOF)
 # =============================================================================
 log ""
-log "Step 5: Running dry-run validation..."
+log "Step 5: Running dry-run validation (mode=${MODE})..."
 log "        This proves all picks can be graded tomorrow."
 
 DRY_RUN=$(curl -sf -X POST $AUTH_HEADER \
     -H "Content-Type: application/json" \
-    -d "{\"date\":\"${DATE}\",\"sports\":[\"NBA\",\"NFL\",\"MLB\",\"NHL\",\"NCAAB\"]}" \
+    -d "{\"date\":\"${DATE}\",\"mode\":\"${MODE}\",\"sports\":[\"NBA\",\"NFL\",\"MLB\",\"NHL\",\"NCAAB\"]}" \
     "${API_BASE}/live/grader/dry-run" 2>/dev/null || echo '{"overall_status":"ERROR"}')
 
 DRY_RUN_STATUS=$(echo "$DRY_RUN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('overall_status','ERROR'))" 2>/dev/null || echo "ERROR")
+FAILED=$(echo "$DRY_RUN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('failed',0))" 2>/dev/null || echo "0")
+UNRESOLVED=$(echo "$DRY_RUN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('unresolved',0))" 2>/dev/null || echo "0")
+PENDING=$(echo "$DRY_RUN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('pending',0))" 2>/dev/null || echo "0")
+GRADED=$(echo "$DRY_RUN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('graded',0))" 2>/dev/null || echo "0")
+PRE_MODE_PASS=$(echo "$DRY_RUN" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('pre_mode_pass',False) else 'false')" 2>/dev/null || echo "false")
 
-case "$DRY_RUN_STATUS" in
-    "PASS")
-        log_pass "All picks validated successfully"
-        PASSED=$(echo "$DRY_RUN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('passed',0))" 2>/dev/null || echo "0")
-        log "       ${PASSED} picks ready for grading"
-        ;;
-    "PENDING")
-        log_warn "Some games not yet complete (this is expected)"
-        PENDING=$(echo "$DRY_RUN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('pending',0))" 2>/dev/null || echo "0")
-        PASSED=$(echo "$DRY_RUN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('passed',0))" 2>/dev/null || echo "0")
-        log "       ${PASSED} already graded, ${PENDING} pending game completion"
-        OVERALL_STATUS="PENDING"
-        ;;
-    "FAIL"|"ERROR")
-        log_fail "Dry-run validation failed"
-        FAILED=$(echo "$DRY_RUN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('failed',0))" 2>/dev/null || echo "0")
-        log "       ${FAILED} picks failed validation"
+log "       Graded: ${GRADED}, Pending: ${PENDING}, Failed: ${FAILED}, Unresolved: ${UNRESOLVED}"
 
-        # Show failed picks
-        echo "$DRY_RUN" | python3 -c "
+# Show unresolved picks if any
+if [ "$UNRESOLVED" != "0" ]; then
+    log_fail "Unresolved picks found:"
+    echo "$DRY_RUN" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-for sport, data in d.get('by_sport', {}).items():
-    for fp in data.get('failed_picks', []):
-        print(f'       {fp.get(\"pick_id\")}: {fp.get(\"reason\")} - {fp.get(\"player\",\"N/A\")}')
+for up in d.get('unresolved_picks', [])[:5]:
+    print(f'       {up.get(\"pick_id\")}: {up.get(\"reason\")} - {up.get(\"player\",\"N/A\")}')
 " 2>/dev/null || true
+fi
 
+# Show failed picks if any
+if [ "$FAILED" != "0" ]; then
+    log_fail "Failed picks found:"
+    echo "$DRY_RUN" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for fp in d.get('failed_picks', [])[:5]:
+    print(f'       {fp.get(\"pick_id\")}: {fp.get(\"reason\")} - {fp.get(\"player\",\"N/A\")}')
+" 2>/dev/null || true
+fi
+
+# Determine status based on mode
+if [ "$MODE" = "pre" ]; then
+    # PRE mode: PASS if failed=0 AND unresolved=0 (pending is OK)
+    if [ "$PRE_MODE_PASS" = "true" ]; then
+        if [ "$PENDING" != "0" ]; then
+            log_pending "Games not yet complete - picks are valid and ready for grading"
+        else
+            log_pass "All picks validated and graded"
+        fi
+    else
+        log_fail "Validation errors found (failed=${FAILED}, unresolved=${UNRESOLVED})"
         OVERALL_STATUS="FAIL"
-        ;;
-esac
+    fi
+else
+    # POST mode: PASS only if all graded
+    if [ "$FAILED" = "0" ] && [ "$UNRESOLVED" = "0" ] && [ "$PENDING" = "0" ]; then
+        log_pass "All picks validated and graded"
+    elif [ "$FAILED" != "0" ] || [ "$UNRESOLVED" != "0" ]; then
+        log_fail "Validation errors found (failed=${FAILED}, unresolved=${UNRESOLVED})"
+        OVERALL_STATUS="FAIL"
+    else
+        log_pending "${PENDING} picks still pending grading"
+        OVERALL_STATUS="PENDING"
+    fi
+fi
 
 # =============================================================================
 # FINAL SUMMARY
@@ -205,21 +273,30 @@ esac
 log ""
 log "=== VERIFICATION SUMMARY ==="
 log "Date: ${DATE}"
+log "Mode: ${MODE}"
 log "Picks saved: ${PICKS_SAVED}"
 log "Queue count: ${QUEUE_COUNT}"
-log "Dry-run status: ${DRY_RUN_STATUS}"
+log "Dry-run: graded=${GRADED}, pending=${PENDING}, failed=${FAILED}, unresolved=${UNRESOLVED}"
 log ""
 
+# Exit based on overall status
 case "$OVERALL_STATUS" in
     "PASS")
         echo -e "${GREEN}=== VERIFICATION PASSED ===${NC}"
-        echo "Tomorrow's 6AM autograder will successfully grade these picks."
+        if [ "$MODE" = "pre" ]; then
+            echo "All picks are valid and ready for grading."
+            echo "Tomorrow's 6AM autograder will successfully grade these picks."
+        else
+            echo "All picks have been successfully graded."
+        fi
         exit 0
         ;;
     "PENDING")
         echo -e "${YELLOW}=== VERIFICATION PENDING ===${NC}"
         echo "All picks are valid, but games haven't completed yet."
-        echo "Run again after games finish for full validation."
+        if [ "$MODE" = "post" ]; then
+            echo "Run again after games finish for full validation."
+        fi
         exit 2
         ;;
     "FAIL")

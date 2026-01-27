@@ -158,6 +158,18 @@ except ImportError:
     IDENTITY_RESOLVER_AVAILABLE = False
     logger.warning("identity module not available - player resolution disabled")
 
+# Import Centralized Signal Calculators (v14.11 - Single-calculation policy)
+try:
+    from signals import (
+        calculate_public_fade,
+        get_public_fade_context,
+        PublicFadeSignal,
+    )
+    SIGNALS_AVAILABLE = True
+except ImportError:
+    SIGNALS_AVAILABLE = False
+    logger.warning("signals module not available - using inline calculations")
+
 # Redis import with fallback
 try:
     import redis
@@ -1855,13 +1867,17 @@ async def get_props(sport: str):
 
 
 @router.get("/best-bets/{sport}")
-async def get_best_bets(sport: str):
+async def get_best_bets(sport: str, mode: Optional[str] = None):
     """
     Get best bets using full 8 AI Models + 8 Pillars + JARVIS + Esoteric scoring.
     Returns TWO categories: props (player props) and game_picks (spreads, totals, ML).
 
     Scoring Formula:
     TOTAL = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
+
+    Query Parameters:
+    - mode: Optional. Set to "live" to filter only is_live==true picks
+            (halftime/period break opportunities with live lines available)
 
     Response Schema:
     {
@@ -1876,8 +1892,11 @@ async def get_best_bets(sport: str):
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
-    # Check cache first
-    cache_key = f"best-bets:{sport_lower}"
+    # Validate mode parameter
+    live_mode = mode and mode.lower() == "live"
+
+    # Check cache first (separate cache for live mode)
+    cache_key = f"best-bets:{sport_lower}" + (":live" if live_mode else "")
     cached = api_cache.get(cache_key)
     if cached:
         return cached
@@ -2074,15 +2093,32 @@ async def get_best_bets(sport: str):
             pillars_failed.append("Reverse Line Movement")
 
         # Pillar 3: Public Betting Fade (0-2 pts) - fading heavy public action
+        # v14.11: Use centralized public fade calculator (single-calculation policy)
         public_pct_val = sharp_signal.get("public_pct", 50)
-        public_boost = 0.0
-        if public_pct_val >= 75:  # Heavy public on one side = fade potential
-            public_boost = 2.0
-            research_reasons.append(f"Public at {public_pct_val}% (fade signal)")
-            pillars_passed.append("Public Fade Opportunity")
-        elif public_pct_val >= 65:
-            public_boost = 1.0
-            research_reasons.append(f"Public at {public_pct_val}% (mild fade)")
+        ticket_pct_val = sharp_signal.get("ticket_pct")
+        money_pct_val = sharp_signal.get("money_pct")
+
+        if SIGNALS_AVAILABLE:
+            pf_signal = calculate_public_fade(public_pct_val, ticket_pct_val, money_pct_val)
+            public_boost = pf_signal.research_boost
+            pf_context = get_public_fade_context(pf_signal)
+            if pf_signal.reason:
+                research_reasons.append(pf_signal.reason)
+            if pf_signal.is_fade_opportunity:
+                pillars_passed.append("Public Fade Opportunity")
+        else:
+            # Fallback to inline calculation
+            public_boost = 0.0
+            pf_context = {"public_overload": False}
+            if public_pct_val >= 75:
+                public_boost = 2.0
+                research_reasons.append(f"Public at {public_pct_val}% (fade signal)")
+                pillars_passed.append("Public Fade Opportunity")
+                pf_context = {"public_overload": True}
+            elif public_pct_val >= 65:
+                public_boost = 1.0
+                research_reasons.append(f"Public at {public_pct_val}% (mild fade)")
+                pf_context = {"public_overload": True}
 
         # Pillar 4: Base research floor (2 pts baseline)
         base_research = 2.0
@@ -2596,13 +2632,19 @@ async def get_best_bets(sport: str):
                     "book": book_name,  # v14.9: Consistent sportsbook field
                     "book_key": book_key,
                     "book_link": book_link,
+                    # v14.11: Sportsbook aliases for output contract
+                    "sportsbook_name": book_name,
+                    "sportsbook_event_url": book_link,
                     "game": f"{away_team} @ {home_team}",
                     "matchup": f"{away_team} @ {home_team}",
                     "home_team": home_team,
                     "away_team": away_team,
                     "start_time_et": start_time_et,
                     "game_status": game_status,
+                    "status": game_status.lower() if game_status else "scheduled",  # v14.11: Status field
                     "has_started": has_started,  # v14.9: Boolean for frontend
+                    "is_started_already": has_started,  # v14.11: Alias for frontend
+                    "is_live": game_status == "MISSED_START",  # v14.11: Live mode flag
                     "is_live_bet_candidate": game_status == "MISSED_START",
                     "recommendation": f"{side.upper()} {line}",
                     "injury_status": resolved_injury_status,
@@ -2610,6 +2652,20 @@ async def get_best_bets(sport: str):
                     "best_book": book_name,
                     "best_book_link": book_link,
                     "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
+                    "signals_firing": signals_fired,  # v14.11: Alias for output contract
+                    "pillars_hit": score_data.get("pillars_passed", []),  # v14.11: Alias
+                    # v14.11: Engine breakdown for frontend
+                    "engine_breakdown": {
+                        "ai": score_data.get("ai_score", 0),
+                        "research": score_data.get("research_score", 0),
+                        "esoteric": score_data.get("esoteric_score", 0),
+                        "jarvis": score_data.get("jarvis_rs", 0),
+                    },
+                    # v14.11: Titanium reasons alias
+                    "titanium_reasons": score_data.get("smash_reasons", []),
+                    # v14.11: Grading fields (populated by pick_logger)
+                    "graded": False,
+                    "grade_status": "PENDING",
                     **score_data,
                     "sharp_signal": sharp_signal.get("signal_strength", "NONE")
                 })
@@ -2770,19 +2826,39 @@ async def get_best_bets(sport: str):
                                 "book": best_book,  # v14.9: Consistent sportsbook field
                                 "book_key": best_book_key,
                                 "book_link": best_link,
+                                # v14.11: Sportsbook aliases for output contract
+                                "sportsbook_name": best_book,
+                                "sportsbook_event_url": best_link,
                                 "game": f"{away_team} @ {home_team}",
                                 "matchup": f"{away_team} @ {home_team}",
                                 "home_team": home_team,
                                 "away_team": away_team,
                                 "start_time_et": start_time_et,
                                 "game_status": game_status,
+                                "status": game_status.lower() if game_status else "scheduled",  # v14.11: Status field
                                 "has_started": has_started,  # v14.9: Boolean for frontend
+                                "is_started_already": has_started,  # v14.11: Alias for frontend
+                                "is_live": game_status == "MISSED_START",  # v14.11: Live mode flag
                                 "is_live_bet_candidate": game_status == "MISSED_START",
                                 "market": market_key,
                                 "recommendation": display,
                                 "best_book": best_book,
                                 "best_book_link": best_link,
                                 "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
+                                "signals_firing": signals_fired,  # v14.11: Alias for output contract
+                                "pillars_hit": score_data.get("pillars_passed", []),  # v14.11: Alias
+                                # v14.11: Engine breakdown for frontend
+                                "engine_breakdown": {
+                                    "ai": score_data.get("ai_score", 0),
+                                    "research": score_data.get("research_score", 0),
+                                    "esoteric": score_data.get("esoteric_score", 0),
+                                    "jarvis": score_data.get("jarvis_rs", 0),
+                                },
+                                # v14.11: Titanium reasons alias
+                                "titanium_reasons": score_data.get("smash_reasons", []),
+                                # v14.11: Grading fields (populated by pick_logger)
+                                "graded": False,
+                                "grade_status": "PENDING",
                                 **score_data,
                                 "sharp_signal": sharp_signal.get("signal_strength", "NONE")
                             })
@@ -2831,19 +2907,39 @@ async def get_best_bets(sport: str):
                 "book": "",  # v14.9: No book for sharp signals
                 "book_key": "",
                 "book_link": "",
+                # v14.11: Sportsbook aliases for output contract
+                "sportsbook_name": "",
+                "sportsbook_event_url": "",
                 "game": f"{away_team} @ {home_team}",
                 "matchup": f"{away_team} @ {home_team}",  # v14.9: Consistent alias
                 "home_team": home_team,
                 "away_team": away_team,
                 "start_time_et": "",  # v14.9: Not available from sharp data
                 "game_status": "UPCOMING",  # v14.9: Default status
+                "status": "scheduled",  # v14.11: Status field
                 "has_started": False,  # v14.9: Boolean for frontend
+                "is_started_already": False,  # v14.11: Alias for frontend
+                "is_live": False,  # v14.11: Live mode flag
                 "is_live_bet_candidate": False,
                 "market": "sharp_money",
                 "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
                 "best_book": "",  # v14.9: Backward compat
                 "best_book_link": "",
                 "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
+                "signals_firing": signals_fired,  # v14.11: Alias for output contract
+                "pillars_hit": score_data.get("pillars_passed", []),  # v14.11: Alias
+                # v14.11: Engine breakdown for frontend
+                "engine_breakdown": {
+                    "ai": score_data.get("ai_score", 0),
+                    "research": score_data.get("research_score", 0),
+                    "esoteric": score_data.get("esoteric_score", 0),
+                    "jarvis": score_data.get("jarvis_rs", 0),
+                },
+                # v14.11: Titanium reasons alias
+                "titanium_reasons": score_data.get("smash_reasons", []),
+                # v14.11: Grading fields (populated by pick_logger)
+                "graded": False,
+                "grade_status": "PENDING",
                 **score_data,
                 "sharp_signal": signal.get("signal_strength", "MODERATE")
             })
@@ -2893,6 +2989,26 @@ async def get_best_bets(sport: str):
             logger.error("PICK_LOGGER: Failed to log picks: %s", e)
 
     # ============================================
+    # LIVE MODE FILTERING (v14.11)
+    # ============================================
+    # When mode=live, filter to only picks marked as is_live==true
+    # These are halftime/period break opportunities where live lines exist
+    if live_mode:
+        # Filter props: check is_live or is_live_bet_candidate
+        top_props = [
+            p for p in top_props
+            if p.get("is_live") is True or p.get("is_live_bet_candidate") is True
+        ]
+
+        # Filter game picks: check is_live or is_live_bet_candidate
+        top_game_picks = [
+            p for p in top_game_picks
+            if p.get("is_live") is True or p.get("is_live_bet_candidate") is True
+        ]
+
+        logger.info("LIVE_MODE: Filtered to %d props, %d game_picks", len(top_props), len(top_game_picks))
+
+    # ============================================
     # BUILD FINAL RESPONSE
     # ============================================
     # Get astro status if available
@@ -2917,6 +3033,7 @@ async def get_best_bets(sport: str):
 
     result = {
         "sport": sport.upper(),
+        "mode": "live" if live_mode else "standard",  # v14.11: Indicate which mode
         "source": f"jarvis_savant_v{TIERING_VERSION if TIERING_AVAILABLE else '11.08'}",
         "scoring_system": "Phase 1-3 Integrated + Titanium v11.08",
         "engine_version": TIERING_VERSION if TIERING_AVAILABLE else "11.08",
@@ -3128,14 +3245,29 @@ async def debug_pick_breakdown(sport: str):
             research_reasons.append(f"Line variance {line_variance:.1f}pts (minimal)")
 
         # Pillar 3: Public Betting Fade (0-2 pts)
+        # v14.11: Use centralized public fade calculator (single-calculation policy)
         public_pct_val = sharp_signal.get("public_pct", public_pct)
-        public_boost = 0.0
-        if public_pct_val >= 75:
-            public_boost = 2.0
-            research_reasons.append(f"Public at {public_pct_val}% (fade signal)")
-        elif public_pct_val >= 65:
-            public_boost = 1.0
-            research_reasons.append(f"Public at {public_pct_val}% (mild fade)")
+        ticket_pct_val = sharp_signal.get("ticket_pct")
+        money_pct_val = sharp_signal.get("money_pct")
+
+        if SIGNALS_AVAILABLE:
+            public_fade_signal = calculate_public_fade(public_pct_val, ticket_pct_val, money_pct_val)
+            public_boost = public_fade_signal.research_boost
+            public_fade_context = get_public_fade_context(public_fade_signal)
+            if public_fade_signal.reason:
+                research_reasons.append(public_fade_signal.reason)
+        else:
+            # Fallback to inline calculation
+            public_boost = 0.0
+            public_fade_context = {"public_overload": False}
+            if public_pct_val >= 75:
+                public_boost = 2.0
+                research_reasons.append(f"Public at {public_pct_val}% (fade signal)")
+                public_fade_context = {"public_overload": True, "is_strong_fade": True}
+            elif public_pct_val >= 65:
+                public_boost = 1.0
+                research_reasons.append(f"Public at {public_pct_val}% (mild fade)")
+                public_fade_context = {"public_overload": True, "is_strong_fade": False}
 
         # Pillar 4: Base research floor (2 pts baseline)
         base_research = 2.0
@@ -3148,14 +3280,15 @@ async def debug_pick_breakdown(sport: str):
         pillar_score = sharp_boost + line_boost + public_boost
 
         # --- ESOTERIC COMPONENTS ---
+        # v14.11: public_fade_mod REMOVED - only Research Engine applies public fade boost
         gematria_score = 0.0
         jarvis_score = 0.0
         astro_score = 0.0
         fib_score = 0.0
         vortex_score = 0.0
         daily_edge_score = 0.0
-        public_fade_mod = 0.0
         trap_mod = 0.0
+        # NOTE: public_fade_context available for reference, but NOT applied numerically
 
         jarvis_triggers_hit = []
         esoteric_reasons = []
@@ -3186,14 +3319,10 @@ async def debug_pick_breakdown(sport: str):
                     esoteric_reasons.append(f"Gematria triggered: strength {round(gematria_strength, 2)}")
                 gematria_score = gematria_strength * 10 * ESOTERIC_WEIGHTS["gematria"]
 
-                # PUBLIC FADE
-                public_fade = jarvis.calculate_public_fade_signal(public_pct)
-                public_fade_mod = public_fade.get("influence", 0)
-                if public_fade_mod != 0:
-                    if public_fade_mod < 0:
-                        penalties_applied.append({"name": "Public Fade", "magnitude": round(public_fade_mod, 2)})
-                    else:
-                        esoteric_reasons.append(f"Public fade boost: {round(public_fade_mod, 2)}")
+                # v14.11: PUBLIC FADE - Now context-only for Esoteric, NO numeric modifier
+                # Research Engine owns the boost; Esoteric only sees the flag
+                if public_fade_context.get("public_overload"):
+                    esoteric_reasons.append(f"Public overload detected (context only, no boost)")
 
                 # TRAP DEDUCTION
                 trap = jarvis.calculate_large_spread_trap(spread, total)
@@ -3235,10 +3364,11 @@ async def debug_pick_breakdown(sport: str):
             esoteric_reasons.append("No esoteric signals triggered")
 
         # --- ESOTERIC SCORE ---
+        # v14.11: public_fade_mod REMOVED - prevents double-counting with Research Engine
         esoteric_raw = (
             gematria_score + jarvis_score + astro_score +
             fib_score + vortex_score + daily_edge_score +
-            public_fade_mod + trap_mod
+            trap_mod  # trap_mod is the only negative modifier
         )
         esoteric_score = max(0, min(10, esoteric_raw))
 
@@ -4223,7 +4353,9 @@ Whether we win or lose, we're always improving! 💪
 @router.get("/grader/queue")
 async def get_grader_queue(
     date: Optional[str] = None,
-    sports: Optional[str] = None
+    sports: Optional[str] = None,
+    run_id: Optional[str] = None,
+    latest_run: bool = False
 ):
     """
     Get ungraded picks queue for a date.
@@ -4233,9 +4365,12 @@ async def get_grader_queue(
     Query params:
     - date: Date to query (default: today ET)
     - sports: Comma-separated sports filter (default: all)
+    - run_id: Filter to specific run (optional)
+    - latest_run: If true, filter to most recent run only (default: false)
 
     Example:
         GET /live/grader/queue?date=2026-01-26&sports=NBA,NFL
+        GET /live/grader/queue?date=2026-01-26&latest_run=true
     """
     if not PICK_LOGGER_AVAILABLE:
         raise HTTPException(status_code=503, detail="Pick logger not available")
@@ -4257,6 +4392,16 @@ async def get_grader_queue(
             sport_list = [s.strip().upper() for s in sports.split(",")]
             picks = [p for p in picks if p.sport.upper() in sport_list]
 
+        # Filter by run_id if specified
+        if run_id:
+            picks = [p for p in picks if getattr(p, 'run_id', '') == run_id]
+        elif latest_run:
+            # Get latest run_id
+            latest_run_id = pick_logger.get_latest_run_id(date)
+            if latest_run_id:
+                picks = [p for p in picks if getattr(p, 'run_id', '') == latest_run_id]
+                run_id = latest_run_id
+
         # Filter to ungraded only (not graded AND result is None)
         ungraded = [p for p in picks if not getattr(p, 'graded', False) and p.result is None]
 
@@ -4266,15 +4411,19 @@ async def get_grader_queue(
             sport = p.sport.upper()
             by_sport[sport] = by_sport.get(sport, 0) + 1
 
-        logger.info("Grader queue: %d ungraded picks for %s", len(ungraded), date)
+        logger.info("Grader queue: %d ungraded picks for %s (run_id=%s)", len(ungraded), date, run_id or "all")
 
         return {
             "date": date,
+            "run_id": run_id,
+            "latest_run": latest_run,
             "total": len(ungraded),
             "by_sport": by_sport,
             "picks": [
                 {
                     "pick_id": p.pick_id,
+                    "pick_hash": getattr(p, "pick_hash", ""),
+                    "run_id": getattr(p, "run_id", ""),
                     "sport": p.sport,
                     "player_name": p.player_name,
                     "matchup": p.matchup,
@@ -4285,6 +4434,7 @@ async def get_grader_queue(
                     "game_start_time_et": p.game_start_time_et,
                     "canonical_event_id": getattr(p, "canonical_event_id", ""),
                     "canonical_player_id": getattr(p, "canonical_player_id", ""),
+                    "grade_status": getattr(p, "grade_status", "PENDING"),
                 }
                 for p in ungraded
             ],
@@ -4303,7 +4453,7 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
     Validates all picks can be:
     1. Matched to events (event ID exists or resolvable)
     2. Matched to players (for props: player ID exists or resolvable)
-    3. Graded when game completes (minimal validation)
+    3. Graded when game completes (grade-ready checklist)
 
     This is the KEY PROOF that tomorrow's 6AM grader will work.
 
@@ -4311,10 +4461,16 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
     {
         "date": "2026-01-26",
         "sports": ["NBA", "NFL", "MLB", "NHL", "NCAAB"],
+        "mode": "pre",  // "pre" (day-of) or "post" (next-day verification)
         "fail_on_unresolved": true
     }
 
+    Mode semantics:
+    - PRE (day-of): PASS if failed=0 AND unresolved=0 (pending allowed)
+    - POST (next-day): PASS only if failed=0 AND pending=0 AND unresolved=0
+
     Returns structured validation report with PASS/FAIL/PENDING status.
+    Per-pick reasons: PENDING_GAME_NOT_FINAL, UNRESOLVED_EVENT, UNRESOLVED_PLAYER, etc.
     """
     if not PICK_LOGGER_AVAILABLE:
         raise HTTPException(status_code=503, detail="Pick logger not available")
@@ -4329,6 +4485,7 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
             else:
                 date = datetime.now().strftime("%Y-%m-%d")
         sports = request_data.get("sports") or ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
+        mode = request_data.get("mode", "pre")  # "pre" or "post"
         fail_on_unresolved = request_data.get("fail_on_unresolved", False)
 
         pick_logger = get_pick_logger()
@@ -4338,17 +4495,20 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
         sport_set = set(s.upper() for s in sports)
         picks = [p for p in all_picks if p.sport.upper() in sport_set]
 
-        # Initialize results
+        # Initialize results with new counters
         results = {
             "date": date,
+            "mode": mode,
             "total": len(picks),
-            "passed": 0,
-            "failed": 0,
+            "graded": 0,
             "pending": 0,
+            "failed": 0,
+            "unresolved": 0,
             "by_sport": {},
         }
 
         failed_picks = []
+        unresolved_picks = []
 
         for pick in picks:
             sport = pick.sport.upper()
@@ -4358,13 +4518,15 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
                     "picks": 0,
                     "event_resolved": 0,
                     "player_resolved": 0,
+                    "graded": 0,
+                    "pending": 0,
+                    "unresolved": 0,
                     "failed_picks": []
                 }
 
             results["by_sport"][sport]["picks"] += 1
 
             # Check 1: Event resolution
-            # Event is considered resolved if we have canonical_event_id OR a matchup
             canonical_event_id = getattr(pick, "canonical_event_id", "")
             event_ok = bool(canonical_event_id) or bool(pick.matchup)
             if event_ok:
@@ -4374,80 +4536,117 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
             player_ok = True
             if pick.player_name:
                 canonical_player_id = getattr(pick, "canonical_player_id", "")
-                # Player is resolved if we have canonical ID OR identity resolver available
                 player_ok = bool(canonical_player_id) or IDENTITY_RESOLVER_AVAILABLE
                 if player_ok:
                     results["by_sport"][sport]["player_resolved"] += 1
 
-            # Check 3: Overall status determination
+            # Check 3: Grade-ready checklist (if available)
+            grade_ready_check = pick_logger.check_grade_ready(pick) if hasattr(pick_logger, 'check_grade_ready') else {"is_grade_ready": True, "reasons": []}
+
+            # Determine per-pick status
+            pick_reason = None
             if not event_ok:
-                results["failed"] += 1
-                failed_picks.append({
+                results["unresolved"] += 1
+                results["by_sport"][sport]["unresolved"] += 1
+                pick_reason = "UNRESOLVED_EVENT"
+                unresolved_picks.append({
                     "pick_id": pick.pick_id,
                     "sport": sport,
                     "player": pick.player_name,
                     "matchup": pick.matchup,
-                    "reason": "EVENT_NOT_FOUND"
-                })
-                results["by_sport"][sport]["failed_picks"].append({
-                    "pick_id": pick.pick_id,
-                    "reason": "EVENT_NOT_FOUND",
-                    "player": pick.player_name
+                    "reason": pick_reason
                 })
             elif pick.player_name and not player_ok:
+                results["unresolved"] += 1
+                results["by_sport"][sport]["unresolved"] += 1
+                pick_reason = "UNRESOLVED_PLAYER"
+                unresolved_picks.append({
+                    "pick_id": pick.pick_id,
+                    "sport": sport,
+                    "player": pick.player_name,
+                    "matchup": pick.matchup,
+                    "reason": pick_reason
+                })
+            elif not grade_ready_check["is_grade_ready"]:
+                # Missing required fields for grading
                 results["failed"] += 1
+                pick_reason = "MISSING_GRADE_FIELDS"
                 failed_picks.append({
                     "pick_id": pick.pick_id,
                     "sport": sport,
                     "player": pick.player_name,
                     "matchup": pick.matchup,
-                    "reason": "PLAYER_NOT_FOUND"
+                    "reason": pick_reason,
+                    "missing_fields": grade_ready_check.get("missing_fields", [])
                 })
                 results["by_sport"][sport]["failed_picks"].append({
                     "pick_id": pick.pick_id,
-                    "reason": "PLAYER_NOT_FOUND",
-                    "player": pick.player_name
+                    "reason": pick_reason,
+                    "player": pick.player_name,
+                    "missing_fields": grade_ready_check.get("missing_fields", [])
                 })
-            elif pick.result is not None:
+            elif pick.result is not None or getattr(pick, 'graded', False):
                 # Already graded
-                results["passed"] += 1
+                results["graded"] += 1
+                results["by_sport"][sport]["graded"] += 1
             else:
-                # Awaiting game completion
+                # Awaiting game completion (valid, just not graded yet)
                 results["pending"] += 1
+                results["by_sport"][sport]["pending"] += 1
 
-        # Determine overall status
-        if results["failed"] > 0:
-            results["overall_status"] = "FAIL"
-        elif results["pending"] > 0:
-            results["overall_status"] = "PENDING"
-        else:
-            results["overall_status"] = "PASS"
+        # Determine overall status based on mode
+        if mode == "pre":
+            # PRE mode: PASS if failed=0 AND unresolved=0 (pending allowed)
+            if results["failed"] > 0 or results["unresolved"] > 0:
+                results["overall_status"] = "FAIL"
+            elif results["pending"] > 0:
+                results["overall_status"] = "PENDING"  # This is OK for pre-mode
+            else:
+                results["overall_status"] = "PASS"
+        else:  # post mode
+            # POST mode: PASS only if everything graded
+            if results["failed"] > 0 or results["unresolved"] > 0:
+                results["overall_status"] = "FAIL"
+            elif results["pending"] > 0:
+                results["overall_status"] = "PENDING"  # Still waiting for grades
+            else:
+                results["overall_status"] = "PASS"
+
+        # For exit code interpretation
+        results["pre_mode_pass"] = (results["failed"] == 0 and results["unresolved"] == 0)
+        results["post_mode_pass"] = (results["failed"] == 0 and results["unresolved"] == 0 and results["pending"] == 0)
 
         results["summary"] = {
             "total": results["total"],
-            "passed": results["passed"],
+            "graded": results["graded"],
+            "pending": results["pending"],
             "failed": results["failed"],
-            "pending": results["pending"]
+            "unresolved": results["unresolved"]
         }
+        results["failed_picks"] = failed_picks
+        results["unresolved_picks"] = unresolved_picks
         results["timestamp"] = datetime.now().isoformat()
 
         logger.info(
-            "Dry-run complete: %s - total=%d passed=%d failed=%d pending=%d",
+            "Dry-run complete (mode=%s): %s - total=%d graded=%d pending=%d failed=%d unresolved=%d",
+            mode,
             results["overall_status"],
             results["total"],
-            results["passed"],
+            results["graded"],
+            results["pending"],
             results["failed"],
-            results["pending"]
+            results["unresolved"]
         )
 
-        # Return HTTP 422 if fail_on_unresolved and there are failures
-        if fail_on_unresolved and results["failed"] > 0:
+        # Return HTTP 422 if fail_on_unresolved and there are failures/unresolved
+        if fail_on_unresolved and (results["failed"] > 0 or results["unresolved"] > 0):
             raise HTTPException(
                 status_code=422,
                 detail={
-                    "message": f"{results['failed']} picks failed validation",
+                    "message": f"{results['failed']} failed, {results['unresolved']} unresolved",
                     "overall_status": "FAIL",
                     "failed_picks": failed_picks,
+                    "unresolved_picks": unresolved_picks,
                     "summary": results["summary"]
                 }
             )
