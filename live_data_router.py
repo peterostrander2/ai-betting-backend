@@ -1250,11 +1250,24 @@ async def get_sharp_money(sport: str):
                     # v15.1: Include ALL games with splits data so research engine
                     # always has ticket_pct/money_pct. Signal strength varies by diff.
                     for game in splits:
-                        money_pct = game.get("money_pct", game.get("moneyPct", 50))
-                        ticket_pct = game.get("ticket_pct", game.get("ticketPct", 50))
-                        public_pct = game.get("public_pct", game.get("publicPct", ticket_pct))
-                        diff = abs(money_pct - ticket_pct)
+                        # Handle Playbook v1 nested splits format:
+                        # { "splits": { "spread": { "bets": { "homePercent": N }, "money": { "homePercent": N } } } }
+                        _sp = game.get("splits", {})
+                        _sp_spread = _sp.get("spread", {}) if isinstance(_sp, dict) else {}
+                        _sp_bets = _sp_spread.get("bets", {})
+                        _sp_money = _sp_spread.get("money", {})
 
+                        if _sp_bets or _sp_money:
+                            ticket_pct = _sp_bets.get("homePercent", _sp_bets.get("home_pct", 50))
+                            money_pct = _sp_money.get("homePercent", _sp_money.get("home_pct", 50))
+                            public_pct = ticket_pct
+                        else:
+                            # Flat field fallback
+                            money_pct = game.get("money_pct", game.get("moneyPct", 50))
+                            ticket_pct = game.get("ticket_pct", game.get("ticketPct", 50))
+                            public_pct = game.get("public_pct", game.get("publicPct", ticket_pct))
+
+                        diff = abs(money_pct - ticket_pct)
                         sharp_side = "home" if money_pct > ticket_pct else "away"
                         if diff >= 20:
                             strength = "STRONG"
@@ -1265,15 +1278,19 @@ async def get_sharp_money(sport: str):
                         else:
                             strength = "NONE"
 
+                        home = game.get("home_team", game.get("homeTeam", game.get("homeTeamName")))
+                        away = game.get("away_team", game.get("awayTeam", game.get("awayTeamName")))
+
                         data.append({
                             "game_id": game.get("id", game.get("gameId")),
-                            "home_team": game.get("home_team", game.get("homeTeam")),
-                            "away_team": game.get("away_team", game.get("awayTeam")),
+                            "home_team": home,
+                            "away_team": away,
                             "sharp_side": sharp_side,
                             "money_pct": money_pct,
                             "ticket_pct": ticket_pct,
                             "public_pct": public_pct,
-                            "signal_strength": strength
+                            "signal_strength": strength,
+                            "line_variance": 0
                         })
 
                     if data:
@@ -2562,30 +2579,39 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     try:
         _lines_data = await get_lines(sport)
         for _lg in _lines_data.get("data", []):
-            _lg_home = _lg.get("home_team", "")
-            _lg_away = _lg.get("away_team", "")
+            # Handle both Playbook format (homeTeamName) and Odds API format (home_team)
+            _lg_home = _lg.get("home_team") or _lg.get("homeTeamName", "")
+            _lg_away = _lg.get("away_team") or _lg.get("awayTeamName", "")
             if not _lg_home or not _lg_away:
                 continue
             _lg_key = f"{_lg_away}@{_lg_home}"
             _gc_spread = 0
             _gc_total = 220
-            # Extract spread/total from lines data (handles both Playbook and Odds API formats)
-            _spreads = _lg.get("spreads", [])
-            _totals = _lg.get("totals", [])
-            if isinstance(_spreads, list):
-                for _sp in _spreads:
-                    if isinstance(_sp, dict) and _sp.get("team") == _lg_home and _sp.get("point") is not None:
-                        _gc_spread = _sp["point"]
-                        break
-            elif isinstance(_spreads, (int, float)):
-                _gc_spread = _spreads
-            if isinstance(_totals, list):
-                for _tl in _totals:
-                    if isinstance(_tl, dict) and _tl.get("point") is not None:
-                        _gc_total = _tl["point"]
-                        break
-            elif isinstance(_totals, (int, float)):
-                _gc_total = _totals
+
+            # Playbook v1 format: { "lines": { "spread": { "home": -1.5 }, "total": 6.5 } }
+            _lines_obj = _lg.get("lines", {})
+            if isinstance(_lines_obj, dict) and _lines_obj:
+                _sp_obj = _lines_obj.get("spread", {})
+                if isinstance(_sp_obj, dict) and "home" in _sp_obj:
+                    _gc_spread = _sp_obj["home"]
+                _tl_val = _lines_obj.get("total")
+                if isinstance(_tl_val, (int, float)):
+                    _gc_total = _tl_val
+            else:
+                # Odds API format: { "spreads": [{team, point}], "totals": [{point}] }
+                _spreads = _lg.get("spreads", [])
+                _totals = _lg.get("totals", [])
+                if isinstance(_spreads, list):
+                    for _sp in _spreads:
+                        if isinstance(_sp, dict) and _sp.get("team") == _lg_home and _sp.get("point") is not None:
+                            _gc_spread = _sp["point"]
+                            break
+                if isinstance(_totals, list):
+                    for _tl in _totals:
+                        if isinstance(_tl, dict) and _tl.get("point") is not None:
+                            _gc_total = _tl["point"]
+                            break
+
             game_context[_lg_key] = {"spread": _gc_spread, "total": _gc_total}
         logger.info("Game context built for props: %d games with spread/total data", len(game_context))
     except Exception as e:
