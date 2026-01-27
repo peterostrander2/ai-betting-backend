@@ -697,7 +697,7 @@ class JarvisSavantEngine:
             boost = 5
             color = "purple"
             action = "PERFECT CONFLUENCE - PLAY"
-        elif (both_high or either_high) and aligned_70:
+        elif aligned_70:
             level = "STRONG"
             boost = 3
             color = "green"

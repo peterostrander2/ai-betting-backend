@@ -1302,9 +1302,11 @@ async def get_sharp_money(sport: str):
                                 params={"apiKey": ODDS_API_KEY, "regions": "us", "markets": "spreads", "oddsFormat": "american"}
                             )
                             if _lv_resp and _lv_resp.status_code == 200:
-                                _lv_variance = {}  # team_key → variance
+                                _lv_variance = {}  # normalized_key → variance
+                                _lv_raw_keys = {}  # for debug logging
                                 for _lv_game in _lv_resp.json():
                                     _lv_key = f"{_lv_game.get('away_team', '')}@{_lv_game.get('home_team', '')}"
+                                    _lv_norm_key = _lv_key.lower().strip()
                                     _lv_spreads = []
                                     for _lv_bm in _lv_game.get("bookmakers", []):
                                         for _lv_mkt in _lv_bm.get("markets", []):
@@ -1313,18 +1315,37 @@ async def get_sharp_money(sport: str):
                                                     if _lv_out.get("name") == _lv_game.get("home_team"):
                                                         _lv_spreads.append(_lv_out.get("point", 0))
                                     if len(_lv_spreads) >= 2:
-                                        _lv_variance[_lv_key] = round(max(_lv_spreads) - min(_lv_spreads), 1)
-                                # Merge variance into Playbook signals
+                                        _lv_val = round(max(_lv_spreads) - min(_lv_spreads), 1)
+                                        _lv_variance[_lv_norm_key] = _lv_val
+                                        _lv_raw_keys[_lv_key] = _lv_val
+                                    else:
+                                        _lv_variance[_lv_norm_key] = 0.0
+                                logger.info("Odds API variance keys: %s", list(_lv_raw_keys.keys())[:5])
+                                # Merge variance into Playbook signals using normalized keys
+                                _lv_matched = 0
                                 for signal in data:
                                     _sig_key = f"{signal.get('away_team', '')}@{signal.get('home_team', '')}"
-                                    lv = _lv_variance.get(_sig_key, 0)
+                                    _sig_norm = _sig_key.lower().strip()
+                                    lv = _lv_variance.get(_sig_norm, 0)
+                                    if lv == 0 and _sig_norm not in _lv_variance:
+                                        # Try partial matching on home team
+                                        _sig_home = (signal.get('home_team') or '').lower()
+                                        for _vk, _vv in _lv_variance.items():
+                                            if _sig_home and _sig_home in _vk:
+                                                lv = _vv
+                                                break
+                                    if lv > 0 or _sig_norm in _lv_variance:
+                                        _lv_matched += 1
                                     signal["line_variance"] = lv
                                     # Upgrade signal_strength if line variance is strong
                                     if lv >= 2.0 and signal["signal_strength"] in ("NONE", "MILD"):
                                         signal["signal_strength"] = "STRONG"
                                     elif lv >= 1.5 and signal["signal_strength"] in ("NONE", "MILD"):
                                         signal["signal_strength"] = "MODERATE"
-                                logger.info("Merged Odds API line variance for %s: %d games with variance", sport, sum(1 for v in _lv_variance.values() if v > 0))
+                                logger.info("Merged Odds API line variance for %s: %d/%d matched, %d with variance>0, playbook_keys=%s",
+                                           sport, _lv_matched, len(data),
+                                           sum(1 for v in _lv_variance.values() if v > 0),
+                                           [f"{s.get('away_team')}@{s.get('home_team')}" for s in data[:3]])
                         except Exception as e:
                             logger.warning("Failed to merge line variance: %s", e)
 
@@ -2289,10 +2310,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 pf_context = {"public_overload": True}
 
         # Pillar 4: Base research floor (2 pts baseline)
+        # v15.2: Boost base when real splits data is present (not default 50/50)
         base_research = 2.0
+        _has_real_splits = sharp_signal and (sharp_signal.get("ticket_pct") is not None or sharp_signal.get("money_pct") is not None)
+        if _has_real_splits:
+            _mt_diff = abs((sharp_signal.get("money_pct") or 50) - (sharp_signal.get("ticket_pct") or 50))
+            if _mt_diff >= 3:
+                base_research = 3.0  # Real splits with money-ticket divergence
+                research_reasons.append(f"Splits data present (m/t diff={_mt_diff:.0f}%)")
+            else:
+                base_research = 2.5  # Real splits but minimal divergence
+                research_reasons.append("Splits data present (minimal divergence)")
 
         # Research score: Sum of pillars normalized to 0-10
-        # Max possible: 3 (sharp) + 3 (line) + 2 (public) + 2 (base) = 10
+        # Max possible: 3 (sharp) + 3 (line) + 2 (public) + 3 (base) = 11 → capped at 10
         research_score = min(10.0, base_research + sharp_boost + line_boost + public_boost)
         research_reasons.append(f"Research: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + Base:{base_research})")
 

@@ -163,17 +163,22 @@ def calculate_public_fade(
     # Smart money divergence bonus
     # If tickets are heavy but money is lighter, sharps are fading
     if ticket_pct is not None and money_pct is not None:
-        if ticket_pct > 60 and money_pct < 45:
-            divergence = ticket_pct - money_pct
-            if divergence >= 20:
-                # Strong sharp money divergence - add to research boost
-                signal.research_boost = min(2.5, signal.research_boost + 0.5)
-                signal.strength = min(1.0, signal.strength + 0.2)
-                signal.is_fade_opportunity = True
-                if signal.reason:
-                    signal.reason += f" + Sharp divergence ({divergence:.0f}%)"
-                else:
-                    signal.reason = f"Sharp money divergence (tickets {ticket_pct:.0f}%, money {money_pct:.0f}%)"
+        divergence = abs(ticket_pct - money_pct)
+        if ticket_pct > 60 and money_pct < 45 and divergence >= 20:
+            # Strong sharp money divergence
+            signal.research_boost = min(2.5, signal.research_boost + 0.5)
+            signal.strength = min(1.0, signal.strength + 0.2)
+            signal.is_fade_opportunity = True
+            if signal.reason:
+                signal.reason += f" + Sharp divergence ({divergence:.0f}%)"
+            else:
+                signal.reason = f"Sharp money divergence (tickets {ticket_pct:.0f}%, money {money_pct:.0f}%)"
+        elif divergence >= 5 and not signal.is_fade_opportunity:
+            # v15.2: Mild ticket-money divergence — sharps may be positioning
+            signal.research_boost = min(2.0, signal.research_boost + 0.5)
+            signal.is_fade_opportunity = True
+            signal.direction = "LEAN_MONEY"
+            signal.reason = f"Ticket-money divergence {divergence:.0f}% (t={ticket_pct:.0f}% m={money_pct:.0f}%)"
 
     return signal
 
