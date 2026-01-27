@@ -248,6 +248,42 @@ async def debug_seed_pick():
         return {"error": str(e)}
 
 
+@app.get("/debug/storage-info")
+async def debug_storage_info():
+    """Show storage paths and file counts for diagnosing persistence."""
+    import os, glob
+    from data_dir import DATA_DIR, PICK_LOGS, GRADED_PICKS, GRADER_DATA, AUDIT_LOGS
+    try:
+        from pick_logger import get_pick_logger
+        pl = get_pick_logger()
+        storage = pl.storage_path
+        graded = pl.graded_path
+        in_memory = {date: len(picks) for date, picks in pl.picks.items()}
+    except Exception as e:
+        storage = graded = str(e)
+        in_memory = {}
+
+    def list_files(d):
+        if not os.path.exists(d):
+            return {"exists": False}
+        files = os.listdir(d)
+        return {"exists": True, "count": len(files), "files": files[:20]}
+
+    return {
+        "DATA_DIR": DATA_DIR,
+        "RAILWAY_VOLUME_MOUNT_PATH": os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "NOT SET"),
+        "pick_logger_storage_path": storage,
+        "pick_logger_graded_path": graded,
+        "in_memory_picks": in_memory,
+        "dirs": {
+            "pick_logs": list_files(PICK_LOGS),
+            "graded_picks": list_files(GRADED_PICKS),
+            "grader_data": list_files(GRADER_DATA),
+            "audit_logs": list_files(AUDIT_LOGS),
+        }
+    }
+
+
 @app.post("/debug/run-autograde")
 async def debug_run_autograde():
     """Trigger one grading pass immediately."""
