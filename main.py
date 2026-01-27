@@ -43,6 +43,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Smoke test MUST be registered before the /live router (which requires auth)
+@app.get("/live/smoke-test/alert-status")
+@app.head("/live/smoke-test/alert-status")
+async def smoke_test_alert_status():
+    return {"status": "ok"}
+
 # Include routers
 app.include_router(live_router)
 app.include_router(scheduler_router)
@@ -171,16 +177,6 @@ async def esoteric_today_energy():
     }
 
 # ============================================================================
-# SMOKE TEST (stops 404 noise from health probes)
-# ============================================================================
-
-@app.get("/live/smoke-test/alert-status")
-@app.head("/live/smoke-test/alert-status")
-async def smoke_test_alert_status():
-    return {"status": "ok"}
-
-
-# ============================================================================
 # DEBUG: AUTOGRADER VERIFICATION ENDPOINTS (no auth)
 # ============================================================================
 
@@ -291,6 +287,108 @@ async def debug_run_autograde():
         from result_fetcher import scheduled_auto_grade
         result = await scheduled_auto_grade()
         return {"triggered": True, "result": result}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/debug/prediction-store-status")
+async def debug_prediction_store_status():
+    """Counts for pending/graded picks, last 24h, and filenames."""
+    try:
+        import os
+        from pick_logger import get_pick_logger
+        from datetime import datetime, timedelta
+        from dataclasses import asdict
+        import pytz
+        ET = pytz.timezone("America/New_York")
+        now_et = datetime.now(ET)
+        today = now_et.strftime("%Y-%m-%d")
+        yesterday = (now_et - timedelta(days=1)).strftime("%Y-%m-%d")
+        from data_dir import PICK_LOGS, GRADED_PICKS
+
+        pl = get_pick_logger()
+
+        def date_stats(date_str):
+            picks = pl.get_picks_for_date(date_str)
+            pending = [p for p in picks if not p.result]
+            graded = [p for p in picks if p.result]
+            log_file = os.path.join(PICK_LOGS, f"picks_{date_str}.jsonl")
+            graded_file = os.path.join(GRADED_PICKS, f"graded_{date_str}.jsonl")
+            return {
+                "total": len(picks),
+                "pending": len(pending),
+                "graded": len(graded),
+                "wins": sum(1 for p in graded if p.result == "WIN"),
+                "losses": sum(1 for p in graded if p.result == "LOSS"),
+                "pushes": sum(1 for p in graded if p.result == "PUSH"),
+                "log_file": log_file,
+                "log_exists": os.path.exists(log_file),
+                "graded_file": graded_file,
+                "graded_exists": os.path.exists(graded_file),
+            }
+
+        return {
+            "today": {"date": today, **date_stats(today)},
+            "yesterday": {"date": yesterday, **date_stats(yesterday)},
+            "in_memory_dates": list(pl.picks.keys()),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/debug/seed-pick-and-grade")
+async def debug_seed_pick_and_grade():
+    """Seed a fake pick, persist it, run one grading pass, return the updated record."""
+    try:
+        from pick_logger import get_pick_logger
+        from result_fetcher import auto_grade_picks
+        from datetime import datetime, timedelta
+        from dataclasses import asdict
+        import pytz
+        ET = pytz.timezone("America/New_York")
+        now_et = datetime.now(ET)
+        today = now_et.strftime("%Y-%m-%d")
+
+        pl = get_pick_logger()
+
+        # Seed a pick with a start time in the past so it's gradable
+        fake = {
+            "sport": "NBA", "pick_type": "PROP",
+            "player_name": "LeBron James", "matchup": "LAL @ BOS",
+            "home_team": "Boston Celtics", "away_team": "Los Angeles Lakers",
+            "prop_type": "points", "line": 25.5, "side": "Over",
+            "odds": -110, "book": "fanduel", "final_score": 8.5,
+            "ai_score": 7.0, "research_score": 8.0,
+            "esoteric_score": 6.0, "jarvis_score": 5.0,
+            "tier": "GOLD_STAR", "units": 1.0,
+            "start_time_et": (now_et - timedelta(hours=4)).isoformat(),
+        }
+        seed_result = pl.log_pick(pick_data=fake, game_start_time=fake["start_time_et"], skip_duplicates=False)
+        pick_id = seed_result.get("pick_id")
+
+        # Run autograde
+        grade_result = await auto_grade_picks(date=today)
+
+        # Fetch the pick back
+        updated_pick = None
+        for p in pl.get_picks_for_date(today):
+            if p.pick_id == pick_id:
+                updated_pick = {
+                    "pick_id": p.pick_id, "result": p.result,
+                    "graded": p.graded, "grade_status": p.grade_status,
+                    "actual_value": p.actual_value, "graded_at": p.graded_at,
+                    "units_won_lost": p.units_won_lost,
+                }
+                break
+
+        return {
+            "seed": seed_result,
+            "grade_summary": {
+                "picks_graded": grade_result.get("picks_graded", 0),
+                "picks_failed": grade_result.get("picks_failed", 0),
+            },
+            "updated_pick": updated_pick,
+        }
     except Exception as e:
         return {"error": str(e)}
 

@@ -809,7 +809,8 @@ class PickLogger:
         self,
         pick_id: str,
         result: str,
-        actual_value: Optional[float] = None
+        actual_value: Optional[float] = None,
+        date: Optional[str] = None
     ) -> Optional[Dict]:
         """
         Grade a pick with actual result.
@@ -818,46 +819,70 @@ class PickLogger:
             pick_id: The pick ID to grade
             result: WIN, LOSS, or PUSH
             actual_value: Optional actual stat value for props
+            date: Date to search (default: today, also checks yesterday)
 
         Returns:
             Grading result or None if pick not found
         """
-        today = get_today_date_et()
+        # Search today and yesterday
+        dates_to_search = []
+        if date:
+            dates_to_search.append(date)
+        else:
+            today = get_today_date_et()
+            yesterday = (get_now_et() - timedelta(days=1)).strftime("%Y-%m-%d")
+            dates_to_search = [today, yesterday]
 
-        for pick in self.picks.get(today, []):
-            if pick.pick_id == pick_id:
-                pick.result = result.upper()
-                pick.actual_value = actual_value
-                pick.graded_at = get_now_et().isoformat()
-                # v14.10: Set graded flag and grade_result
-                pick.graded = True
-                pick.grade_result = pick.result
+        for search_date in dates_to_search:
+            # Ensure picks are loaded for this date
+            if search_date not in self.picks:
+                self._load_picks_from_file(search_date)
 
-                # Calculate units won/lost
-                if pick.result == "WIN":
-                    if pick.odds > 0:
-                        pick.units_won_lost = pick.units * (pick.odds / 100)
-                    else:
-                        pick.units_won_lost = pick.units * (100 / abs(pick.odds))
-                elif pick.result == "LOSS":
-                    pick.units_won_lost = -pick.units
-                else:  # PUSH
-                    pick.units_won_lost = 0
+            for pick in self.picks.get(search_date, []):
+                if pick.pick_id == pick_id:
+                    pick.result = result.upper()
+                    pick.actual_value = actual_value
+                    pick.graded_at = get_now_et().isoformat()
+                    pick.graded = True
+                    pick.grade_result = pick.result
+                    pick.grade_status = "GRADED"
 
-                # Save updated picks
-                self._save_graded_picks(today)
+                    # Calculate units won/lost
+                    if pick.result == "WIN":
+                        if pick.odds > 0:
+                            pick.units_won_lost = pick.units * (pick.odds / 100)
+                        else:
+                            pick.units_won_lost = pick.units * (100 / abs(pick.odds))
+                    elif pick.result == "LOSS":
+                        pick.units_won_lost = -pick.units
+                    else:  # PUSH
+                        pick.units_won_lost = 0
 
-                return {
-                    "pick_id": pick_id,
-                    "result": pick.result,
-                    "units_won_lost": pick.units_won_lost,
-                    "graded_at": pick.graded_at
-                }
+                    # Save to BOTH canonical log and graded file
+                    self._rewrite_pick_log(search_date)
+                    self._save_graded_picks(search_date)
+
+                    return {
+                        "pick_id": pick_id,
+                        "result": pick.result,
+                        "units_won_lost": pick.units_won_lost,
+                        "graded_at": pick.graded_at
+                    }
 
         return None
 
+    def _rewrite_pick_log(self, date: str):
+        """Rewrite the canonical pick log so graded status survives redeploy."""
+        log_file = os.path.join(self.storage_path, f"picks_{date}.jsonl")
+        picks = self.picks.get(date, [])
+        if not picks:
+            return
+        with open(log_file, 'w') as f:
+            for pick in picks:
+                f.write(json.dumps(asdict(pick)) + "\n")
+
     def _save_graded_picks(self, date: str):
-        """Save graded picks to separate file."""
+        """Save graded picks to separate file (secondary copy)."""
         graded_file = os.path.join(self.graded_path, f"graded_{date}.jsonl")
 
         graded = [p for p in self.picks.get(date, []) if p.result is not None]
