@@ -1060,7 +1060,8 @@ async def auto_grade_picks(
             grade_result = pick_logger.grade_pick(
                 pick_id=pick.pick_id,
                 result=result,
-                actual_value=actual_value
+                actual_value=actual_value,
+                date=date
             )
 
             if grade_result:
