@@ -126,6 +126,35 @@ class PublishedPick:
     units_won_lost: Optional[float] = None
     graded_at: Optional[str] = None
 
+    # === NEW FIELDS FOR E2E VERIFICATION (v14.10) ===
+
+    # Grading status
+    graded: bool = False
+    grade_result: Optional[str] = None  # WIN/LOSS/PUSH (alias of result)
+
+    # Event identity (cross-provider mapping)
+    canonical_event_id: str = ""
+    provider_event_ids: Dict[str, str] = field(default_factory=dict)
+    # {"odds_api": "abc123", "balldontlie": "12345", "playbook": "PLY-456"}
+
+    # Player identity (for props)
+    canonical_player_id: str = ""
+    provider_player_ids: Dict[str, Any] = field(default_factory=dict)
+    # {"balldontlie": 237, "odds_api": None, "playbook": "LBJ-001"}
+
+    # Line/odds snapshot at bet time
+    line_at_bet: float = 0.0
+    odds_at_bet: int = -110
+    timestamp_at_bet: str = ""
+
+    # Closing line value
+    closing_line: Optional[float] = None
+    closing_odds: Optional[int] = None
+    clv: Optional[float] = None  # Positive = beat the market
+
+    # Event status tracking
+    event_status: str = "NOT_STARTED"  # NOT_STARTED, IN_PROGRESS, FINAL
+
 
 # =============================================================================
 # TIMEZONE HELPERS
@@ -429,7 +458,21 @@ class PickLogger:
             jarvis_reasons=pick_data.get("jarvis_reasons", []),
             injury_status=injury_status,
             book_validated=book_valid and injury_valid,
-            validation_errors=validation_errors
+            validation_errors=validation_errors,
+            # v14.10 E2E verification fields
+            graded=False,
+            grade_result=None,
+            canonical_event_id=pick_data.get("canonical_event_id", ""),
+            provider_event_ids=pick_data.get("provider_event_ids", {}),
+            canonical_player_id=pick_data.get("canonical_player_id", ""),
+            provider_player_ids=pick_data.get("provider_player_ids", pick_data.get("provider_ids", {})),
+            line_at_bet=float(pick_data.get("line", 0)),
+            odds_at_bet=int(pick_data.get("odds", -110)),
+            timestamp_at_bet=now_et.isoformat(),
+            closing_line=None,
+            closing_odds=None,
+            clv=None,
+            event_status="NOT_STARTED"
         )
 
         # Store and persist
@@ -531,6 +574,9 @@ class PickLogger:
                 pick.result = result.upper()
                 pick.actual_value = actual_value
                 pick.graded_at = get_now_et().isoformat()
+                # v14.10: Set graded flag and grade_result
+                pick.graded = True
+                pick.grade_result = pick.result
 
                 # Calculate units won/lost
                 if pick.result == "WIN":

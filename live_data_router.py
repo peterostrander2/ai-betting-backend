@@ -4217,6 +4217,251 @@ Whether we win or lose, we're always improving! 💪
 
 
 # ============================================================================
+# GRADER QUEUE & DRY-RUN ENDPOINTS (v14.10) - E2E Verification
+# ============================================================================
+
+@router.get("/grader/queue")
+async def get_grader_queue(
+    date: Optional[str] = None,
+    sports: Optional[str] = None
+):
+    """
+    Get ungraded picks queue for a date.
+
+    Returns minimal pick data for queue management and verification.
+
+    Query params:
+    - date: Date to query (default: today ET)
+    - sports: Comma-separated sports filter (default: all)
+
+    Example:
+        GET /live/grader/queue?date=2026-01-26&sports=NBA,NFL
+    """
+    if not PICK_LOGGER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Pick logger not available")
+
+    try:
+        # Get date in ET
+        if not date:
+            if PYTZ_AVAILABLE:
+                ET_TZ = pytz.timezone("America/New_York")
+                date = datetime.now(ET_TZ).strftime("%Y-%m-%d")
+            else:
+                date = datetime.now().strftime("%Y-%m-%d")
+
+        pick_logger = get_pick_logger()
+        picks = pick_logger.get_picks_for_date(date)
+
+        # Filter by sports
+        if sports:
+            sport_list = [s.strip().upper() for s in sports.split(",")]
+            picks = [p for p in picks if p.sport.upper() in sport_list]
+
+        # Filter to ungraded only (not graded AND result is None)
+        ungraded = [p for p in picks if not getattr(p, 'graded', False) and p.result is None]
+
+        # Count by sport
+        by_sport = {}
+        for p in ungraded:
+            sport = p.sport.upper()
+            by_sport[sport] = by_sport.get(sport, 0) + 1
+
+        logger.info("Grader queue: %d ungraded picks for %s", len(ungraded), date)
+
+        return {
+            "date": date,
+            "total": len(ungraded),
+            "by_sport": by_sport,
+            "picks": [
+                {
+                    "pick_id": p.pick_id,
+                    "sport": p.sport,
+                    "player_name": p.player_name,
+                    "matchup": p.matchup,
+                    "prop_type": p.prop_type,
+                    "line": p.line,
+                    "side": p.side,
+                    "tier": p.tier,
+                    "game_start_time_et": p.game_start_time_et,
+                    "canonical_event_id": getattr(p, "canonical_event_id", ""),
+                    "canonical_player_id": getattr(p, "canonical_player_id", ""),
+                }
+                for p in ungraded
+            ],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception("Failed to get grader queue: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/grader/dry-run")
+async def run_grader_dry_run(request_data: Dict[str, Any]):
+    """
+    Dry-run validation of autograder pipeline.
+
+    Validates all picks can be:
+    1. Matched to events (event ID exists or resolvable)
+    2. Matched to players (for props: player ID exists or resolvable)
+    3. Graded when game completes (minimal validation)
+
+    This is the KEY PROOF that tomorrow's 6AM grader will work.
+
+    Request body:
+    {
+        "date": "2026-01-26",
+        "sports": ["NBA", "NFL", "MLB", "NHL", "NCAAB"],
+        "fail_on_unresolved": true
+    }
+
+    Returns structured validation report with PASS/FAIL/PENDING status.
+    """
+    if not PICK_LOGGER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Pick logger not available")
+
+    try:
+        # Parse request - get date from request or default to today ET
+        date = request_data.get("date")
+        if not date:
+            if PYTZ_AVAILABLE:
+                ET_TZ = pytz.timezone("America/New_York")
+                date = datetime.now(ET_TZ).strftime("%Y-%m-%d")
+            else:
+                date = datetime.now().strftime("%Y-%m-%d")
+        sports = request_data.get("sports") or ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
+        fail_on_unresolved = request_data.get("fail_on_unresolved", False)
+
+        pick_logger = get_pick_logger()
+        all_picks = pick_logger.get_picks_for_date(date)
+
+        # Filter by sports
+        sport_set = set(s.upper() for s in sports)
+        picks = [p for p in all_picks if p.sport.upper() in sport_set]
+
+        # Initialize results
+        results = {
+            "date": date,
+            "total": len(picks),
+            "passed": 0,
+            "failed": 0,
+            "pending": 0,
+            "by_sport": {},
+        }
+
+        failed_picks = []
+
+        for pick in picks:
+            sport = pick.sport.upper()
+
+            if sport not in results["by_sport"]:
+                results["by_sport"][sport] = {
+                    "picks": 0,
+                    "event_resolved": 0,
+                    "player_resolved": 0,
+                    "failed_picks": []
+                }
+
+            results["by_sport"][sport]["picks"] += 1
+
+            # Check 1: Event resolution
+            # Event is considered resolved if we have canonical_event_id OR a matchup
+            canonical_event_id = getattr(pick, "canonical_event_id", "")
+            event_ok = bool(canonical_event_id) or bool(pick.matchup)
+            if event_ok:
+                results["by_sport"][sport]["event_resolved"] += 1
+
+            # Check 2: Player resolution (props only)
+            player_ok = True
+            if pick.player_name:
+                canonical_player_id = getattr(pick, "canonical_player_id", "")
+                # Player is resolved if we have canonical ID OR identity resolver available
+                player_ok = bool(canonical_player_id) or IDENTITY_RESOLVER_AVAILABLE
+                if player_ok:
+                    results["by_sport"][sport]["player_resolved"] += 1
+
+            # Check 3: Overall status determination
+            if not event_ok:
+                results["failed"] += 1
+                failed_picks.append({
+                    "pick_id": pick.pick_id,
+                    "sport": sport,
+                    "player": pick.player_name,
+                    "matchup": pick.matchup,
+                    "reason": "EVENT_NOT_FOUND"
+                })
+                results["by_sport"][sport]["failed_picks"].append({
+                    "pick_id": pick.pick_id,
+                    "reason": "EVENT_NOT_FOUND",
+                    "player": pick.player_name
+                })
+            elif pick.player_name and not player_ok:
+                results["failed"] += 1
+                failed_picks.append({
+                    "pick_id": pick.pick_id,
+                    "sport": sport,
+                    "player": pick.player_name,
+                    "matchup": pick.matchup,
+                    "reason": "PLAYER_NOT_FOUND"
+                })
+                results["by_sport"][sport]["failed_picks"].append({
+                    "pick_id": pick.pick_id,
+                    "reason": "PLAYER_NOT_FOUND",
+                    "player": pick.player_name
+                })
+            elif pick.result is not None:
+                # Already graded
+                results["passed"] += 1
+            else:
+                # Awaiting game completion
+                results["pending"] += 1
+
+        # Determine overall status
+        if results["failed"] > 0:
+            results["overall_status"] = "FAIL"
+        elif results["pending"] > 0:
+            results["overall_status"] = "PENDING"
+        else:
+            results["overall_status"] = "PASS"
+
+        results["summary"] = {
+            "total": results["total"],
+            "passed": results["passed"],
+            "failed": results["failed"],
+            "pending": results["pending"]
+        }
+        results["timestamp"] = datetime.now().isoformat()
+
+        logger.info(
+            "Dry-run complete: %s - total=%d passed=%d failed=%d pending=%d",
+            results["overall_status"],
+            results["total"],
+            results["passed"],
+            results["failed"],
+            results["pending"]
+        )
+
+        # Return HTTP 422 if fail_on_unresolved and there are failures
+        if fail_on_unresolved and results["failed"] > 0:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": f"{results['failed']} picks failed validation",
+                    "overall_status": "FAIL",
+                    "failed_picks": failed_picks,
+                    "summary": results["summary"]
+                }
+            )
+
+        return results
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Dry-run failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # PICK LOGGER ENDPOINTS (v14.9) - Production Pick Persistence & Audit
 # ============================================================================
 

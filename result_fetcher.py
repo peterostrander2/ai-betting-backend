@@ -232,6 +232,155 @@ async def fetch_completed_games(sport: str, days_back: int = 1) -> List[GameResu
 
 
 # =============================================================================
+# CLOSING LINE VALUE (CLV) - v14.10
+# =============================================================================
+
+async def fetch_closing_odds(
+    sport: str,
+    event_id: str,
+    market: str = "player_points"
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch closing odds from Odds API historical endpoint.
+
+    NOTE: This requires Odds API Historical tier subscription.
+    If unavailable, returns None and CLV is not calculated.
+
+    Args:
+        sport: Sport code (NBA, NFL, etc.)
+        event_id: Odds API event ID
+        market: Market type (player_points, spreads, totals)
+
+    Returns:
+        Dict with closing_line, closing_odds, book, timestamp, or None if unavailable
+    """
+    if not ODDS_API_KEY:
+        logger.debug("ODDS_API_KEY not set - CLV unavailable")
+        return None
+
+    sport_key = ODDS_API_SPORTS.get(sport.upper())
+    if not sport_key:
+        return None
+
+    # Historical odds endpoint (requires subscription)
+    url = f"{ODDS_API_BASE}/historical/sports/{sport_key}/events/{event_id}/odds"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "markets": market,
+        "bookmakers": "draftkings,fanduel",
+        "oddsFormat": "american"
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, params=params)
+
+            if resp.status_code == 404:
+                logger.debug("Historical odds not available for event %s", event_id)
+                return None
+
+            if resp.status_code == 403:
+                logger.warning("Historical odds API requires subscription upgrade")
+                return None
+
+            if resp.status_code == 402:
+                logger.warning("Historical odds API requires payment/upgrade")
+                return None
+
+            if resp.status_code != 200:
+                logger.warning("Historical odds API error: %d", resp.status_code)
+                return None
+
+            data = resp.json()
+
+            # Extract closing line from response
+            if not data.get("data"):
+                return None
+
+            # Get the last (closing) snapshot
+            if isinstance(data["data"], list):
+                closing_snapshot = data["data"][-1]
+            else:
+                closing_snapshot = data["data"]
+
+            bookmakers = closing_snapshot.get("bookmakers", [])
+            if not bookmakers:
+                return None
+
+            # Prefer DraftKings, fall back to FanDuel
+            book = next((b for b in bookmakers if b.get("key") == "draftkings"), None)
+            if not book:
+                book = next((b for b in bookmakers if b.get("key") == "fanduel"), None)
+            if not book:
+                book = bookmakers[0]
+
+            markets = book.get("markets", [])
+            if not markets:
+                return None
+
+            market_data = markets[0]
+            outcomes = market_data.get("outcomes", [])
+
+            if outcomes:
+                return {
+                    "book": book.get("key"),
+                    "market": market,
+                    "line": outcomes[0].get("point"),
+                    "odds": outcomes[0].get("price"),
+                    "timestamp": closing_snapshot.get("timestamp")
+                }
+
+            return None
+
+    except Exception as e:
+        logger.error("Error fetching closing odds: %s", e)
+        return None
+
+
+def calculate_clv(
+    line_at_bet: float,
+    closing_line: float,
+    side: str
+) -> float:
+    """
+    Calculate Closing Line Value.
+
+    CLV measures how much value you captured vs the closing line.
+    Positive CLV = beat the market (good)
+    Negative CLV = worse than closing (bad)
+
+    For OVER bets: CLV = closing_line - line_at_bet
+        (Closing higher than your bet = you got value)
+    For UNDER bets: CLV = line_at_bet - closing_line
+        (Closing lower than your bet = you got value)
+
+    For spreads (taking points):
+        CLV = closing_spread - spread_at_bet
+        (Getting more points than closing = value)
+
+    Args:
+        line_at_bet: The line when the bet was placed
+        closing_line: The closing line at game time
+        side: Bet side (Over, Under, or team name for spreads)
+
+    Returns:
+        CLV value (positive = beat the market)
+    """
+    side_upper = side.upper()
+
+    if side_upper == "OVER":
+        # For overs, higher closing line = you got value
+        return closing_line - line_at_bet
+    elif side_upper == "UNDER":
+        # For unders, lower closing line = you got value
+        return line_at_bet - closing_line
+    else:
+        # For spreads, assume positive CLV if you got more points
+        # (This is simplified - real spread CLV depends on context)
+        return closing_line - line_at_bet
+
+
+# =============================================================================
 # PLAYBOOK API - PLAYER STATS (PRIMARY SOURCE)
 # =============================================================================
 
