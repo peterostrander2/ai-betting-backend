@@ -583,9 +583,10 @@ async def admin_cleanup_test_picks(date: str = None):
         picks = pl.get_picks_for_date(date)
         before = len(picks)
 
-        # Remove test picks (seeded ones have LAL @ BOS + LeBron + GOLD_STAR)
+        # Remove test picks: seeded (LAL @ BOS + LeBron + GOLD_STAR) or e2e-proof (pick_id starts with e2e_)
         cleaned = [p for p in picks if not (
-            p.matchup == "LAL @ BOS" and p.player_name == "LeBron James" and p.tier == "GOLD_STAR"
+            (p.matchup == "LAL @ BOS" and p.player_name == "LeBron James" and p.tier == "GOLD_STAR")
+            or p.pick_id.startswith("e2e_")
         )]
         removed = before - len(cleaned)
         pl.picks[date] = cleaned
