@@ -920,7 +920,7 @@ async def auto_grade_picks(
 
     # Default sports
     if not sports:
-        sports = ["NBA", "NHL", "NFL", "MLB"]
+        sports = ["NBA", "NHL", "NFL", "MLB", "NCAAB"]
 
     logger.info("Starting auto-grade for %s, sports: %s", date, sports)
 

@@ -197,7 +197,8 @@ class DailyAuditJob:
     
     def _save_audit_log(self, results: Dict):
         """Save audit results to file."""
-        log_dir = os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "audit_logs")
+        from data_dir import AUDIT_LOGS
+        log_dir = AUDIT_LOGS
         os.makedirs(log_dir, exist_ok=True)
         
         date_str = datetime.now().strftime("%Y-%m-%d")
@@ -239,7 +240,8 @@ class CleanupJob:
                 removed += original_count - len(self.auto_grader.predictions[sport])
         
         # Cleanup old audit logs
-        log_dir = os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "audit_logs")
+        from data_dir import AUDIT_LOGS
+        log_dir = AUDIT_LOGS
         if os.path.exists(log_dir):
             for filename in os.listdir(log_dir):
                 filepath = os.path.join(log_dir, filename)

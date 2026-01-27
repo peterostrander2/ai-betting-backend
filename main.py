@@ -25,6 +25,7 @@ from live_data_router import router as live_router, close_shared_client
 import database
 from daily_scheduler import scheduler_router, init_scheduler, get_scheduler
 from auto_grader import get_grader
+from data_dir import ensure_dirs, DATA_DIR
 from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILABLE
 
 app = FastAPI(
@@ -49,6 +50,7 @@ app.include_router(scheduler_router)
 # Startup event - initialize database and scheduler
 @app.on_event("startup")
 async def startup_event():
+    ensure_dirs()
     database.init_database()
     # Initialize and start daily scheduler with auto_grader connection
     # CRITICAL: Pass grader so scheduler can adjust weights on audit
