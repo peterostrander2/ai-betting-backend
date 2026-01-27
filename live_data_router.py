@@ -2337,9 +2337,8 @@ async def get_best_bets(sport: str):
                 smash_reasons.append(f"Jarvis Engine: {round(jarvis_rs, 2)}/10")
 
         # Build penalties array from modifiers
+        # v15.0: public_fade_mod removed (now only in Research as positive boost)
         penalties = []
-        if public_fade_mod < 0:
-            penalties.append({"name": "Public Fade", "magnitude": round(public_fade_mod, 2)})
         if trap_mod < 0:
             penalties.append({"name": "Large Spread Trap", "magnitude": round(trap_mod, 2)})
 
