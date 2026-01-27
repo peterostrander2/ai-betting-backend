@@ -50,8 +50,9 @@ logger = logging.getLogger("pick_logger")
 # CONFIGURATION
 # =============================================================================
 
-STORAGE_PATH = "./pick_logs"
-GRADED_PATH = "./graded_picks"
+_VOLUME = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", ".")
+STORAGE_PATH = os.path.join(_VOLUME, "pick_logs")
+GRADED_PATH = os.path.join(_VOLUME, "graded_picks")
 
 # Books we validate against
 SUPPORTED_BOOKS = {
