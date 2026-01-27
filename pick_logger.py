@@ -29,7 +29,7 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple, Set
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict, field, fields as dataclass_fields
 from collections import defaultdict
 import logging
 
@@ -214,6 +214,11 @@ class PublishedPick:
 
     # Tier badge for frontend
     tier_badge: str = ""  # SMASH, GOLD, EDGE, etc.
+
+    # v15.1 - Grading metadata
+    game_time_utc: str = ""  # ISO UTC game start time
+    minutes_since_start: int = 0  # Minutes since game start (0 if not started)
+    raw_inputs_snapshot: Dict[str, Any] = field(default_factory=dict)  # Key features used
 
 
 # =============================================================================
@@ -724,7 +729,11 @@ class PickLogger:
             league=pick_data.get("league", pick_data.get("sport", "")),
             status=status,
             base_score=base_score,
-            tier_badge=tier_badge
+            tier_badge=tier_badge,
+            # v15.1 grading metadata
+            game_time_utc=pick_data.get("game_time_utc", ""),
+            minutes_since_start=int(pick_data.get("minutes_since_start", 0)),
+            raw_inputs_snapshot=pick_data.get("raw_inputs_snapshot", {}),
         )
 
         # Store and persist
@@ -799,14 +808,18 @@ class PickLogger:
         """Load picks from JSONL file for a given date."""
         log_file = os.path.join(self.storage_path, f"picks_{date}.jsonl")
         if os.path.exists(log_file):
+            valid_field_names = {f.name for f in dataclass_fields(PublishedPick)}
             picks = []
             with open(log_file, 'r') as f:
                 for line in f:
                     try:
                         data = json.loads(line.strip())
-                        pick = PublishedPick(**data)
+                        # Filter to known fields so schema changes don't crash loading
+                        filtered = {k: v for k, v in data.items() if k in valid_field_names}
+                        pick = PublishedPick(**filtered)
                         picks.append(pick)
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("Failed to parse pick line: %s", e)
                         continue
             self.picks[date] = picks
 

@@ -598,6 +598,243 @@ async def ops_cache_status():
         return {"error": str(e)}
 
 
+# =============================================================================
+# OPS ENDPOINTS — Autograder visibility (v15.1)
+# =============================================================================
+_last_grade_run = {}
+
+# Load persisted grade run metadata on startup
+try:
+    import json as _json
+    _grade_run_path = _os.path.join(DATA_DIR, "last_grade_run.json")
+    if _os.path.exists(_grade_run_path):
+        with open(_grade_run_path, "r") as _f:
+            _last_grade_run = _json.load(_f)
+except Exception:
+    pass
+
+
+@app.get("/ops/latest-audit", dependencies=[Depends(_require_admin)])
+async def ops_latest_audit():
+    """Return the newest audit log file with per-sport totals."""
+    import json
+    from data_dir import AUDIT_LOGS
+    try:
+        if not _os.path.exists(AUDIT_LOGS):
+            return {"error": "No audit_logs directory"}
+        files = sorted(
+            [f for f in _os.listdir(AUDIT_LOGS) if f.startswith("audit_") and f.endswith(".json")],
+            reverse=True
+        )
+        if not files:
+            return {"error": "No audit files found", "directory": AUDIT_LOGS}
+        latest = files[0]
+        path = _os.path.join(AUDIT_LOGS, latest)
+        with open(path, "r") as f:
+            data = json.load(f)
+        # Build per-sport totals
+        totals = {}
+        sports_data = data.get("sports", {})
+        for sport, sport_info in sports_data.items():
+            summary = sport_info.get("summary", {})
+            totals[sport] = {
+                "graded": summary.get("graded_count", 0),
+                "hit_rate": summary.get("hit_rate", 0),
+                "mae": summary.get("mae", 0),
+            }
+        return {
+            "file_path": path,
+            "file_name": latest,
+            "timestamp": data.get("timestamp", ""),
+            "totals_per_sport": totals,
+            "audit": data,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/ops/auto-grade/run", dependencies=[Depends(_require_admin)])
+async def ops_auto_grade_run():
+    """Trigger autograde immediately. Returns full grading summary."""
+    global _last_grade_run
+    import json
+    from datetime import datetime, timedelta
+    import pytz
+    try:
+        from result_fetcher import auto_grade_picks
+    except ImportError:
+        return {"error": "result_fetcher not available"}
+
+    ET = pytz.timezone("America/New_York")
+    now_et = datetime.now(ET)
+    today = now_et.strftime("%Y-%m-%d")
+
+    dates_to_grade = [today]
+    if now_et.hour < 12:
+        yesterday = (now_et - timedelta(days=1)).strftime("%Y-%m-%d")
+        dates_to_grade.append(yesterday)
+
+    all_results = []
+    for date in dates_to_grade:
+        result = await auto_grade_picks(date=date)
+        all_results.append(result)
+
+    # Persist metadata
+    _last_grade_run = {
+        "timestamp_et": now_et.isoformat(),
+        "timestamp_utc": datetime.utcnow().isoformat() + "Z",
+        "dates_graded": dates_to_grade,
+        "results": all_results,
+    }
+    try:
+        grade_run_path = _os.path.join(DATA_DIR, "last_grade_run.json")
+        with open(grade_run_path, "w") as f:
+            json.dump(_last_grade_run, f, indent=2, default=str)
+    except Exception:
+        pass
+
+    return _last_grade_run
+
+
+@app.get("/ops/grader/status", dependencies=[Depends(_require_admin)])
+async def ops_grader_status():
+    """Comprehensive grader status: pick counts, last run, storage info."""
+    from datetime import datetime, timedelta
+    import pytz
+    from data_dir import PICK_LOGS, SUPPORTED_SPORTS
+    try:
+        from pick_logger import get_pick_logger
+    except ImportError:
+        return {"error": "pick_logger not available"}
+
+    ET = pytz.timezone("America/New_York")
+    now_et = datetime.now(ET)
+    today = now_et.strftime("%Y-%m-%d")
+    yesterday = (now_et - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    pick_logger = get_pick_logger()
+    counts = {"total": 0, "pending": 0, "graded": 0, "failed": 0, "waiting": 0}
+    by_sport = {}
+
+    for date in [today, yesterday]:
+        picks = pick_logger.get_picks_for_date(date)
+        for p in picks:
+            counts["total"] += 1
+            status = getattr(p, "grade_status", "PENDING")
+            if status == "GRADED" or p.result:
+                counts["graded"] += 1
+            elif status == "FAILED":
+                counts["failed"] += 1
+            elif status == "WAITING_FINAL":
+                counts["waiting"] += 1
+            else:
+                counts["pending"] += 1
+            sport = p.sport.upper()
+            if sport not in by_sport:
+                by_sport[sport] = {"total": 0, "pending": 0, "graded": 0}
+            by_sport[sport]["total"] += 1
+            if status == "GRADED" or p.result:
+                by_sport[sport]["graded"] += 1
+            elif status not in ("FAILED",):
+                by_sport[sport]["pending"] += 1
+
+    # List pick log files
+    pick_files = []
+    if _os.path.exists(PICK_LOGS):
+        pick_files = sorted(
+            [f for f in _os.listdir(PICK_LOGS) if f.endswith(".jsonl")],
+            reverse=True
+        )[:10]
+
+    return {
+        "predictions_total": counts["total"],
+        "predictions_pending": counts["pending"],
+        "predictions_graded": counts["graded"],
+        "predictions_failed": counts["failed"],
+        "predictions_waiting_final": counts["waiting"],
+        "by_sport": by_sport,
+        "dates_checked": [today, yesterday],
+        "last_grade_run_timestamp": _last_grade_run.get("timestamp_et"),
+        "last_grade_run_timestamp_utc": _last_grade_run.get("timestamp_utc"),
+        "last_grade_run_summary": _last_grade_run.get("results"),
+        "storage_backend": "jsonl_file",
+        "predictions_store_path": PICK_LOGS,
+        "recent_pick_files": pick_files,
+        "supported_sports": list(SUPPORTED_SPORTS),
+    }
+
+
+@app.post("/ops/predictions/test-seed", dependencies=[Depends(_require_admin)])
+async def ops_predictions_test_seed():
+    """Seed 1 dummy prediction into the exact store autograde reads."""
+    import uuid
+    from datetime import datetime, timedelta
+    import pytz
+    from data_dir import PICK_LOGS
+    try:
+        from pick_logger import get_pick_logger
+    except ImportError:
+        return {"error": "pick_logger not available"}
+
+    ET = pytz.timezone("America/New_York")
+    now_et = datetime.now(ET)
+    yesterday = (now_et - timedelta(days=1)).strftime("%Y-%m-%d")
+    game_time = (now_et - timedelta(hours=5)).replace(hour=19, minute=0, second=0)
+
+    pick_id = f"test_seed_{uuid.uuid4().hex[:8]}"
+    pick_data = {
+        "pick_id": pick_id,
+        "sport": "NBA",
+        "pick_type": "PROP",
+        "player_name": "Test Player Seed",
+        "matchup": "TEST @ SEED",
+        "home_team": "SEED",
+        "away_team": "TEST",
+        "prop_type": "points",
+        "market": "player_points",
+        "line": 22.5,
+        "side": "Over",
+        "odds": -110,
+        "book": "DraftKings",
+        "start_time_et": game_time.isoformat(),
+        "ai_score": 7.0,
+        "research_score": 7.5,
+        "esoteric_score": 6.0,
+        "jarvis_score": 5.5,
+        "final_score": 7.2,
+        "total_score": 7.2,
+        "tier": "GOLD_STAR",
+        "units": 2.0,
+        "titanium_triggered": False,
+        "injury_status": "HEALTHY",
+        "game_time_utc": game_time.astimezone(pytz.utc).isoformat(),
+        "minutes_since_start": max(0, int((now_et - game_time).total_seconds() / 60)),
+        "raw_inputs_snapshot": {"line": 22.5, "odds": -110, "matchup": "TEST @ SEED", "seeded": True},
+    }
+
+    pick_logger = get_pick_logger()
+    result = pick_logger.log_pick(
+        pick_data=pick_data,
+        game_start_time=game_time.isoformat(),
+        skip_duplicates=False
+    )
+
+    # log_pick always writes to today's date file
+    today_str = now_et.strftime("%Y-%m-%d")
+    written_to = _os.path.join(PICK_LOGS, f"picks_{today_str}.jsonl")
+
+    return {
+        "seeded": True,
+        "seeded_prediction_id": result.get("pick_id") or pick_id,
+        "pick_hash": result.get("pick_hash"),
+        "written_to": written_to,
+        "date": today_str,
+        "sport": "NBA",
+        "store": "pick_logger (JSONL) — same store autograde reads from",
+        "next_step": "Call POST /ops/auto-grade/run to attempt grading this seed",
+    }
+
+
 @app.post("/admin/cleanup-test-picks", dependencies=[Depends(_require_admin)])
 async def admin_cleanup_test_picks(date: str = None):
     """Remove seeded test picks (LAL @ BOS / LeBron / GOLD_STAR) for a given date."""

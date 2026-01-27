@@ -920,7 +920,8 @@ async def auto_grade_picks(
 
     # Default sports
     if not sports:
-        sports = ["NBA", "NHL", "NFL", "MLB", "NCAAB"]
+        from data_dir import SUPPORTED_SPORTS
+        sports = list(SUPPORTED_SPORTS)
 
     logger.info("Starting auto-grade for %s, sports: %s", date, sports)
 

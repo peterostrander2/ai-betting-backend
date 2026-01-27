@@ -58,7 +58,8 @@ async def warm_best_bets_cache():
     ET = pytz.timezone("America/New_York")
     now_et = datetime.now(ET)
     today_str = now_et.strftime("%Y-%m-%d")
-    sports = ["nba", "nhl", "ncaab", "nfl", "mlb"]
+    from data_dir import SUPPORTED_SPORTS
+    sports = [s.lower() for s in SUPPORTED_SPORTS]
 
     for sport in sports:
         cache_key = f"best-bets:{sport}"
@@ -191,7 +192,8 @@ class DailyAuditJob:
             "sports": {}
         }
         
-        for sport in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
+        from data_dir import SUPPORTED_SPORTS
+        for sport in SUPPORTED_SPORTS:
             try:
                 sport_result = self.audit_sport(sport)
                 results["sports"][sport] = sport_result

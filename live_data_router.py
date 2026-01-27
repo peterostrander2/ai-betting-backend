@@ -3016,9 +3016,39 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key):
             pick_logger = get_pick_logger()
             logged_count = 0
             validation_warnings = []
+            _now_for_log = datetime.now(pytz.timezone("America/New_York"))
+
+            def _enrich_pick_for_logging(p):
+                """Add game_time_utc, minutes_since_start, raw_inputs_snapshot."""
+                start_et = p.get("start_time_et", "")
+                game_time_utc = ""
+                mins_since = 0
+                if start_et:
+                    try:
+                        et_tz = pytz.timezone("America/New_York")
+                        gt = datetime.fromisoformat(start_et.replace("Z", "+00:00"))
+                        if gt.tzinfo is None:
+                            gt = et_tz.localize(gt)
+                        game_time_utc = gt.astimezone(pytz.utc).isoformat()
+                        delta = (_now_for_log - gt.astimezone(et_tz)).total_seconds()
+                        if delta > 0:
+                            mins_since = int(delta / 60)
+                    except Exception:
+                        pass
+                p["game_time_utc"] = game_time_utc
+                p["minutes_since_start"] = mins_since
+                p["raw_inputs_snapshot"] = {
+                    "line": p.get("line"),
+                    "odds": p.get("odds", -110),
+                    "matchup": p.get("matchup", p.get("game", "")),
+                    "injury_status": p.get("injury_status", "HEALTHY"),
+                    "sharp_signal": p.get("sharp_signal", ""),
+                    "tier": p.get("tier", ""),
+                }
 
             # Log prop picks
             for pick in top_props:
+                _enrich_pick_for_logging(pick)
                 log_result = pick_logger.log_pick(
                     pick_data=pick,
                     game_start_time=pick.get("start_time_et", "")
@@ -3030,6 +3060,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key):
 
             # Log game picks
             for pick in top_game_picks:
+                _enrich_pick_for_logging(pick)
                 log_result = pick_logger.log_pick(
                     pick_data=pick,
                     game_start_time=pick.get("start_time_et", "")

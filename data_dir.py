@@ -17,6 +17,9 @@ GRADED_PICKS = os.path.join(DATA_DIR, "graded_picks")
 GRADER_DATA = os.path.join(DATA_DIR, "grader_data")
 AUDIT_LOGS = os.path.join(DATA_DIR, "audit_logs")
 
+# Single source of truth for supported sports (used by grader, scheduler, audit, warm)
+SUPPORTED_SPORTS = ["NBA", "NHL", "NFL", "MLB", "NCAAB"]
+
 
 def ensure_dirs():
     """Create all data subdirectories. Call once at startup."""
