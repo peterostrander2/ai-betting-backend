@@ -2335,14 +2335,14 @@ async def get_best_bets(sport: str, mode: Optional[str] = None):
                 titanium_triggered=titanium_triggered
             )
         else:
-            # Fallback tier determination
+            # Fallback tier determination (v12.0 thresholds)
             if titanium_triggered:
                 bet_tier = {"tier": "TITANIUM_SMASH", "units": 2.5, "action": "SMASH", "badge": "TITANIUM SMASH"}
-            elif final_score >= 9.0:
+            elif final_score >= 7.5:  # v12.0: was 9.0
                 bet_tier = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
-            elif final_score >= 7.5:
+            elif final_score >= 6.5:  # v12.0: was 7.5
                 bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
-            elif final_score >= 6.0:
+            elif final_score >= 5.5:  # v12.0: was 6.0
                 bet_tier = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
             else:
                 bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
@@ -3486,13 +3486,14 @@ async def debug_pick_breakdown(sport: str):
         if TIERING_AVAILABLE:
             bet_tier = tier_from_score(final_score, confluence, titanium_triggered=titanium_triggered)
         else:
+            # Fallback tier determination (v12.0 thresholds)
             if titanium_triggered:
                 bet_tier = {"tier": "TITANIUM_SMASH", "units": 2.5, "action": "SMASH"}
-            elif final_score >= 9.0:
+            elif final_score >= 7.5:  # v12.0: was 9.0
                 bet_tier = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
-            elif final_score >= 7.5:
+            elif final_score >= 6.5:  # v12.0: was 7.5
                 bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
-            elif final_score >= 6.0:
+            elif final_score >= 5.5:  # v12.0: was 6.0
                 bet_tier = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
             else:
                 bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
