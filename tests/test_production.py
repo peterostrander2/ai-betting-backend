@@ -517,49 +517,61 @@ class TestTieringSingleSource:
             assert tier in TIER_CONFIG, f"Tier {tier} not defined in TIER_CONFIG"
 
     def test_tier_from_score_gold_star(self):
-        """Score >= 9.0 should return GOLD_STAR."""
+        """Score >= 7.5 should return GOLD_STAR (v12.0 thresholds)."""
         from tiering import tier_from_score
-        result = tier_from_score(final_score=9.5)
+        result = tier_from_score(final_score=8.0)
         assert result["tier"] == "GOLD_STAR"
 
     def test_tier_from_score_edge_lean(self):
-        """Score >= 7.5 and < 9.0 should return EDGE_LEAN."""
+        """Score >= 6.5 and < 7.5 should return EDGE_LEAN (v12.0 thresholds)."""
         from tiering import tier_from_score
-        result = tier_from_score(final_score=8.0)
+        result = tier_from_score(final_score=7.0)
         assert result["tier"] == "EDGE_LEAN"
 
     def test_tier_from_score_monitor(self):
-        """Score >= 6.0 and < 7.5 should return MONITOR."""
+        """Score >= 5.5 and < 6.5 should return MONITOR (v12.0 thresholds)."""
         from tiering import tier_from_score
-        result = tier_from_score(final_score=6.5)
+        result = tier_from_score(final_score=6.0)
         assert result["tier"] == "MONITOR"
 
     def test_tier_from_score_pass(self):
-        """Score < 6.0 should return PASS."""
+        """Score < 5.5 should return PASS (v12.0 thresholds)."""
         from tiering import tier_from_score
         result = tier_from_score(final_score=5.0)
         assert result["tier"] == "PASS"
 
     def test_titanium_rule_check(self):
-        """Titanium rule should trigger with 3/4 engines >= 8.0."""
+        """Titanium rule should trigger with final_score >= 8.0 AND 3/4 engines >= 6.5 (v12.0)."""
         from tiering import check_titanium_rule
 
-        # Should trigger
+        # Should trigger: final >= 8.0 AND 3/4 engines >= 6.5
         triggered, explanation, engines = check_titanium_rule(
             ai_score=8.5,
             research_score=8.2,
             esoteric_score=8.0,
-            jarvis_score=7.0
+            jarvis_score=5.0,
+            final_score=8.5
         )
         assert triggered == True
         assert len(engines) >= 3
 
-        # Should NOT trigger (only 2 engines)
+        # Should NOT trigger (final_score < 8.0)
         triggered, explanation, engines = check_titanium_rule(
             ai_score=8.5,
             research_score=8.2,
-            esoteric_score=6.0,
-            jarvis_score=5.0
+            esoteric_score=8.0,
+            jarvis_score=7.0,
+            final_score=7.9
+        )
+        assert triggered == False
+
+        # Should NOT trigger (only 2 engines >= 6.5)
+        triggered, explanation, engines = check_titanium_rule(
+            ai_score=8.5,
+            research_score=8.2,
+            esoteric_score=5.0,
+            jarvis_score=5.0,
+            final_score=8.5
         )
         assert triggered == False
 

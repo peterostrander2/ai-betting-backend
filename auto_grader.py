@@ -473,7 +473,11 @@ class AutoGrader:
         # Get current weights
         if stat_type not in self.weights.get(sport, {}):
             stat_type = "points"  # Default
-        
+
+        # Ensure sport and stat_type exist in weights
+        if sport not in self.weights or stat_type not in self.weights[sport]:
+            return {"error": f"No weights found for {sport}/{stat_type}", "weights_unchanged": True}
+
         current = self.weights[sport][stat_type]
         
         # Calculate bias
