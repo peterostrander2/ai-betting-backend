@@ -170,6 +170,95 @@ async def esoteric_today_energy():
         "combined_edge": combined_edge
     }
 
+# ============================================================================
+# SMOKE TEST (stops 404 noise from health probes)
+# ============================================================================
+
+@app.get("/live/smoke-test/alert-status")
+@app.head("/live/smoke-test/alert-status")
+async def smoke_test_alert_status():
+    return {"status": "ok"}
+
+
+# ============================================================================
+# DEBUG: AUTOGRADER VERIFICATION ENDPOINTS (no auth)
+# ============================================================================
+
+@app.get("/debug/pending-picks")
+async def debug_pending_picks():
+    """Return count and sample of ungraded picks."""
+    try:
+        from pick_logger import get_pick_logger
+        from datetime import datetime, timedelta
+        import pytz
+        now_et = datetime.now(pytz.timezone("America/New_York"))
+        today = now_et.strftime("%Y-%m-%d")
+        yesterday = (now_et - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        pl = get_pick_logger()
+        today_picks = pl.get_picks_for_date(today)
+        yesterday_picks = pl.get_picks_for_date(yesterday)
+        today_pending = [p for p in today_picks if not p.result]
+        yesterday_pending = [p for p in yesterday_picks if not p.result]
+
+        def pick_summary(p):
+            return {
+                "pick_id": p.pick_id, "sport": p.sport, "matchup": p.matchup,
+                "player": p.player_name, "line": p.line, "side": p.side,
+                "final_score": p.final_score, "tier": p.tier,
+                "result": p.result, "date": p.date,
+            }
+
+        return {
+            "today": today, "yesterday": yesterday,
+            "today_total": len(today_picks), "today_pending": len(today_pending),
+            "yesterday_total": len(yesterday_picks), "yesterday_pending": len(yesterday_pending),
+            "sample_today": [pick_summary(p) for p in today_pending[:5]],
+            "sample_yesterday": [pick_summary(p) for p in yesterday_pending[:5]],
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/debug/seed-pick")
+async def debug_seed_pick():
+    """Create 1 fake pending pick dated yesterday for autograder testing."""
+    try:
+        from pick_logger import get_pick_logger
+        from datetime import datetime, timedelta
+        import pytz
+        ET = pytz.timezone("America/New_York")
+        yesterday = (datetime.now(ET) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        pl = get_pick_logger()
+        fake = {
+            "sport": "NBA", "pick_type": "PROP",
+            "player_name": "LeBron James", "matchup": "LAL @ BOS",
+            "home_team": "Boston Celtics", "away_team": "Los Angeles Lakers",
+            "prop_type": "points", "line": 25.5, "side": "Over",
+            "odds": -110, "book": "fanduel", "final_score": 8.5,
+            "ai_score": 7.0, "research_score": 8.0,
+            "esoteric_score": 6.0, "jarvis_score": 5.0,
+            "tier": "GOLD_STAR", "units": 1.0,
+            "start_time_et": (datetime.now(ET) - timedelta(hours=3)).isoformat(),
+        }
+        result = pl.log_pick(pick_data=fake, game_start_time=fake["start_time_et"], skip_duplicates=False)
+        return {"seeded": True, "date": yesterday, "result": result}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/debug/run-autograde")
+async def debug_run_autograde():
+    """Trigger one grading pass immediately."""
+    try:
+        from result_fetcher import scheduled_auto_grade
+        result = await scheduled_auto_grade()
+        return {"triggered": True, "result": result}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 8000))
