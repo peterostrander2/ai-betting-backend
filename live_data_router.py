@@ -2952,7 +2952,7 @@ async def get_best_bets(sport: str, mode: Optional[str] = None):
     top_game_picks = filtered_game_picks[:10]
 
     # ============================================
-    # LOG PICKS FOR GRADING (v14.9)
+    # LOG PICKS FOR GRADING (v14.9 + v12.0 auto_grader integration)
     # ============================================
     if PICK_LOGGER_AVAILABLE:
         try:
@@ -2988,6 +2988,59 @@ async def get_best_bets(sport: str, mode: Optional[str] = None):
                 logger.warning("PICK_LOGGER: Validation warnings: %s", validation_warnings[:5])
         except Exception as e:
             logger.error("PICK_LOGGER: Failed to log picks: %s", e)
+
+    # LOG TO AUTO_GRADER for weight learning (v12.0)
+    # ============================================
+    if AUTO_GRADER_AVAILABLE:
+        try:
+            grader = get_grader()
+            grader_logged = 0
+
+            # Log prop picks to auto_grader (props have stat predictions)
+            for pick in top_props:
+                player_name = pick.get("player_name", pick.get("player", ""))
+                prop_type = pick.get("prop_type", pick.get("market", "points"))
+                line = pick.get("line", 0)
+
+                if player_name and line:
+                    # Map prop_type to stat_type
+                    stat_type_map = {
+                        "points": "points", "pts": "points",
+                        "rebounds": "rebounds", "reb": "rebounds",
+                        "assists": "assists", "ast": "assists",
+                        "threes": "threes", "3pt": "threes",
+                        "steals": "steals", "stl": "steals",
+                        "blocks": "blocks", "blk": "blocks",
+                        "pra": "pra", "pts+reb+ast": "pra",
+                        "passing_yards": "passing_yards",
+                        "rushing_yards": "rushing_yards",
+                        "receiving_yards": "receiving_yards",
+                    }
+                    stat_type = stat_type_map.get(prop_type.lower(), "points")
+
+                    # Extract adjustments from pick if available
+                    adjustments = {
+                        "defense": pick.get("defense_adjustment", 0.0),
+                        "pace": pick.get("pace_adjustment", 0.0),
+                        "vacuum": pick.get("vacuum_adjustment", 0.0),
+                        "lstm_brain": pick.get("lstm_adjustment", 0.0),
+                        "officials": pick.get("officials_adjustment", 0.0),
+                    }
+
+                    grader.log_prediction(
+                        sport=sport.upper(),
+                        player_name=player_name,
+                        stat_type=stat_type,
+                        predicted_value=line,  # Use line as predicted value
+                        line=line,
+                        adjustments=adjustments
+                    )
+                    grader_logged += 1
+
+            if grader_logged > 0:
+                logger.info("AUTO_GRADER: Logged %d prop predictions for weight learning", grader_logged)
+        except Exception as e:
+            logger.error("AUTO_GRADER: Failed to log predictions: %s", e)
 
     # ============================================
     # LIVE MODE FILTERING (v14.11)
