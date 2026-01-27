@@ -96,14 +96,12 @@ def parse_game_time(time_str: str) -> Optional[datetime]:
         if "Z" in time_str:
             time_str = time_str.replace("Z", "+00:00")
 
-        # Try parsing with timezone
-        if "+" in time_str or time_str.endswith("Z"):
-            dt = datetime.fromisoformat(time_str)
-        else:
-            # Naive datetime - assume UTC
-            dt = datetime.fromisoformat(time_str)
-            if PYTZ_AVAILABLE and UTC:
-                dt = UTC.localize(dt)
+        # Parse the datetime string
+        dt = datetime.fromisoformat(time_str)
+
+        # If naive datetime, assume UTC and localize
+        if dt.tzinfo is None and PYTZ_AVAILABLE and UTC:
+            dt = UTC.localize(dt)
 
         # Convert to ET
         if PYTZ_AVAILABLE and ET and dt.tzinfo:
@@ -424,3 +422,51 @@ def log_slate_summary(slate: Set[str], sport: str) -> None:
                get_today_date_str(),
                len(slate),
                ", ".join(sorted(slate)) if slate else "NO GAMES")
+
+
+# =============================================================================
+# v11.15: GAME START STATUS
+# =============================================================================
+
+def is_game_started(commence_time: str) -> bool:
+    """
+    Check if a game has already started.
+
+    Args:
+        commence_time: ISO format datetime string
+
+    Returns:
+        True if game has started (commence_time is in the past)
+    """
+    game_dt = parse_game_time(commence_time)
+    if not game_dt:
+        return False
+
+    now_et = get_now_et()
+
+    # Make comparison timezone-aware if needed
+    if PYTZ_AVAILABLE and ET:
+        if game_dt.tzinfo is None:
+            game_dt = ET.localize(game_dt)
+        game_dt = game_dt.astimezone(ET)
+
+    return now_et > game_dt
+
+
+def get_game_status(commence_time: str) -> str:
+    """
+    Get game status based on start time.
+
+    Args:
+        commence_time: ISO format datetime string
+
+    Returns:
+        "UPCOMING" | "MISSED_START" | "NOT_TODAY"
+    """
+    if not is_game_today(commence_time):
+        return "NOT_TODAY"
+
+    if is_game_started(commence_time):
+        return "MISSED_START"
+
+    return "UPCOMING"

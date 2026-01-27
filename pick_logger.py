@@ -1,29 +1,34 @@
 """
 PICK_LOGGER.PY - Production Pick Logging & Grading System
 ==========================================================
-v14.9 - Handles all pick persistence, grading, and audit reporting
+v14.11 - Full E2E verification with run_id and deduplication
 
 Features:
-- Log picks with full v14.9 transparency fields
+- Log picks with full transparency fields
 - Already_started detection for late pulls
 - Today-only EST date enforcement
 - Book availability validation
 - Daily audit report generation
+- run_id for batch tracking and deduplication
+- pick_hash for deterministic uniqueness
+- Grade-ready checklist for autograder validation
 
 Usage:
     from pick_logger import (
         get_pick_logger,
         log_published_pick,
         grade_pick,
-        run_daily_audit_report
+        run_daily_audit_report,
+        check_grade_ready
     )
 """
 
 import os
 import json
 import hashlib
+import uuid
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Set
 from dataclasses import dataclass, asdict, field
 from collections import defaultdict
 import logging
@@ -125,6 +130,83 @@ class PublishedPick:
     actual_value: Optional[float] = None
     units_won_lost: Optional[float] = None
     graded_at: Optional[str] = None
+
+    # === NEW FIELDS FOR E2E VERIFICATION (v14.10) ===
+
+    # Grading status
+    graded: bool = False
+    grade_result: Optional[str] = None  # WIN/LOSS/PUSH (alias of result)
+
+    # Event identity (cross-provider mapping)
+    canonical_event_id: str = ""
+    provider_event_ids: Dict[str, str] = field(default_factory=dict)
+    # {"odds_api": "abc123", "balldontlie": "12345", "playbook": "PLY-456"}
+
+    # Player identity (for props)
+    canonical_player_id: str = ""
+    provider_player_ids: Dict[str, Any] = field(default_factory=dict)
+    # {"balldontlie": 237, "odds_api": None, "playbook": "LBJ-001"}
+
+    # Line/odds snapshot at bet time
+    line_at_bet: float = 0.0
+    odds_at_bet: int = -110
+    timestamp_at_bet: str = ""
+
+    # Closing line value
+    closing_line: Optional[float] = None
+    closing_odds: Optional[int] = None
+    clv: Optional[float] = None  # Positive = beat the market
+
+    # Event status tracking
+    event_status: str = "NOT_STARTED"  # NOT_STARTED, IN_PROGRESS, FINAL
+
+    # === NEW FIELDS FOR RUN TRACKING (v14.11) ===
+
+    # Run ID for batch tracking and deduplication
+    run_id: str = ""  # UUID for each best-bets execution
+
+    # Pick hash for deterministic uniqueness
+    pick_hash: str = ""  # SHA256 hash of pick key fields
+
+    # Grade status for verification
+    grade_status: str = "PENDING"  # PENDING, GRADED, FAILED, UNRESOLVED
+
+    # Book/market fields for grade-ready checklist
+    book_key: str = ""  # Canonical book identifier
+    market: str = ""  # Market type (spread, total, moneyline, player_points, etc.)
+
+    # Jason Sim v2 additional fields
+    jason_sim_available: bool = False  # Whether sim ran successfully
+    variance_flag: str = ""  # HIGH, MED, LOW
+    injury_state: str = "CONFIRMED_ONLY"  # Injury handling mode
+    sim_count: int = 0  # Number of simulations run
+
+    # Signals and explainability
+    signals_firing: List[str] = field(default_factory=list)
+    engine_breakdown: Dict[str, Any] = field(default_factory=dict)
+    vacuum_flags: List[str] = field(default_factory=list)
+    titanium_reasons: List[str] = field(default_factory=list)
+
+    # Live betting context
+    is_live: bool = False
+    live_context: Dict[str, Any] = field(default_factory=dict)
+    is_started_already: bool = False  # Alias for already_started
+
+    # Sportsbook details
+    sportsbook_name: str = ""
+    sportsbook_event_url: Optional[str] = None
+
+    # League (for frontend display)
+    league: str = ""  # Same as sport for now
+
+    # Status for frontend
+    status: str = "scheduled"  # scheduled, live, final
+
+    # Base score (pre-jason)
+    base_score: float = 0.0
+
+    # Tier badge for frontend
+    tier_badge: str = ""  # SMASH, GOLD, EDGE, etc.
 
 
 # =============================================================================
@@ -293,7 +375,7 @@ def validate_injury_for_prop(injury_status: str) -> Tuple[bool, str]:
 
 class PickLogger:
     """
-    Production pick logger with full v14.9 support.
+    Production pick logger with full v14.11 support.
 
     Handles:
     - Logging published picks with transparency fields
@@ -301,17 +383,108 @@ class PickLogger:
     - Book/injury validation
     - Today-only grading enforcement
     - Audit report generation
+    - Run tracking with run_id
+    - Deduplication with pick_hash
+    - Grade-ready checklist validation
     """
 
     def __init__(self, storage_path: str = STORAGE_PATH):
         self.storage_path = storage_path
         self.graded_path = GRADED_PATH
         self.picks: Dict[str, List[PublishedPick]] = defaultdict(list)  # By date
+        self.pick_hashes: Dict[str, Set[str]] = defaultdict(set)  # By date, set of hashes
+        self.current_run_id: Optional[str] = None  # Current execution run
+        self.runs: Dict[str, Dict[str, Any]] = {}  # run_id -> metadata
 
         os.makedirs(storage_path, exist_ok=True)
         os.makedirs(GRADED_PATH, exist_ok=True)
 
         self._load_today_picks()
+
+    def start_run(self) -> str:
+        """Start a new pick generation run. Returns run_id."""
+        self.current_run_id = str(uuid.uuid4())
+        self.runs[self.current_run_id] = {
+            "started_at": get_now_et().isoformat(),
+            "picks_inserted": 0,
+            "picks_skipped": 0,
+            "sports": set(),
+        }
+        logger.info("Started new run: %s", self.current_run_id)
+        return self.current_run_id
+
+    def end_run(self) -> Dict[str, Any]:
+        """End current run and return summary."""
+        if not self.current_run_id:
+            return {"error": "No active run"}
+
+        run_data = self.runs.get(self.current_run_id, {})
+        run_data["ended_at"] = get_now_et().isoformat()
+        run_data["sports"] = list(run_data.get("sports", set()))
+
+        summary = {
+            "run_id": self.current_run_id,
+            **run_data
+        }
+
+        self.current_run_id = None
+        logger.info("Ended run: %s", summary)
+        return summary
+
+    def get_run_id(self) -> str:
+        """Get current run_id or start a new one."""
+        if not self.current_run_id:
+            return self.start_run()
+        return self.current_run_id
+
+    def _generate_pick_hash(self, pick_data: Dict) -> str:
+        """
+        Generate deterministic hash for pick uniqueness.
+
+        Hash is based on: player + prop_type + line + side + matchup + date
+        This allows same pick with different lines to be logged separately.
+        """
+        key_parts = [
+            str(pick_data.get("player_name", pick_data.get("player", ""))).lower().strip(),
+            str(pick_data.get("prop_type", pick_data.get("market", ""))).lower().strip(),
+            str(pick_data.get("line", "")),
+            str(pick_data.get("side", pick_data.get("over_under", ""))).lower().strip(),
+            str(pick_data.get("matchup", pick_data.get("game", ""))).lower().strip(),
+            str(pick_data.get("pick_type", "")).lower().strip(),
+        ]
+        hash_input = "|".join(key_parts).encode()
+        return hashlib.sha256(hash_input).hexdigest()[:16]
+
+    def is_duplicate(self, pick_hash: str, date: str, line: float = None, allow_line_change: bool = True) -> Tuple[bool, str]:
+        """
+        Check if a pick is a duplicate.
+
+        Args:
+            pick_hash: The pick's deterministic hash
+            date: Date to check against
+            line: Current line value (for material change detection)
+            allow_line_change: If True, allows re-logging if line changed significantly
+
+        Returns:
+            Tuple of (is_duplicate: bool, reason: str)
+        """
+        if pick_hash not in self.pick_hashes.get(date, set()):
+            return False, ""
+
+        if allow_line_change and line is not None:
+            # Check if line changed materially (>0.5 points)
+            existing = self._find_pick_by_hash(date, pick_hash)
+            if existing and abs(existing.line - line) > 0.5:
+                return False, "LINE_CHANGED"
+
+        return True, "DUPLICATE_PICK"
+
+    def _find_pick_by_hash(self, date: str, pick_hash: str) -> Optional[PublishedPick]:
+        """Find a pick by its hash."""
+        for pick in self.picks.get(date, []):
+            if getattr(pick, 'pick_hash', '') == pick_hash:
+                return pick
+        return None
 
     def _get_today_file(self) -> str:
         """Get today's pick log file path."""
@@ -329,9 +502,21 @@ class PickLogger:
                     for line in f:
                         if line.strip():
                             data = json.loads(line)
-                            pick = PublishedPick(**data)
+                            # Handle missing new fields with defaults
+                            for field_name in ['run_id', 'pick_hash', 'grade_status', 'book_key', 'market',
+                                               'jason_sim_available', 'variance_flag', 'injury_state', 'sim_count',
+                                               'signals_firing', 'engine_breakdown', 'vacuum_flags', 'titanium_reasons',
+                                               'is_live', 'live_context', 'is_started_already', 'sportsbook_name',
+                                               'sportsbook_event_url', 'league', 'status', 'base_score', 'tier_badge']:
+                                if field_name not in data:
+                                    data[field_name] = None  # Will use dataclass default
+                            pick = PublishedPick(**{k: v for k, v in data.items() if v is not None or k in data})
                             self.picks[today].append(pick)
-                logger.info("Loaded %d picks for %s", len(self.picks[today]), today)
+                            # Build pick_hash index
+                            if hasattr(pick, 'pick_hash') and pick.pick_hash:
+                                self.pick_hashes[today].add(pick.pick_hash)
+                logger.info("Loaded %d picks for %s (with %d unique hashes)",
+                           len(self.picks[today]), today, len(self.pick_hashes[today]))
             except Exception as e:
                 logger.error("Failed to load picks: %s", e)
 
@@ -346,21 +531,53 @@ class PickLogger:
         self,
         pick_data: Dict[str, Any],
         game_start_time: str = "",
-        available_props: Optional[List[Dict]] = None
+        available_props: Optional[List[Dict]] = None,
+        run_id: Optional[str] = None,
+        skip_duplicates: bool = True
     ) -> Dict[str, Any]:
         """
-        Log a published pick with full v14.9 fields.
+        Log a published pick with full v14.11 fields.
 
         Args:
             pick_data: Pick data from best-bets endpoint
             game_start_time: ISO format game start time
             available_props: Optional props list for book validation
+            run_id: Optional run_id (uses current run if not specified)
+            skip_duplicates: If True, skip duplicate picks (default True)
 
         Returns:
-            Dict with pick_id, validation status, and any warnings
+            Dict with pick_id, validation status, dedup info, and any warnings
         """
         today = get_today_date_et()
         now_et = get_now_et()
+
+        # Use provided run_id or get current
+        run_id = run_id or self.get_run_id()
+
+        # Generate pick_hash for deduplication
+        pick_hash = self._generate_pick_hash(pick_data)
+
+        # Check for duplicates
+        is_dup, dup_reason = self.is_duplicate(
+            pick_hash, today,
+            line=float(pick_data.get("line", 0)),
+            allow_line_change=True
+        )
+
+        if is_dup and skip_duplicates:
+            # Track skipped in run
+            if run_id in self.runs:
+                self.runs[run_id]["picks_skipped"] = self.runs[run_id].get("picks_skipped", 0) + 1
+
+            return {
+                "pick_id": None,
+                "pick_hash": pick_hash,
+                "logged": False,
+                "skipped": True,
+                "skip_reason": dup_reason,
+                "run_id": run_id,
+                "should_publish": False
+            }
 
         # Generate pick_id if not present
         pick_id = pick_data.get("pick_id") or self._generate_pick_id(pick_data)
@@ -387,6 +604,33 @@ class PickLogger:
         if not book_valid:
             validation_errors.append(book_error)
 
+        # Compute base_score (pre-jason)
+        ai = float(pick_data.get("ai_score", 0))
+        research = float(pick_data.get("research_score", 0))
+        esoteric = float(pick_data.get("esoteric_score", 0))
+        jarvis = float(pick_data.get("jarvis_score", pick_data.get("jarvis_rs", 0)))
+        jason_boost = float(pick_data.get("jason_sim_boost", 0))
+        final = float(pick_data.get("final_score", pick_data.get("total_score", 0)))
+        base_score = final - jason_boost if jason_boost else final
+
+        # Determine tier badge
+        tier = pick_data.get("tier", "PASS")
+        tier_badge_map = {
+            "TITANIUM_SMASH": "SMASH",
+            "GOLD_STAR": "GOLD",
+            "EDGE_LEAN": "EDGE",
+            "MONITOR": "WATCH",
+            "PASS": ""
+        }
+        tier_badge = tier_badge_map.get(tier, tier)
+
+        # Determine status
+        status = "scheduled"
+        if already_started:
+            status = "live"
+        if pick_data.get("event_status") == "FINAL":
+            status = "final"
+
         # Create pick record
         pick = PublishedPick(
             pick_id=pick_id,
@@ -407,12 +651,12 @@ class PickLogger:
             published_at=now_et.isoformat(),
             already_started=already_started,
             late_pull_reason=late_reason,
-            ai_score=float(pick_data.get("ai_score", 0)),
-            research_score=float(pick_data.get("research_score", 0)),
-            esoteric_score=float(pick_data.get("esoteric_score", 0)),
-            jarvis_score=float(pick_data.get("jarvis_score", pick_data.get("jarvis_rs", 0))),
-            final_score=float(pick_data.get("final_score", pick_data.get("total_score", 0))),
-            tier=pick_data.get("tier", "PASS"),
+            ai_score=ai,
+            research_score=research,
+            esoteric_score=esoteric,
+            jarvis_score=jarvis,
+            final_score=final,
+            tier=tier,
             titanium_flag=pick_data.get("titanium_triggered", False),
             units=float(pick_data.get("units", 0)),
             research_breakdown=pick_data.get("research_breakdown", {}),
@@ -420,7 +664,7 @@ class PickLogger:
             pillars_passed=pick_data.get("pillars_passed", []),
             pillars_failed=pick_data.get("pillars_failed", []),
             jason_ran=pick_data.get("jason_ran", False),
-            jason_sim_boost=float(pick_data.get("jason_sim_boost", 0)),
+            jason_sim_boost=jason_boost,
             jason_blocked=pick_data.get("jason_blocked", False),
             jason_win_pct_home=float(pick_data.get("jason_win_pct_home", 50)),
             jason_win_pct_away=float(pick_data.get("jason_win_pct_away", 50)),
@@ -429,16 +673,68 @@ class PickLogger:
             jarvis_reasons=pick_data.get("jarvis_reasons", []),
             injury_status=injury_status,
             book_validated=book_valid and injury_valid,
-            validation_errors=validation_errors
+            validation_errors=validation_errors,
+            # v14.10 E2E verification fields
+            graded=False,
+            grade_result=None,
+            canonical_event_id=pick_data.get("canonical_event_id", ""),
+            provider_event_ids=pick_data.get("provider_event_ids", {}),
+            canonical_player_id=pick_data.get("canonical_player_id", ""),
+            provider_player_ids=pick_data.get("provider_player_ids", pick_data.get("provider_ids", {})),
+            line_at_bet=float(pick_data.get("line", 0)),
+            odds_at_bet=int(pick_data.get("odds", -110)),
+            timestamp_at_bet=now_et.isoformat(),
+            closing_line=None,
+            closing_odds=None,
+            clv=None,
+            event_status=pick_data.get("event_status", "NOT_STARTED"),
+            # v14.11 new fields
+            run_id=run_id,
+            pick_hash=pick_hash,
+            grade_status="PENDING",
+            book_key=pick_data.get("book_key", book.lower().replace(" ", "_") if book else ""),
+            market=pick_data.get("market", prop_type or pick_data.get("pick_type", "")),
+            jason_sim_available=pick_data.get("jason_sim_available", pick_data.get("jason_ran", False)),
+            variance_flag=pick_data.get("variance_flag", ""),
+            injury_state=pick_data.get("injury_state", "CONFIRMED_ONLY"),
+            sim_count=int(pick_data.get("sim_count", 1000 if pick_data.get("jason_ran") else 0)),
+            signals_firing=pick_data.get("signals_firing", []),
+            engine_breakdown=pick_data.get("engine_breakdown", {
+                "ai_score": ai,
+                "research_score": research,
+                "esoteric_score": esoteric,
+                "jarvis_score": jarvis,
+                "jason_boost": jason_boost
+            }),
+            vacuum_flags=pick_data.get("vacuum_flags", []),
+            titanium_reasons=pick_data.get("titanium_reasons", []),
+            is_live=already_started,
+            live_context=pick_data.get("live_context", {}),
+            is_started_already=already_started,
+            sportsbook_name=pick_data.get("sportsbook_name", book),
+            sportsbook_event_url=pick_data.get("sportsbook_event_url"),
+            league=pick_data.get("league", pick_data.get("sport", "")),
+            status=status,
+            base_score=base_score,
+            tier_badge=tier_badge
         )
 
         # Store and persist
         self.picks[today].append(pick)
+        self.pick_hashes[today].add(pick_hash)
         self._save_pick(pick)
+
+        # Track in run
+        if run_id in self.runs:
+            self.runs[run_id]["picks_inserted"] = self.runs[run_id].get("picks_inserted", 0) + 1
+            self.runs[run_id]["sports"].add(pick.sport.upper())
 
         return {
             "pick_id": pick_id,
+            "pick_hash": pick_hash,
+            "run_id": run_id,
             "logged": True,
+            "skipped": False,
             "already_started": already_started,
             "late_pull_reason": late_reason,
             "book_validated": book_valid and injury_valid,
@@ -531,6 +827,9 @@ class PickLogger:
                 pick.result = result.upper()
                 pick.actual_value = actual_value
                 pick.graded_at = get_now_et().isoformat()
+                # v14.10: Set graded flag and grade_result
+                pick.graded = True
+                pick.grade_result = pick.result
 
                 # Calculate units won/lost
                 if pick.result == "WIN":
@@ -825,6 +1124,202 @@ class PickLogger:
             for p in low_score_wins[:limit]
         ]
 
+    def check_grade_ready(self, pick: PublishedPick) -> Dict[str, Any]:
+        """
+        Check if a pick is grade-ready for the autograder.
+
+        Validates:
+        - canonical_event_id exists (or matchup as fallback)
+        - For props: canonical_player_id exists
+        - book_key is set
+        - market is set
+        - line_at_bet and odds_at_bet are set
+        - timestamp_at_bet is set
+
+        Returns:
+            Dict with status (READY, UNRESOLVED), missing fields, and reasons
+        """
+        missing_fields = []
+        reasons = []
+
+        # Check event resolution
+        if not getattr(pick, 'canonical_event_id', '') and not pick.matchup:
+            missing_fields.append("canonical_event_id")
+            reasons.append("UNRESOLVED_EVENT")
+
+        # Check player resolution (for props only)
+        if pick.player_name and not getattr(pick, 'canonical_player_id', ''):
+            missing_fields.append("canonical_player_id")
+            reasons.append("UNRESOLVED_PLAYER")
+
+        # Check required fields for grading
+        if not getattr(pick, 'book_key', '') and not pick.book:
+            missing_fields.append("book_key")
+            reasons.append("MISSING_BOOK")
+
+        if not getattr(pick, 'market', '') and not pick.prop_type:
+            missing_fields.append("market")
+            reasons.append("MISSING_MARKET")
+
+        line_at_bet = getattr(pick, 'line_at_bet', 0.0)
+        if line_at_bet == 0.0 and pick.line == 0.0:
+            missing_fields.append("line_at_bet")
+            reasons.append("MISSING_LINE")
+
+        odds_at_bet = getattr(pick, 'odds_at_bet', 0)
+        if odds_at_bet == 0 and pick.odds == 0:
+            missing_fields.append("odds_at_bet")
+            reasons.append("MISSING_ODDS")
+
+        timestamp = getattr(pick, 'timestamp_at_bet', '')
+        if not timestamp and not pick.published_at:
+            missing_fields.append("timestamp_at_bet")
+            reasons.append("MISSING_TIMESTAMP")
+
+        # Determine status
+        if reasons:
+            status = "UNRESOLVED"
+        else:
+            status = "READY"
+
+        return {
+            "pick_id": pick.pick_id,
+            "status": status,
+            "missing_fields": missing_fields,
+            "reasons": reasons,
+            "is_grade_ready": status == "READY"
+        }
+
+    def validate_all_picks_grade_ready(
+        self,
+        date: Optional[str] = None,
+        sports: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Validate all picks for a date are grade-ready.
+
+        This is the KEY function for proving tomorrow's autograder will work.
+
+        Args:
+            date: Date to check (default: today ET)
+            sports: Optional list of sports to filter
+
+        Returns:
+            Dict with overall status, counts, and per-pick details
+        """
+        if not date:
+            date = get_today_date_et()
+
+        picks = self.get_picks_for_date(date)
+
+        # Filter by sports if specified
+        if sports:
+            sport_set = set(s.upper() for s in sports)
+            picks = [p for p in picks if p.sport.upper() in sport_set]
+
+        # Validate each pick
+        results = {
+            "date": date,
+            "total": len(picks),
+            "ready": 0,
+            "unresolved": 0,
+            "graded": 0,
+            "pending": 0,
+            "by_reason": {},
+            "unresolved_picks": []
+        }
+
+        for pick in picks:
+            # Skip already graded
+            if pick.result is not None or getattr(pick, 'graded', False):
+                results["graded"] += 1
+                continue
+
+            check = self.check_grade_ready(pick)
+
+            if check["is_grade_ready"]:
+                results["ready"] += 1
+                results["pending"] += 1
+            else:
+                results["unresolved"] += 1
+                results["unresolved_picks"].append({
+                    "pick_id": pick.pick_id,
+                    "sport": pick.sport,
+                    "player": pick.player_name,
+                    "matchup": pick.matchup,
+                    "reasons": check["reasons"],
+                    "missing_fields": check["missing_fields"]
+                })
+
+                # Count by reason
+                for reason in check["reasons"]:
+                    results["by_reason"][reason] = results["by_reason"].get(reason, 0) + 1
+
+        # Overall status
+        if results["unresolved"] > 0:
+            results["overall_status"] = "UNRESOLVED"
+        elif results["pending"] > 0:
+            results["overall_status"] = "PENDING"
+        else:
+            results["overall_status"] = "PASS"
+
+        return results
+
+    def get_picks_by_run(self, run_id: str, date: Optional[str] = None) -> List[PublishedPick]:
+        """Get picks for a specific run_id."""
+        if not date:
+            date = get_today_date_et()
+
+        picks = self.get_picks_for_date(date)
+        return [p for p in picks if getattr(p, 'run_id', '') == run_id]
+
+    def get_latest_run_id(self, date: Optional[str] = None) -> Optional[str]:
+        """Get the most recent run_id for a date."""
+        if not date:
+            date = get_today_date_et()
+
+        picks = self.get_picks_for_date(date)
+        if not picks:
+            return None
+
+        # Find latest by published_at timestamp
+        latest = max(picks, key=lambda p: p.published_at or "")
+        return getattr(latest, 'run_id', None)
+
+    def get_run_summary(self, date: Optional[str] = None) -> Dict[str, Any]:
+        """Get summary of all runs for a date."""
+        if not date:
+            date = get_today_date_et()
+
+        picks = self.get_picks_for_date(date)
+
+        runs = {}
+        for pick in picks:
+            run_id = getattr(pick, 'run_id', 'unknown')
+            if run_id not in runs:
+                runs[run_id] = {
+                    "run_id": run_id,
+                    "pick_count": 0,
+                    "sports": set(),
+                    "first_pick": pick.published_at,
+                    "last_pick": pick.published_at
+                }
+            runs[run_id]["pick_count"] += 1
+            runs[run_id]["sports"].add(pick.sport.upper())
+            if pick.published_at > runs[run_id]["last_pick"]:
+                runs[run_id]["last_pick"] = pick.published_at
+
+        # Convert sets to lists for JSON
+        for r in runs.values():
+            r["sports"] = list(r["sports"])
+
+        return {
+            "date": date,
+            "total_runs": len(runs),
+            "total_picks": len(picks),
+            "runs": list(runs.values())
+        }
+
 
 # =============================================================================
 # SINGLETON INSTANCE
@@ -863,3 +1358,23 @@ def run_daily_audit_report(date: Optional[str] = None) -> Dict:
 def get_today_picks(sport: Optional[str] = None) -> List[PublishedPick]:
     """Get today's picks (convenience function)."""
     return get_pick_logger().get_today_picks(sport)
+
+
+def check_grade_ready(date: Optional[str] = None, sports: Optional[List[str]] = None) -> Dict:
+    """Validate all picks are grade-ready (convenience function)."""
+    return get_pick_logger().validate_all_picks_grade_ready(date, sports)
+
+
+def start_pick_run() -> str:
+    """Start a new pick generation run (convenience function)."""
+    return get_pick_logger().start_run()
+
+
+def end_pick_run() -> Dict:
+    """End current pick run and get summary (convenience function)."""
+    return get_pick_logger().end_run()
+
+
+def get_run_summary(date: Optional[str] = None) -> Dict:
+    """Get summary of all runs for a date (convenience function)."""
+    return get_pick_logger().get_run_summary(date)

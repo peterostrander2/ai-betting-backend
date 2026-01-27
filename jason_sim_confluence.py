@@ -405,8 +405,9 @@ class JasonSimConfluence:
         final_score = base_score + jason_sim_boost
 
         return {
-            # Required fields
+            # Required fields (v14.11 output contract)
             "jason_ran": True,
+            "jason_sim_available": True,  # v14.11: Explicit availability flag
             "jason_sim_boost": round(jason_sim_boost, 2),
             "jason_blocked": eval_result["blocked"],
             "jason_win_pct_home": sim_results["home_win_pct"],
@@ -415,6 +416,7 @@ class JasonSimConfluence:
             "projected_pace": sim_results["projected_pace"],
             "variance_flag": sim_results["variance_flag"],
             "injury_state": injury_state,
+            "sim_count": sim_results.get("num_sims", 1000),  # v14.11: Simulation count
             "confluence_reasons": eval_result["reasons"],
             # Additional fields
             "home_cover_pct": sim_results.get("home_cover_pct", 50.0),
@@ -492,9 +494,11 @@ def get_default_jason_output() -> Dict[str, Any]:
     Get default Jason output when Jason doesn't run.
 
     This ensures jason_* fields always exist even on error.
+    v14.11: Added jason_sim_available and sim_count for complete contract.
     """
     return {
         "jason_ran": False,
+        "jason_sim_available": False,  # v14.11: Explicit availability flag
         "jason_sim_boost": 0.0,
         "jason_blocked": False,
         "jason_win_pct_home": 50.0,
@@ -502,7 +506,8 @@ def get_default_jason_output() -> Dict[str, Any]:
         "projected_total": 220.0,
         "projected_pace": "NEUTRAL",
         "variance_flag": "MED",
-        "injury_state": "UNKNOWN",
+        "injury_state": "CONFIRMED_ONLY",  # v14.11: Default to CONFIRMED_ONLY
+        "sim_count": 0,  # v14.11: Number of simulations run
         "confluence_reasons": ["Jason did not run"],
         "base_score": 0.0,
         "final_score_with_jason": 0.0

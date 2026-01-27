@@ -40,7 +40,7 @@ INTERPRETING BIAS RESULTS:
 import json
 import os
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from collections import defaultdict
 import numpy as np
@@ -928,6 +928,155 @@ def get_grader() -> AutoGrader:
     if _grader_instance is None:
         _grader_instance = AutoGrader()
     return _grader_instance
+
+
+# ============================================
+# LEARNING LOOP CONVENIENCE CLASS (v14.11)
+# ============================================
+
+class LearningLoop:
+    """
+    Convenience wrapper for learning loop functionality.
+
+    Provides a simple interface that the master prompt references:
+        from auto_grader import learning
+        weights = learning.get_weights()
+
+    v14.11: Ensures learning loop never 500s endpoints by catching errors.
+    """
+
+    def get_weights(self, sport: str = "NBA", stat_type: str = "points") -> Dict[str, Any]:
+        """
+        Get current learned weights.
+
+        Returns:
+            Dict with weights and metadata, or defaults on error
+        """
+        try:
+            grader = get_grader()
+            weights = grader.get_weights(sport.upper(), stat_type)
+            return {
+                "sport": sport.upper(),
+                "stat_type": stat_type,
+                "weights": weights,
+                "source": "learned"
+            }
+        except Exception as e:
+            logger.warning("Learning loop error in get_weights: %s", e)
+            # Return defaults - never 500
+            return {
+                "sport": sport.upper(),
+                "stat_type": stat_type,
+                "weights": {
+                    "defense": 0.15,
+                    "pace": 0.12,
+                    "vacuum": 0.18,
+                    "lstm": 0.10,
+                    "officials": 0.05,
+                    "park_factor": 0.10
+                },
+                "source": "default",
+                "error": str(e)
+            }
+
+    def get_all_weights(self) -> Dict[str, Any]:
+        """Get all weights for all sports."""
+        try:
+            grader = get_grader()
+            return grader.get_all_weights()
+        except Exception as e:
+            logger.warning("Learning loop error in get_all_weights: %s", e)
+            return {"error": str(e), "source": "default"}
+
+    def get_daily_summary(self, sport: str = None, days_back: int = 1) -> Dict[str, Any]:
+        """
+        Get daily summary of what changed, why, and rollback info.
+
+        Returns:
+            Dict with changes, reasons, and rollback ability
+        """
+        try:
+            grader = get_grader()
+
+            if sport:
+                bias = grader.calculate_bias(sport.upper(), "points", days_back)
+                history = grader.bias_history.get(f"{sport.upper()}_points", [])
+            else:
+                # Aggregate across sports
+                bias = {}
+                history = []
+                for s in grader.SUPPORTED_SPORTS:
+                    s_bias = grader.calculate_bias(s, "points", days_back)
+                    if "error" not in s_bias:
+                        bias[s] = s_bias
+                    s_history = grader.bias_history.get(f"{s}_points", [])
+                    history.extend(s_history[-3:])  # Last 3 per sport
+
+            # Build summary
+            return {
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "days_analyzed": days_back,
+                "sport": sport.upper() if sport else "ALL",
+                "bias_analysis": bias,
+                "recent_changes": history[-10:] if history else [],
+                "rollback_available": len(history) > 0,
+                "can_rollback_to": history[-2]["timestamp"] if len(history) > 1 else None
+            }
+        except Exception as e:
+            logger.warning("Learning loop error in get_daily_summary: %s", e)
+            return {"error": str(e), "rollback_available": False}
+
+    def rollback_weights(self, sport: str, to_timestamp: str) -> Dict[str, Any]:
+        """
+        Rollback weights to a previous state.
+
+        Args:
+            sport: Sport to rollback
+            to_timestamp: ISO timestamp to rollback to
+
+        Returns:
+            Dict with success status
+        """
+        try:
+            grader = get_grader()
+            sport = sport.upper()
+
+            # Find the historical state
+            history = grader.bias_history.get(f"{sport}_points", [])
+            target_state = None
+            for entry in history:
+                if entry["timestamp"] == to_timestamp:
+                    target_state = entry
+                    break
+
+            if not target_state:
+                return {"error": f"State not found for {to_timestamp}"}
+
+            # Restore weights from that state
+            adjustments = target_state.get("adjustments", {})
+            current = grader.weights.get(sport, {}).get("points")
+            if not current:
+                return {"error": f"No weights found for {sport}"}
+
+            for factor, adj in adjustments.items():
+                old_weight = adj.get("old", getattr(current, factor, 0.15))
+                setattr(current, factor, old_weight)
+
+            grader._save_state()
+
+            return {
+                "success": True,
+                "sport": sport,
+                "rolled_back_to": to_timestamp,
+                "weights_restored": adjustments
+            }
+        except Exception as e:
+            logger.warning("Learning loop error in rollback_weights: %s", e)
+            return {"error": str(e), "success": False}
+
+
+# Module-level learning instance
+learning = LearningLoop()
 
 
 # ============================================

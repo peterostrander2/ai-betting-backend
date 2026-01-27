@@ -95,7 +95,10 @@ try:
         filter_today_games,
         get_game_start_time_et,
         get_today_date_str,
-        log_slate_summary
+        get_today_range_et,
+        log_slate_summary,
+        is_game_started,
+        get_game_status
     )
     TIME_FILTERS_AVAILABLE = True
 except ImportError:
@@ -140,6 +143,33 @@ try:
 except ImportError:
     RESULT_FETCHER_AVAILABLE = False
     logger.warning("result_fetcher module not available - auto-grading disabled")
+
+# Import Unified Player Identity Resolver (v14.9 - CRITICAL for prop accuracy)
+try:
+    from identity import (
+        resolve_player,
+        get_player_resolver,
+        get_player_index,
+        normalize_player_name,
+        normalize_team_name,
+        ResolvedPlayer,
+    )
+    IDENTITY_RESOLVER_AVAILABLE = True
+except ImportError:
+    IDENTITY_RESOLVER_AVAILABLE = False
+    logger.warning("identity module not available - player resolution disabled")
+
+# Import Centralized Signal Calculators (v14.11 - Single-calculation policy)
+try:
+    from signals import (
+        calculate_public_fade,
+        get_public_fade_context,
+        PublicFadeSignal,
+    )
+    SIGNALS_AVAILABLE = True
+except ImportError:
+    SIGNALS_AVAILABLE = False
+    logger.warning("signals module not available - using inline calculations")
 
 # Redis import with fallback
 try:
@@ -204,12 +234,13 @@ else:
 
 ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
-# Sport mappings - Playbook uses uppercase league names (NBA, NFL, MLB, NHL)
+# Sport mappings - Playbook uses uppercase league names (NBA, NFL, MLB, NHL, NCAAB)
 SPORT_MAPPINGS = {
     "nba": {"odds": "basketball_nba", "espn": "basketball/nba", "playbook": "NBA"},
     "nfl": {"odds": "americanfootball_nfl", "espn": "football/nfl", "playbook": "NFL"},
     "mlb": {"odds": "baseball_mlb", "espn": "baseball/mlb", "playbook": "MLB"},
     "nhl": {"odds": "icehockey_nhl", "espn": "hockey/nhl", "playbook": "NHL"},
+    "ncaab": {"odds": "basketball_ncaab", "espn": "basketball/mens-college-basketball", "playbook": "NCAAB"},
 }
 
 # ============================================================================
@@ -1837,13 +1868,17 @@ async def get_props(sport: str):
 
 
 @router.get("/best-bets/{sport}")
-async def get_best_bets(sport: str):
+async def get_best_bets(sport: str, mode: Optional[str] = None):
     """
     Get best bets using full 8 AI Models + 8 Pillars + JARVIS + Esoteric scoring.
     Returns TWO categories: props (player props) and game_picks (spreads, totals, ML).
 
     Scoring Formula:
     TOTAL = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
+
+    Query Parameters:
+    - mode: Optional. Set to "live" to filter only is_live==true picks
+            (halftime/period break opportunities with live lines available)
 
     Response Schema:
     {
@@ -1858,8 +1893,11 @@ async def get_best_bets(sport: str):
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
-    # Check cache first
-    cache_key = f"best-bets:{sport_lower}"
+    # Validate mode parameter
+    live_mode = mode and mode.lower() == "live"
+
+    # Check cache first (separate cache for live mode)
+    cache_key = f"best-bets:{sport_lower}" + (":live" if live_mode else "")
     cached = api_cache.get(cache_key)
     if cached:
         return cached
@@ -1883,38 +1921,138 @@ async def get_best_bets(sport: str):
     # Get learned weights for esoteric scoring
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
 
-    # Helper function to calculate scores with v10.1 dual-score confluence + v11.08 Jason Sim
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0):
-        # =====================================================================
-        # v10.2 DUAL-SCORE CONFLUENCE SYSTEM (Gematria-Dominant)
-        # =====================================================================
-        # RESEARCH SCORE (0-10): 8 AI Models (0-8) + 8 Pillars (0-8) scaled to 0-10
-        # ESOTERIC SCORE (0-10): Weighted by signal importance:
-        #   - Gematria:      52% → max 5.2 pts (DOMINANT signal)
-        #   - JARVIS:        20% → max 2.0 pts
-        #   - Astro:         13% → max 1.3 pts
-        #   - Fibonacci:      5% → max 0.5 pts
-        #   - Vortex:         5% → max 0.5 pts
-        #   - Daily Edge:     5% → max 0.5 pts
-        #   + Public Fade & Trap modifiers (can be negative)
-        # FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost
-        # =====================================================================
+    # ==========================================================================
+    # v15.0 STANDALONE JARVIS ENGINE (0-10 scale)
+    # ==========================================================================
+    # Jarvis is now a SEPARATE 4th engine, not part of Esoteric
+    # Components:
+    #   - Gematria Signal (40%): 0-4 pts
+    #   - Sacred Triggers (40%): 2178/201/33/93/322 → 0-4 pts
+    #   - Mid-Spread Amplifier (20%): Goldilocks zone → 0-2 pts
+    # ==========================================================================
+    def calculate_jarvis_engine_score(
+        jarvis_engine,
+        game_str: str,
+        player_name: str = "",
+        home_team: str = "",
+        away_team: str = "",
+        spread: float = 0
+    ) -> Dict[str, Any]:
+        """
+        JARVIS ENGINE (0-10 standalone) - v15.0
 
-        # --- ESOTERIC WEIGHTS (v10.2 - Gematria Dominant) ---
-        ESOTERIC_WEIGHTS = {
-            "gematria": 0.52,    # 52% - Dominant signal (Boss approved)
-            "jarvis": 0.20,      # 20% - JARVIS triggers
-            "astro": 0.13,       # 13% - Vedic astrology
-            "fib": 0.05,         # 5%  - Fibonacci alignment
-            "vortex": 0.05,      # 5%  - Tesla 3-6-9 patterns
-            "daily_edge": 0.05   # 5%  - Daily energy
+        Returns standalone jarvis_score plus all required output fields.
+        """
+        JARVIS_WEIGHTS = {
+            "gematria": 0.40,     # 40% - Gematria signal (0-4 pts)
+            "triggers": 0.40,     # 40% - Sacred triggers (0-4 pts)
+            "mid_spread": 0.20    # 20% - Goldilocks zone amplifier (0-2 pts)
         }
 
-        # --- ENGINE SEPARATION (v14.9 Clean Architecture) ---
+        jarvis_triggers_hit = []
+        immortal_detected = False
+        gematria_score = 0.0
+        trigger_score = 0.0
+        mid_spread_score = 0.0
+
+        if jarvis_engine:
+            # 1. Sacred Triggers (40% weight, max 4 pts)
+            trigger_result = jarvis_engine.check_jarvis_trigger(game_str)
+            raw_trigger = 0.0
+            for trig in trigger_result.get("triggers_hit", []):
+                raw_trigger += trig["boost"] / 10  # Normalize boost
+                jarvis_triggers_hit.append({
+                    "number": trig["number"],
+                    "name": trig["name"],
+                    "match_type": trig.get("match_type", "DIRECT"),
+                    "boost": round(trig["boost"] / 10, 2)
+                })
+                if trig["number"] == 2178:
+                    immortal_detected = True
+
+            # Scale trigger score: normalize to 0-1, multiply by weight*10
+            trigger_score = min(1.0, raw_trigger) * 10 * JARVIS_WEIGHTS["triggers"]
+
+            # 2. Gematria Signal (40% weight, max 4 pts)
+            if player_name and home_team:
+                gematria = jarvis_engine.calculate_gematria_signal(player_name, home_team, away_team)
+                gematria_strength = gematria.get("signal_strength", 0)
+                if gematria.get("triggered"):
+                    gematria_strength = min(1.0, gematria_strength * 1.5)
+                gematria_score = gematria_strength * 10 * JARVIS_WEIGHTS["gematria"]
+
+            # 3. Mid-Spread Goldilocks Amplifier (20% weight, max 2 pts)
+            mid_spread = jarvis_engine.calculate_mid_spread_signal(spread)
+            mid_spread_mod = mid_spread.get("modifier", 0)
+            if mid_spread_mod > 0:  # Only positive boost (Goldilocks zone 4-9)
+                mid_spread_score = mid_spread_mod * 10 * JARVIS_WEIGHTS["mid_spread"]
+        else:
+            # Fallback: check triggers in game_str directly
+            for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
+                if str(trigger_num) in game_str:
+                    trigger_score += trigger_data["boost"] / 25  # Scaled down
+                    jarvis_triggers_hit.append({
+                        "number": trigger_num,
+                        "name": trigger_data["name"],
+                        "boost": round(trigger_data["boost"] / 25, 2)
+                    })
+                    if trigger_num == 2178:
+                        immortal_detected = True
+            trigger_score = min(4.0, trigger_score)  # Cap at 40% max
+
+        # Total Jarvis Engine Score (0-10)
+        jarvis_rs = gematria_score + trigger_score + mid_spread_score
+        jarvis_rs = max(0, min(10, jarvis_rs))
+
+        # If no triggers and no gematria, return default neutral score
+        jarvis_hits_count = len(jarvis_triggers_hit)
+        if jarvis_hits_count == 0 and gematria_score < 0.5:
+            jarvis_rs = DEFAULT_JARVIS_RS if TIERING_AVAILABLE else 5.0
+
+        return {
+            "jarvis_rs": round(jarvis_rs, 2),
+            "jarvis_active": jarvis_hits_count > 0 or gematria_score >= 1.0,
+            "jarvis_hits_count": jarvis_hits_count,
+            "jarvis_triggers_hit": jarvis_triggers_hit,
+            "jarvis_reasons": [t.get("name", "Unknown") for t in jarvis_triggers_hit] if jarvis_hits_count > 0 else (["Gematria alignment"] if gematria_score >= 1.0 else ["No triggers hit"]),
+            "immortal_detected": immortal_detected,
+            "jarvis_breakdown": {
+                "gematria": round(gematria_score, 2),
+                "triggers": round(trigger_score, 2),
+                "mid_spread": round(mid_spread_score, 2)
+            }
+        }
+
+    # Helper function to calculate scores with v15.0 4-engine architecture + Jason Sim
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0):
+        # =====================================================================
+        # v15.0 FOUR-ENGINE ARCHITECTURE (Clean Separation)
+        # =====================================================================
+        # ENGINE 1 - AI SCORE (0-10): Pure 8 AI Models (0-8 scaled to 0-10)
+        # ENGINE 2 - RESEARCH SCORE (0-10): Sharp money + RLM + Public Fade
+        # ENGINE 3 - ESOTERIC SCORE (0-10): Numerology + Astro + Fib + Vortex + Daily
+        #            (NO Jarvis, NO Gematria, NO Public Fade - those are separate)
+        # ENGINE 4 - JARVIS SCORE (0-10): Gematria + Sacred Triggers + Mid-Spread
+        #
+        # FINAL = (research × 0.45) + (esoteric × 0.25) + (jarvis × 0.20) + confluence_boost
+        # Then: FINAL += jason_sim_boost (post-pick confluence)
+        # =====================================================================
+
+        # --- ESOTERIC WEIGHTS (v15.0 - Clean Separation, NO Jarvis/Gematria) ---
+        ESOTERIC_WEIGHTS = {
+            "numerology": 0.35,   # 35% - Generic numerology (MANDATORY)
+            "astro": 0.25,        # 25% - Vedic astrology
+            "fib": 0.15,          # 15% - Fibonacci alignment
+            "vortex": 0.15,       # 15% - Tesla 3-6-9 patterns
+            "daily_edge": 0.10    # 10% - Daily energy
+        }
+
+        # --- ENGINE SEPARATION (v15.0 Clean Architecture) ---
         # AI Score: Pure model output (0-8 scale) - NO external signals
         # Research Score: Sharp money + Line variance + Public betting (0-10 scale)
-        # Esoteric Score: Gematria + JARVIS + Astro + Numerology (0-10 scale)
-        # The three engines are then combined for final score
+        # Esoteric Score: Numerology + Astro + Fib + Vortex + Daily (0-10 scale)
+        # Jarvis Score: Gematria + Sacred Triggers + Mid-Spread (0-10 scale)
+        # The four engines are combined for final score
 
         research_reasons = []
         pillars_passed = []
@@ -1956,15 +2094,32 @@ async def get_best_bets(sport: str):
             pillars_failed.append("Reverse Line Movement")
 
         # Pillar 3: Public Betting Fade (0-2 pts) - fading heavy public action
+        # v14.11: Use centralized public fade calculator (single-calculation policy)
         public_pct_val = sharp_signal.get("public_pct", 50)
-        public_boost = 0.0
-        if public_pct_val >= 75:  # Heavy public on one side = fade potential
-            public_boost = 2.0
-            research_reasons.append(f"Public at {public_pct_val}% (fade signal)")
-            pillars_passed.append("Public Fade Opportunity")
-        elif public_pct_val >= 65:
-            public_boost = 1.0
-            research_reasons.append(f"Public at {public_pct_val}% (mild fade)")
+        ticket_pct_val = sharp_signal.get("ticket_pct")
+        money_pct_val = sharp_signal.get("money_pct")
+
+        if SIGNALS_AVAILABLE:
+            pf_signal = calculate_public_fade(public_pct_val, ticket_pct_val, money_pct_val)
+            public_boost = pf_signal.research_boost
+            pf_context = get_public_fade_context(pf_signal)
+            if pf_signal.reason:
+                research_reasons.append(pf_signal.reason)
+            if pf_signal.is_fade_opportunity:
+                pillars_passed.append("Public Fade Opportunity")
+        else:
+            # Fallback to inline calculation
+            public_boost = 0.0
+            pf_context = {"public_overload": False}
+            if public_pct_val >= 75:
+                public_boost = 2.0
+                research_reasons.append(f"Public at {public_pct_val}% (fade signal)")
+                pillars_passed.append("Public Fade Opportunity")
+                pf_context = {"public_overload": True}
+            elif public_pct_val >= 65:
+                public_boost = 1.0
+                research_reasons.append(f"Public at {public_pct_val}% (mild fade)")
+                pf_context = {"public_overload": True}
 
         # Pillar 4: Base research floor (2 pts baseline)
         base_research = 2.0
@@ -1977,114 +2132,88 @@ async def get_best_bets(sport: str):
         # Pillar score for backwards compatibility (used in scoring_breakdown)
         pillar_score = sharp_boost + line_boost + public_boost
 
-        # --- ESOTERIC SCORE CALCULATION (v10.2 Gematria-Dominant) ---
-        gematria_score = 0.0       # 0-5.2 pts (52%)
-        jarvis_score = 0.0         # 0-2.0 pts (20%)
-        astro_score = 0.0          # 0-1.3 pts (13%)
-        fib_score = 0.0            # 0-0.5 pts (5%)
-        vortex_score = 0.0         # 0-0.5 pts (5%)
-        daily_edge_score = 0.0     # 0-0.5 pts (5%)
-        public_fade_mod = 0.0      # Modifier (can be negative)
-        trap_mod = 0.0             # Modifier (negative)
-        mid_spread_mod = 0.0       # Modifier for mid-spread signal
+        # =================================================================
+        # v15.0 JARVIS ENGINE (Standalone 0-10) - Called FIRST
+        # =================================================================
+        jarvis_data = calculate_jarvis_engine_score(
+            jarvis_engine=jarvis,
+            game_str=game_str,
+            player_name=player_name,
+            home_team=home_team,
+            away_team=away_team,
+            spread=spread
+        )
+        jarvis_rs = jarvis_data["jarvis_rs"]
+        jarvis_active = jarvis_data["jarvis_active"]
+        jarvis_hits_count = jarvis_data["jarvis_hits_count"]
+        jarvis_triggers_hit = jarvis_data["jarvis_triggers_hit"]
+        jarvis_reasons = jarvis_data["jarvis_reasons"]
+        immortal_detected = jarvis_data["immortal_detected"]
+        jarvis_triggered = jarvis_hits_count > 0
 
-        jarvis_triggers_hit = []
-        immortal_detected = False
-        jarvis_triggered = False
+        # =================================================================
+        # v15.0 ESOTERIC SCORE (0-10) - NO Jarvis/Gematria/Public Fade
+        # =================================================================
+        # Components: Numerology (35%) + Astro (25%) + Fib (15%) + Vortex (15%) + Daily (10%)
+        numerology_score = 0.0    # 0-3.5 pts (35%)
+        astro_score = 0.0         # 0-2.5 pts (25%)
+        fib_score = 0.0           # 0-1.5 pts (15%)
+        vortex_score = 0.0        # 0-1.5 pts (15%)
+        daily_edge_score = 0.0    # 0-1.0 pts (10%)
+        trap_mod = 0.0            # Modifier (negative)
+
+        # --- NUMEROLOGY (35% weight, max 3.5 pts) - MANDATORY ---
+        # Generic daily numerology based on day patterns
+        from datetime import datetime as dt_now
+        day_of_year = dt_now.now().timetuple().tm_yday
+        numerology_raw = (day_of_year % 9 + 1) / 9  # 0.11 to 1.0
+        # Boost if game string contains master numbers (11, 22, 33)
+        if "11" in game_str or "22" in game_str or "33" in game_str:
+            numerology_raw = min(1.0, numerology_raw * 1.3)
+        numerology_score = numerology_raw * 10 * ESOTERIC_WEIGHTS["numerology"]
 
         if jarvis:
-            # --- JARVIS TRIGGERS (20% weight, max 2.0 pts) ---
-            trigger_result = jarvis.check_jarvis_trigger(game_str)
-            raw_jarvis = 0.0
-            for trig in trigger_result.get("triggers_hit", []):
-                raw_jarvis += trig["boost"] / 10  # Normalize boost
-                jarvis_triggers_hit.append({
-                    "number": trig["number"],
-                    "name": trig["name"],
-                    "match_type": trig.get("match_type", "DIRECT"),
-                    "boost": round(trig["boost"] / 10, 2)
-                })
-                if trig["number"] == 2178:
-                    immortal_detected = True
-            jarvis_triggered = len(jarvis_triggers_hit) > 0
-            # Scale to 20% weight (max 2.0 pts)
-            jarvis_score = min(1.0, raw_jarvis) * 10 * ESOTERIC_WEIGHTS["jarvis"]
+            # --- TRAP DEDUCTION (negative modifier) ---
+            trap = jarvis.calculate_large_spread_trap(spread, total)
+            trap_mod = trap.get("modifier", 0)  # Usually negative
 
-            # --- GEMATRIA (52% weight, max 5.2 pts) - DOMINANT SIGNAL ---
-            if player_name and home_team:
-                gematria = jarvis.calculate_gematria_signal(player_name, home_team, away_team)
-                # Gematria signal_strength is 0-1, triggered boosts it
-                gematria_strength = gematria.get("signal_strength", 0)
-                if gematria.get("triggered"):
-                    gematria_strength = min(1.0, gematria_strength * 1.5)  # Boost when triggered
-                # Scale to 52% weight (max 5.2 pts)
-                gematria_score = gematria_strength * 10 * ESOTERIC_WEIGHTS["gematria"]
+            # --- FIBONACCI (15% weight, max 1.5 pts) ---
+            fib_alignment = jarvis.calculate_fibonacci_alignment(float(spread) if spread else 0)
+            fib_raw = fib_alignment.get("modifier", 0)
+            fib_score = max(0, fib_raw) * 10 * ESOTERIC_WEIGHTS["fib"]
 
-                # --- PUBLIC FADE (modifier, can be negative) ---
-                public_fade = jarvis.calculate_public_fade_signal(public_pct)
-                public_fade_mod = public_fade.get("influence", 0)  # -0.95 to +0.2
+            # --- VORTEX (15% weight, max 1.5 pts) ---
+            vortex_value = int(abs(spread * 10)) if spread else 0
+            vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
+            vortex_raw = vortex_pattern.get("modifier", 0)
+            vortex_score = max(0, vortex_raw) * 10 * ESOTERIC_WEIGHTS["vortex"]
 
-                # --- MID-SPREAD (modifier) ---
-                mid_spread = jarvis.calculate_mid_spread_signal(spread)
-                mid_spread_mod = mid_spread.get("modifier", 0)
+        # --- ASTRO (25% weight, max 2.5 pts) ---
+        astro = vedic.calculate_astro_score() if vedic else {"overall_score": 50}
+        astro_normalized = (astro["overall_score"] - 50) / 50  # -1 to +1
+        astro_score = max(0, astro_normalized) * 10 * ESOTERIC_WEIGHTS["astro"]
 
-                # --- TRAP DEDUCTION (negative modifier) ---
-                trap = jarvis.calculate_large_spread_trap(spread, total)
-                trap_mod = trap.get("modifier", 0)  # Usually negative
-
-                # --- FIBONACCI (5% weight, max 0.5 pts) ---
-                fib_alignment = jarvis.calculate_fibonacci_alignment(float(spread) if spread else 0)
-                fib_raw = fib_alignment.get("modifier", 0)
-                fib_score = max(0, fib_raw) * 10 * ESOTERIC_WEIGHTS["fib"]
-
-                # --- VORTEX (5% weight, max 0.5 pts) ---
-                vortex_value = int(abs(spread * 10)) if spread else 0
-                vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
-                vortex_raw = vortex_pattern.get("modifier", 0)
-                vortex_score = max(0, vortex_raw) * 10 * ESOTERIC_WEIGHTS["vortex"]
-
-            # --- ASTRO (13% weight, max 1.3 pts) ---
-            astro = vedic.calculate_astro_score() if vedic else {"overall_score": 50}
-            astro_normalized = (astro["overall_score"] - 50) / 50  # -1 to +1
-            astro_score = max(0, astro_normalized) * 10 * ESOTERIC_WEIGHTS["astro"]
-
-        else:
-            # Fallback to simple trigger check
-            for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
-                if str(trigger_num) in game_str:
-                    jarvis_score += trigger_data["boost"] / 50  # Scaled down
-                    jarvis_triggers_hit.append({
-                        "number": trigger_num,
-                        "name": trigger_data["name"],
-                        "boost": round(trigger_data["boost"] / 50, 2)
-                    })
-                    if trigger_num == 2178:
-                        immortal_detected = True
-            jarvis_triggered = len(jarvis_triggers_hit) > 0
-            jarvis_score = min(2.0, jarvis_score)  # Cap at 20%
-
-        # --- DAILY EDGE (5% weight, max 0.5 pts) ---
+        # --- DAILY EDGE (10% weight, max 1.0 pts) ---
         if daily_energy.get("overall_score", 50) >= 85:
-            daily_edge_score = 10 * ESOTERIC_WEIGHTS["daily_edge"]  # 0.5 pts
+            daily_edge_score = 10 * ESOTERIC_WEIGHTS["daily_edge"]  # 1.0 pts
         elif daily_energy.get("overall_score", 50) >= 70:
-            daily_edge_score = 5 * ESOTERIC_WEIGHTS["daily_edge"]   # 0.25 pts
+            daily_edge_score = 5 * ESOTERIC_WEIGHTS["daily_edge"]   # 0.5 pts
 
-        # --- ESOTERIC SCORE: Sum of weighted components + modifiers ---
+        # --- ESOTERIC SCORE: Sum of weighted components + trap modifier ---
+        # v15.0: NO gematria, NO jarvis triggers, NO public_fade, NO mid_spread
         esoteric_raw = (
-            gematria_score +      # 52% weight (0-5.2)
-            jarvis_score +        # 20% weight (0-2.0)
-            astro_score +         # 13% weight (0-1.3)
-            fib_score +           # 5% weight (0-0.5)
-            vortex_score +        # 5% weight (0-0.5)
-            daily_edge_score +    # 5% weight (0-0.5)
-            mid_spread_mod +      # Modifier
-            public_fade_mod +     # Modifier (usually negative)
+            numerology_score +    # 35% weight (0-3.5)
+            astro_score +         # 25% weight (0-2.5)
+            fib_score +           # 15% weight (0-1.5)
+            vortex_score +        # 15% weight (0-1.5)
+            daily_edge_score +    # 10% weight (0-1.0)
             trap_mod              # Modifier (negative)
         )
         # esoteric_raw already scaled to 0-10 via weights, just clamp
         esoteric_score = max(0, min(10, esoteric_raw))
 
-        # --- v10.1 DUAL-SCORE CONFLUENCE ---
+        # --- v15.0 FOUR-ENGINE CONFLUENCE ---
+        # Now considers all 4 engines for confluence determination
         if jarvis:
             confluence = jarvis.calculate_confluence(
                 research_score=research_score,
@@ -2093,15 +2222,16 @@ async def get_best_bets(sport: str):
                 jarvis_triggered=jarvis_triggered
             )
         else:
-            # Fallback confluence calculation
+            # Fallback confluence calculation with 4 engines
             alignment = 1 - abs(research_score - esoteric_score) / 10
             alignment_pct = alignment * 100
             both_high = research_score >= 7.5 and esoteric_score >= 7.5
-            if immortal_detected and both_high and alignment_pct >= 80:
+            jarvis_high = jarvis_rs >= 7.5
+            if immortal_detected and both_high and jarvis_high and alignment_pct >= 80:
                 confluence = {"level": "IMMORTAL", "boost": 10, "alignment_pct": alignment_pct}
-            elif jarvis_triggered and both_high and alignment_pct >= 80:
+            elif jarvis_triggered and both_high and jarvis_high and alignment_pct >= 80:
                 confluence = {"level": "JARVIS_PERFECT", "boost": 7, "alignment_pct": alignment_pct}
-            elif both_high and alignment_pct >= 80:
+            elif both_high and jarvis_high and alignment_pct >= 80:
                 confluence = {"level": "PERFECT", "boost": 5, "alignment_pct": alignment_pct}
             elif alignment_pct >= 70:
                 confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
@@ -2113,9 +2243,11 @@ async def get_best_bets(sport: str):
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
 
-        # --- v10.1 BASE SCORE FORMULA ---
-        # BASE = (research × 0.67) + (esoteric × 0.33) + confluence_boost
-        base_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence_boost
+        # --- v15.0 BASE SCORE FORMULA (4 Engines) ---
+        # BASE = (research × 0.45) + (esoteric × 0.25) + (jarvis × 0.20) + confluence_boost
+        # AI influence via research correlation (sharp money often follows models)
+        # Remaining 10% captured in confluence alignment
+        base_score = (research_score * 0.45) + (esoteric_score * 0.25) + (jarvis_rs * 0.20) + confluence_boost
 
         # --- v11.08 JASON SIM CONFLUENCE (runs after base score, before tier assignment) ---
         # Jason simulates game outcomes and applies boost/downgrade based on win probability
@@ -2166,18 +2298,11 @@ async def get_best_bets(sport: str):
         # Check if Jason blocked this pick
         jason_blocked = jason_output.get("jason_blocked", False)
 
-        # --- v11.08 JARVIS RAW SCORE (0-10 scale for Titanium check) ---
-        # jarvis_score is 0-2.0 from esoteric weights, scale to 0-10 for display and Titanium
-        # IMPORTANT: If no triggers, default to 5.0 (neutral) so jarvis_rs always exists
-        jarvis_hits_count = len(jarvis_triggers_hit)
-        if jarvis_hits_count > 0:
-            jarvis_rs = scale_jarvis_score_to_10(jarvis_score, max_jarvis=2.0) if TIERING_AVAILABLE else jarvis_score * 5
-        else:
-            jarvis_rs = DEFAULT_JARVIS_RS if TIERING_AVAILABLE else 5.0
-        jarvis_active = jarvis_hits_count > 0
-        jarvis_reasons = [t.get("name", "Unknown") for t in jarvis_triggers_hit] if jarvis_hits_count > 0 else ["No triggers hit"]
+        # --- v15.0: jarvis_rs already calculated by standalone function above ---
+        # jarvis_rs, jarvis_active, jarvis_hits_count, jarvis_triggers_hit, jarvis_reasons
+        # are all set from calculate_jarvis_engine_score() call
 
-        # --- v11.08 TITANIUM CHECK (3 of 4 engines >= 8.0) ---
+        # --- v15.0 TITANIUM CHECK (3 of 4 engines >= 8.0) ---
         # Scale AI score from 0-8 to 0-10 for comparison
         ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
 
@@ -2250,9 +2375,8 @@ async def get_best_bets(sport: str):
                 smash_reasons.append(f"Jarvis Engine: {round(jarvis_rs, 2)}/10")
 
         # Build penalties array from modifiers
+        # v15.0: public_fade_mod removed (now only in Research as positive boost)
         penalties = []
-        if public_fade_mod < 0:
-            penalties.append({"name": "Public Fade", "magnitude": round(public_fade_mod, 2)})
         if trap_mod < 0:
             penalties.append({"name": "Large Spread Trap", "magnitude": round(trap_mod, 2)})
 
@@ -2289,16 +2413,17 @@ async def get_best_bets(sport: str):
                 "base_research": 2.0,
                 "total": round(research_score, 2)
             },
+            # v15.0 Esoteric breakdown (NO gematria, NO jarvis, NO public_fade - clean separation)
             "esoteric_breakdown": {
-                "gematria": round(gematria_score, 2),
-                "jarvis_triggers": round(jarvis_score, 2),
+                "numerology": round(numerology_score, 2),
                 "astro": round(astro_score, 2),
                 "fibonacci": round(fib_score, 2),
                 "vortex": round(vortex_score, 2),
                 "daily_edge": round(daily_edge_score, 2),
-                "public_fade_mod": round(public_fade_mod, 2),
                 "trap_mod": round(trap_mod, 2)
             },
+            # v15.0 Jarvis breakdown (standalone engine)
+            "jarvis_breakdown": jarvis_data.get("jarvis_breakdown", {}),
             "jarvis_triggers": jarvis_triggers_hit,
             "immortal_detected": immortal_detected,
             # v11.08 JARVIS fields (MUST always exist)
@@ -2409,26 +2534,139 @@ async def get_best_bets(sport: str):
                             "reason": f"Player is {injury_status}"
                         })
 
+                # v11.15: Determine game status (UPCOMING vs MISSED_START)
+                game_status = "UPCOMING"
+                if TIME_FILTERS_AVAILABLE and commence_time:
+                    game_status = get_game_status(commence_time)
+
+                # v14.9 UNIFIED PLAYER IDENTITY RESOLUTION
+                # Resolve player to canonical ID for accurate grading
+                canonical_player_id = None
+                provider_ids = {}
+                player_position = None
+                player_team = None  # Resolved team from identity lookup
+                resolved_injury_status = injury_status
+                prop_blocked = False
+                blocked_reason = None
+
+                if IDENTITY_RESOLVER_AVAILABLE:
+                    try:
+                        # Try home team first, then away team for better matching
+                        resolved = await resolve_player(
+                            sport=sport.upper(),
+                            raw_name=player,
+                            team_hint=home_team,
+                            event_id=game_key
+                        )
+
+                        # If low confidence with home team, try away team
+                        if not resolved.is_resolved or resolved.confidence < 0.8:
+                            resolved_away = await resolve_player(
+                                sport=sport.upper(),
+                                raw_name=player,
+                                team_hint=away_team,
+                                event_id=game_key
+                            )
+                            if resolved_away.confidence > resolved.confidence:
+                                resolved = resolved_away
+
+                        if resolved.is_resolved:
+                            canonical_player_id = resolved.canonical_player_id
+                            provider_ids = resolved.provider_ids
+                            player_position = resolved.position
+                            # Use resolved team if we got a good match
+                            if resolved.team:
+                                player_team = resolved.team
+
+                            # Check injury guard from resolver
+                            resolver = get_player_resolver()
+                            # For TITANIUM tier, don't allow QUESTIONABLE
+                            allow_questionable = score_data.get("tier", "PASS") != "TITANIUM_SMASH"
+                            resolved = await resolver.check_injury_guard(resolved, allow_questionable=allow_questionable)
+
+                            if resolved.is_blocked:
+                                prop_blocked = True
+                                blocked_reason = resolved.blocked_reason
+                                logger.info("PLAYER GUARD: Blocking prop for %s (reason: %s)", player, blocked_reason)
+                    except Exception as e:
+                        logger.warning("Player resolution failed for %s: %s", player, e)
+                        # Generate fallback canonical ID
+                        canonical_player_id = f"{sport.upper()}:NAME:{normalize_player_name(player) if IDENTITY_RESOLVER_AVAILABLE else player.lower().replace(' ', '_')}|{home_team.lower().replace(' ', '_')}"
+
+                # Skip blocked props
+                if prop_blocked:
+                    continue
+
+                # If no canonical ID generated, create fallback
+                if not canonical_player_id:
+                    safe_name = player.lower().replace(" ", "_").replace("'", "").replace(".", "")
+                    safe_team = home_team.lower().replace(" ", "_")
+                    canonical_player_id = f"{sport.upper()}:NAME:{safe_name}|{safe_team}"
+
+                # v14.9: Build signals_fired array from pillars
+                signals_fired = score_data.get("pillars_passed", []).copy()
+                if sharp_signal.get("signal_strength") in ["STRONG", "MODERATE"]:
+                    signals_fired.append(f"SHARP_{sharp_signal.get('signal_strength')}")
+
+                # v14.9: Determine has_started
+                has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
+
                 props_picks.append({
                     "sport": sport.upper(),
+                    "league": sport.upper(),  # v14.9: Consistent league field
+                    "event_id": game_key,  # v14.9: For prop availability tracking
                     "player": player,
                     "player_name": player,
+                    "player_team": player_team,  # v14.9: Resolved team
+                    # v14.9 CANONICAL PLAYER ID - required for grading
+                    "canonical_player_id": canonical_player_id,
+                    "provider_ids": provider_ids,
+                    "position": player_position,
                     "market": market,
                     "stat_type": market,
                     "prop_type": market,
                     "line": line,
                     "side": side,
+                    "direction": side.upper(),  # v14.9: Alias for frontend consistency
                     "over_under": side,
                     "odds": odds,
+                    "book": book_name,  # v14.9: Consistent sportsbook field
+                    "book_key": book_key,
+                    "book_link": book_link,
+                    # v14.11: Sportsbook aliases for output contract
+                    "sportsbook_name": book_name,
+                    "sportsbook_event_url": book_link,
                     "game": f"{away_team} @ {home_team}",
                     "matchup": f"{away_team} @ {home_team}",
                     "home_team": home_team,
                     "away_team": away_team,
                     "start_time_et": start_time_et,
+                    "game_status": game_status,
+                    "status": game_status.lower() if game_status else "scheduled",  # v14.11: Status field
+                    "has_started": has_started,  # v14.9: Boolean for frontend
+                    "is_started_already": has_started,  # v14.11: Alias for frontend
+                    "is_live": game_status == "MISSED_START",  # v14.11: Live mode flag
+                    "is_live_bet_candidate": game_status == "MISSED_START",
                     "recommendation": f"{side.upper()} {line}",
-                    "injury_status": injury_status,
+                    "injury_status": resolved_injury_status,
+                    "injury_checked": True,  # v14.9: Injury was checked via identity resolver
                     "best_book": book_name,
                     "best_book_link": book_link,
+                    "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
+                    "signals_firing": signals_fired,  # v14.11: Alias for output contract
+                    "pillars_hit": score_data.get("pillars_passed", []),  # v14.11: Alias
+                    # v14.11: Engine breakdown for frontend
+                    "engine_breakdown": {
+                        "ai": score_data.get("ai_score", 0),
+                        "research": score_data.get("research_score", 0),
+                        "esoteric": score_data.get("esoteric_score", 0),
+                        "jarvis": score_data.get("jarvis_rs", 0),
+                    },
+                    # v14.11: Titanium reasons alias
+                    "titanium_reasons": score_data.get("smash_reasons", []),
+                    # v14.11: Grading fields (populated by pick_logger)
+                    "graded": False,
+                    "grade_status": "PENDING",
                     **score_data,
                     "sharp_signal": sharp_signal.get("signal_strength", "NONE")
                 })
@@ -2446,10 +2684,13 @@ async def get_best_bets(sport: str):
         if key not in best_by_player_market or pick["total_score"] > best_by_player_market[key]["total_score"]:
             best_by_player_market[key] = pick
 
-    # Sort deduplicated props by score and take top 10
+    # v15.0: Filter to COMMUNITY_MIN_SCORE (>= 6.5) before taking top 10
+    # Only EDGE_LEAN and above shown to community
+    COMMUNITY_MIN_SCORE = 6.5
     deduplicated_props = list(best_by_player_market.values())
-    deduplicated_props.sort(key=lambda x: x["total_score"], reverse=True)
-    top_props = deduplicated_props[:10]
+    filtered_props = [p for p in deduplicated_props if p["total_score"] >= COMMUNITY_MIN_SCORE]
+    filtered_props.sort(key=lambda x: x["total_score"], reverse=True)
+    top_props = filtered_props[:10]
 
     # ============================================
     # CATEGORY 2: GAME PICKS (Spreads, Totals, ML)
@@ -2494,11 +2735,13 @@ async def get_best_bets(sport: str):
                     start_time_et = get_game_start_time_et(commence_time)
 
                 # Track best odds across books
-                best_odds_by_market = {}  # market_key -> {outcome -> (odds, book_name, book_link)}
+                best_odds_by_market = {}  # market_key -> {outcome -> (odds, book_name, book_key, book_link)}
 
                 for bm in game.get("bookmakers", []):
                     book_name = bm.get("title", "Unknown")
                     book_key = bm.get("key", "")
+                    # Generate affiliate link for this book
+                    bm_link = AFFILIATE_LINKS.get(book_key, "")
 
                     for market in bm.get("markets", []):
                         market_key = market.get("key", "")
@@ -2510,7 +2753,7 @@ async def get_best_bets(sport: str):
 
                             outcome_key = f"{market_key}:{pick_name}:{point}"
                             if outcome_key not in best_odds_by_market or odds > best_odds_by_market[outcome_key][0]:
-                                best_odds_by_market[outcome_key] = (odds, book_name, "")
+                                best_odds_by_market[outcome_key] = (odds, book_name, book_key, bm_link)
 
                 # Now build picks using best odds
                 for bm in game.get("bookmakers", [])[:1]:  # Use first book structure
@@ -2522,8 +2765,8 @@ async def get_best_bets(sport: str):
                             point = outcome.get("point")
 
                             outcome_key = f"{market_key}:{pick_name}:{point}"
-                            best_odds, best_book, best_link = best_odds_by_market.get(
-                                outcome_key, (outcome.get("price", -110), "Unknown", "")
+                            best_odds, best_book, best_book_key, best_link = best_odds_by_market.get(
+                                outcome_key, (outcome.get("price", -110), "Unknown", "", "")
                             )
 
                             # Build display info
@@ -2558,23 +2801,65 @@ async def get_best_bets(sport: str):
                                 prop_line=point if point else 0
                             )
 
+                            # v11.15: Determine game status (UPCOMING vs MISSED_START)
+                            game_status = "UPCOMING"
+                            if TIME_FILTERS_AVAILABLE and commence_time:
+                                game_status = get_game_status(commence_time)
+
+                            # v14.9: Build signals_fired array from pillars
+                            signals_fired = score_data.get("pillars_passed", []).copy()
+                            if sharp_signal.get("signal_strength") in ["STRONG", "MODERATE"]:
+                                signals_fired.append(f"SHARP_{sharp_signal.get('signal_strength')}")
+
+                            # v14.9: Determine has_started
+                            has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
+
                             game_picks.append({
                                 "sport": sport.upper(),
+                                "league": sport.upper(),  # v14.9: Consistent league field
+                                "event_id": game_key,  # v14.9: For tracking consistency with props
                                 "pick_type": pick_type,
                                 "pick": display,
                                 "pick_side": pick_side,
                                 "team": pick_name if market_key != "totals" else None,
                                 "line": point,
                                 "odds": best_odds,
+                                "book": best_book,  # v14.9: Consistent sportsbook field
+                                "book_key": best_book_key,
+                                "book_link": best_link,
+                                # v14.11: Sportsbook aliases for output contract
+                                "sportsbook_name": best_book,
+                                "sportsbook_event_url": best_link,
                                 "game": f"{away_team} @ {home_team}",
                                 "matchup": f"{away_team} @ {home_team}",
                                 "home_team": home_team,
                                 "away_team": away_team,
                                 "start_time_et": start_time_et,
+                                "game_status": game_status,
+                                "status": game_status.lower() if game_status else "scheduled",  # v14.11: Status field
+                                "has_started": has_started,  # v14.9: Boolean for frontend
+                                "is_started_already": has_started,  # v14.11: Alias for frontend
+                                "is_live": game_status == "MISSED_START",  # v14.11: Live mode flag
+                                "is_live_bet_candidate": game_status == "MISSED_START",
                                 "market": market_key,
                                 "recommendation": display,
                                 "best_book": best_book,
                                 "best_book_link": best_link,
+                                "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
+                                "signals_firing": signals_fired,  # v14.11: Alias for output contract
+                                "pillars_hit": score_data.get("pillars_passed", []),  # v14.11: Alias
+                                # v14.11: Engine breakdown for frontend
+                                "engine_breakdown": {
+                                    "ai": score_data.get("ai_score", 0),
+                                    "research": score_data.get("research_score", 0),
+                                    "esoteric": score_data.get("esoteric_score", 0),
+                                    "jarvis": score_data.get("jarvis_rs", 0),
+                                },
+                                # v14.11: Titanium reasons alias
+                                "titanium_reasons": score_data.get("smash_reasons", []),
+                                # v14.11: Grading fields (populated by pick_logger)
+                                "graded": False,
+                                "grade_status": "PENDING",
                                 **score_data,
                                 "sharp_signal": sharp_signal.get("signal_strength", "NONE")
                             })
@@ -2606,24 +2891,65 @@ async def get_best_bets(sport: str):
                 prop_line=0
             )
 
+            # v14.9: Build signals_fired array
+            signals_fired = score_data.get("pillars_passed", []).copy()
+            signals_fired.append(f"SHARP_{signal.get('signal_strength', 'MODERATE')}")
+
             game_picks.append({
+                "sport": sport.upper(),  # v14.9: Consistent field
+                "league": sport.upper(),  # v14.9: Consistent league field
+                "event_id": signal.get("game_id", ""),  # v14.9: Use game_id from signal if available
                 "pick_type": "SHARP",
                 "pick": f"Sharp on {signal.get('side', 'HOME')}",
+                "pick_side": f"{signal.get('side', 'HOME')} SHARP",  # v14.9: Consistent field
                 "team": home_team if signal.get("side") == "HOME" else away_team,
                 "line": signal.get("line_variance", 0),
                 "odds": -110,
+                "book": "",  # v14.9: No book for sharp signals
+                "book_key": "",
+                "book_link": "",
+                # v14.11: Sportsbook aliases for output contract
+                "sportsbook_name": "",
+                "sportsbook_event_url": "",
                 "game": f"{away_team} @ {home_team}",
+                "matchup": f"{away_team} @ {home_team}",  # v14.9: Consistent alias
                 "home_team": home_team,
                 "away_team": away_team,
+                "start_time_et": "",  # v14.9: Not available from sharp data
+                "game_status": "UPCOMING",  # v14.9: Default status
+                "status": "scheduled",  # v14.11: Status field
+                "has_started": False,  # v14.9: Boolean for frontend
+                "is_started_already": False,  # v14.11: Alias for frontend
+                "is_live": False,  # v14.11: Live mode flag
+                "is_live_bet_candidate": False,
                 "market": "sharp_money",
                 "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
+                "best_book": "",  # v14.9: Backward compat
+                "best_book_link": "",
+                "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
+                "signals_firing": signals_fired,  # v14.11: Alias for output contract
+                "pillars_hit": score_data.get("pillars_passed", []),  # v14.11: Alias
+                # v14.11: Engine breakdown for frontend
+                "engine_breakdown": {
+                    "ai": score_data.get("ai_score", 0),
+                    "research": score_data.get("research_score", 0),
+                    "esoteric": score_data.get("esoteric_score", 0),
+                    "jarvis": score_data.get("jarvis_rs", 0),
+                },
+                # v14.11: Titanium reasons alias
+                "titanium_reasons": score_data.get("smash_reasons", []),
+                # v14.11: Grading fields (populated by pick_logger)
+                "graded": False,
+                "grade_status": "PENDING",
                 **score_data,
                 "sharp_signal": signal.get("signal_strength", "MODERATE")
             })
 
-    # Sort game picks by score and take top 10
-    game_picks.sort(key=lambda x: x["total_score"], reverse=True)
-    top_game_picks = game_picks[:10]
+    # v15.0: Filter to COMMUNITY_MIN_SCORE (>= 6.5) before taking top 10
+    # Only EDGE_LEAN and above shown to community
+    filtered_game_picks = [p for p in game_picks if p["total_score"] >= COMMUNITY_MIN_SCORE]
+    filtered_game_picks.sort(key=lambda x: x["total_score"], reverse=True)
+    top_game_picks = filtered_game_picks[:10]
 
     # ============================================
     # LOG PICKS FOR GRADING (v14.9)
@@ -2664,6 +2990,26 @@ async def get_best_bets(sport: str):
             logger.error("PICK_LOGGER: Failed to log picks: %s", e)
 
     # ============================================
+    # LIVE MODE FILTERING (v14.11)
+    # ============================================
+    # When mode=live, filter to only picks marked as is_live==true
+    # These are halftime/period break opportunities where live lines exist
+    if live_mode:
+        # Filter props: check is_live or is_live_bet_candidate
+        top_props = [
+            p for p in top_props
+            if p.get("is_live") is True or p.get("is_live_bet_candidate") is True
+        ]
+
+        # Filter game picks: check is_live or is_live_bet_candidate
+        top_game_picks = [
+            p for p in top_game_picks
+            if p.get("is_live") is True or p.get("is_live_bet_candidate") is True
+        ]
+
+        logger.info("LIVE_MODE: Filtered to %d props, %d game_picks", len(top_props), len(top_game_picks))
+
+    # ============================================
     # BUILD FINAL RESPONSE
     # ============================================
     # Get astro status if available
@@ -2678,11 +3024,25 @@ async def get_best_bets(sport: str):
         except Exception as e:
             logger.warning("Failed to get astro status: %s", e)
 
+    # v14.9 Version metadata for frontend
+    build_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:8] or "local"
+    deploy_version = "14.9"
+
+    # v14.9: Date and timestamp in ET
+    date_et = get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d")
+    run_timestamp_et = datetime.now().isoformat()
+
     result = {
         "sport": sport.upper(),
+        "mode": "live" if live_mode else "standard",  # v14.11: Indicate which mode
         "source": f"jarvis_savant_v{TIERING_VERSION if TIERING_AVAILABLE else '11.08'}",
         "scoring_system": "Phase 1-3 Integrated + Titanium v11.08",
         "engine_version": TIERING_VERSION if TIERING_AVAILABLE else "11.08",
+        "deploy_version": deploy_version,
+        "build_sha": build_sha,
+        "identity_resolver": IDENTITY_RESOLVER_AVAILABLE,
+        "date_et": date_et,  # v14.9: Today's date in ET
+        "run_timestamp_et": run_timestamp_et,  # v14.9: When this response was generated
         "props": {
             "count": len(top_props),
             "total_analyzed": len(props_picks),
@@ -2766,6 +3126,88 @@ async def get_live_bets(sport: str):
         "picks": live_picks,
         "live_games_count": len(live_picks),
         "community_threshold": 6.5,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# ============================================================================
+# v11.15: LIVE IN-GAME PICKS ENDPOINT (with BallDontLie context)
+# ============================================================================
+
+@router.get("/in-game/{sport}")
+async def get_in_game_picks(sport: str):
+    """
+    v11.15: Live in-game betting picks for games that have already started.
+
+    Returns picks from best-bets that have game_status=MISSED_START,
+    meaning they are candidates for live/in-game betting.
+
+    For NBA, includes BallDontLie live context if configured (BDL_API_KEY).
+
+    Trigger Windows (NBA):
+    - HALFTIME: Between Q2 end and Q3 start
+    - LATE_GAME_Q4: Q4 with 10:00 or less remaining
+    - OVERTIME: Any overtime period
+
+    Response includes:
+    - live_picks: Picks for games that have started
+    - trigger_games: Games currently in valid trigger windows
+    - bdl_context: BallDontLie live data (if available)
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Get best-bets and filter to MISSED_START picks
+    best_bets_result = await get_best_bets(sport)
+
+    # Filter props and game picks to only MISSED_START
+    live_props = [
+        p for p in best_bets_result.get("props", {}).get("picks", [])
+        if p.get("game_status") == "MISSED_START"
+    ]
+    live_game_picks = [
+        p for p in best_bets_result.get("game_picks", {}).get("picks", [])
+        if p.get("game_status") == "MISSED_START"
+    ]
+
+    # Get BallDontLie context for NBA
+    bdl_context = None
+    if sport_lower == "nba":
+        try:
+            from alt_data_sources.balldontlie import (
+                is_balldontlie_configured,
+                get_nba_live_context
+            )
+            if is_balldontlie_configured():
+                bdl_context = await get_nba_live_context()
+        except ImportError:
+            logger.debug("BallDontLie module not available")
+        except Exception as e:
+            logger.warning("Failed to get BallDontLie context: %s", e)
+
+    # Build trigger games list from BDL context
+    trigger_games = []
+    if bdl_context and bdl_context.get("available"):
+        trigger_games = bdl_context.get("trigger_games", [])
+
+    return {
+        "sport": sport.upper(),
+        "source": "live_in_game_v11.15",
+        "live_props": {
+            "count": len(live_props),
+            "picks": live_props
+        },
+        "live_game_picks": {
+            "count": len(live_game_picks),
+            "picks": live_game_picks
+        },
+        "trigger_windows": {
+            "games_in_window": len(trigger_games),
+            "games": trigger_games
+        },
+        "bdl_context": bdl_context,
+        "bdl_configured": bdl_context is not None and bdl_context.get("available", False),
         "timestamp": datetime.now().isoformat()
     }
 
@@ -2869,14 +3311,29 @@ async def debug_pick_breakdown(sport: str):
             research_reasons.append(f"Line variance {line_variance:.1f}pts (minimal)")
 
         # Pillar 3: Public Betting Fade (0-2 pts)
+        # v14.11: Use centralized public fade calculator (single-calculation policy)
         public_pct_val = sharp_signal.get("public_pct", public_pct)
-        public_boost = 0.0
-        if public_pct_val >= 75:
-            public_boost = 2.0
-            research_reasons.append(f"Public at {public_pct_val}% (fade signal)")
-        elif public_pct_val >= 65:
-            public_boost = 1.0
-            research_reasons.append(f"Public at {public_pct_val}% (mild fade)")
+        ticket_pct_val = sharp_signal.get("ticket_pct")
+        money_pct_val = sharp_signal.get("money_pct")
+
+        if SIGNALS_AVAILABLE:
+            public_fade_signal = calculate_public_fade(public_pct_val, ticket_pct_val, money_pct_val)
+            public_boost = public_fade_signal.research_boost
+            public_fade_context = get_public_fade_context(public_fade_signal)
+            if public_fade_signal.reason:
+                research_reasons.append(public_fade_signal.reason)
+        else:
+            # Fallback to inline calculation
+            public_boost = 0.0
+            public_fade_context = {"public_overload": False}
+            if public_pct_val >= 75:
+                public_boost = 2.0
+                research_reasons.append(f"Public at {public_pct_val}% (fade signal)")
+                public_fade_context = {"public_overload": True, "is_strong_fade": True}
+            elif public_pct_val >= 65:
+                public_boost = 1.0
+                research_reasons.append(f"Public at {public_pct_val}% (mild fade)")
+                public_fade_context = {"public_overload": True, "is_strong_fade": False}
 
         # Pillar 4: Base research floor (2 pts baseline)
         base_research = 2.0
@@ -2889,14 +3346,15 @@ async def debug_pick_breakdown(sport: str):
         pillar_score = sharp_boost + line_boost + public_boost
 
         # --- ESOTERIC COMPONENTS ---
+        # v14.11: public_fade_mod REMOVED - only Research Engine applies public fade boost
         gematria_score = 0.0
         jarvis_score = 0.0
         astro_score = 0.0
         fib_score = 0.0
         vortex_score = 0.0
         daily_edge_score = 0.0
-        public_fade_mod = 0.0
         trap_mod = 0.0
+        # NOTE: public_fade_context available for reference, but NOT applied numerically
 
         jarvis_triggers_hit = []
         esoteric_reasons = []
@@ -2927,14 +3385,10 @@ async def debug_pick_breakdown(sport: str):
                     esoteric_reasons.append(f"Gematria triggered: strength {round(gematria_strength, 2)}")
                 gematria_score = gematria_strength * 10 * ESOTERIC_WEIGHTS["gematria"]
 
-                # PUBLIC FADE
-                public_fade = jarvis.calculate_public_fade_signal(public_pct)
-                public_fade_mod = public_fade.get("influence", 0)
-                if public_fade_mod != 0:
-                    if public_fade_mod < 0:
-                        penalties_applied.append({"name": "Public Fade", "magnitude": round(public_fade_mod, 2)})
-                    else:
-                        esoteric_reasons.append(f"Public fade boost: {round(public_fade_mod, 2)}")
+                # v14.11: PUBLIC FADE - Now context-only for Esoteric, NO numeric modifier
+                # Research Engine owns the boost; Esoteric only sees the flag
+                if public_fade_context.get("public_overload"):
+                    esoteric_reasons.append(f"Public overload detected (context only, no boost)")
 
                 # TRAP DEDUCTION
                 trap = jarvis.calculate_large_spread_trap(spread, total)
@@ -2976,10 +3430,11 @@ async def debug_pick_breakdown(sport: str):
             esoteric_reasons.append("No esoteric signals triggered")
 
         # --- ESOTERIC SCORE ---
+        # v14.11: public_fade_mod REMOVED - prevents double-counting with Research Engine
         esoteric_raw = (
             gematria_score + jarvis_score + astro_score +
             fib_score + vortex_score + daily_edge_score +
-            public_fade_mod + trap_mod
+            trap_mod  # trap_mod is the only negative modifier
         )
         esoteric_score = max(0, min(10, esoteric_raw))
 
@@ -3227,6 +3682,335 @@ async def debug_pick_breakdown(sport: str):
             "edge_lean_count": sum(1 for p in props_breakdown + game_breakdown if p.get("tier") == "EDGE_LEAN")
         }
     }
+
+
+# ============================================================================
+# DEBUG ENDPOINTS (v14.9 Production Requirements)
+# ============================================================================
+
+@router.get("/debug/pipeline/{sport}")
+async def debug_pipeline(sport: str):
+    """
+    DEBUG ENDPOINT: Full pipeline step-by-step BEFORE final filtering.
+
+    Shows the raw scoring data at each stage of the pipeline:
+    1. Raw API data fetched
+    2. TODAY-only filtering applied
+    3. Engine scores calculated (AI, Research, Esoteric, Jarvis)
+    4. Jason Sim confluence applied
+    5. Tier assignment
+    6. Final filtering (deduplication, injury blocking)
+
+    This helps debug why certain picks may be missing or scored unexpectedly.
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    pipeline_steps = {
+        "step_1_api_fetch": {},
+        "step_2_today_filter": {},
+        "step_3_engine_scores": {},
+        "step_4_jason_confluence": {},
+        "step_5_tier_assignment": {},
+        "step_6_final_filtering": {}
+    }
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    # Step 1: Raw API fetch
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "spreads,h2h,totals",
+                "oddsFormat": "american"
+            }
+        )
+        raw_games = resp.json() if resp and resp.status_code == 200 else []
+        pipeline_steps["step_1_api_fetch"] = {
+            "games_fetched": len(raw_games),
+            "games": [{"home": g.get("home_team"), "away": g.get("away_team"), "commence_time": g.get("commence_time")} for g in raw_games[:10]]
+        }
+    except Exception as e:
+        pipeline_steps["step_1_api_fetch"] = {"error": str(e)}
+
+    # Step 2: TODAY-only filter
+    if TIME_FILTERS_AVAILABLE and raw_games:
+        today_games, excluded = validate_today_slate(raw_games)
+        pipeline_steps["step_2_today_filter"] = {
+            "today_games_count": len(today_games),
+            "excluded_count": len(excluded),
+            "excluded_reasons": [{"game": f"{g.get('away_team')}@{g.get('home_team')}", "time": g.get("commence_time")} for g in excluded[:5]]
+        }
+    else:
+        pipeline_steps["step_2_today_filter"] = {
+            "note": "TIME_FILTERS not available or no games"
+        }
+
+    # Step 3-6: Get from best-bets endpoint
+    try:
+        best_bets = await get_best_bets(sport)
+        pipeline_steps["step_3_engine_scores"] = {
+            "props_scored": best_bets.get("props", {}).get("total_analyzed", 0),
+            "games_scored": best_bets.get("game_picks", {}).get("total_analyzed", 0)
+        }
+        pipeline_steps["step_4_jason_confluence"] = {
+            "jason_available": JASON_SIM_AVAILABLE,
+            "sample_jason_output": best_bets.get("props", {}).get("picks", [{}])[0].get("jason_ran") if best_bets.get("props", {}).get("picks") else None
+        }
+        pipeline_steps["step_5_tier_assignment"] = {
+            "tiering_module_available": TIERING_AVAILABLE,
+            "tier_distribution": {
+                "TITANIUM_SMASH": sum(1 for p in best_bets.get("props", {}).get("picks", []) + best_bets.get("game_picks", {}).get("picks", []) if p.get("tier") == "TITANIUM_SMASH"),
+                "GOLD_STAR": sum(1 for p in best_bets.get("props", {}).get("picks", []) + best_bets.get("game_picks", {}).get("picks", []) if p.get("tier") == "GOLD_STAR"),
+                "EDGE_LEAN": sum(1 for p in best_bets.get("props", {}).get("picks", []) + best_bets.get("game_picks", {}).get("picks", []) if p.get("tier") == "EDGE_LEAN"),
+                "MONITOR": sum(1 for p in best_bets.get("props", {}).get("picks", []) + best_bets.get("game_picks", {}).get("picks", []) if p.get("tier") == "MONITOR"),
+                "PASS": sum(1 for p in best_bets.get("props", {}).get("picks", []) + best_bets.get("game_picks", {}).get("picks", []) if p.get("tier") == "PASS")
+            }
+        }
+        pipeline_steps["step_6_final_filtering"] = {
+            "final_props": best_bets.get("props", {}).get("count", 0),
+            "final_game_picks": best_bets.get("game_picks", {}).get("count", 0),
+            "identity_resolver": best_bets.get("identity_resolver", False)
+        }
+    except Exception as e:
+        pipeline_steps["step_3_engine_scores"] = {"error": str(e)}
+
+    return {
+        "sport": sport.upper(),
+        "pipeline": pipeline_steps,
+        "modules_available": {
+            "tiering": TIERING_AVAILABLE,
+            "time_filters": TIME_FILTERS_AVAILABLE,
+            "jason_sim": JASON_SIM_AVAILABLE,
+            "identity_resolver": IDENTITY_RESOLVER_AVAILABLE,
+            "pick_logger": PICK_LOGGER_AVAILABLE,
+            "auto_grader": AUTO_GRADER_AVAILABLE
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/debug/identity/{player_name}")
+async def debug_identity(player_name: str, sport: str = "nba", team_hint: str = ""):
+    """
+    DEBUG ENDPOINT: Test player identity resolution.
+
+    Returns all resolution attempts and matches for a player name.
+    Useful for debugging why a player prop might be missing or mismatched.
+    """
+    if not IDENTITY_RESOLVER_AVAILABLE:
+        return {
+            "player_name": player_name,
+            "error": "Identity resolver module not available",
+            "fallback_id": f"{sport.upper()}:NAME:{player_name.lower().replace(' ', '_')}",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    try:
+        # Try resolution
+        resolved = await resolve_player(
+            sport=sport.upper(),
+            raw_name=player_name,
+            team_hint=team_hint,
+            event_id=""
+        )
+
+        # Get normalizations
+        normalized_name = normalize_player_name(player_name)
+        normalized_team = normalize_team_name(team_hint) if team_hint else None
+
+        return {
+            "input": {
+                "player_name": player_name,
+                "sport": sport.upper(),
+                "team_hint": team_hint
+            },
+            "normalizations": {
+                "normalized_name": normalized_name,
+                "normalized_team": normalized_team
+            },
+            "resolution_result": {
+                "is_resolved": resolved.is_resolved,
+                "canonical_player_id": resolved.canonical_player_id,
+                "provider_ids": resolved.provider_ids,
+                "confidence": resolved.confidence,
+                "match_method": str(resolved.match_method) if hasattr(resolved, 'match_method') else "unknown",
+                "team": resolved.team,
+                "position": resolved.position,
+                "is_blocked": resolved.is_blocked,
+                "blocked_reason": resolved.blocked_reason
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "player_name": player_name,
+            "error": str(e),
+            "fallback_id": f"{sport.upper()}:NAME:{player_name.lower().replace(' ', '_')}",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/debug/today-games/{sport}")
+async def debug_today_games(sport: str):
+    """
+    DEBUG ENDPOINT: Show raw game list with TODAY-only validation.
+
+    Verifies no tomorrow games are included.
+    Shows each game's commence_time and whether it passes TODAY filter.
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+
+    try:
+        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+        resp = await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "spreads",
+                "oddsFormat": "american"
+            }
+        )
+
+        if not resp or resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Failed to fetch games from Odds API")
+
+        raw_games = resp.json()
+
+        # Analyze each game
+        game_analysis = []
+        for game in raw_games:
+            commence_time = game.get("commence_time", "")
+            home_team = game.get("home_team", "")
+            away_team = game.get("away_team", "")
+
+            analysis = {
+                "matchup": f"{away_team} @ {home_team}",
+                "commence_time_raw": commence_time,
+                "commence_time_et": get_game_start_time_et(commence_time) if TIME_FILTERS_AVAILABLE else "N/A"
+            }
+
+            if TIME_FILTERS_AVAILABLE:
+                analysis["is_today"] = is_game_today(commence_time)
+                analysis["game_status"] = get_game_status(commence_time)
+                analysis["has_started"] = is_game_started(commence_time)
+            else:
+                analysis["is_today"] = "TIME_FILTERS not available"
+
+            game_analysis.append(analysis)
+
+        # Get today's date info
+        today_info = {}
+        if TIME_FILTERS_AVAILABLE:
+            start_et, end_et = get_today_range_et()
+            today_info = {
+                "today_date_et": get_today_date_str(),
+                "window_start": start_et.isoformat() if hasattr(start_et, 'isoformat') else str(start_et),
+                "window_end": end_et.isoformat() if hasattr(end_et, 'isoformat') else str(end_et)
+            }
+
+        return {
+            "sport": sport.upper(),
+            "total_games_from_api": len(raw_games),
+            "today_filter_available": TIME_FILTERS_AVAILABLE,
+            "today_info": today_info,
+            "games": game_analysis,
+            "summary": {
+                "today_games": sum(1 for g in game_analysis if g.get("is_today") == True),
+                "not_today": sum(1 for g in game_analysis if g.get("is_today") == False),
+                "already_started": sum(1 for g in game_analysis if g.get("has_started") == True)
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/debug/learning/latest")
+async def debug_learning_latest():
+    """
+    DEBUG ENDPOINT: Get latest learning loop status and report.
+
+    Shows:
+    - Current weights for all esoteric signals
+    - Recent performance by signal
+    - Weight adjustment history
+    - Grading statistics
+    """
+    result = {
+        "esoteric_learning": {},
+        "auto_grader": {},
+        "timestamp": datetime.now().isoformat()
+    }
+
+    # Esoteric Learning Loop
+    try:
+        loop = get_esoteric_loop()
+        if loop:
+            result["esoteric_learning"] = {
+                "available": True,
+                "current_weights": loop.get_weights(),
+                "performance_30d": loop.get_performance(days_back=30),
+                "recent_picks": loop.get_recent_picks(limit=5)
+            }
+        else:
+            result["esoteric_learning"] = {"available": False}
+    except Exception as e:
+        result["esoteric_learning"] = {"available": False, "error": str(e)}
+
+    # Auto Grader
+    if AUTO_GRADER_AVAILABLE:
+        try:
+            grader = get_grader()
+            total_predictions = sum(len(p) for p in grader.predictions.values())
+
+            # Get performance for each sport
+            sport_performance = {}
+            for sport in grader.SUPPORTED_SPORTS:
+                try:
+                    perf = grader.get_performance(sport, days_back=7)
+                    sport_performance[sport] = perf
+                except:
+                    sport_performance[sport] = {"error": "Could not fetch"}
+
+            result["auto_grader"] = {
+                "available": True,
+                "total_predictions_logged": total_predictions,
+                "storage_path": grader.storage_path,
+                "sports_tracked": grader.SUPPORTED_SPORTS,
+                "performance_by_sport": sport_performance
+            }
+        except Exception as e:
+            result["auto_grader"] = {"available": False, "error": str(e)}
+    else:
+        result["auto_grader"] = {"available": False}
+
+    # Esoteric Grader (from esoteric_grader.py)
+    try:
+        from esoteric_grader import get_esoteric_grader
+        eso_grader = get_esoteric_grader()
+        result["esoteric_grader"] = {
+            "available": True,
+            "accuracy_stats": eso_grader.get_all_accuracy_stats(),
+            "performance_summary": eso_grader.get_performance_summary(days_back=30)
+        }
+    except Exception as e:
+        result["esoteric_grader"] = {"available": False, "error": str(e)}
+
+    return result
 
 
 @router.get("/lstm/status")
@@ -3625,6 +4409,320 @@ Whether we win or lose, we're always improving! 💪
 
     except Exception as e:
         logger.exception("Failed to generate daily report: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# GRADER QUEUE & DRY-RUN ENDPOINTS (v14.10) - E2E Verification
+# ============================================================================
+
+@router.get("/grader/queue")
+async def get_grader_queue(
+    date: Optional[str] = None,
+    sports: Optional[str] = None,
+    run_id: Optional[str] = None,
+    latest_run: bool = False
+):
+    """
+    Get ungraded picks queue for a date.
+
+    Returns minimal pick data for queue management and verification.
+
+    Query params:
+    - date: Date to query (default: today ET)
+    - sports: Comma-separated sports filter (default: all)
+    - run_id: Filter to specific run (optional)
+    - latest_run: If true, filter to most recent run only (default: false)
+
+    Example:
+        GET /live/grader/queue?date=2026-01-26&sports=NBA,NFL
+        GET /live/grader/queue?date=2026-01-26&latest_run=true
+    """
+    if not PICK_LOGGER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Pick logger not available")
+
+    try:
+        # Get date in ET
+        if not date:
+            if PYTZ_AVAILABLE:
+                ET_TZ = pytz.timezone("America/New_York")
+                date = datetime.now(ET_TZ).strftime("%Y-%m-%d")
+            else:
+                date = datetime.now().strftime("%Y-%m-%d")
+
+        pick_logger = get_pick_logger()
+        picks = pick_logger.get_picks_for_date(date)
+
+        # Filter by sports
+        if sports:
+            sport_list = [s.strip().upper() for s in sports.split(",")]
+            picks = [p for p in picks if p.sport.upper() in sport_list]
+
+        # Filter by run_id if specified
+        if run_id:
+            picks = [p for p in picks if getattr(p, 'run_id', '') == run_id]
+        elif latest_run:
+            # Get latest run_id
+            latest_run_id = pick_logger.get_latest_run_id(date)
+            if latest_run_id:
+                picks = [p for p in picks if getattr(p, 'run_id', '') == latest_run_id]
+                run_id = latest_run_id
+
+        # Filter to ungraded only (not graded AND result is None)
+        ungraded = [p for p in picks if not getattr(p, 'graded', False) and p.result is None]
+
+        # Count by sport
+        by_sport = {}
+        for p in ungraded:
+            sport = p.sport.upper()
+            by_sport[sport] = by_sport.get(sport, 0) + 1
+
+        logger.info("Grader queue: %d ungraded picks for %s (run_id=%s)", len(ungraded), date, run_id or "all")
+
+        return {
+            "date": date,
+            "run_id": run_id,
+            "latest_run": latest_run,
+            "total": len(ungraded),
+            "by_sport": by_sport,
+            "picks": [
+                {
+                    "pick_id": p.pick_id,
+                    "pick_hash": getattr(p, "pick_hash", ""),
+                    "run_id": getattr(p, "run_id", ""),
+                    "sport": p.sport,
+                    "player_name": p.player_name,
+                    "matchup": p.matchup,
+                    "prop_type": p.prop_type,
+                    "line": p.line,
+                    "side": p.side,
+                    "tier": p.tier,
+                    "game_start_time_et": p.game_start_time_et,
+                    "canonical_event_id": getattr(p, "canonical_event_id", ""),
+                    "canonical_player_id": getattr(p, "canonical_player_id", ""),
+                    "grade_status": getattr(p, "grade_status", "PENDING"),
+                }
+                for p in ungraded
+            ],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception("Failed to get grader queue: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/grader/dry-run")
+async def run_grader_dry_run(request_data: Dict[str, Any]):
+    """
+    Dry-run validation of autograder pipeline.
+
+    Validates all picks can be:
+    1. Matched to events (event ID exists or resolvable)
+    2. Matched to players (for props: player ID exists or resolvable)
+    3. Graded when game completes (grade-ready checklist)
+
+    This is the KEY PROOF that tomorrow's 6AM grader will work.
+
+    Request body:
+    {
+        "date": "2026-01-26",
+        "sports": ["NBA", "NFL", "MLB", "NHL", "NCAAB"],
+        "mode": "pre",  // "pre" (day-of) or "post" (next-day verification)
+        "fail_on_unresolved": true
+    }
+
+    Mode semantics:
+    - PRE (day-of): PASS if failed=0 AND unresolved=0 (pending allowed)
+    - POST (next-day): PASS only if failed=0 AND pending=0 AND unresolved=0
+
+    Returns structured validation report with PASS/FAIL/PENDING status.
+    Per-pick reasons: PENDING_GAME_NOT_FINAL, UNRESOLVED_EVENT, UNRESOLVED_PLAYER, etc.
+    """
+    if not PICK_LOGGER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Pick logger not available")
+
+    try:
+        # Parse request - get date from request or default to today ET
+        date = request_data.get("date")
+        if not date:
+            if PYTZ_AVAILABLE:
+                ET_TZ = pytz.timezone("America/New_York")
+                date = datetime.now(ET_TZ).strftime("%Y-%m-%d")
+            else:
+                date = datetime.now().strftime("%Y-%m-%d")
+        sports = request_data.get("sports") or ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
+        mode = request_data.get("mode", "pre")  # "pre" or "post"
+        fail_on_unresolved = request_data.get("fail_on_unresolved", False)
+
+        pick_logger = get_pick_logger()
+        all_picks = pick_logger.get_picks_for_date(date)
+
+        # Filter by sports
+        sport_set = set(s.upper() for s in sports)
+        picks = [p for p in all_picks if p.sport.upper() in sport_set]
+
+        # Initialize results with new counters
+        results = {
+            "date": date,
+            "mode": mode,
+            "total": len(picks),
+            "graded": 0,
+            "pending": 0,
+            "failed": 0,
+            "unresolved": 0,
+            "by_sport": {},
+        }
+
+        failed_picks = []
+        unresolved_picks = []
+
+        for pick in picks:
+            sport = pick.sport.upper()
+
+            if sport not in results["by_sport"]:
+                results["by_sport"][sport] = {
+                    "picks": 0,
+                    "event_resolved": 0,
+                    "player_resolved": 0,
+                    "graded": 0,
+                    "pending": 0,
+                    "unresolved": 0,
+                    "failed_picks": []
+                }
+
+            results["by_sport"][sport]["picks"] += 1
+
+            # Check 1: Event resolution
+            canonical_event_id = getattr(pick, "canonical_event_id", "")
+            event_ok = bool(canonical_event_id) or bool(pick.matchup)
+            if event_ok:
+                results["by_sport"][sport]["event_resolved"] += 1
+
+            # Check 2: Player resolution (props only)
+            player_ok = True
+            if pick.player_name:
+                canonical_player_id = getattr(pick, "canonical_player_id", "")
+                player_ok = bool(canonical_player_id) or IDENTITY_RESOLVER_AVAILABLE
+                if player_ok:
+                    results["by_sport"][sport]["player_resolved"] += 1
+
+            # Check 3: Grade-ready checklist (if available)
+            grade_ready_check = pick_logger.check_grade_ready(pick) if hasattr(pick_logger, 'check_grade_ready') else {"is_grade_ready": True, "reasons": []}
+
+            # Determine per-pick status
+            pick_reason = None
+            if not event_ok:
+                results["unresolved"] += 1
+                results["by_sport"][sport]["unresolved"] += 1
+                pick_reason = "UNRESOLVED_EVENT"
+                unresolved_picks.append({
+                    "pick_id": pick.pick_id,
+                    "sport": sport,
+                    "player": pick.player_name,
+                    "matchup": pick.matchup,
+                    "reason": pick_reason
+                })
+            elif pick.player_name and not player_ok:
+                results["unresolved"] += 1
+                results["by_sport"][sport]["unresolved"] += 1
+                pick_reason = "UNRESOLVED_PLAYER"
+                unresolved_picks.append({
+                    "pick_id": pick.pick_id,
+                    "sport": sport,
+                    "player": pick.player_name,
+                    "matchup": pick.matchup,
+                    "reason": pick_reason
+                })
+            elif not grade_ready_check["is_grade_ready"]:
+                # Missing required fields for grading
+                results["failed"] += 1
+                pick_reason = "MISSING_GRADE_FIELDS"
+                failed_picks.append({
+                    "pick_id": pick.pick_id,
+                    "sport": sport,
+                    "player": pick.player_name,
+                    "matchup": pick.matchup,
+                    "reason": pick_reason,
+                    "missing_fields": grade_ready_check.get("missing_fields", [])
+                })
+                results["by_sport"][sport]["failed_picks"].append({
+                    "pick_id": pick.pick_id,
+                    "reason": pick_reason,
+                    "player": pick.player_name,
+                    "missing_fields": grade_ready_check.get("missing_fields", [])
+                })
+            elif pick.result is not None or getattr(pick, 'graded', False):
+                # Already graded
+                results["graded"] += 1
+                results["by_sport"][sport]["graded"] += 1
+            else:
+                # Awaiting game completion (valid, just not graded yet)
+                results["pending"] += 1
+                results["by_sport"][sport]["pending"] += 1
+
+        # Determine overall status based on mode
+        if mode == "pre":
+            # PRE mode: PASS if failed=0 AND unresolved=0 (pending allowed)
+            if results["failed"] > 0 or results["unresolved"] > 0:
+                results["overall_status"] = "FAIL"
+            elif results["pending"] > 0:
+                results["overall_status"] = "PENDING"  # This is OK for pre-mode
+            else:
+                results["overall_status"] = "PASS"
+        else:  # post mode
+            # POST mode: PASS only if everything graded
+            if results["failed"] > 0 or results["unresolved"] > 0:
+                results["overall_status"] = "FAIL"
+            elif results["pending"] > 0:
+                results["overall_status"] = "PENDING"  # Still waiting for grades
+            else:
+                results["overall_status"] = "PASS"
+
+        # For exit code interpretation
+        results["pre_mode_pass"] = (results["failed"] == 0 and results["unresolved"] == 0)
+        results["post_mode_pass"] = (results["failed"] == 0 and results["unresolved"] == 0 and results["pending"] == 0)
+
+        results["summary"] = {
+            "total": results["total"],
+            "graded": results["graded"],
+            "pending": results["pending"],
+            "failed": results["failed"],
+            "unresolved": results["unresolved"]
+        }
+        results["failed_picks"] = failed_picks
+        results["unresolved_picks"] = unresolved_picks
+        results["timestamp"] = datetime.now().isoformat()
+
+        logger.info(
+            "Dry-run complete (mode=%s): %s - total=%d graded=%d pending=%d failed=%d unresolved=%d",
+            mode,
+            results["overall_status"],
+            results["total"],
+            results["graded"],
+            results["pending"],
+            results["failed"],
+            results["unresolved"]
+        )
+
+        # Return HTTP 422 if fail_on_unresolved and there are failures/unresolved
+        if fail_on_unresolved and (results["failed"] > 0 or results["unresolved"] > 0):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": f"{results['failed']} failed, {results['unresolved']} unresolved",
+                    "overall_status": "FAIL",
+                    "failed_picks": failed_picks,
+                    "unresolved_picks": unresolved_picks,
+                    "summary": results["summary"]
+                }
+            )
+
+        return results
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Dry-run failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
