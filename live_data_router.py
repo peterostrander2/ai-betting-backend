@@ -2350,9 +2350,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         jarvis_triggered = jarvis_hits_count > 0
 
         # =================================================================
-        # v15.0 ESOTERIC SCORE (0-10) - NO Jarvis/Gematria/Public Fade
+        # v15.2 ESOTERIC SCORE (0-10) - Per-Pick Differentiation
         # =================================================================
         # Components: Numerology (35%) + Astro (25%) + Fib (15%) + Vortex (15%) + Daily (10%)
+        import hashlib as _hl
         numerology_score = 0.0    # 0-3.5 pts (35%)
         astro_score = 0.0         # 0-2.5 pts (25%)
         fib_score = 0.0           # 0-1.5 pts (15%)
@@ -2360,12 +2361,27 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         daily_edge_score = 0.0    # 0-1.0 pts (10%)
         trap_mod = 0.0            # Modifier (negative)
 
-        # --- NUMEROLOGY (35% weight, max 3.5 pts) - MANDATORY ---
-        # Generic daily numerology based on day patterns
+        # --- A) MAGNITUDE for fib/vortex (never 0 for props) ---
+        _eso_magnitude = abs(spread) if spread else 0
+        if _eso_magnitude == 0 and prop_line:
+            _eso_magnitude = abs(prop_line)
+        if _eso_magnitude == 0:
+            _eso_magnitude = abs(total / 10) if total and total != 220 else 0
+
+        # --- B) NUMEROLOGY (35% weight, max 3.5 pts) - Pick-specific ---
         from datetime import datetime as dt_now
         day_of_year = dt_now.now().timetuple().tm_yday
-        numerology_raw = (day_of_year % 9 + 1) / 9  # 0.11 to 1.0
-        # Boost if game string contains master numbers (11, 22, 33)
+        daily_base = (day_of_year % 9 + 1) / 9  # 0.11 to 1.0
+
+        # Pick-specific seed (deterministic via SHA-256)
+        _pick_hash = _hl.sha256(f"{game_str}|{prop_line}|{player_name}".encode()).hexdigest()
+        _pick_seed = int(_pick_hash[:8], 16) % 9 + 1  # 1-9
+        pick_factor = _pick_seed / 9  # 0.11 to 1.0
+
+        # Blend: 40% daily + 60% pick-specific
+        numerology_raw = (daily_base * 0.4) + (pick_factor * 0.6)
+
+        # Master number boost
         if "11" in game_str or "22" in game_str or "33" in game_str:
             numerology_raw = min(1.0, numerology_raw * 1.3)
         numerology_score = numerology_raw * 10 * ESOTERIC_WEIGHTS["numerology"]
@@ -2375,30 +2391,36 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             trap = jarvis.calculate_large_spread_trap(spread, total)
             trap_mod = trap.get("modifier", 0)  # Usually negative
 
-            # --- FIBONACCI (15% weight, max 1.5 pts) ---
-            fib_alignment = jarvis.calculate_fibonacci_alignment(float(spread) if spread else 0)
+            # --- E) FIBONACCI (15% weight, max 1.5 pts) - scaled in esoteric path ---
+            fib_alignment = jarvis.calculate_fibonacci_alignment(float(_eso_magnitude) if _eso_magnitude else 0)
             fib_raw = fib_alignment.get("modifier", 0)
-            fib_score = max(0, fib_raw) * 10 * ESOTERIC_WEIGHTS["fib"]
+            # Scale up fib modifier in esoteric layer (Jarvis returns 0.05-0.15)
+            _fib_scaled = min(0.6, fib_raw * 6.0) if fib_raw > 0 else 0.0
+            fib_score = _fib_scaled * 10 * ESOTERIC_WEIGHTS["fib"]
 
-            # --- VORTEX (15% weight, max 1.5 pts) ---
-            vortex_value = int(abs(spread * 10)) if spread else 0
+            # --- E) VORTEX (15% weight, max 1.5 pts) - scaled in esoteric path ---
+            vortex_value = int(abs(_eso_magnitude * 10)) if _eso_magnitude else 0
             vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
             vortex_raw = vortex_pattern.get("modifier", 0)
-            vortex_score = max(0, vortex_raw) * 10 * ESOTERIC_WEIGHTS["vortex"]
+            # Scale up vortex modifier in esoteric layer (Jarvis returns 0.08-0.15)
+            _vortex_scaled = min(0.7, vortex_raw * 5.0) if vortex_raw > 0 else 0.0
+            vortex_score = _vortex_scaled * 10 * ESOTERIC_WEIGHTS["vortex"]
 
-        # --- ASTRO (25% weight, max 2.5 pts) ---
+        # --- C) ASTRO (25% weight, max 2.5 pts) - Linear 0-100 → 0-10 ---
         astro = vedic.calculate_astro_score() if vedic else {"overall_score": 50}
-        astro_normalized = (astro["overall_score"] - 50) / 50  # -1 to +1
-        astro_score = max(0, astro_normalized) * 10 * ESOTERIC_WEIGHTS["astro"]
+        # Map 0-100 directly to 0-10 (50 ≈ 5.0, not 0.0)
+        astro_score = (astro["overall_score"] / 100) * 10 * ESOTERIC_WEIGHTS["astro"]
 
-        # --- DAILY EDGE (10% weight, max 1.0 pts) ---
-        if daily_energy.get("overall_score", 50) >= 85:
-            daily_edge_score = 10 * ESOTERIC_WEIGHTS["daily_edge"]  # 1.0 pts
-        elif daily_energy.get("overall_score", 50) >= 70:
-            daily_edge_score = 5 * ESOTERIC_WEIGHTS["daily_edge"]   # 0.5 pts
+        # --- D) DAILY EDGE (10% weight, max 1.0 pts) - Lower thresholds ---
+        _de = daily_energy.get("overall_score", 50)
+        if _de >= 85:
+            daily_edge_score = 10 * ESOTERIC_WEIGHTS["daily_edge"]   # 1.0 pts
+        elif _de >= 70:
+            daily_edge_score = 7 * ESOTERIC_WEIGHTS["daily_edge"]    # 0.7 pts
+        elif _de >= 55:
+            daily_edge_score = 4 * ESOTERIC_WEIGHTS["daily_edge"]    # 0.4 pts
 
         # --- ESOTERIC SCORE: Sum of weighted components + trap modifier ---
-        # v15.0: NO gematria, NO jarvis triggers, NO public_fade, NO mid_spread
         esoteric_raw = (
             numerology_score +    # 35% weight (0-3.5)
             astro_score +         # 25% weight (0-2.5)
@@ -2407,8 +2429,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             daily_edge_score +    # 10% weight (0-1.0)
             trap_mod              # Modifier (negative)
         )
-        # esoteric_raw already scaled to 0-10 via weights, just clamp
+        # Clamp to 0-10
         esoteric_score = max(0, min(10, esoteric_raw))
+        logger.debug("Esoteric[%s]: mag=%.1f num=%.2f astro=%.2f fib=%.2f vortex=%.2f daily=%.2f trap=%.2f → raw=%.2f",
+                     game_str[:30], _eso_magnitude, numerology_score, astro_score, fib_score, vortex_score, daily_edge_score, trap_mod, esoteric_raw)
 
         # --- v15.0 FOUR-ENGINE CONFLUENCE ---
         # Now considers all 4 engines for confluence determination
@@ -2610,6 +2634,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             },
             # v15.0 Esoteric breakdown (NO gematria, NO jarvis, NO public_fade - clean separation)
             "esoteric_breakdown": {
+                "magnitude_input": round(_eso_magnitude, 2),
                 "numerology": round(numerology_score, 2),
                 "astro": round(astro_score, 2),
                 "fibonacci": round(fib_score, 2),
