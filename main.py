@@ -495,37 +495,48 @@ async def debug_e2e_proof():
             # Line = actual - 2 → player went Over
             test_line = actual_pts - 2.0
 
-        # 3. Seed this as a real pick dated yesterday
+        # 3. Seed this as a real pick dated YESTERDAY (so grader fetches yesterday's stats)
         pl = get_pick_logger()
-        pick_data = {
-            "sport": "NBA", "pick_type": "PROP",
-            "player_name": player_name,
-            "matchup": f"{away} @ {home}",
-            "home_team": home, "away_team": away,
-            "prop_type": "points", "line": test_line, "side": "Over",
-            "odds": -110, "book": "fanduel",
-            "final_score": 8.0, "ai_score": 7.0, "research_score": 7.5,
-            "esoteric_score": 6.0, "jarvis_score": 5.0,
-            "tier": "GOLD_STAR", "units": 1.0,
-            "start_time_et": (now_et - timedelta(hours=20)).isoformat(),
-        }
-        seed_result = pl.log_pick(pick_data=pick_data, game_start_time=pick_data["start_time_et"], skip_duplicates=False)
-        pick_id = seed_result.get("pick_id")
+        from pick_logger import PublishedPick, get_now_et
+        from dataclasses import asdict
+        import json as _json
+
+        pick_id = f"e2e_{int(now_et.timestamp())}"
+        pick = PublishedPick(
+            pick_id=pick_id, date=yesterday, sport="NBA", pick_type="PROP",
+            player_name=player_name, matchup=f"{away} @ {home}",
+            home_team=home, away_team=away,
+            prop_type="points", line=test_line, side="Over",
+            odds=-110, book="fanduel",
+            final_score=8.0, ai_score=7.0, research_score=7.5,
+            esoteric_score=6.0, jarvis_score=5.0,
+            tier="GOLD_STAR", units=1.0,
+            game_start_time_et=(now_et - timedelta(hours=20)).isoformat(),
+            published_at=now_et.isoformat(),
+            grade_status="PENDING",
+        )
+
+        # Write directly to yesterday's pick log
+        log_file = _os.path.join(pl.storage_path, f"picks_{yesterday}.jsonl")
+        with open(log_file, 'a') as f:
+            f.write(_json.dumps(asdict(pick)) + "\n")
+        # Load into memory
+        if yesterday not in pl.picks:
+            pl.picks[yesterday] = []
+        pl.picks[yesterday].append(pick)
+
+        seed_result = {"pick_id": pick_id, "logged": True, "date": yesterday}
 
         # 4. Snapshot: pick is PENDING
-        pending_pick = None
-        for p in pl.get_picks_for_date(now_et.strftime("%Y-%m-%d")):
-            if p.pick_id == pick_id:
-                pending_pick = {"pick_id": p.pick_id, "result": p.result, "grade_status": p.grade_status}
-                break
+        pending_pick = {"pick_id": pick_id, "result": None, "grade_status": "PENDING"}
 
-        # 5. Run autograde (grades today which is where the pick was logged)
-        today = now_et.strftime("%Y-%m-%d")
-        grade_result = await auto_grade_picks(date=today)
+        # 5. Run autograde for YESTERDAY (where the game and pick both live)
+        grade_result = await auto_grade_picks(date=yesterday)
 
         # 6. Snapshot: pick should be GRADED
+        # Reload from memory (grade_pick updates in-place)
         graded_pick = None
-        for p in pl.get_picks_for_date(today):
+        for p in pl.get_picks_for_date(yesterday):
             if p.pick_id == pick_id:
                 graded_pick = {
                     "pick_id": p.pick_id, "result": p.result,

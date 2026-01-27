@@ -515,7 +515,7 @@ async def fetch_nba_player_stats(date: str) -> List[PlayerStatline]:
         List of PlayerStatline objects
     """
     # balldontlie.io API - backup source
-    url = "https://api.balldontlie.io/stats"
+    url = f"{BALLDONTLIE_BASE_URL}/stats"
 
     if not BALLDONTLIE_API_KEY:
         logger.info("No BALLDONTLIE_API_KEY - using ESPN backup")
