@@ -1899,7 +1899,12 @@ async def get_props(sport: str):
 
 
 @router.get("/best-bets/{sport}")
-async def get_best_bets(sport: str, mode: Optional[str] = None):
+async def get_best_bets(
+    sport: str,
+    mode: Optional[str] = None,
+    min_score: Optional[float] = None,
+    debug: Optional[int] = None
+):
     """
     Get best bets using full 8 AI Models + 8 Pillars + JARVIS + Esoteric scoring.
     Returns TWO categories: props (player props) and game_picks (spreads, totals, ML).
@@ -1909,16 +1914,8 @@ async def get_best_bets(sport: str, mode: Optional[str] = None):
 
     Query Parameters:
     - mode: Optional. Set to "live" to filter only is_live==true picks
-            (halftime/period break opportunities with live lines available)
-
-    Response Schema:
-    {
-        "sport": "NBA",
-        "props": [...],       // Player props
-        "game_picks": [...],  // Spreads, totals, moneylines
-        "daily_energy": {...},
-        "timestamp": "ISO timestamp"
-    }
+    - min_score: Override minimum score threshold (default 6.5, min 5.0 for debug)
+    - debug: Set to 1 to return top 25 candidates with full engine breakdown
     """
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
@@ -1926,19 +1923,32 @@ async def get_best_bets(sport: str, mode: Optional[str] = None):
 
     # Validate mode parameter
     live_mode = mode and mode.lower() == "live"
+    debug_mode = debug == 1
 
-    # Check cache first (separate cache for live mode)
-    cache_key = f"best-bets:{sport_lower}" + (":live" if live_mode else "")
-    cached = api_cache.get(cache_key)
-    if cached:
-        return cached
+    # Clamp min_score: production floor is 6.5, debug allows down to 5.0
+    effective_min_score = 6.5
+    if min_score is not None:
+        effective_min_score = max(5.0, min(10.0, min_score))
+
+    # Skip cache in debug mode
+    if not debug_mode:
+        cache_key = f"best-bets:{sport_lower}" + (":live" if live_mode else "")
+        cached = api_cache.get(cache_key)
+        if cached:
+            return cached
+    else:
+        cache_key = None  # Don't cache debug responses
 
     import uuid as _uuid
     request_id = _uuid.uuid4().hex[:12]
     _start = time.time()
     try:
-        result = await _best_bets_inner(sport, sport_lower, live_mode, cache_key)
-        logger.info("best-bets %s completed in %.1fs (request_id=%s)", sport, time.time() - _start, request_id)
+        result = await _best_bets_inner(
+            sport, sport_lower, live_mode,
+            cache_key, effective_min_score, debug_mode
+        )
+        logger.info("best-bets %s completed in %.1fs (request_id=%s, debug=%s, min=%.1f)",
+                     sport, time.time() - _start, request_id, debug_mode, effective_min_score)
         return result
     except HTTPException:
         raise
@@ -1952,7 +1962,8 @@ async def get_best_bets(sport: str, mode: Optional[str] = None):
         })
 
 
-async def _best_bets_inner(sport, sport_lower, live_mode, cache_key):
+async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
+                           min_score=6.5, debug_mode=False):
     sport_upper = sport.upper()
 
     # Get MasterPredictionSystem
@@ -2741,12 +2752,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key):
         if key not in best_by_player_market or pick["total_score"] > best_by_player_market[key]["total_score"]:
             best_by_player_market[key] = pick
 
-    # v15.0: Filter to COMMUNITY_MIN_SCORE (>= 6.5) before taking top 10
-    # Only EDGE_LEAN and above shown to community
-    COMMUNITY_MIN_SCORE = 6.5
+    # v15.0: Filter to min_score threshold before taking top picks
+    # Production default is 6.5 (EDGE_LEAN+), debug mode can lower to 5.0
+    COMMUNITY_MIN_SCORE = min_score
     deduplicated_props = list(best_by_player_market.values())
+    deduplicated_props.sort(key=lambda x: x["total_score"], reverse=True)
+
+    # Capture ALL candidates for debug/distribution before filtering
+    _all_prop_candidates = deduplicated_props  # Keep ref for debug output
+
     filtered_props = [p for p in deduplicated_props if p["total_score"] >= COMMUNITY_MIN_SCORE]
-    filtered_props.sort(key=lambda x: x["total_score"], reverse=True)
     top_props = filtered_props[:10]
 
     # ============================================
@@ -3002,10 +3017,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key):
                 "sharp_signal": signal.get("signal_strength", "MODERATE")
             })
 
-    # v15.0: Filter to COMMUNITY_MIN_SCORE (>= 6.5) before taking top 10
-    # Only EDGE_LEAN and above shown to community
+    # v15.0: Filter to min_score threshold before taking top 10
+    game_picks.sort(key=lambda x: x["total_score"], reverse=True)
+    _all_game_candidates = game_picks  # Keep ref for debug output
+
     filtered_game_picks = [p for p in game_picks if p["total_score"] >= COMMUNITY_MIN_SCORE]
-    filtered_game_picks.sort(key=lambda x: x["total_score"], reverse=True)
     top_game_picks = filtered_game_picks[:10]
 
     # ============================================
@@ -3191,7 +3207,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key):
         },
         "game_picks": {
             "count": len(top_game_picks),
-            "total_analyzed": len(game_picks),
+            "total_analyzed": len(_all_game_candidates),
             "picks": top_game_picks
         },
         "esoteric": {
@@ -3203,7 +3219,76 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key):
         "timestamp": datetime.now().isoformat(),
         "_cached_at": time.time()
     }
-    api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
+
+    # === DEBUG MODE: Return top 25 candidates with full engine breakdown ===
+    if debug_mode:
+        def _debug_pick(p):
+            """Extract debug-relevant fields from a candidate pick."""
+            return {
+                "player_name": p.get("player_name", p.get("player", "")),
+                "matchup": p.get("matchup", p.get("game", "")),
+                "prop_type": p.get("prop_type", p.get("market", p.get("pick_type", ""))),
+                "line": p.get("line"),
+                "side": p.get("side", p.get("over_under", "")),
+                "final_score": p.get("total_score", p.get("final_score", 0)),
+                "tier": p.get("tier", "PASS"),
+                "action": p.get("action", "SKIP"),
+                "sub_scores": {
+                    "ai_score": p.get("ai_score", 0),
+                    "research_score": p.get("research_score", 0),
+                    "esoteric_score": p.get("esoteric_score", 0),
+                    "jarvis_score": p.get("jarvis_score", p.get("jarvis_rs", 0)),
+                    "jason_sim_boost": p.get("jason_sim_boost", 0),
+                    "base_score": p.get("base_score", 0),
+                },
+                "breakdown": {
+                    "scoring": p.get("scoring_breakdown", {}),
+                    "research": p.get("research_breakdown", {}),
+                    "esoteric": p.get("esoteric_breakdown", {}),
+                    "jarvis": p.get("jarvis_breakdown", {}),
+                },
+                "missing_data": {
+                    "no_odds": not p.get("odds") and not p.get("best_odds"),
+                    "no_sharp_signal": not p.get("research_breakdown", {}).get("sharp_boost"),
+                    "no_splits": not p.get("research_breakdown", {}).get("public_boost"),
+                    "no_injury_data": p.get("injury_status", "HEALTHY") == "UNKNOWN",
+                    "no_jarvis_triggers": p.get("jarvis_hits_count", 0) == 0,
+                    "jason_blocked": p.get("jason_blocked", False),
+                    "jason_not_run": not p.get("jason_ran", False),
+                },
+                "titanium_triggered": p.get("titanium_triggered", False),
+                "titanium_reasons": p.get("titanium_reasons", p.get("smash_reasons", [])),
+                "signals_fired": p.get("jarvis_reasons", []) + p.get("confluence_reasons", []),
+            }
+
+        debug_props = [_debug_pick(p) for p in _all_prop_candidates[:25]]
+        debug_games = [_debug_pick(p) for p in _all_game_candidates[:25]]
+
+        # Score distribution buckets (0.5 increments)
+        all_scores = [p.get("total_score", 0) for p in _all_prop_candidates + _all_game_candidates]
+        buckets = {}
+        for s in all_scores:
+            bucket = round(int(s * 2) / 2, 1)  # Round to nearest 0.5
+            buckets[bucket] = buckets.get(bucket, 0) + 1
+
+        result["debug"] = {
+            "min_score_used": min_score,
+            "community_threshold": 6.5,
+            "total_prop_candidates": len(_all_prop_candidates),
+            "total_game_candidates": len(_all_game_candidates),
+            "props_above_6_0": sum(1 for p in _all_prop_candidates if p.get("total_score", 0) >= 6.0),
+            "props_above_6_5": sum(1 for p in _all_prop_candidates if p.get("total_score", 0) >= 6.5),
+            "games_above_6_0": sum(1 for p in _all_game_candidates if p.get("total_score", 0) >= 6.0),
+            "games_above_6_5": sum(1 for p in _all_game_candidates if p.get("total_score", 0) >= 6.5),
+            "score_distribution": dict(sorted(buckets.items())),
+            "top_prop_candidates": debug_props,
+            "top_game_candidates": debug_games,
+        }
+        # Don't cache debug responses
+        return result
+
+    if cache_key:
+        api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
     return result
 
 

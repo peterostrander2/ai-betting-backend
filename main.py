@@ -835,6 +835,80 @@ async def ops_predictions_test_seed():
     }
 
 
+@app.get("/ops/score-distribution/{sport}", dependencies=[Depends(_require_admin)])
+async def ops_score_distribution(sport: str, date: str = None):
+    """
+    Score distribution histogram for best-bets candidates.
+    Shows why picks may not qualify: near-misses, missing data, engine gaps.
+    """
+    from datetime import datetime, timedelta
+    import pytz
+    try:
+        from live_data_router import get_best_bets
+    except ImportError:
+        return {"error": "live_data_router not available"}
+
+    ET = pytz.timezone("America/New_York")
+    if not date:
+        date = datetime.now(ET).strftime("%Y-%m-%d")
+
+    # Run best-bets in debug mode with low threshold to capture everything
+    try:
+        result = await get_best_bets(sport, min_score=0.0, debug=1)
+    except Exception as e:
+        return {"error": f"Failed to run best-bets: {e}"}
+
+    debug = result.get("debug", {})
+    all_candidates = debug.get("top_prop_candidates", []) + debug.get("top_game_candidates", [])
+
+    # Build histogram buckets (0.0 to 10.0, step 0.5)
+    buckets = {round(i * 0.5, 1): 0 for i in range(21)}
+    for c in all_candidates:
+        score = c.get("final_score", 0)
+        bucket = round(min(10.0, int(score * 2) / 2), 1)
+        buckets[bucket] = buckets.get(bucket, 0) + 1
+
+    # Missing data counters
+    missing = {
+        "no_odds": 0, "no_sharp_signal": 0, "no_splits": 0,
+        "no_injury_data": 0, "no_jarvis_triggers": 0,
+        "jason_blocked": 0, "jason_not_run": 0,
+    }
+    for c in all_candidates:
+        md = c.get("missing_data", {})
+        for key in missing:
+            if md.get(key):
+                missing[key] += 1
+
+    # Near-miss analysis
+    near_misses_6_0 = [c for c in all_candidates if 5.5 <= c.get("final_score", 0) < 6.0]
+    near_misses_6_5 = [c for c in all_candidates if 6.0 <= c.get("final_score", 0) < 6.5]
+
+    return {
+        "sport": sport.upper(),
+        "date": date,
+        "total_candidates": debug.get("total_prop_candidates", 0) + debug.get("total_game_candidates", 0),
+        "total_prop_candidates": debug.get("total_prop_candidates", 0),
+        "total_game_candidates": debug.get("total_game_candidates", 0),
+        "counts": {
+            "above_6_0": debug.get("props_above_6_0", 0) + debug.get("games_above_6_0", 0),
+            "above_6_5": debug.get("props_above_6_5", 0) + debug.get("games_above_6_5", 0),
+            "above_7_5": sum(1 for c in all_candidates if c.get("final_score", 0) >= 7.5),
+            "above_8_0": sum(1 for c in all_candidates if c.get("final_score", 0) >= 8.0),
+        },
+        "histogram": buckets,
+        "missing_data_counts": missing,
+        "near_misses_5_5_to_6_0": len(near_misses_6_0),
+        "near_misses_6_0_to_6_5": len(near_misses_6_5),
+        "top_near_misses": sorted(
+            near_misses_6_5 + near_misses_6_0,
+            key=lambda x: x.get("final_score", 0),
+            reverse=True
+        )[:10],
+        "score_distribution_from_engine": debug.get("score_distribution", {}),
+    }
+
+
 @app.post("/admin/cleanup-test-picks", dependencies=[Depends(_require_admin)])
 async def admin_cleanup_test_picks(date: str = None):
     """Remove seeded test picks (LAL @ BOS / LeBron / GOLD_STAR) for a given date."""
