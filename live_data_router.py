@@ -1646,6 +1646,9 @@ async def get_props(sport: str):
     }
     """
     sport_lower = sport.lower()
+    if sport_lower == "ncaab":
+        return {"sport": "NCAAB", "source": "disabled", "count": 0, "data": [],
+                "note": "NCAAB player props disabled — state legality varies"}
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
@@ -2460,11 +2463,15 @@ async def get_best_bets(sport: str, mode: Optional[str] = None):
 
     # ============================================
     # CATEGORY 1: PLAYER PROPS
+    # (NCAAB props disabled — state legality varies)
     # ============================================
     props_picks = []
     invalid_injury_count = 0
+    _skip_ncaab_props = sport_upper == "NCAAB"
+    if _skip_ncaab_props:
+        logger.info("NCAAB props disabled — state legality varies, skipping prop analysis")
     try:
-        props_data = await get_props(sport)
+        props_data = await get_props(sport) if not _skip_ncaab_props else {"data": []}
         for game in props_data.get("data", []):
             home_team = game.get("home_team", "")
             away_team = game.get("away_team", "")
