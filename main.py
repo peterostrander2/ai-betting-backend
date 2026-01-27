@@ -457,11 +457,17 @@ async def debug_e2e_proof():
             games = games_resp.json().get("data", [])
             finished = [g for g in games if g.get("status") == "Final"]
             if not finished:
-                return {"error": f"No finished NBA games found for {yesterday}", "games_found": len(games)}
+                return {"error": f"No finished NBA games found for {yesterday}",
+                        "games_found": len(games),
+                        "sample_game": games[0] if games else None,
+                        "statuses": [g.get("status") for g in games]}
 
             game = finished[0]
-            home = game["home_team"]["full_name"]
-            away = game["away_team"]["full_name"]
+            # BDL v1 uses "home_team" and "visitor_team"
+            home_obj = game.get("home_team") or game.get("home_team_id") or {}
+            away_obj = game.get("visitor_team") or game.get("away_team") or {}
+            home = home_obj.get("full_name", str(home_obj)) if isinstance(home_obj, dict) else str(home_obj)
+            away = away_obj.get("full_name", str(away_obj)) if isinstance(away_obj, dict) else str(away_obj)
             game_id = game["id"]
 
             # 2. Get box score — find a player with real stats
@@ -478,9 +484,14 @@ async def debug_e2e_proof():
                     break
 
             if not real_player:
-                return {"error": "No player with 15+ points found in box score", "game": f"{away} @ {home}"}
+                return {"error": "No player with 15+ points found in box score",
+                        "game": f"{away} @ {home}", "stats_count": len(stats),
+                        "sample_stat": stats[0] if stats else None}
 
-            player_name = f"{real_player['player']['first_name']} {real_player['player']['last_name']}"
+            p_obj = real_player.get("player", {})
+            player_name = f"{p_obj.get('first_name', '')} {p_obj.get('last_name', '')}".strip()
+            if not player_name:
+                player_name = str(p_obj)
             actual_pts = real_player["pts"]
             # Set line so we know the expected result
             # Line = actual - 2 → player went Over
