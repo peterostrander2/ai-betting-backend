@@ -1247,23 +1247,34 @@ async def get_sharp_money(sport: str):
                     json_body = resp.json()
                     splits = json_body if isinstance(json_body, list) else json_body.get("data", json_body.get("games", []))
 
-                    # Derive sharp signals: when money% differs from ticket% by 10%+
+                    # v15.1: Include ALL games with splits data so research engine
+                    # always has ticket_pct/money_pct. Signal strength varies by diff.
                     for game in splits:
                         money_pct = game.get("money_pct", game.get("moneyPct", 50))
                         ticket_pct = game.get("ticket_pct", game.get("ticketPct", 50))
+                        public_pct = game.get("public_pct", game.get("publicPct", ticket_pct))
                         diff = abs(money_pct - ticket_pct)
 
-                        if diff >= 10:  # 10%+ difference indicates sharp action
-                            sharp_side = "home" if money_pct > ticket_pct else "away"
-                            data.append({
-                                "game_id": game.get("id", game.get("gameId")),
-                                "home_team": game.get("home_team", game.get("homeTeam")),
-                                "away_team": game.get("away_team", game.get("awayTeam")),
-                                "sharp_side": sharp_side,
-                                "money_pct": money_pct,
-                                "ticket_pct": ticket_pct,
-                                "signal_strength": "STRONG" if diff >= 20 else "MODERATE"
-                            })
+                        sharp_side = "home" if money_pct > ticket_pct else "away"
+                        if diff >= 20:
+                            strength = "STRONG"
+                        elif diff >= 10:
+                            strength = "MODERATE"
+                        elif diff >= 5:
+                            strength = "MILD"
+                        else:
+                            strength = "NONE"
+
+                        data.append({
+                            "game_id": game.get("id", game.get("gameId")),
+                            "home_team": game.get("home_team", game.get("homeTeam")),
+                            "away_team": game.get("away_team", game.get("awayTeam")),
+                            "sharp_side": sharp_side,
+                            "money_pct": money_pct,
+                            "ticket_pct": ticket_pct,
+                            "public_pct": public_pct,
+                            "signal_strength": strength
+                        })
 
                     if data:
                         logger.info("Playbook sharp signals derived for %s: %d signals", sport, len(data))
@@ -1319,16 +1330,28 @@ async def get_sharp_money(sport: str):
                             if outcome.get("name") == game.get("home_team"):
                                 spreads.append(outcome.get("point", 0))
 
-            if len(spreads) >= 3:
+            # v15.1: Include ALL games so sharp_lookup always has entries.
+            # Games with high variance get stronger signal_strength.
+            variance = 0.0
+            if len(spreads) >= 2:
                 variance = max(spreads) - min(spreads)
-                if variance >= 1.5:
-                    data.append({
-                        "game_id": game.get("id"),
-                        "home_team": game.get("home_team"),
-                        "away_team": game.get("away_team"),
-                        "line_variance": round(variance, 1),
-                        "signal_strength": "STRONG" if variance >= 2 else "MODERATE"
-                    })
+
+            if variance >= 2:
+                strength = "STRONG"
+            elif variance >= 1.5:
+                strength = "MODERATE"
+            elif variance >= 0.5:
+                strength = "MILD"
+            else:
+                strength = "NONE"
+
+            data.append({
+                "game_id": game.get("id"),
+                "home_team": game.get("home_team"),
+                "away_team": game.get("away_team"),
+                "line_variance": round(variance, 1),
+                "signal_strength": strength
+            })
 
         logger.info("Odds API sharp analysis for %s: %d signals found", sport, len(data))
 
@@ -2132,13 +2155,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # --- RESEARCH SCORE (Market Intelligence - 0-10 scale) ---
         # Pillar 1: Sharp Money Detection (0-3 pts)
         sharp_boost = 0.0
-        if sharp_signal.get("signal_strength") == "STRONG":
+        sig_strength = sharp_signal.get("signal_strength", "NONE")
+        if sig_strength == "STRONG":
             sharp_boost = 3.0
             research_reasons.append("Sharp signal STRONG (+3.0)")
             pillars_passed.append("Sharp Money Detection")
-        elif sharp_signal.get("signal_strength") == "MODERATE":
+        elif sig_strength == "MODERATE":
             sharp_boost = 1.5
             research_reasons.append("Sharp signal MODERATE (+1.5)")
+            pillars_passed.append("Sharp Money Detection")
+        elif sig_strength == "MILD":
+            sharp_boost = 0.5
+            research_reasons.append("Sharp signal MILD (+0.5)")
             pillars_passed.append("Sharp Money Detection")
         else:
             research_reasons.append("No sharp signal detected")
@@ -2478,6 +2506,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "line_boost": round(line_boost, 2),
                 "public_boost": round(public_boost, 2),
                 "base_research": 2.0,
+                "signal_strength": sig_strength,
                 "total": round(research_score, 2)
             },
             # v15.0 Esoteric breakdown (NO gematria, NO jarvis, NO public_fade - clean separation)
@@ -2526,6 +2555,43 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         }
 
     # ============================================
+    # v15.1: Pre-fetch game lines for game_context (spread/total for props)
+    # Uses cached get_lines() to avoid extra API calls
+    # ============================================
+    game_context = {}  # game_key → {spread, total}
+    try:
+        _lines_data = await get_lines(sport)
+        for _lg in _lines_data.get("data", []):
+            _lg_home = _lg.get("home_team", "")
+            _lg_away = _lg.get("away_team", "")
+            if not _lg_home or not _lg_away:
+                continue
+            _lg_key = f"{_lg_away}@{_lg_home}"
+            _gc_spread = 0
+            _gc_total = 220
+            # Extract spread/total from lines data (handles both Playbook and Odds API formats)
+            _spreads = _lg.get("spreads", [])
+            _totals = _lg.get("totals", [])
+            if isinstance(_spreads, list):
+                for _sp in _spreads:
+                    if isinstance(_sp, dict) and _sp.get("team") == _lg_home and _sp.get("point") is not None:
+                        _gc_spread = _sp["point"]
+                        break
+            elif isinstance(_spreads, (int, float)):
+                _gc_spread = _spreads
+            if isinstance(_totals, list):
+                for _tl in _totals:
+                    if isinstance(_tl, dict) and _tl.get("point") is not None:
+                        _gc_total = _tl["point"]
+                        break
+            elif isinstance(_totals, (int, float)):
+                _gc_total = _totals
+            game_context[_lg_key] = {"spread": _gc_spread, "total": _gc_total}
+        logger.info("Game context built for props: %d games with spread/total data", len(game_context))
+    except Exception as e:
+        logger.warning("Failed to build game_context for props: %s", e)
+
+    # ============================================
     # CATEGORY 1: PLAYER PROPS
     # (NCAAB props disabled — state legality varies)
     # ============================================
@@ -2558,6 +2624,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             sharp_signal = sharp_lookup.get(game_key, {})
             commence_time = game.get("commence_time", "")
 
+            # v15.1: Inherit game-level spread/total for props scoring
+            _ctx = game_context.get(game_key, {})
+            _game_spread = _ctx.get("spread", 0)
+            _game_total = _ctx.get("total", 220)
+
             # Get start time in ET for display
             start_time_et = ""
             if TIME_FILTERS_AVAILABLE and commence_time:
@@ -2585,6 +2656,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     continue
 
                 # Calculate score with full esoteric integration
+                # v15.1: Props inherit game-level spread/total for esoteric scoring
                 score_data = calculate_pick_score(
                     game_str + player,
                     sharp_signal,
@@ -2592,9 +2664,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     player_name=player,
                     home_team=home_team,
                     away_team=away_team,
-                    spread=0,
-                    total=220,
-                    public_pct=50,
+                    spread=_game_spread,
+                    total=_game_total,
+                    public_pct=sharp_signal.get("public_pct", sharp_signal.get("ticket_pct", 50)),
                     pick_type="PROP",
                     pick_side=side,
                     prop_line=line
@@ -2891,7 +2963,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 away_team=away_team,
                                 spread=point if market_key == "spreads" and point else 0,
                                 total=point if market_key == "totals" and point else 220,
-                                public_pct=50,
+                                public_pct=sharp_signal.get("public_pct", sharp_signal.get("ticket_pct", 50)),
                                 pick_type=pick_type,
                                 pick_side=pick_side,
                                 prop_line=point if point else 0
@@ -3274,11 +3346,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "missing_data": {
                     "no_odds": not p.get("odds") and not p.get("best_odds"),
                     "no_sharp_signal": not p.get("research_breakdown", {}).get("sharp_boost"),
-                    "no_splits": not p.get("research_breakdown", {}).get("public_boost"),
+                    "no_splits": not p.get("research_breakdown", {}).get("public_boost") and not p.get("research_breakdown", {}).get("sharp_boost"),
                     "no_injury_data": p.get("injury_status", "HEALTHY") == "UNKNOWN",
                     "no_jarvis_triggers": p.get("jarvis_hits_count", 0) == 0,
                     "jason_blocked": p.get("jason_blocked", False),
                     "jason_not_run": not p.get("jason_ran", False),
+                },
+                "engine_inputs": {
+                    "research_total": p.get("research_breakdown", {}).get("total", 0),
+                    "sharp_boost": p.get("research_breakdown", {}).get("sharp_boost", 0),
+                    "public_boost": p.get("research_breakdown", {}).get("public_boost", 0),
+                    "esoteric_fib": p.get("esoteric_breakdown", {}).get("fibonacci", 0),
+                    "esoteric_vortex": p.get("esoteric_breakdown", {}).get("vortex", 0),
+                    "confluence_boost": p.get("scoring_breakdown", {}).get("confluence_boost", 0),
                 },
                 "titanium_triggered": p.get("titanium_triggered", False),
                 "titanium_reasons": p.get("titanium_reasons", p.get("smash_reasons", [])),
@@ -3309,6 +3389,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "dropped_out_of_window_games": _dropped_out_of_window_games,
             "dropped_missing_time_props": _dropped_missing_time_props,
             "dropped_missing_time_games": _dropped_missing_time_games,
+            # v15.1 diagnostics
+            "sharp_lookup_size": len(sharp_lookup),
+            "sharp_source": sharp_data.get("source", "unknown"),
+            "game_context_size": len(game_context),
+            "splits_present_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("research_breakdown", {}).get("sharp_boost", 0) > 0),
+            "jarvis_active_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("jarvis_hits_count", 0) > 0),
+            "jason_ran_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("jason_ran", False)),
             "top_prop_candidates": debug_props,
             "top_game_candidates": debug_games,
         }
