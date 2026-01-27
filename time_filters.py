@@ -54,23 +54,29 @@ def get_now_et() -> datetime:
         return datetime.now()
 
 
-def get_today_range_et() -> Tuple[datetime, datetime]:
+def get_today_range_et(date_str: Optional[str] = None) -> Tuple[datetime, datetime]:
     """
     Get today's valid time range in ET.
 
+    Args:
+        date_str: Optional date string (YYYY-MM-DD). If None, uses today.
+
     Returns:
         Tuple of (start_of_day, end_of_day) in ET
-        Start: 12:01 AM ET
-        End: 11:59 PM ET
+        Start: 00:00:00 ET
+        End: 11:59:59 PM ET
     """
-    now_et = get_now_et()
-    today = now_et.date()
+    if date_str:
+        today = datetime.strptime(date_str, "%Y-%m-%d").date()
+    else:
+        now_et = get_now_et()
+        today = now_et.date()
 
     if PYTZ_AVAILABLE and ET:
-        start = ET.localize(datetime.combine(today, dt_time(0, 1, 0)))  # 12:01 AM
+        start = ET.localize(datetime.combine(today, dt_time(0, 0, 0)))  # 00:00:00
         end = ET.localize(datetime.combine(today, dt_time(23, 59, 59)))  # 11:59 PM
     else:
-        start = datetime.combine(today, dt_time(0, 1, 0))
+        start = datetime.combine(today, dt_time(0, 0, 0))
         end = datetime.combine(today, dt_time(23, 59, 59))
 
     return start, end
@@ -470,3 +476,87 @@ def get_game_status(commence_time: str) -> str:
         return "MISSED_START"
 
     return "UPCOMING"
+
+
+# =============================================================================
+# ET DAY BOUNDS — date_str-aware filtering (v15.1)
+# =============================================================================
+
+def et_day_bounds(date_str: Optional[str] = None) -> Tuple[datetime, datetime]:
+    """
+    Get ET day bounds. If date_str None, use today.
+
+    Args:
+        date_str: Optional date string (YYYY-MM-DD)
+
+    Returns:
+        Tuple of (start, end) datetimes in ET
+    """
+    if date_str:
+        day = datetime.strptime(date_str, "%Y-%m-%d").date()
+    else:
+        day = get_now_et().date()
+
+    if PYTZ_AVAILABLE and ET:
+        start = ET.localize(datetime.combine(day, dt_time(0, 0, 0)))
+        end = ET.localize(datetime.combine(day, dt_time(23, 59, 59)))
+    else:
+        start = datetime.combine(day, dt_time(0, 0, 0))
+        end = datetime.combine(day, dt_time(23, 59, 59))
+
+    return start, end
+
+
+def is_in_et_day(commence_time: str, date_str: Optional[str] = None) -> bool:
+    """
+    Check if event is within ET day bounds.
+
+    Args:
+        commence_time: ISO format datetime string
+        date_str: Optional date string (YYYY-MM-DD). If None, uses today.
+
+    Returns:
+        True if event falls within the ET day
+    """
+    game_dt = parse_game_time(commence_time)
+    if not game_dt:
+        return False
+    start, end = et_day_bounds(date_str)
+    if PYTZ_AVAILABLE and ET:
+        if game_dt.tzinfo is None:
+            game_dt = ET.localize(game_dt)
+        game_dt = game_dt.astimezone(ET)
+    else:
+        # Without pytz, bounds are naive — strip tzinfo for comparison
+        if game_dt.tzinfo is not None:
+            # Approximate ET as UTC-5 offset
+            from datetime import timezone, timedelta as _td
+            et_offset = timezone(_td(hours=-5))
+            game_dt = game_dt.astimezone(et_offset).replace(tzinfo=None)
+    return start <= game_dt <= end
+
+
+def filter_events_today_et(
+    events: List[Dict],
+    date_str: Optional[str] = None
+) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """
+    Filter events to ET day.
+
+    Args:
+        events: List of event dicts with commence_time
+        date_str: Optional date string (YYYY-MM-DD). If None, uses today.
+
+    Returns:
+        Tuple of (kept, dropped_out_of_window, dropped_missing_time)
+    """
+    kept, dropped_window, dropped_missing = [], [], []
+    for e in events:
+        ct = e.get("commence_time", "")
+        if not ct:
+            dropped_missing.append(e)
+        elif is_in_et_day(ct, date_str):
+            kept.append(e)
+        else:
+            dropped_window.append(e)
+    return kept, dropped_window, dropped_missing

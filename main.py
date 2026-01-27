@@ -854,7 +854,7 @@ async def ops_score_distribution(sport: str, date: str = None):
 
     # Run best-bets in debug mode with low threshold to capture everything
     try:
-        result = await get_best_bets(sport, min_score=0.0, debug=1)
+        result = await get_best_bets(sport, min_score=0.0, debug=1, date=date)
     except Exception as e:
         return {"error": f"Failed to run best-bets: {e}"}
 

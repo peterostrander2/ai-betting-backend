@@ -99,7 +99,8 @@ try:
         get_today_range_et,
         log_slate_summary,
         is_game_started,
-        get_game_status
+        get_game_status,
+        filter_events_today_et
     )
     TIME_FILTERS_AVAILABLE = True
 except ImportError:
@@ -1903,7 +1904,8 @@ async def get_best_bets(
     sport: str,
     mode: Optional[str] = None,
     min_score: Optional[float] = None,
-    debug: Optional[int] = None
+    debug: Optional[int] = None,
+    date: Optional[str] = None
 ):
     """
     Get best bets using full 8 AI Models + 8 Pillars + JARVIS + Esoteric scoring.
@@ -1945,7 +1947,8 @@ async def get_best_bets(
     try:
         result = await _best_bets_inner(
             sport, sport_lower, live_mode,
-            cache_key, effective_min_score, debug_mode
+            cache_key, effective_min_score, debug_mode,
+            date_str=date
         )
         logger.info("best-bets %s completed in %.1fs (request_id=%s, debug=%s, min=%.1f)",
                      sport, time.time() - _start, request_id, debug_mode, effective_min_score)
@@ -1963,7 +1966,7 @@ async def get_best_bets(
 
 
 async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
-                           min_score=6.5, debug_mode=False):
+                           min_score=6.5, debug_mode=False, date_str=None):
     sport_upper = sport.upper()
 
     # Get MasterPredictionSystem
@@ -2533,7 +2536,21 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         logger.info("NCAAB props disabled — state legality varies, skipping prop analysis")
     try:
         props_data = await get_props(sport) if not _skip_ncaab_props else {"data": []}
-        for game in props_data.get("data", []):
+
+        # v15.1: Apply ET day gate to props — filter out non-today events
+        raw_prop_games = props_data.get("data", [])
+        _dropped_out_of_window_props = 0
+        _dropped_missing_time_props = 0
+        if TIME_FILTERS_AVAILABLE and raw_prop_games:
+            prop_games, _dropped_props_window, _dropped_props_missing = filter_events_today_et(raw_prop_games, date_str)
+            _dropped_out_of_window_props = len(_dropped_props_window)
+            _dropped_missing_time_props = len(_dropped_props_missing)
+            logger.info("PROPS TODAY GATE: kept=%d, dropped_window=%d, dropped_missing=%d",
+                        len(prop_games), _dropped_out_of_window_props, _dropped_missing_time_props)
+        else:
+            prop_games = raw_prop_games
+
+        for game in prop_games:
             home_team = game.get("home_team", "")
             away_team = game.get("away_team", "")
             game_key = f"{away_team}@{home_team}"
@@ -2769,6 +2786,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # ============================================
     game_picks = []
     ghost_game_count = 0
+    _dropped_out_of_window_games = 0
+    _dropped_missing_time_games = 0
     sport_config = SPORT_MAPPINGS[sport_lower]
 
     try:
@@ -2787,11 +2806,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         if resp and resp.status_code == 200:
             games = resp.json()
 
-            # v11.08 TODAY-ONLY FILTER: Exclude tomorrow games
+            # v15.1 TODAY-ONLY FILTER: Exclude non-today games with counters
+            _dropped_out_of_window_games = 0
+            _dropped_missing_time_games = 0
             if TIME_FILTERS_AVAILABLE:
-                today_games, excluded = validate_today_slate(games)
-                ghost_game_count = len(excluded)
-                games = today_games
+                games, _dropped_games_window, _dropped_games_missing = filter_events_today_et(games, date_str)
+                _dropped_out_of_window_games = len(_dropped_games_window)
+                _dropped_missing_time_games = len(_dropped_games_missing)
+                ghost_game_count = _dropped_out_of_window_games + _dropped_missing_time_games
+                logger.info("GAMES TODAY GATE: kept=%d, dropped_window=%d, dropped_missing=%d",
+                            len(games), _dropped_out_of_window_games, _dropped_missing_time_games)
 
             for game in games:
                 home_team = game.get("home_team", "")
@@ -3281,6 +3305,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "games_above_6_0": sum(1 for p in _all_game_candidates if p.get("total_score", 0) >= 6.0),
             "games_above_6_5": sum(1 for p in _all_game_candidates if p.get("total_score", 0) >= 6.5),
             "score_distribution": dict(sorted(buckets.items())),
+            "dropped_out_of_window_props": _dropped_out_of_window_props,
+            "dropped_out_of_window_games": _dropped_out_of_window_games,
+            "dropped_missing_time_props": _dropped_missing_time_props,
+            "dropped_missing_time_games": _dropped_missing_time_games,
             "top_prop_candidates": debug_props,
             "top_game_candidates": debug_games,
         }
