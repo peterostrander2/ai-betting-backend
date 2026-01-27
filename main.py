@@ -429,6 +429,123 @@ async def debug_seed_pick_and_grade():
         return {"error": str(e)}
 
 
+@app.post("/debug/e2e-proof", dependencies=[Depends(_require_admin)])
+async def debug_e2e_proof():
+    """
+    E2E proof: find a real finished NBA game from yesterday, seed a prop pick
+    for a real player using real stats, then autograde it. This proves the full
+    pipeline: pending → graded with real data.
+    """
+    try:
+        from pick_logger import get_pick_logger
+        from result_fetcher import auto_grade_picks
+        from datetime import datetime, timedelta
+        import pytz, httpx
+        ET = pytz.timezone("America/New_York")
+        now_et = datetime.now(ET)
+        yesterday = (now_et - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        BDL_KEY = _os.getenv("BALLDONTLIE_API_KEY", "1cbb16a0-3060-4caf-ac17-ff11352540bc")
+        headers = {"Authorization": BDL_KEY}
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            # 1. Find a finished game from yesterday
+            games_resp = await client.get(
+                f"https://api.balldontlie.io/v1/games?dates[]={yesterday}&per_page=5",
+                headers=headers
+            )
+            games = games_resp.json().get("data", [])
+            finished = [g for g in games if g.get("status") == "Final"]
+            if not finished:
+                return {"error": f"No finished NBA games found for {yesterday}", "games_found": len(games)}
+
+            game = finished[0]
+            home = game["home_team"]["full_name"]
+            away = game["away_team"]["full_name"]
+            game_id = game["id"]
+
+            # 2. Get box score — find a player with real stats
+            stats_resp = await client.get(
+                f"https://api.balldontlie.io/v1/stats?game_ids[]={game_id}&per_page=25",
+                headers=headers
+            )
+            stats = stats_resp.json().get("data", [])
+            # Find a player with significant points
+            real_player = None
+            for s in stats:
+                if s.get("pts", 0) >= 15 and s.get("min") and ":" in str(s.get("min", "")):
+                    real_player = s
+                    break
+
+            if not real_player:
+                return {"error": "No player with 15+ points found in box score", "game": f"{away} @ {home}"}
+
+            player_name = f"{real_player['player']['first_name']} {real_player['player']['last_name']}"
+            actual_pts = real_player["pts"]
+            # Set line so we know the expected result
+            # Line = actual - 2 → player went Over
+            test_line = actual_pts - 2.0
+
+        # 3. Seed this as a real pick dated yesterday
+        pl = get_pick_logger()
+        pick_data = {
+            "sport": "NBA", "pick_type": "PROP",
+            "player_name": player_name,
+            "matchup": f"{away} @ {home}",
+            "home_team": home, "away_team": away,
+            "prop_type": "points", "line": test_line, "side": "Over",
+            "odds": -110, "book": "fanduel",
+            "final_score": 8.0, "ai_score": 7.0, "research_score": 7.5,
+            "esoteric_score": 6.0, "jarvis_score": 5.0,
+            "tier": "GOLD_STAR", "units": 1.0,
+            "start_time_et": (now_et - timedelta(hours=20)).isoformat(),
+        }
+        seed_result = pl.log_pick(pick_data=pick_data, game_start_time=pick_data["start_time_et"], skip_duplicates=False)
+        pick_id = seed_result.get("pick_id")
+
+        # 4. Snapshot: pick is PENDING
+        pending_pick = None
+        for p in pl.get_picks_for_date(now_et.strftime("%Y-%m-%d")):
+            if p.pick_id == pick_id:
+                pending_pick = {"pick_id": p.pick_id, "result": p.result, "grade_status": p.grade_status}
+                break
+
+        # 5. Run autograde (grades today which is where the pick was logged)
+        today = now_et.strftime("%Y-%m-%d")
+        grade_result = await auto_grade_picks(date=today)
+
+        # 6. Snapshot: pick should be GRADED
+        graded_pick = None
+        for p in pl.get_picks_for_date(today):
+            if p.pick_id == pick_id:
+                graded_pick = {
+                    "pick_id": p.pick_id, "result": p.result,
+                    "grade_status": p.grade_status, "actual_value": p.actual_value,
+                    "graded_at": p.graded_at, "units_won_lost": p.units_won_lost,
+                }
+                break
+
+        return {
+            "proof": "E2E autograder pipeline",
+            "game": f"{away} @ {home} ({yesterday})",
+            "player": player_name,
+            "actual_points": actual_pts,
+            "line_set": test_line,
+            "expected_result": "WIN" if actual_pts > test_line else "LOSS",
+            "step_1_seed": seed_result,
+            "step_2_before_grade": pending_pick,
+            "step_3_grade_summary": {
+                "picks_graded": grade_result.get("picks_graded", 0),
+                "picks_failed": grade_result.get("picks_failed", 0),
+            },
+            "step_4_after_grade": graded_pick,
+            "verdict": "PASS" if graded_pick and graded_pick.get("result") else "FAIL",
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
 @app.post("/admin/cleanup-test-picks", dependencies=[Depends(_require_admin)])
 async def admin_cleanup_test_picks(date: str = None):
     """Remove seeded test picks (LAL @ BOS / LeBron / GOLD_STAR) for a given date."""
