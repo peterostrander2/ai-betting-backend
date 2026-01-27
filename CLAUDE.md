@@ -101,6 +101,33 @@ curl "https://web-production-7b2a.up.railway.app/live/api-usage" -H "X-API-Key: 
 
 ---
 
+## CRITICAL: Today-Only ET Gate (NEVER skip this)
+
+**Every data path that touches Odds API events MUST filter to today-only in ET before processing.**
+
+### Rules
+1. **Props AND game picks** must both pass through `filter_events_today_et()` before iteration
+2. The day boundary is **00:00:00 ET to 23:59:59 ET** — never 12:01 AM
+3. `filter_events_today_et(events, date_str)` returns `(kept, dropped_window, dropped_missing)` — always log the drop counts
+4. `date_str` (YYYY-MM-DD) must be threaded through the full call chain: endpoint → `get_best_bets(date=)` → `_best_bets_inner(date_str=)` → `filter_events_today_et(events, date_str)`
+5. Debug output must include `dropped_out_of_window_props`, `dropped_out_of_window_games`, `dropped_missing_time_props`, `dropped_missing_time_games`
+
+### Why
+Without the gate, `get_props()` returns ALL upcoming events from Odds API (could be 60+ games across multiple days). This causes:
+- Inflated candidate counts
+- Ghost picks for games not happening today
+- Score distribution skewed by tomorrow's games
+
+### Where it lives
+- `time_filters.py`: `et_day_bounds()`, `is_in_et_day()`, `filter_events_today_et()`
+- `live_data_router.py` `_best_bets_inner()`: applied to both props loop (~line 2536) and game picks (~line 2790)
+- `main.py` `/ops/score-distribution`: passes `date=date` to `get_best_bets()`
+
+### If adding a new data path
+If you add ANY new endpoint or function that processes Odds API events, you MUST apply `filter_events_today_et()` before iteration. No exceptions.
+
+---
+
 ## Architecture
 
 ### Core Files (Active)
