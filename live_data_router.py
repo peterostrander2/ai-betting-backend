@@ -1906,13 +1906,13 @@ async def get_best_bets(sport: str, mode: Optional[str] = None):
         return cached
 
     try:
-      return await _best_bets_inner(sport, sport_lower, live_mode, cache_key)
+        return await _best_bets_inner(sport, sport_lower, live_mode, cache_key)
     except HTTPException:
-      raise
+        raise
     except Exception as e:
-      import traceback
-      logger.error("best-bets CRASH: %s\n%s", e, traceback.format_exc())
-      return {"error": str(e), "traceback": traceback.format_exc().split("\n")[-4:]}
+        import traceback
+        logger.error("best-bets CRASH: %s\n%s", e, traceback.format_exc())
+        return {"error": str(e), "traceback": traceback.format_exc().split("\n")[-4:]}
 
 
 async def _best_bets_inner(sport, sport_lower, live_mode, cache_key):
