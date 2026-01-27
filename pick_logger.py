@@ -509,21 +509,15 @@ class PickLogger:
         today_file = self._get_today_file()
 
         if os.path.exists(today_file):
+            valid_field_names = {f.name for f in dataclass_fields(PublishedPick)}
             try:
                 with open(today_file, 'r') as f:
                     for line in f:
                         if line.strip():
                             data = json.loads(line)
-                            # Handle missing new fields with defaults
-                            for field_name in ['run_id', 'pick_hash', 'grade_status', 'book_key', 'market',
-                                               'jason_sim_available', 'variance_flag', 'injury_state', 'sim_count',
-                                               'signals_firing', 'engine_breakdown', 'vacuum_flags', 'titanium_reasons',
-                                               'is_live', 'live_context', 'is_started_already', 'sportsbook_name',
-                                               'sportsbook_event_url', 'league', 'status', 'base_score', 'tier_badge',
-                                               'retry_count', 'last_error', 'last_attempt_at']:
-                                if field_name not in data:
-                                    data[field_name] = None  # Will use dataclass default
-                            pick = PublishedPick(**{k: v for k, v in data.items() if v is not None or k in data})
+                            # Filter to known fields so schema changes don't crash
+                            filtered = {k: v for k, v in data.items() if k in valid_field_names}
+                            pick = PublishedPick(**filtered)
                             self.picks[today].append(pick)
                             # Build pick_hash index
                             if hasattr(pick, 'pick_hash') and pick.pick_hash:

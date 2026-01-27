@@ -111,7 +111,7 @@ class AutoGrader:
     5. Persist for next session
     """
     
-    SUPPORTED_SPORTS = ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
+    SUPPORTED_SPORTS = ["NBA", "NFL", "MLB", "NHL", "NCAAB"]  # Kept in sync with data_dir.SUPPORTED_SPORTS
     
     def __init__(self, storage_path: str = None):
         if storage_path is None:
