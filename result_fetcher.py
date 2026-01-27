@@ -986,6 +986,16 @@ async def auto_grade_picks(
             sport = pick.sport.upper()
 
             # Determine if this is a prop or game pick
+            # Skip picks that already FAILED (max retries exceeded)
+            MAX_GRADE_RETRIES = 5
+            if getattr(pick, 'grade_status', '') == "FAILED":
+                results["picks_failed"] += 1
+                continue
+
+            # Track retry attempt
+            pick.retry_count = getattr(pick, 'retry_count', 0) + 1
+            pick.last_attempt_at = datetime.now(ET).isoformat()
+
             if pick.player_name:
                 # PROP PICK - need player stats
                 stats = all_player_stats.get(sport, [])
@@ -997,7 +1007,12 @@ async def auto_grade_picks(
                 )
 
                 if actual_value is None:
-                    logger.debug("Could not find stats for %s", pick.player_name)
+                    logger.debug("Could not find stats for %s (attempt %d)", pick.player_name, pick.retry_count)
+                    pick.last_error = f"Stats not found for {pick.player_name}"
+                    if pick.retry_count >= MAX_GRADE_RETRIES:
+                        pick.grade_status = "FAILED"
+                    else:
+                        pick.grade_status = "WAITING_FINAL"
                     results["picks_failed"] += 1
                     continue
 
@@ -1021,7 +1036,12 @@ async def auto_grade_picks(
                         break
 
                 if not matched_game:
-                    logger.debug("Could not find game for %s", pick.matchup)
+                    logger.debug("Could not find game for %s (attempt %d)", pick.matchup, pick.retry_count)
+                    pick.last_error = f"Game not found for {pick.matchup}"
+                    if pick.retry_count >= MAX_GRADE_RETRIES:
+                        pick.grade_status = "FAILED"
+                    else:
+                        pick.grade_status = "WAITING_FINAL"
                     results["picks_failed"] += 1
                     continue
 
@@ -1065,6 +1085,12 @@ async def auto_grade_picks(
             logger.error("Error grading pick %s: %s", pick.pick_id, e)
             results["picks_failed"] += 1
             results["errors"].append(str(e))
+
+    # Persist retry state back to canonical log
+    try:
+        pick_logger._rewrite_pick_log(date)
+    except Exception as e:
+        logger.error("Failed to persist retry state: %s", e)
 
     # Calculate summary stats
     graded = results["graded_picks"]

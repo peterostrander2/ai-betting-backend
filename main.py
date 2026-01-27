@@ -16,9 +16,10 @@ Features:
 Total: 18 esoteric modules
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import os as _os
 
 from fastapi.responses import Response
 from live_data_router import router as live_router, close_shared_client
@@ -43,11 +44,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# =============================================================================
+# ADMIN GATING for debug/admin endpoints
+# =============================================================================
+_DEBUG_MODE = _os.getenv("DEBUG_MODE", "0") == "1"
+_ADMIN_TOKEN = _os.getenv("ADMIN_TOKEN", _os.getenv("API_AUTH_KEY", ""))
+
+
+def _require_admin(x_admin_token: str = Header(None, alias="X-Admin-Token")):
+    """Require admin token for debug endpoints. Bypassed when DEBUG_MODE=1."""
+    if _DEBUG_MODE:
+        return True
+    if not x_admin_token or x_admin_token != _ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return True
+
+
 # Smoke test MUST be registered before the /live router (which requires auth)
 @app.get("/live/smoke-test/alert-status")
 @app.head("/live/smoke-test/alert-status")
 async def smoke_test_alert_status():
-    return {"status": "ok"}
+    return Response(
+        content='{"status":"ok"}',
+        media_type="application/json",
+        headers={"Content-Length": "15"}
+    )
 
 # Include routers
 app.include_router(live_router)
@@ -180,7 +201,7 @@ async def esoteric_today_energy():
 # DEBUG: AUTOGRADER VERIFICATION ENDPOINTS (no auth)
 # ============================================================================
 
-@app.get("/debug/pending-picks")
+@app.get("/debug/pending-picks", dependencies=[Depends(_require_admin)])
 async def debug_pending_picks():
     """Return count and sample of ungraded picks."""
     try:
@@ -216,7 +237,7 @@ async def debug_pending_picks():
         return {"error": str(e)}
 
 
-@app.post("/debug/seed-pick")
+@app.post("/debug/seed-pick", dependencies=[Depends(_require_admin)])
 async def debug_seed_pick():
     """Create 1 fake pending pick dated yesterday for autograder testing."""
     try:
@@ -244,7 +265,7 @@ async def debug_seed_pick():
         return {"error": str(e)}
 
 
-@app.get("/debug/storage-info")
+@app.get("/debug/storage-info", dependencies=[Depends(_require_admin)])
 async def debug_storage_info():
     """Show storage paths and file counts for diagnosing persistence."""
     import os, glob
@@ -280,7 +301,7 @@ async def debug_storage_info():
     }
 
 
-@app.post("/debug/run-autograde")
+@app.post("/debug/run-autograde", dependencies=[Depends(_require_admin)])
 async def debug_run_autograde():
     """Trigger one grading pass immediately."""
     try:
@@ -291,7 +312,7 @@ async def debug_run_autograde():
         return {"error": str(e)}
 
 
-@app.get("/debug/prediction-store-status")
+@app.get("/debug/prediction-store-status", dependencies=[Depends(_require_admin)])
 async def debug_prediction_store_status():
     """Counts for pending/graded picks, last 24h, and filenames."""
     try:
@@ -327,16 +348,31 @@ async def debug_prediction_store_status():
                 "graded_exists": os.path.exists(graded_file),
             }
 
+        # Sport breakdown for today
+        today_picks = pl.get_picks_for_date(today)
+        by_sport = {}
+        for p in today_picks:
+            s = p.sport.upper()
+            if s not in by_sport:
+                by_sport[s] = {"total": 0, "pending": 0, "graded": 0}
+            by_sport[s]["total"] += 1
+            if p.result:
+                by_sport[s]["graded"] += 1
+            else:
+                by_sport[s]["pending"] += 1
+
         return {
             "today": {"date": today, **date_stats(today)},
             "yesterday": {"date": yesterday, **date_stats(yesterday)},
+            "by_sport": by_sport,
+            "supported_sports": ["NBA", "NHL", "NFL", "MLB", "NCAAB"],
             "in_memory_dates": list(pl.picks.keys()),
         }
     except Exception as e:
         return {"error": str(e)}
 
 
-@app.post("/debug/seed-pick-and-grade")
+@app.post("/debug/seed-pick-and-grade", dependencies=[Depends(_require_admin)])
 async def debug_seed_pick_and_grade():
     """Seed a fake pick, persist it, run one grading pass, return the updated record."""
     try:
@@ -389,6 +425,35 @@ async def debug_seed_pick_and_grade():
             },
             "updated_pick": updated_pick,
         }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/admin/cleanup-test-picks", dependencies=[Depends(_require_admin)])
+async def admin_cleanup_test_picks(date: str = None):
+    """Remove seeded test picks (LAL @ BOS / LeBron / GOLD_STAR) for a given date."""
+    try:
+        from pick_logger import get_pick_logger
+        from datetime import datetime, timedelta
+        import pytz
+        ET = pytz.timezone("America/New_York")
+        if not date:
+            date = datetime.now(ET).strftime("%Y-%m-%d")
+
+        pl = get_pick_logger()
+        picks = pl.get_picks_for_date(date)
+        before = len(picks)
+
+        # Remove test picks (seeded ones have LAL @ BOS + LeBron + GOLD_STAR)
+        cleaned = [p for p in picks if not (
+            p.matchup == "LAL @ BOS" and p.player_name == "LeBron James" and p.tier == "GOLD_STAR"
+        )]
+        removed = before - len(cleaned)
+        pl.picks[date] = cleaned
+        if removed > 0:
+            pl._rewrite_pick_log(date)
+
+        return {"date": date, "before": before, "after": len(cleaned), "removed": removed}
     except Exception as e:
         return {"error": str(e)}
 

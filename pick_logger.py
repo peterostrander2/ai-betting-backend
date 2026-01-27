@@ -171,7 +171,12 @@ class PublishedPick:
     pick_hash: str = ""  # SHA256 hash of pick key fields
 
     # Grade status for verification
-    grade_status: str = "PENDING"  # PENDING, GRADED, FAILED, UNRESOLVED
+    grade_status: str = "PENDING"  # PENDING, WAITING_FINAL, GRADED, FAILED, UNRESOLVED
+
+    # Retry tracking for grading state machine
+    retry_count: int = 0
+    last_error: str = ""
+    last_attempt_at: str = ""
 
     # Book/market fields for grade-ready checklist
     book_key: str = ""  # Canonical book identifier
@@ -509,7 +514,8 @@ class PickLogger:
                                                'jason_sim_available', 'variance_flag', 'injury_state', 'sim_count',
                                                'signals_firing', 'engine_breakdown', 'vacuum_flags', 'titanium_reasons',
                                                'is_live', 'live_context', 'is_started_already', 'sportsbook_name',
-                                               'sportsbook_event_url', 'league', 'status', 'base_score', 'tier_badge']:
+                                               'sportsbook_event_url', 'league', 'status', 'base_score', 'tier_badge',
+                                               'retry_count', 'last_error', 'last_attempt_at']:
                                 if field_name not in data:
                                     data[field_name] = None  # Will use dataclass default
                             pick = PublishedPick(**{k: v for k, v in data.items() if v is not None or k in data})
