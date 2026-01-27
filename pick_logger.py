@@ -784,12 +784,11 @@ class PickLogger:
         Returns:
             List of PublishedPick objects for that date
         """
-        picks = self.picks.get(date, [])
-
-        # Also try to load from file if not in memory
-        if not picks:
+        # Load from file if this date has never been loaded
+        if date not in self.picks:
             self._load_picks_from_file(date)
-            picks = self.picks.get(date, [])
+
+        picks = self.picks.get(date, [])
 
         if sport:
             picks = [p for p in picks if p.sport.upper() == sport.upper()]
