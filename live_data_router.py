@@ -1294,8 +1294,42 @@ async def get_sharp_money(sport: str):
                         })
 
                     if data:
+                        # v15.1: Merge Odds API line variance into Playbook data
+                        try:
+                            _lv_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+                            _lv_resp = await fetch_with_retries(
+                                "GET", _lv_url,
+                                params={"apiKey": ODDS_API_KEY, "regions": "us", "markets": "spreads", "oddsFormat": "american"}
+                            )
+                            if _lv_resp and _lv_resp.status_code == 200:
+                                _lv_variance = {}  # team_key → variance
+                                for _lv_game in _lv_resp.json():
+                                    _lv_key = f"{_lv_game.get('away_team', '')}@{_lv_game.get('home_team', '')}"
+                                    _lv_spreads = []
+                                    for _lv_bm in _lv_game.get("bookmakers", []):
+                                        for _lv_mkt in _lv_bm.get("markets", []):
+                                            if _lv_mkt.get("key") == "spreads":
+                                                for _lv_out in _lv_mkt.get("outcomes", []):
+                                                    if _lv_out.get("name") == _lv_game.get("home_team"):
+                                                        _lv_spreads.append(_lv_out.get("point", 0))
+                                    if len(_lv_spreads) >= 2:
+                                        _lv_variance[_lv_key] = round(max(_lv_spreads) - min(_lv_spreads), 1)
+                                # Merge variance into Playbook signals
+                                for signal in data:
+                                    _sig_key = f"{signal.get('away_team', '')}@{signal.get('home_team', '')}"
+                                    lv = _lv_variance.get(_sig_key, 0)
+                                    signal["line_variance"] = lv
+                                    # Upgrade signal_strength if line variance is strong
+                                    if lv >= 2.0 and signal["signal_strength"] in ("NONE", "MILD"):
+                                        signal["signal_strength"] = "STRONG"
+                                    elif lv >= 1.5 and signal["signal_strength"] in ("NONE", "MILD"):
+                                        signal["signal_strength"] = "MODERATE"
+                                logger.info("Merged Odds API line variance for %s: %d games with variance", sport, sum(1 for v in _lv_variance.values() if v > 0))
+                        except Exception as e:
+                            logger.warning("Failed to merge line variance: %s", e)
+
                         logger.info("Playbook sharp signals derived for %s: %d signals", sport, len(data))
-                        result = {"sport": sport.upper(), "source": "playbook", "count": len(data), "data": data, "movements": data}
+                        result = {"sport": sport.upper(), "source": "playbook+odds_api", "count": len(data), "data": data, "movements": data}
                         api_cache.set(cache_key, result)
                         return result
                 except ValueError as e:
@@ -2141,7 +2175,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         #            (NO Jarvis, NO Gematria, NO Public Fade - those are separate)
         # ENGINE 4 - JARVIS SCORE (0-10): Gematria + Sacred Triggers + Mid-Spread
         #
-        # FINAL = (research × 0.45) + (esoteric × 0.25) + (jarvis × 0.20) + confluence_boost
+        # FINAL = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15) + confluence_boost
         # Then: FINAL += jason_sim_boost (post-pick confluence)
         # =====================================================================
 
@@ -2165,9 +2199,30 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         pillars_passed = []
         pillars_failed = []
 
-        # --- AI SCORE (Pure Model - 0-8 scale) ---
-        # This is the base AI prediction, not influenced by market signals
-        ai_score = min(8.0, base_ai)
+        # --- AI SCORE (Dynamic Model - 0-8 scale) ---
+        # v15.1: AI score is calibrated based on data quality signals
+        # Base AI (5.0 props, 4.5 games) + boosts for data availability
+        _ai_boost = 0.0
+        # Odds data present: +0.5
+        if sharp_signal:
+            _ai_boost += 0.5
+        # Strong/moderate sharp signal aligns with model: +1.0 / +0.5
+        _ss = sharp_signal.get("signal_strength", "NONE")
+        if _ss == "STRONG":
+            _ai_boost += 1.0
+        elif _ss == "MODERATE":
+            _ai_boost += 0.5
+        elif _ss == "MILD":
+            _ai_boost += 0.25
+        # Favorable line value (spread in predictable range 3-10): +0.5
+        if 3 <= abs(spread) <= 10:
+            _ai_boost += 0.5
+        # Player name present for props (more data = better model): +0.25
+        if player_name:
+            _ai_boost += 0.25
+        ai_score = min(8.0, base_ai + _ai_boost)
+        # Scale AI to 0-10 for use in base_score formula
+        ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
 
         # --- RESEARCH SCORE (Market Intelligence - 0-10 scale) ---
         # Pillar 1: Sharp Money Detection (0-3 pts)
@@ -2355,11 +2410,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
 
-        # --- v15.0 BASE SCORE FORMULA (4 Engines) ---
-        # BASE = (research × 0.45) + (esoteric × 0.25) + (jarvis × 0.20) + confluence_boost
-        # AI influence via research correlation (sharp money often follows models)
-        # Remaining 10% captured in confluence alignment
-        base_score = (research_score * 0.45) + (esoteric_score * 0.25) + (jarvis_rs * 0.20) + confluence_boost
+        # --- v15.1 BASE SCORE FORMULA (4 Engines + AI) ---
+        # BASE = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15) + confluence_boost
+        # AI models now directly contribute 25% of the score
+        base_score = (ai_scaled * 0.25) + (research_score * 0.30) + (esoteric_score * 0.20) + (jarvis_rs * 0.15) + confluence_boost
 
         # --- v11.08 JASON SIM CONFLUENCE (runs after base score, before tier assignment) ---
         # Jason simulates game outcomes and applies boost/downgrade based on win probability
@@ -2415,9 +2469,6 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # are all set from calculate_jarvis_engine_score() call
 
         # --- v15.0 TITANIUM CHECK (3 of 4 engines >= 8.0) ---
-        # Scale AI score from 0-8 to 0-10 for comparison
-        ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
-
         titanium_triggered = False
         titanium_explanation = ""
         if TIERING_AVAILABLE:
