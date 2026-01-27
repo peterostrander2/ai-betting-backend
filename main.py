@@ -476,12 +476,10 @@ async def debug_e2e_proof():
                 headers=headers
             )
             stats = stats_resp.json().get("data", [])
-            # Find a player with significant points
-            real_player = None
-            for s in stats:
-                if s.get("pts", 0) >= 15 and s.get("min") and ":" in str(s.get("min", "")):
-                    real_player = s
-                    break
+            # Find the player with the most points
+            stats_with_pts = [s for s in stats if s.get("pts", 0) and s.get("pts", 0) >= 10]
+            stats_with_pts.sort(key=lambda s: s.get("pts", 0), reverse=True)
+            real_player = stats_with_pts[0] if stats_with_pts else None
 
             if not real_player:
                 return {"error": "No player with 15+ points found in box score",
