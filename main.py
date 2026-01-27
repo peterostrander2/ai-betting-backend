@@ -561,6 +561,34 @@ async def debug_e2e_proof():
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 
+@app.get("/ops/cache-status", dependencies=[Depends(_require_admin)])
+async def ops_cache_status():
+    """Per-sport cache status for best-bets pre-warm verification."""
+    import time as _time
+    try:
+        from live_data_router import api_cache
+        sports = ["nba", "nhl", "ncaab", "nfl", "mlb"]
+        result = {}
+        for sport in sports:
+            cache_key = f"best-bets:{sport}"
+            cached = api_cache.get(cache_key)
+            warm_meta = api_cache.get(f"warm_meta:{sport}")
+
+            cache_age = None
+            if cached and isinstance(cached, dict) and "_cached_at" in cached:
+                cache_age = round(_time.time() - cached["_cached_at"], 1)
+
+            result[sport] = {
+                "cache_present": cached is not None,
+                "cache_age_seconds": cache_age,
+                "last_warm_time": warm_meta.get("last_warm_time") if warm_meta else None,
+                "last_warm_duration": warm_meta.get("duration_seconds") if warm_meta else None,
+            }
+        return {"sports": result, "cache_backend": api_cache.stats().get("backend", "unknown")}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/admin/cleanup-test-picks", dependencies=[Depends(_require_admin)])
 async def admin_cleanup_test_picks(date: str = None):
     """Remove seeded test picks (LAL @ BOS / LeBron / GOLD_STAR) for a given date."""

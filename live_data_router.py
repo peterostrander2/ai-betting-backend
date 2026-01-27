@@ -6,6 +6,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import Optional, List, Dict, Any
 import httpx
+import time
 
 # Import Pydantic models for request/response validation
 try:
@@ -404,6 +405,33 @@ class HybridCache:
         # Always clear memory cache too
         self._memory_cache.clear()
         logger.info("Memory cache cleared")
+
+    def acquire_lock(self, key: str, ttl: int = 900) -> bool:
+        """Try to acquire a distributed lock. Returns True if acquired."""
+        lock_key = f"lock:{key}"
+        if self._using_redis and self._redis_client:
+            try:
+                return bool(self._redis_client.set(self._make_key(lock_key), "1", nx=True, ex=ttl))
+            except Exception:
+                pass
+        # In-memory fallback
+        if lock_key in self._memory_cache:
+            _, expires_at = self._memory_cache[lock_key]
+            if datetime.now() < expires_at:
+                return False
+        self._memory_cache[lock_key] = ("1", datetime.now() + timedelta(seconds=ttl))
+        return True
+
+    def release_lock(self, key: str):
+        """Release a distributed lock."""
+        lock_key = f"lock:{key}"
+        if self._using_redis and self._redis_client:
+            try:
+                self._redis_client.delete(self._make_key(lock_key))
+            except Exception:
+                pass
+        if lock_key in self._memory_cache:
+            del self._memory_cache[lock_key]
 
     def stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
@@ -1905,14 +1933,23 @@ async def get_best_bets(sport: str, mode: Optional[str] = None):
     if cached:
         return cached
 
+    import uuid as _uuid
+    request_id = _uuid.uuid4().hex[:12]
+    _start = time.time()
     try:
-        return await _best_bets_inner(sport, sport_lower, live_mode, cache_key)
+        result = await _best_bets_inner(sport, sport_lower, live_mode, cache_key)
+        logger.info("best-bets %s completed in %.1fs (request_id=%s)", sport, time.time() - _start, request_id)
+        return result
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        logger.error("best-bets CRASH: %s\n%s", e, traceback.format_exc())
-        return {"error": str(e), "traceback": traceback.format_exc().split("\n")[-4:]}
+        import traceback as _tb
+        logger.error("best-bets CRASH request_id=%s sport=%s: %s\n%s",
+                     request_id, sport, e, _tb.format_exc())
+        raise HTTPException(status_code=500, detail={
+            "message": "best-bets failed",
+            "request_id": request_id
+        })
 
 
 async def _best_bets_inner(sport, sport_lower, live_mode, cache_key):
@@ -3132,7 +3169,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key):
             "learned_weights": esoteric_weights,
             "learning_active": learning is not None
         },
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "_cached_at": time.time()
     }
     api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
     return result
