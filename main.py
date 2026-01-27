@@ -61,14 +61,9 @@ def _require_admin(x_admin_token: str = Header(None, alias="X-Admin-Token")):
 
 
 # Smoke test MUST be registered before the /live router (which requires auth)
-@app.get("/live/smoke-test/alert-status")
-@app.head("/live/smoke-test/alert-status")
-async def smoke_test_alert_status():
-    return Response(
-        content='{"status":"ok"}',
-        media_type="application/json",
-        headers={"Content-Length": "15"}
-    )
+@app.api_route("/live/smoke-test/alert-status", methods=["GET", "HEAD"])
+def alert_status():
+    return {"ok": True}
 
 # Include routers
 app.include_router(live_router)
