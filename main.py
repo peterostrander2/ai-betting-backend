@@ -435,6 +435,8 @@ async def admin_cleanup_test_picks(date: str = None):
     try:
         from pick_logger import get_pick_logger
         from datetime import datetime, timedelta
+        from dataclasses import asdict
+        import json
         import pytz
         ET = pytz.timezone("America/New_York")
         if not date:
@@ -450,8 +452,17 @@ async def admin_cleanup_test_picks(date: str = None):
         )]
         removed = before - len(cleaned)
         pl.picks[date] = cleaned
+        pl.pick_hashes[date] = {getattr(p, 'pick_hash', '') for p in cleaned if getattr(p, 'pick_hash', '')}
         if removed > 0:
             pl._rewrite_pick_log(date)
+            # Also clean graded file
+            import os
+            from data_dir import GRADED_PICKS
+            graded_file = os.path.join(GRADED_PICKS, f"graded_{date}.jsonl")
+            graded_remaining = [p for p in cleaned if p.result]
+            with open(graded_file, 'w') as f:
+                for p in graded_remaining:
+                    f.write(json.dumps(asdict(p)) + "\n")
 
         return {"date": date, "before": before, "after": len(cleaned), "removed": removed}
     except Exception as e:
