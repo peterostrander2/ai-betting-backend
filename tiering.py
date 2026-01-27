@@ -1,19 +1,21 @@
 """
 TIERING.PY - SINGLE SOURCE OF TRUTH FOR BET TIERS
 =================================================
-v11.08 - Production tier system with Titanium support
+v12.0 - Production hardened tier system with Titanium support
 
 This module is the ONLY place tier configurations should be defined.
 All other files should import from here via:
     from tiering import tier_from_score, get_tier_config, check_titanium_rule
 
 TIER HIERARCHY (highest to lowest):
-1. TITANIUM_SMASH - Rare conviction tier (3/4 engines >= 8.0)
-2. GOLD_STAR - Maximum confidence (final_score >= 9.0)
-3. EDGE_LEAN - Strong edge (final_score >= 7.5)
+1. TITANIUM_SMASH - Rare conviction tier (3/4 engines >= 6.5 AND final_score >= 8.0)
+2. GOLD_STAR - Maximum confidence (final_score >= 7.5)
+3. EDGE_LEAN - Strong edge (final_score >= 6.5)
 4. ML_DOG_LOTTO - NHL Dog Protocol special
-5. MONITOR - Track only (final_score >= 6.0)
-6. PASS - No action (final_score < 6.0)
+5. MONITOR - Track only (final_score >= 5.5)
+6. PASS - No action (final_score < 5.5)
+
+COMMUNITY OUTPUT FILTER: Only picks with final_score >= 6.5 are shown to community.
 """
 
 from typing import Dict, Any, List, Optional, Tuple
@@ -21,14 +23,20 @@ from typing import Dict, Any, List, Optional, Tuple
 # =============================================================================
 # ENGINE VERSION
 # =============================================================================
-ENGINE_VERSION = "11.08"
+ENGINE_VERSION = "12.0"
 
 # =============================================================================
 # TITANIUM THRESHOLD CONFIGURATION
 # =============================================================================
-TITANIUM_THRESHOLD = 8.0  # Score threshold for each engine
+TITANIUM_THRESHOLD = 6.5  # Meaningful contribution threshold for each engine
+TITANIUM_FINAL_SCORE_MIN = 8.0  # Final score must also be >= 8.0
 TITANIUM_MIN_ENGINES = 3  # Minimum engines meeting threshold (out of 4)
 TITANIUM_REQUIRES_JARVIS = True  # Prefer Jarvis as one of the qualifying engines
+
+# =============================================================================
+# COMMUNITY OUTPUT FILTER
+# =============================================================================
+COMMUNITY_MIN_SCORE = 6.5  # Only show picks >= 6.5 to community
 
 # =============================================================================
 # TIER CONFIGURATION - SINGLE SOURCE OF TRUTH
@@ -40,8 +48,8 @@ TIER_CONFIG = {
         "action": "SMASH",
         "badge": "TITANIUM SMASH",
         "priority": 1,          # Highest priority
-        "threshold": None,      # Special rule: 3/4 engines >= 8.0
-        "description": "Rare conviction - 3 of 4 engines aligned at 8.0+"
+        "threshold": None,      # Special rule: 3/4 engines >= 6.5 AND final_score >= 8.0
+        "description": "Rare conviction - 3 of 4 engines meaningful + final >= 8.0"
     },
     "GOLD_STAR": {
         "units": 2.0,
@@ -49,7 +57,7 @@ TIER_CONFIG = {
         "action": "SMASH",
         "badge": "GOLD STAR",
         "priority": 2,
-        "threshold": 9.0,
+        "threshold": 7.5,       # Changed from 9.0 per production hardening spec
         "description": "Maximum confidence - all signals aligned"
     },
     "EDGE_LEAN": {
@@ -58,7 +66,7 @@ TIER_CONFIG = {
         "action": "PLAY",
         "badge": "EDGE LEAN",
         "priority": 3,
-        "threshold": 7.5,
+        "threshold": 6.5,       # Changed from 7.5 per production hardening spec
         "description": "Strong edge - most signals agree"
     },
     "ML_DOG_LOTTO": {
@@ -76,7 +84,7 @@ TIER_CONFIG = {
         "action": "WATCH",
         "badge": "MONITOR",
         "priority": 5,
-        "threshold": 6.0,
+        "threshold": 5.5,       # Changed from 6.0 per production hardening spec
         "description": "Track but no action recommended"
     },
     "PASS": {
@@ -111,13 +119,15 @@ def check_titanium_rule(
     ai_score: float,
     research_score: float,
     esoteric_score: float,
-    jarvis_score: float
+    jarvis_score: float,
+    final_score: float = None
 ) -> Tuple[bool, str, List[str]]:
     """
     Check if Titanium tier is triggered.
 
-    TITANIUM RULE (v11.08):
-    - 3 of 4 engines must score >= 8.0
+    TITANIUM RULE (v12.0 - Production Hardened):
+    - final_score must be >= 8.0 (mandatory prerequisite)
+    - 3 of 4 engines must score >= 6.5 (meaningful contribution)
     - Engines: AI (0-10 scaled), Research (0-10), Esoteric (0-10), Jarvis (0-10 scaled)
     - PREFERRED: Jarvis should be one of the 3 qualifying engines
 
@@ -126,13 +136,18 @@ def check_titanium_rule(
         research_score: Research score (0-10 scale)
         esoteric_score: Esoteric score (0-10 scale)
         jarvis_score: Jarvis raw score (0-10 scale)
+        final_score: Final blended score (0-10 scale) - REQUIRED for Titanium
 
     Returns:
         Tuple of (triggered: bool, explanation: str, qualifying_engines: List[str])
     """
-    threshold = TITANIUM_THRESHOLD
+    threshold = TITANIUM_THRESHOLD  # 6.5 for meaningful contribution
 
-    # Check each engine against threshold
+    # NEW: Final score prerequisite (mandatory)
+    if final_score is not None and final_score < TITANIUM_FINAL_SCORE_MIN:
+        return False, f"Titanium: Final score {final_score:.1f} < {TITANIUM_FINAL_SCORE_MIN} (prerequisite not met)", []
+
+    # Check each engine against meaningful contribution threshold
     engines = {
         "AI": ai_score >= threshold,
         "Research": research_score >= threshold,
@@ -143,18 +158,28 @@ def check_titanium_rule(
     qualifying = [name for name, passed in engines.items() if passed]
     qualifying_count = len(qualifying)
 
-    # Basic trigger: 3+ engines >= 8.0
-    basic_triggered = qualifying_count >= TITANIUM_MIN_ENGINES
+    # Basic trigger: 3+ engines >= 6.5 (meaningful contribution)
+    engines_qualified = qualifying_count >= TITANIUM_MIN_ENGINES
 
     # Check if Jarvis is among qualifying (preferred but not required)
     jarvis_qualifies = engines["Jarvis"]
 
-    if basic_triggered:
-        if jarvis_qualifies:
-            explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} (Jarvis active)"
+    # Both conditions must be met
+    if engines_qualified:
+        if final_score is None:
+            # Backward compatibility: if final_score not provided, just check engines
+            if jarvis_qualifies:
+                explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} (Jarvis active)"
+            else:
+                explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} (Jarvis inactive)"
+            return True, explanation, qualifying
         else:
-            explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} (Jarvis inactive)"
-        return True, explanation, qualifying
+            # Full v12.0 rule: engines + final_score
+            if jarvis_qualifies:
+                explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} + final {final_score:.1f} >= {TITANIUM_FINAL_SCORE_MIN} (Jarvis active)"
+            else:
+                explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} + final {final_score:.1f} >= {TITANIUM_FINAL_SCORE_MIN} (Jarvis inactive)"
+            return True, explanation, qualifying
     else:
         explanation = f"Titanium: {qualifying_count}/4 engines >= {threshold} (need {TITANIUM_MIN_ENGINES})"
         return False, explanation, qualifying
@@ -222,12 +247,12 @@ def tier_from_score(
             "titanium_triggered": False
         }
 
-    # PRIORITY 3: Score-based tiers
-    if final_score >= 9.0:
+    # PRIORITY 3: Score-based tiers (v12.0 thresholds)
+    if final_score >= 7.5:
         tier = "GOLD_STAR"
-    elif final_score >= 7.5:
+    elif final_score >= 6.5:
         tier = "EDGE_LEAN"
-    elif final_score >= 6.0:
+    elif final_score >= 5.5:
         tier = "MONITOR"
     else:
         tier = "PASS"
@@ -432,6 +457,36 @@ def is_prop_invalid_injury(injury_status: str) -> bool:
 
 
 # =============================================================================
+# COMMUNITY OUTPUT FILTERING
+# =============================================================================
+
+def filter_for_community(picks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Filter picks for community output - only show >= COMMUNITY_MIN_SCORE (6.5).
+
+    Args:
+        picks: List of pick dictionaries with 'final_score' key
+
+    Returns:
+        Filtered list of picks meeting community threshold
+    """
+    return [p for p in picks if p.get("final_score", 0) >= COMMUNITY_MIN_SCORE]
+
+
+def is_community_worthy(final_score: float) -> bool:
+    """
+    Check if a pick meets community output threshold.
+
+    Args:
+        final_score: The pick's final score
+
+    Returns:
+        True if pick should be shown to community
+    """
+    return final_score >= COMMUNITY_MIN_SCORE
+
+
+# =============================================================================
 # DEFAULT VALUES
 # =============================================================================
 
@@ -441,3 +496,36 @@ DEFAULT_JARVIS_RS = 5.0
 # Default stack values
 DEFAULT_STACK_COMPLETE = True
 DEFAULT_PARTIAL_STACK_REASONS: List[str] = []
+
+
+# =============================================================================
+# PROP AVAILABILITY CHECK (Phase 8)
+# =============================================================================
+
+def validate_prop_availability(
+    player_name: str,
+    available_props: List[Dict[str, Any]]
+) -> Tuple[bool, str]:
+    """
+    Check if player is offered on any book - if not, treat as unavailable.
+
+    Args:
+        player_name: Player name to check
+        available_props: List of available props with 'player' key
+
+    Returns:
+        Tuple of (is_available: bool, reason: str)
+    """
+    if not available_props:
+        return False, f"No props available - cannot validate {player_name}"
+
+    # Normalize player name for comparison
+    player_lower = player_name.lower().strip()
+
+    # Check if player is in available props
+    for prop in available_props:
+        prop_player = prop.get("player", "").lower().strip()
+        if prop_player == player_lower or player_lower in prop_player or prop_player in player_lower:
+            return True, "Available"
+
+    return False, f"Player {player_name} not offered - likely unavailable"

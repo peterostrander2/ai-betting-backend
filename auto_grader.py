@@ -605,6 +605,153 @@ class AutoGrader:
                 }
         return result
 
+    # ============================================
+    # SPEC COMPLIANCE METHOD ALIASES (v12.0)
+    # ============================================
+
+    def apply_updates(self, learning_rate: float = 0.05) -> Dict:
+        """
+        Alias for adjust_weights with custom learning rate.
+
+        Per EsotericLearningLoop spec compliance.
+        """
+        results = {}
+        for sport in self.SUPPORTED_SPORTS:
+            results[sport] = self.adjust_weights(sport, days_back=1, apply_changes=True)
+        return results
+
+    def snapshot(self) -> Dict:
+        """
+        Save current state and return snapshot data.
+
+        Per EsotericLearningLoop spec compliance.
+        """
+        self._save_state()
+        return {
+            "weights": self.get_all_weights(),
+            "timestamp": datetime.now().isoformat(),
+            "predictions_count": sum(len(p) for p in self.predictions.values())
+        }
+
+    def load_snapshot(self, path: str = None) -> bool:
+        """
+        Load state from snapshot.
+
+        Per EsotericLearningLoop spec compliance.
+        """
+        if path:
+            self.storage_path = path
+        self._load_state()
+        return True
+
+    # ============================================
+    # JSONL DAILY STORAGE (v12.0)
+    # ============================================
+
+    def save_daily_grading_jsonl(self, date_str: str = None) -> str:
+        """
+        Save graded picks to JSONL file for daily tracking.
+
+        Args:
+            date_str: Date string (YYYY-MM-DD), defaults to today
+
+        Returns:
+            Path to JSONL file
+        """
+        import json
+
+        if date_str is None:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+
+        # Ensure graded_picks directory exists
+        graded_dir = os.path.join(self.storage_path, "graded_picks")
+        os.makedirs(graded_dir, exist_ok=True)
+
+        path = os.path.join(graded_dir, f"graded_{date_str}.jsonl")
+
+        # Get all graded predictions from today
+        cutoff = datetime.strptime(date_str, "%Y-%m-%d")
+        cutoff_end = cutoff + timedelta(days=1)
+
+        graded_count = 0
+        with open(path, 'a') as f:
+            for sport, records in self.predictions.items():
+                for record in records:
+                    # Only include graded predictions from this date
+                    if record.actual_value is None:
+                        continue
+
+                    try:
+                        record_date = datetime.fromisoformat(record.timestamp)
+                        if cutoff <= record_date < cutoff_end:
+                            f.write(json.dumps(asdict(record)) + "\n")
+                            graded_count += 1
+                    except (ValueError, TypeError):
+                        continue
+
+        print(f"Saved {graded_count} graded picks to {path}")
+        return path
+
+    def load_daily_grading_jsonl(self, date_str: str) -> List[Dict]:
+        """
+        Load graded picks from JSONL file.
+
+        Args:
+            date_str: Date string (YYYY-MM-DD)
+
+        Returns:
+            List of graded prediction records
+        """
+        import json
+
+        path = os.path.join(self.storage_path, "graded_picks", f"graded_{date_str}.jsonl")
+
+        if not os.path.exists(path):
+            return []
+
+        records = []
+        with open(path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        records.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+
+        return records
+
+    def get_performance_history(self, days_back: int = 7) -> Dict:
+        """
+        Get performance history from JSONL files.
+
+        Returns:
+            Performance metrics by date
+        """
+        history = {}
+
+        for i in range(days_back):
+            date = datetime.now() - timedelta(days=i)
+            date_str = date.strftime("%Y-%m-%d")
+
+            records = self.load_daily_grading_jsonl(date_str)
+
+            if records:
+                hits = sum(1 for r in records if r.get("hit"))
+                total = len(records)
+                errors = [abs(r.get("error", 0)) for r in records if r.get("error") is not None]
+
+                history[date_str] = {
+                    "total_picks": total,
+                    "hits": hits,
+                    "hit_rate": round((hits / total * 100) if total > 0 else 0, 1),
+                    "mae": round(sum(errors) / len(errors) if errors else 0, 2)
+                }
+            else:
+                history[date_str] = {"total_picks": 0, "hits": 0, "hit_rate": 0, "mae": 0}
+
+        return history
+
     def get_audit_summary(self, sport: str, days_back: int = 1) -> Dict:
         """
         Get audit summary for a sport.

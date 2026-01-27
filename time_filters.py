@@ -151,6 +151,33 @@ def is_game_today(commence_time: str) -> bool:
     return is_today
 
 
+def is_game_started(commence_time: str) -> Tuple[bool, Optional[str]]:
+    """
+    Check if a game has already started.
+
+    Args:
+        commence_time: ISO format datetime string
+
+    Returns:
+        Tuple of (is_started: bool, started_at: str or None)
+    """
+    game_dt = parse_game_time(commence_time)
+    if not game_dt:
+        return False, None
+
+    now_et = get_now_et()
+
+    # Make comparison timezone-aware if needed
+    if PYTZ_AVAILABLE and ET:
+        if game_dt.tzinfo is None:
+            game_dt = ET.localize(game_dt)
+        game_dt = game_dt.astimezone(ET)
+
+    is_started = now_et >= game_dt
+
+    return is_started, game_dt.isoformat() if is_started else None
+
+
 def is_game_tomorrow(commence_time: str) -> bool:
     """
     Check if a game is scheduled for tomorrow (should be excluded).

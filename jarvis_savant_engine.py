@@ -1,23 +1,41 @@
 """
-JARVIS SAVANT ENGINE v11.08 - The Complete Scoring System with Titanium Support
+JARVIS SAVANT ENGINE v12.0 - The Complete Scoring System with Titanium Support
 =========================================================
 Phase 1: Confluence Core (Gematria, JARVIS Triggers, Confluence)
 Phase 2: Vedic/Astro Module (Planetary Hours, Nakshatras, Retrograde)
 Phase 3: Learning Loop (Result Tracking, Weight Adjustment)
 
-THE FORMULA (v10.1 Spec Aligned):
+v12.0 ENGINE SEPARATION (Production Hardened):
 ┌─────────────────────────────────────────────────────────────┐
-│                    BOOKIE-O-EM CONFLUENCE                    │
+│                    4 ENGINE ARCHITECTURE                     │
 ├─────────────────────────────────────────────────────────────┤
-│  RESEARCH SCORE (0-10)              ESOTERIC SCORE (0-10)   │
-│  ├─ 8 AI Models (0-8)               ├─ JARVIS RS (0-4)      │
-│  └─ 8 Pillars (0-8)                 ├─ Gematria (52%)       │
-│      scaled to 0-10                 ├─ Public Fade (-13%)   │
-│                                     ├─ Mid-Spread (+20%)    │
-│                                     └─ Esoteric Edge (0-2)  │
+│  Engine A - AI Engine (0-10):                               │
+│  └─ 8-model weighted blend from advanced_ml_backend.py      │
 │                                                              │
-│  Alignment = 1 - |research - esoteric| / 10                 │
+│  Engine B - Research Engine (0-10) - research_engine.py:    │
+│  ├─ Sharp split / sharp money / handle vs tickets           │
+│  ├─ Reverse line movement (RLM)                             │
+│  ├─ Public fade (>= 70% threshold) *MOVED FROM JARVIS*      │
+│  ├─ Hook discipline                                         │
+│  ├─ Goldilocks spread zone *MOVED FROM JARVIS*              │
+│  ├─ Hospital fade                                           │
+│  └─ Trap gates *MOVED FROM JARVIS*                          │
 │                                                              │
+│  Engine C - Esoteric Engine (0-10) - esoteric_engine.py:    │
+│  ├─ Vedic astro                                             │
+│  ├─ Fibonacci/phi                                           │
+│  ├─ Vortex 3-6-9                                           │
+│  ├─ Daily edge                                              │
+│  └─ Generic numerology                                      │
+│                                                              │
+│  Engine D - Jarvis Engine (0-10) - THIS FILE:               │
+│  ├─ Gematria (dominant driver)                              │
+│  ├─ Sacred triggers: 2178/201/33/93/322                     │
+│  └─ Jarvis numerology (distinct from generic)               │
+│                                                              │
+│  NOTE: Public Fade, Mid-Spread, Trap Gate methods are       │
+│  DEPRECATED in this file. Use research_engine.py instead.   │
+├─────────────────────────────────────────────────────────────┤
 │  CONFLUENCE LEVELS:                                          │
 │  IMMORTAL (+10): 2178 + both ≥7.5 + alignment ≥80%          │
 │  JARVIS_PERFECT (+7): Trigger + both ≥7.5 + alignment ≥80%  │
@@ -28,16 +46,16 @@ THE FORMULA (v10.1 Spec Aligned):
 │                                                              │
 │  FINAL = (research × 0.67) + (esoteric × 0.33) + boost      │
 │                                                              │
-│  BET TIERS (v11.08):                                         │
-│  TITANIUM_SMASH (2.5u): 3/4 engines >= 8.0 (rare)           │
-│  GOLD_STAR (2u): FINAL >= 9.0                               │
-│  EDGE_LEAN (1u): FINAL >= 7.5                               │
+│  BET TIERS (v12.0):                                          │
+│  TITANIUM_SMASH (2.5u): 3/4 engines >= 6.5 + final >= 8.0   │
+│  GOLD_STAR (2u): FINAL >= 7.5                               │
+│  EDGE_LEAN (1u): FINAL >= 6.5                               │
 │  ML_DOG_LOTTO (0.5u): NHL Dog Protocol                      │
-│  MONITOR: FINAL >= 6.0                                       │
-│  PASS: FINAL < 6.0                                           │
+│  MONITOR: FINAL >= 5.5                                       │
+│  PASS: FINAL < 5.5                                           │
 └─────────────────────────────────────────────────────────────┘
 
-2178: THE IMMORTAL - Only number where n^4 = reverse AND n^4 = 66^4
+2178: THE IMMORTAL - Only number where n × 4 = reverse(n)
 """
 
 import os
@@ -462,12 +480,16 @@ class JarvisSavantEngine:
         }
 
     # ========================================================================
-    # PUBLIC FADE SIGNAL
+    # PUBLIC FADE SIGNAL (DEPRECATED - Use research_engine.py instead)
     # ========================================================================
 
     def calculate_public_fade_signal(self, public_pct: float) -> Dict[str, Any]:
         """
-        Calculate public fade signal with graduated adjustments.
+        DEPRECATED: This method is kept for backwards compatibility.
+        Use research_engine.calculate_public_fade_signal() instead.
+
+        As of v12.0, Public Fade is a RESEARCH ENGINE signal, not Jarvis.
+        This prevents double-counting in the 4-engine architecture.
 
         PUBLIC FADE CRUSH ZONE (v10.1 spec):
         ≥80% public on chalk  →  -0.95 influence
@@ -532,12 +554,15 @@ class JarvisSavantEngine:
         }
 
     # ========================================================================
-    # MID SPREAD SIGNAL (GOLDILOCKS ZONE)
+    # MID SPREAD SIGNAL (DEPRECATED - Use research_engine.py instead)
     # ========================================================================
 
     def calculate_mid_spread_signal(self, spread: float) -> Dict[str, Any]:
         """
-        Calculate mid-spread signal.
+        DEPRECATED: This method is kept for backwards compatibility.
+        Use research_engine.calculate_goldilocks_signal() instead.
+
+        As of v12.0, Goldilocks Zone is a RESEARCH ENGINE signal, not Jarvis.
 
         +20% boost in Goldilocks zone (spread between +4 and +9) per v10.1 spec.
         """
@@ -575,12 +600,15 @@ class JarvisSavantEngine:
         }
 
     # ========================================================================
-    # LARGE SPREAD TRAP
+    # LARGE SPREAD TRAP (DEPRECATED - Use research_engine.py instead)
     # ========================================================================
 
     def calculate_large_spread_trap(self, spread: float, total: float) -> Dict[str, Any]:
         """
-        Calculate large spread trap signal.
+        DEPRECATED: This method is kept for backwards compatibility.
+        Use research_engine.calculate_trap_gate_signal() instead.
+
+        As of v12.0, Trap Gate is a RESEARCH ENGINE signal, not Jarvis.
 
         -20% trap gate for spreads > 14 (likely trap games).
         """

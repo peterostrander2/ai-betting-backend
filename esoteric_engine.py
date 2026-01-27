@@ -463,8 +463,87 @@ def calculate_atmospheric_drag(city: str, humidity_pct: float = None) -> Dict[st
 
 
 # =============================================================================
-# 9. LIFE PATH SYNC (esoteric.py - Low Priority)
+# 9. GENERIC NUMEROLOGY (v12.0 - Required in Esoteric Engine)
 # =============================================================================
+
+def calculate_generic_numerology(value: any, context: str = "general") -> Dict[str, Any]:
+    """
+    Calculate generic numerology signals for any numeric value.
+
+    This is DISTINCT from Jarvis numerology (sacred triggers like 2178, 201, 33).
+    Generic numerology covers:
+    - Life path numbers
+    - Master numbers (11, 22, 33)
+    - Tesla numbers (3, 6, 9)
+    - Pythagorean reduction
+    - Expression numbers
+
+    Args:
+        value: Any value to analyze (number or string)
+        context: Context for numerology ("player", "game", "spread", "total", "general")
+
+    Returns:
+        Dict with numerology analysis
+    """
+    # Convert value to number if string
+    if isinstance(value, str):
+        # Calculate expression number from string
+        char_values = {chr(i): (i - 96) % 9 or 9 for i in range(97, 123)}
+        numeric_value = sum(char_values.get(c, 0) for c in value.lower() if c.isalpha())
+    else:
+        numeric_value = int(abs(value)) if value else 0
+
+    # Pythagorean reduction (reduce to single digit or master number)
+    reduced = numeric_value
+    while reduced > 9 and reduced not in [11, 22, 33]:
+        reduced = sum(int(d) for d in str(reduced))
+
+    # Check for special numbers
+    is_master_number = reduced in [11, 22, 33]
+    is_tesla_number = reduced in [3, 6, 9]
+    is_power_number = numeric_value in [11, 22, 33, 44, 55, 66, 77, 88, 99]
+
+    # Calculate signal strength
+    signal_strength = 0.0
+    signals_hit = []
+
+    if is_master_number:
+        signal_strength += 0.3
+        signals_hit.append(f"Master Number {reduced}")
+
+    if is_tesla_number:
+        signal_strength += 0.2
+        signals_hit.append(f"Tesla Number {reduced}")
+
+    if is_power_number:
+        signal_strength += 0.15
+        signals_hit.append(f"Power Number {numeric_value}")
+
+    # Digital root analysis
+    digital_root = reduced if reduced <= 9 else sum(int(d) for d in str(reduced))
+
+    # Context-specific bonuses
+    if context == "spread" and 3 <= numeric_value <= 7:
+        signal_strength += 0.1
+        signals_hit.append("Goldilocks spread zone")
+    elif context == "total" and digital_root == 9:
+        signal_strength += 0.1
+        signals_hit.append("Total reduces to completion (9)")
+
+    return {
+        "input_value": value,
+        "numeric_value": numeric_value,
+        "pythagorean_reduction": reduced,
+        "digital_root": digital_root,
+        "is_master_number": is_master_number,
+        "is_tesla_number": is_tesla_number,
+        "is_power_number": is_power_number,
+        "signal_strength": round(signal_strength, 2),
+        "signals_hit": signals_hit,
+        "context": context,
+        "score": round(5.0 + signal_strength * 10, 1)  # Convert to 0-10 scale centered at 5
+    }
+
 
 def calculate_life_path(birth_date_str: str) -> int:
     """Calculate numerology life path number from birth date."""

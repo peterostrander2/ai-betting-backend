@@ -88,6 +88,7 @@ except ImportError:
 try:
     from time_filters import (
         is_game_today,
+        is_game_started,
         is_team_in_slate,
         validate_today_slate,
         build_today_slate,
@@ -2702,6 +2703,71 @@ async def get_best_bets(sport: str):
     }
     api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
     return result
+
+
+# ============================================================================
+# LIVE BETTING ENDPOINT (v12.0 Production Hardened)
+# ============================================================================
+
+@router.get("/live/in-play/{sport}")
+async def get_live_bets(sport: str):
+    """
+    Live betting picks - games currently in progress.
+
+    Only returns picks with final_score >= 6.5 (COMMUNITY_MIN_SCORE).
+    All picks have status = "LIVE" or "STARTED".
+
+    Returns:
+        Dict with sport, type, picks[], live_games_count, timestamp
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    # Get best bets first
+    best_bets_response = await get_best_bets(sport)
+
+    # Filter to only live/started games
+    live_picks = []
+
+    # Process props
+    for pick in best_bets_response.get("props", {}).get("picks", []):
+        commence_time = pick.get("start_time", pick.get("commence_time", ""))
+        if TIME_FILTERS_AVAILABLE and commence_time:
+            is_started, started_at = is_game_started(commence_time)
+            if is_started:
+                # Only include if score >= 6.5 (community threshold)
+                final_score = pick.get("final_score", 0)
+                if final_score >= 6.5:
+                    pick["status"] = "LIVE"
+                    pick["started_at"] = started_at
+                    pick["live_bet_eligible"] = True
+                    live_picks.append(pick)
+
+    # Process game picks
+    for pick in best_bets_response.get("game_picks", {}).get("picks", []):
+        commence_time = pick.get("start_time", pick.get("commence_time", ""))
+        if TIME_FILTERS_AVAILABLE and commence_time:
+            is_started, started_at = is_game_started(commence_time)
+            if is_started:
+                final_score = pick.get("final_score", 0)
+                if final_score >= 6.5:
+                    pick["status"] = "LIVE"
+                    pick["started_at"] = started_at
+                    pick["live_bet_eligible"] = True
+                    live_picks.append(pick)
+
+    # Sort by final_score descending
+    live_picks.sort(key=lambda x: x.get("final_score", 0), reverse=True)
+
+    return {
+        "sport": sport.upper(),
+        "type": "LIVE_BETS",
+        "picks": live_picks,
+        "live_games_count": len(live_picks),
+        "community_threshold": 6.5,
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 # ============================================================================
