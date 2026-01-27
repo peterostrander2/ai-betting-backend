@@ -221,12 +221,13 @@ else:
 
 ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
-# Sport mappings - Playbook uses uppercase league names (NBA, NFL, MLB, NHL)
+# Sport mappings - Playbook uses uppercase league names (NBA, NFL, MLB, NHL, NCAAB)
 SPORT_MAPPINGS = {
     "nba": {"odds": "basketball_nba", "espn": "basketball/nba", "playbook": "NBA"},
     "nfl": {"odds": "americanfootball_nfl", "espn": "football/nfl", "playbook": "NFL"},
     "mlb": {"odds": "baseball_mlb", "espn": "baseball/mlb", "playbook": "MLB"},
     "nhl": {"odds": "icehockey_nhl", "espn": "hockey/nhl", "playbook": "NHL"},
+    "ncaab": {"odds": "basketball_ncaab", "espn": "basketball/mens-college-basketball", "playbook": "NCAAB"},
 }
 
 # ============================================================================
