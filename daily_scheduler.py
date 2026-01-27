@@ -412,14 +412,26 @@ class DailyScheduler:
             for hour, minute, label in [(11, 0, "morning"), (16, 30, "afternoon"), (18, 30, "evening")]:
                 self.scheduler.add_job(
                     self._run_warm_cache,
-                    CronTrigger(hour=hour, minute=minute),
+                    CronTrigger(hour=hour, minute=minute, timezone="America/New_York"),
                     id=f"warm_cache_{label}",
                     name=f"Cache Pre-Warm ({label})"
                 )
             logger.info("Cache pre-warm enabled: 11:00 AM, 4:30 PM, 6:30 PM ET")
 
-            # Startup warm: 2 minutes after boot
-            threading.Timer(120, self._run_warm_cache).start()
+            # Startup warm: 2 minutes after boot (uses same lock path as scheduled warm)
+            def _startup_warm():
+                """Startup warm with stampede guard."""
+                if not WARM_AVAILABLE:
+                    return
+                import pytz
+                ET = pytz.timezone("America/New_York")
+                today_str = datetime.now(ET).strftime("%Y-%m-%d")
+                lock_key = f"warm_startup:{today_str}"
+                if not api_cache.acquire_lock(lock_key, ttl=300):
+                    logger.info("Startup warm skipped: another instance already warming")
+                    return
+                self._run_warm_cache()
+            threading.Timer(120, _startup_warm).start()
             logger.info("Startup cache warm scheduled in 2 minutes")
 
         self.scheduler.start()

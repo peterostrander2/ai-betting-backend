@@ -570,17 +570,26 @@ async def ops_cache_status():
         sports = ["nba", "nhl", "ncaab", "nfl", "mlb"]
         result = {}
         for sport in sports:
+            # Use canonical cache key builder (matches best-bets endpoint)
             cache_key = f"best-bets:{sport}"
+            live_cache_key = f"best-bets:{sport}:live"
             cached = api_cache.get(cache_key)
+            cached_live = api_cache.get(live_cache_key)
             warm_meta = api_cache.get(f"warm_meta:{sport}")
 
             cache_age = None
             if cached and isinstance(cached, dict) and "_cached_at" in cached:
                 cache_age = round(_time.time() - cached["_cached_at"], 1)
 
+            live_cache_age = None
+            if cached_live and isinstance(cached_live, dict) and "_cached_at" in cached_live:
+                live_cache_age = round(_time.time() - cached_live["_cached_at"], 1)
+
             result[sport] = {
                 "cache_present": cached is not None,
                 "cache_age_seconds": cache_age,
+                "live_cache_present": cached_live is not None,
+                "live_cache_age_seconds": live_cache_age,
                 "last_warm_time": warm_meta.get("last_warm_time") if warm_meta else None,
                 "last_warm_duration": warm_meta.get("duration_seconds") if warm_meta else None,
             }
