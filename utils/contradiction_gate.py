@@ -26,22 +26,31 @@ def make_unique_key(pick) -> str:
     - "NBA|2026-01-28|def456|TOTAL||Game|235.5"
     - "NBA|2026-01-28|ghi789|SPREAD||Lakers|-7.5"
     """
-    sport = pick.sport.upper()
-    date_et = pick.date
-    event_id = pick.canonical_event_id or pick.event_id if hasattr(pick, 'event_id') else pick.matchup
-    market = (pick.market or pick.pick_type or "").upper()
-    prop_type = (pick.prop_type or "").lower()
+    # Support both dict and object access
+    def _get(key, default=""):
+        if isinstance(pick, dict):
+            return pick.get(key, default)
+        return getattr(pick, key, default)
+
+    sport = (_get("sport") or "").upper()
+    date_et = _get("date") or _get("date_et", "")
+    event_id = _get("canonical_event_id") or _get("event_id") or _get("matchup", "")
+    market = (_get("market") or _get("pick_type") or "").upper()
+    prop_type = (_get("prop_type") or "").lower()
+    player_name = _get("player_name") or _get("player", "")
+    side = _get("side", "")
+    line = _get("line", 0)
 
     # For props: use player name
     # For game picks: use "Game" or team name for spreads/ML
-    if pick.player_name:
-        subject = pick.player_name
+    if player_name:
+        subject = player_name
     elif market in ["SPREAD", "MONEYLINE", "ML"]:
-        subject = pick.side if pick.side else "Game"
+        subject = side if side else "Game"
     else:
         subject = "Game"
 
-    line_str = f"{pick.line:.1f}"
+    line_str = f"{line:.1f}" if line else "0.0"
 
     key = f"{sport}|{date_et}|{event_id}|{market}|{prop_type}|{subject}|{line_str}"
     return key
@@ -106,7 +115,7 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
     5. Log contradiction details
 
     Args:
-        picks: List of pick objects (PublishedPick or PickOutputSchema)
+        picks: List of pick objects (PublishedPick or PickOutputSchema) or dicts
         debug: If True, include detailed contradiction info in return
 
     Returns:
@@ -114,6 +123,12 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
     """
     if not picks:
         return [], {}
+
+    # Helper function to get field from dict or object
+    def _get(pick, key, default=""):
+        if isinstance(pick, dict):
+            return pick.get(key, default)
+        return getattr(pick, key, default)
 
     contradictions = detect_contradictions(picks)
 
@@ -125,7 +140,7 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
     processed_pick_ids = set()
 
     for pick in picks:
-        pick_id = pick.pick_id
+        pick_id = _get(pick, "pick_id")
 
         # Skip if already processed
         if pick_id in processed_pick_ids:
@@ -143,8 +158,8 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
         group = contradictions[key]
 
         # Check if there are actually opposite sides in this group
-        market = (pick.market or pick.pick_type or "").upper()
-        sides = [p.side for p in group]
+        market = (_get(pick, "market") or _get(pick, "pick_type") or "").upper()
+        sides = [_get(p, "side") for p in group]
         has_opposites = any(
             is_opposite_side(sides[i], sides[j], market)
             for i in range(len(sides))
@@ -155,47 +170,59 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
             # No actual contradiction (maybe same side at different books)
             # Keep all picks in group
             for p in group:
-                if p.pick_id not in processed_pick_ids:
+                p_id = _get(p, "pick_id")
+                if p_id not in processed_pick_ids:
                     kept_picks.append(p)
-                    processed_pick_ids.add(p.pick_id)
+                    processed_pick_ids.add(p_id)
             continue
 
         # Real contradiction with opposite sides - keep highest score only
-        sorted_group = sorted(group, key=lambda p: p.final_score, reverse=True)
+        sorted_group = sorted(group, key=lambda p: _get(p, "final_score", 0) or _get(p, "total_score", 0), reverse=True)
         winner = sorted_group[0]
         losers = sorted_group[1:]
 
         # Keep the winner
-        if winner.pick_id not in processed_pick_ids:
+        winner_id = _get(winner, "pick_id")
+        if winner_id not in processed_pick_ids:
             kept_picks.append(winner)
-            processed_pick_ids.add(winner.pick_id)
+            processed_pick_ids.add(winner_id)
 
         # Mark and drop the losers
         for loser in losers:
-            if loser.pick_id not in processed_pick_ids:
+            loser_id = _get(loser, "pick_id")
+            if loser_id not in processed_pick_ids:
                 # Mark as contradiction blocked
-                if hasattr(loser, 'contradiction_blocked'):
+                if isinstance(loser, dict):
+                    loser["contradiction_blocked"] = True
+                elif hasattr(loser, 'contradiction_blocked'):
                     loser.contradiction_blocked = True
                 dropped_picks.append(loser)
-                processed_pick_ids.add(loser.pick_id)
+                processed_pick_ids.add(loser_id)
 
         # Log contradiction
         if debug or True:  # Always log contradictions
+            winner_score = _get(winner, "final_score", 0) or _get(winner, "total_score", 0)
+            winner_side = _get(winner, "side")
+
             contradiction_info = {
                 "key": key,
-                "kept_pick_id": winner.pick_id,
-                "kept_score": winner.final_score,
-                "kept_side": winner.side,
-                "dropped_pick_ids": [p.pick_id for p in losers],
-                "dropped_scores": [p.final_score for p in losers],
-                "dropped_sides": [p.side for p in losers]
+                "kept_pick_id": _get(winner, "pick_id"),
+                "kept_score": winner_score,
+                "kept_side": winner_side,
+                "dropped_pick_ids": [_get(p, "pick_id") for p in losers],
+                "dropped_scores": [_get(p, "final_score", 0) or _get(p, "total_score", 0) for p in losers],
+                "dropped_sides": [_get(p, "side") for p in losers]
             }
             contradiction_groups.append(contradiction_info)
 
+            loser_strs = [
+                f'{_get(p, "side")} ({_get(p, "final_score", 0) or _get(p, "total_score", 0):.2f})'
+                for p in losers
+            ]
             logger.info(
                 f"Contradiction blocked: {key} | "
-                f"Kept: {winner.side} ({winner.final_score:.2f}) | "
-                f"Dropped: {[f'{p.side} ({p.final_score:.2f})' for p in losers]}"
+                f"Kept: {winner_side} ({winner_score:.2f}) | "
+                f"Dropped: {loser_strs}"
             )
 
     debug_info = {
