@@ -148,7 +148,7 @@ If you add ANY new endpoint or function that processes Odds API events, you MUST
 
 ---
 
-## Signal Architecture (4-Engine v15.2)
+## Signal Architecture (4-Engine v15.3)
 
 ### Scoring Formula
 ```
@@ -156,8 +156,7 @@ FINAL = (AI × 0.25) + (Research × 0.30) + (Esoteric × 0.20) + (Jarvis × 0.15
        + jason_sim_boost (post-pick)
 ```
 
-All engines score 0-10. Confluence boost: STRONG +3, MODERATE +1, DIVERGENT +0.
-Min output threshold: **6.5** (picks below this are filtered out).
+All engines score 0-10. Min output threshold: **6.5** (picks below this are filtered out).
 
 ### Engine 1: AI Score (25%)
 - 8 AI Models (0-8 scaled to 0-10) - `advanced_ml_backend.py`
@@ -177,12 +176,44 @@ Min output threshold: **6.5** (picks below this are filtered out).
 - Mid-spread Goldilocks, trap detection
 - `jarvis_savant_engine.py`
 
-### Confluence
+### Confluence (v15.3 — with STRONG eligibility gate)
 - Alignment = `1 - abs(research - esoteric) / 10`
-- STRONG (+3): alignment ≥ 70%
+- **STRONG (+3)**: alignment ≥ 80% **AND** at least one active signal (`jarvis_active`, `research_sharp_present`, or `jason_sim_boost != 0`). If alignment ≥70% but no active signal, downgrades to MODERATE.
 - MODERATE (+1): alignment ≥ 60%
 - DIVERGENT (+0): below 60%
 - PERFECT/IMMORTAL: both ≥7.5 + jarvis ≥7.5 + alignment ≥80%
+
+**Why the gate**: Without it, two engines that are both mediocre (e.g., R=4.0, E=4.0) get 100% alignment and STRONG +3 boost for free, inflating scores without real conviction.
+
+### CRITICAL: GOLD_STAR Hard Gates (v15.3)
+
+**GOLD_STAR tier requires ALL of these engine minimums. If any fails, downgrade to EDGE_LEAN.**
+
+| Gate | Threshold | Why |
+|------|-----------|-----|
+| `ai_gte_6.8` | AI ≥ 6.8 | AI models must show conviction |
+| `research_gte_5.5` | Research ≥ 5.5 | Must have real market signals (sharp/splits/variance) |
+| `jarvis_gte_6.5` | Jarvis ≥ 6.5 | Jarvis triggers must fire |
+| `esoteric_gte_4.0` | Esoteric ≥ 4.0 | Esoteric components must contribute |
+
+**Output includes**: `scoring_breakdown.gold_star_gates` (dict of gate→bool), `gold_star_eligible` (bool), `gold_star_failed` (list of failed gate names).
+
+**Where it lives**: `live_data_router.py` `calculate_pick_score()`, after `tier_from_score()` call.
+
+### Tier Hierarchy
+| Tier | Score Threshold | Additional Requirements |
+|------|----------------|------------------------|
+| TITANIUM_SMASH | 3/4 engines ≥ 8.0 | Overrides all other tiers |
+| GOLD_STAR | ≥ 7.5 | Must pass ALL hard gates |
+| EDGE_LEAN | ≥ 6.5 | Default for picks above output filter |
+| MONITOR | ≥ 5.5 | Below output filter (hidden) |
+| PASS | < 5.5 | Below output filter (hidden) |
+
+### If modifying confluence or tiers
+1. Do NOT remove STRONG eligibility gate — it prevents inflation from aligned-but-weak engines
+2. Do NOT remove GOLD_STAR hard gates — they ensure only picks with real multi-engine conviction get top tier
+3. Run debug mode and verify gates show in `scoring_breakdown`
+4. Check that STRONG only fires with alignment ≥80% + active signal
 
 ---
 
