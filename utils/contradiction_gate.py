@@ -125,6 +125,7 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
     Returns:
         Tuple of (filtered_picks, debug_info)
     """
+    logger.info(f"GATE: filter_contradictions called with {len(picks) if picks else 0} picks")
     if not picks:
         return [], {}
 
@@ -247,6 +248,7 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
         "contradiction_groups": contradiction_groups if debug else []
     }
 
+    logger.info(f"GATE: Returning {len(kept_picks)} kept, {len(dropped_picks)} dropped")
     return kept_picks, debug_info
 
 
