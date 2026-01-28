@@ -1374,9 +1374,13 @@ Dry-run:
 ### Files Changed
 
 ```
-live_data_router.py   (MODIFIED - Performance overhaul, debug instrumentation, pick logging fixes)
+live_data_router.py   (MODIFIED - Performance overhaul, debug instrumentation, pick logging fixes, smoke test endpoint)
 pick_logger.py        (MODIFIED - None-safe float/int conversions)
 time_filters.py       (UNCHANGED - ET bounds already correct)
 ```
+
+**7. Smoke Test Endpoint**
+
+Added `GET` and `HEAD` `/live/smoke-test/alert-status` — returns `{"status": "ok", "timestamp": "..."}`. Uptime monitors were hitting this path and logging 404s.
 
 ---
