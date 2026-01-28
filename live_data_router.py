@@ -3529,8 +3529,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # Capture ALL candidates for debug/distribution before filtering
     _all_prop_candidates = deduplicated_props  # Keep ref for debug output
 
+    # v15.0: Filter to community minimum score (6.5)
     filtered_props = [p for p in deduplicated_props if p["total_score"] >= COMMUNITY_MIN_SCORE]
-    top_props = filtered_props[:max_props]
+    filtered_below_6_5_props = len(deduplicated_props) - len(filtered_props)
 
     # v15.3: Deduplicate game picks too
     deduplicated_games, _dupe_dropped_games, _dupe_groups_games = _dedupe_picks(game_picks)
@@ -3538,10 +3539,26 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _all_game_candidates = deduplicated_games  # Keep ref for debug output
 
     filtered_game_picks = [p for p in deduplicated_games if p["total_score"] >= COMMUNITY_MIN_SCORE]
-    top_game_picks = filtered_game_picks[:max_games]
+    filtered_below_6_5_games = len(deduplicated_games) - len(filtered_game_picks)
+
+    # v15.0: Apply contradiction gate to prevent both sides of same bet
+    from utils.contradiction_gate import apply_contradiction_gate
+    filtered_props_no_contradict, filtered_games_no_contradict, contradiction_debug = apply_contradiction_gate(
+        filtered_props,
+        filtered_game_picks,
+        debug=debug_mode
+    )
+
+    # Take top N after contradiction filtering
+    top_props = filtered_props_no_contradict[:max_props]
+    top_game_picks = filtered_games_no_contradict[:max_games]
 
     if _dupe_dropped_props + _dupe_dropped_games > 0:
         logger.info("DEDUPE: dropped %d prop dupes, %d game dupes", _dupe_dropped_props, _dupe_dropped_games)
+
+    if contradiction_debug["total_dropped"] > 0:
+        logger.info("CONTRADICTION_GATE: blocked %d props, %d games (opposite sides)",
+                   contradiction_debug["props_dropped"], contradiction_debug["games_dropped"])
 
 
     # ============================================
@@ -3850,6 +3867,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "dupe_dropped_count": _dupe_dropped_props + _dupe_dropped_games,
             "dupe_groups_props": _dupe_groups_props[:10],  # Cap for output size
             "dupe_groups_games": _dupe_groups_games[:10],
+            # v15.0 filtering telemetry
+            "filtered_below_6_5_props": filtered_below_6_5_props,
+            "filtered_below_6_5_games": filtered_below_6_5_games,
+            "filtered_below_6_5_total": filtered_below_6_5_props + filtered_below_6_5_games,
+            "contradiction_blocked_props": contradiction_debug["props_dropped"],
+            "contradiction_blocked_games": contradiction_debug["games_dropped"],
+            "contradiction_blocked_total": contradiction_debug["total_dropped"],
             # v15.1 diagnostics
             "sharp_lookup_size": len(sharp_lookup),
             "sharp_source": sharp_data.get("source", "unknown"),
