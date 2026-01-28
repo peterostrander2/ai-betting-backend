@@ -3479,10 +3479,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     if PICK_LOGGER_AVAILABLE:
         try:
             pick_logger = get_pick_logger()
+            import pytz as _pytz
             logged_count = 0
             skipped_count = 0
             validation_warnings = []
-            _now_for_log = datetime.now(pytz.timezone("America/New_York"))
+            _et_tz = _pytz.timezone("America/New_York")
+            _now_for_log = datetime.now(_et_tz)
 
             def _enrich_pick_for_logging(p):
                 """Add game_time_utc, minutes_since_start, raw_inputs_snapshot."""
@@ -3491,12 +3493,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 mins_since = 0
                 if start_et:
                     try:
-                        et_tz = pytz.timezone("America/New_York")
                         gt = datetime.fromisoformat(start_et.replace("Z", "+00:00"))
                         if gt.tzinfo is None:
-                            gt = et_tz.localize(gt)
-                        game_time_utc = gt.astimezone(pytz.utc).isoformat()
-                        delta = (_now_for_log - gt.astimezone(et_tz)).total_seconds()
+                            gt = _et_tz.localize(gt)
+                        game_time_utc = gt.astimezone(_pytz.utc).isoformat()
+                        delta = (_now_for_log - gt.astimezone(_et_tz)).total_seconds()
                         if delta > 0:
                             mins_since = int(delta / 60)
                     except Exception:
@@ -5308,6 +5309,10 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
         failed_picks = []
         unresolved_picks = []
 
+        # Track already-graded/failed picks separately
+        _already_graded = 0
+        _already_failed = 0
+
         for pick in picks:
             sport = pick.sport.upper()
 
@@ -5321,6 +5326,18 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
                     "unresolved": 0,
                     "failed_picks": []
                 }
+
+            # Skip already-graded or already-failed picks
+            _gs = getattr(pick, "grade_status", "PENDING")
+            if _gs == "GRADED":
+                _already_graded += 1
+                results["graded"] += 1
+                results["by_sport"][sport]["graded"] += 1
+                continue
+            if _gs == "FAILED" and not getattr(pick, "canonical_player_id", ""):
+                # Old test seeds with no canonical_player_id — skip
+                _already_failed += 1
+                continue
 
             results["by_sport"][sport]["picks"] += 1
 
@@ -5423,6 +5440,8 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
         }
         results["failed_picks"] = failed_picks
         results["unresolved_picks"] = unresolved_picks
+        results["skipped_already_graded"] = _already_graded
+        results["skipped_stale_seeds"] = _already_failed
         results["timestamp"] = datetime.now().isoformat()
 
         logger.info(
