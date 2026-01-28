@@ -132,6 +132,14 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
 
     contradictions = detect_contradictions(picks)
 
+    # DEBUG: Log contradictions found
+    if contradictions:
+        logger.info(f"Contradiction gate found {len(contradictions)} potential contradiction groups")
+        for key, group in list(contradictions.items())[:3]:  # Log first 3
+            sports = [_get(p, 'sport') for p in group]
+            sides = [_get(p, 'side') for p in group]
+            logger.info(f"  Group: {key[:50]}... | Sports: {sports} | Sides: {sides}")
+
     kept_picks = []
     dropped_picks = []
     contradiction_groups = []
@@ -165,6 +173,10 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
             for i in range(len(sides))
             for j in range(i + 1, len(sides))
         )
+
+        # DEBUG: Log opposite side check
+        if len(group) > 1 and debug:
+            logger.info(f"Checking opposites for key {key[:50]}: market={market}, sides={sides}, has_opposites={has_opposites}")
 
         if not has_opposites:
             # No actual contradiction (maybe same side at different books)
