@@ -567,7 +567,7 @@ class PickLogger:
         # Check for duplicates
         is_dup, dup_reason = self.is_duplicate(
             pick_hash, today,
-            line=float(pick_data.get("line", 0)),
+            line=float(pick_data.get("line") or 0),
             allow_line_change=True
         )
 
@@ -706,7 +706,7 @@ class PickLogger:
             jason_sim_available=pick_data.get("jason_sim_available", pick_data.get("jason_ran", False)),
             variance_flag=pick_data.get("variance_flag", ""),
             injury_state=pick_data.get("injury_state", "CONFIRMED_ONLY"),
-            sim_count=int(pick_data.get("sim_count", 1000 if pick_data.get("jason_ran") else 0)),
+            sim_count=_i(pick_data.get("sim_count", 1000 if pick_data.get("jason_ran") else 0)),
             signals_firing=pick_data.get("signals_firing", []),
             engine_breakdown=pick_data.get("engine_breakdown", {
                 "ai_score": ai,
@@ -728,7 +728,7 @@ class PickLogger:
             tier_badge=tier_badge,
             # v15.1 grading metadata
             game_time_utc=pick_data.get("game_time_utc", ""),
-            minutes_since_start=int(pick_data.get("minutes_since_start", 0)),
+            minutes_since_start=_i(pick_data.get("minutes_since_start", 0)),
             raw_inputs_snapshot=pick_data.get("raw_inputs_snapshot", {}),
         )
 
