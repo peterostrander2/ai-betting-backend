@@ -2476,11 +2476,21 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         trap_mod = 0.0            # Modifier (negative)
 
         # --- A) MAGNITUDE for fib/vortex (never 0 for props) ---
-        _eso_magnitude = abs(spread) if spread else 0
-        if _eso_magnitude == 0 and prop_line:
-            _eso_magnitude = abs(prop_line)
-        if _eso_magnitude == 0:
-            _eso_magnitude = abs(total / 10) if total and total != 220 else 0
+        # v15.0: For props, prioritize prop_line FIRST; for game picks, use spread/total
+        if player_name:
+            # PROP PICK: Use prop line first, game context as fallback
+            _eso_magnitude = abs(prop_line) if prop_line else 0
+            if _eso_magnitude == 0 and spread:
+                _eso_magnitude = abs(spread)
+            if _eso_magnitude == 0 and total:
+                _eso_magnitude = abs(total / 10) if total != 220 else 0
+        else:
+            # GAME PICK: Use spread/total first (normal flow)
+            _eso_magnitude = abs(spread) if spread else 0
+            if _eso_magnitude == 0 and total:
+                _eso_magnitude = abs(total / 10) if total != 220 else 0
+            if _eso_magnitude == 0 and prop_line:
+                _eso_magnitude = abs(prop_line)
 
         # --- B) NUMEROLOGY (35% weight, max 3.5 pts) - Pick-specific ---
         from datetime import datetime as dt_now

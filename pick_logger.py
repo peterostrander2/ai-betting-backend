@@ -216,6 +216,43 @@ class PublishedPick:
     # Tier badge for frontend
     tier_badge: str = ""  # SMASH, GOLD, EDGE, etc.
 
+    # === NEW FIELDS FOR v15.0 CLARITY (Master Prompt Requirements) ===
+
+    # Human-readable output fields
+    description: str = ""  # Full sentence: "Jamal Murray Assists Over 3.5"
+    pick_detail: str = ""  # Compact: "Assists Over 3.5", "Total Under 246.5"
+
+    # Game status (standardized)
+    game_status: str = "SCHEDULED"  # SCHEDULED, LIVE, FINAL
+
+    # Live betting flags
+    is_live_bet_candidate: bool = False  # True if LIVE and triggers met
+    was_game_already_started: bool = False  # Alias/replacement for already_started
+
+    # Titanium modules tracking
+    titanium_modules_hit: List[str] = field(default_factory=list)  # ['AI', 'Research', 'Jarvis']
+
+    # Odds alias for consistency
+    odds_american: int = -110  # Same as odds, but explicit naming
+
+    # Jason Sim expanded fields
+    jason_projected_total: Optional[float] = None  # Simulated game total
+    jason_variance_flag: str = ""  # HIGH, MED, LOW (alias of variance_flag)
+
+    # Prop availability tracking
+    prop_available_at_books: List[str] = field(default_factory=list)  # Books where confirmed
+
+    # Contradiction prevention
+    contradiction_blocked: bool = False  # True if blocked due to opposite side existing
+
+    # Engine breakdowns (separate from research_breakdown)
+    esoteric_breakdown: Dict[str, Any] = field(default_factory=dict)
+    jarvis_breakdown: Dict[str, Any] = field(default_factory=dict)
+
+    # CLV grading
+    beat_clv: Optional[bool] = None  # True if got better line than closing
+    process_grade: Optional[str] = None  # EXCELLENT, GOOD, FAIR, POOR
+
     # v15.1 - Grading metadata
     game_time_utc: str = ""  # ISO UTC game start time
     minutes_since_start: int = 0  # Minutes since game start (0 if not started)
