@@ -2811,43 +2811,410 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _record("game_context", _s)
 
     # ============================================
-    # CATEGORY 1: PLAYER PROPS
-    # (NCAAB props disabled — state legality varies)
+    # v16.1: PARALLEL DATA FETCH — props + game odds concurrently
+    # ============================================
+    _s = time.time()
+    _skip_ncaab_props = sport_upper == "NCAAB"
+    if _skip_ncaab_props:
+        logger.info("NCAAB props disabled — state legality varies, skipping prop analysis")
+
+    sport_config = SPORT_MAPPINGS[sport_lower]
+    odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
+
+    async def _fetch_props():
+        if _skip_ncaab_props:
+            return {"data": []}
+        return await get_props(sport)
+
+    async def _fetch_game_odds():
+        return await fetch_with_retries(
+            "GET", odds_url,
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "spreads,h2h,totals",
+                "oddsFormat": "american"
+            }
+        )
+
+    props_data, game_odds_resp = await asyncio.gather(
+        _fetch_props(),
+        _fetch_game_odds(),
+        return_exceptions=True
+    )
+    # Handle exceptions from gather
+    if isinstance(props_data, Exception):
+        logger.warning("Props fetch failed in parallel: %s", props_data)
+        props_data = {"data": []}
+    if isinstance(game_odds_resp, Exception):
+        logger.warning("Game odds fetch failed in parallel: %s", game_odds_resp)
+        game_odds_resp = None
+    _record("parallel_fetch", _s)
+
+    # ============================================
+    # APPLY ET DAY GATE to both datasets
+    # ============================================
+    _s = time.time()
+    # --- Props ET filter ---
+    raw_prop_games = props_data.get("data", []) if isinstance(props_data, dict) else []
+    _dropped_out_of_window_props = 0
+    _dropped_missing_time_props = 0
+    if TIME_FILTERS_AVAILABLE and raw_prop_games:
+        prop_games, _dropped_props_window, _dropped_props_missing = filter_events_today_et(raw_prop_games, date_str)
+        _dropped_out_of_window_props = len(_dropped_props_window)
+        _dropped_missing_time_props = len(_dropped_props_missing)
+        logger.info("PROPS TODAY GATE: kept=%d, dropped_window=%d, dropped_missing=%d",
+                    len(prop_games), _dropped_out_of_window_props, _dropped_missing_time_props)
+    else:
+        prop_games = raw_prop_games
+
+    _date_window_et_debug["events_before_props"] = len(raw_prop_games)
+    _date_window_et_debug["events_after_props"] = len(prop_games)
+
+    if len(prop_games) > max_events:
+        logger.info("MAX_EVENTS CAP: Trimming prop events from %d to %d", len(prop_games), max_events)
+        prop_games = prop_games[:max_events]
+
+    # --- Games ET filter ---
+    raw_games = []
+    _dropped_out_of_window_games = 0
+    _dropped_missing_time_games = 0
+    ghost_game_count = 0
+    if game_odds_resp and hasattr(game_odds_resp, 'status_code') and game_odds_resp.status_code == 200:
+        raw_games = game_odds_resp.json()
+        _date_window_et_debug["events_before_games"] = len(raw_games)
+        if TIME_FILTERS_AVAILABLE:
+            raw_games, _dropped_games_window, _dropped_games_missing = filter_events_today_et(raw_games, date_str)
+            _dropped_out_of_window_games = len(_dropped_games_window)
+            _dropped_missing_time_games = len(_dropped_games_missing)
+            ghost_game_count = _dropped_out_of_window_games + _dropped_missing_time_games
+            logger.info("GAMES TODAY GATE: kept=%d, dropped_window=%d, dropped_missing=%d",
+                        len(raw_games), _dropped_out_of_window_games, _dropped_missing_time_games)
+        _date_window_et_debug["events_after_games"] = len(raw_games)
+        if len(raw_games) > max_events:
+            logger.info("MAX_EVENTS CAP: Trimming game events from %d to %d", len(raw_games), max_events)
+            raw_games = raw_games[:max_events]
+    _record("et_filter", _s)
+
+    # ============================================
+    # v16.1: PARALLEL PLAYER RESOLUTION (all unique players at once)
+    # ============================================
+    _s = time.time()
+    _player_resolve_cache = {}  # (sport, name_lower, home, away) → dict|"BLOCKED"
+    _resolve_attempted = 0
+    _resolve_succeeded = 0
+    _resolve_timed_out = 0
+
+    if IDENTITY_RESOLVER_AVAILABLE and prop_games:
+        # 1. Extract unique (player, home_team, away_team) tuples from props
+        _unique_players = {}  # resolve_key → (raw_name, home, away, game_key)
+        for game in prop_games:
+            _ht = game.get("home_team", "")
+            _at = game.get("away_team", "")
+            _gk = f"{_at}@{_ht}"
+            for prop in game.get("props", []):
+                _pn = prop.get("player", "Unknown")
+                _rk = (sport_upper, _pn.lower().strip(), _ht, _at)
+                if _rk not in _unique_players:
+                    _unique_players[_rk] = (_pn, _ht, _at, _gk)
+
+        logger.info("PLAYER RESOLVE: %d unique players to resolve", len(_unique_players))
+
+        # 2. Resolve all in parallel with per-call 0.8s timeout
+        async def _resolve_one(rk, raw_name, home, away, gk):
+            try:
+                resolved = await asyncio.wait_for(
+                    resolve_player(sport=sport_upper, raw_name=raw_name, team_hint=home, event_id=gk),
+                    timeout=0.8
+                )
+                # If low confidence with home team, try away team
+                if not resolved.is_resolved or resolved.confidence < 0.8:
+                    try:
+                        resolved_away = await asyncio.wait_for(
+                            resolve_player(sport=sport_upper, raw_name=raw_name, team_hint=away, event_id=gk),
+                            timeout=0.8
+                        )
+                        if resolved_away.confidence > resolved.confidence:
+                            resolved = resolved_away
+                    except asyncio.TimeoutError:
+                        pass  # Keep first result
+
+                if resolved.is_resolved:
+                    # Check injury guard
+                    try:
+                        _resolver = get_player_resolver()
+                        resolved = await asyncio.wait_for(
+                            _resolver.check_injury_guard(resolved, allow_questionable=True),
+                            timeout=0.5
+                        )
+                    except asyncio.TimeoutError:
+                        pass  # Skip injury guard, don't block
+
+                    if resolved.is_blocked:
+                        return rk, "BLOCKED"
+                    return rk, {
+                        "canonical_player_id": resolved.canonical_player_id,
+                        "provider_ids": resolved.provider_ids,
+                        "position": resolved.position,
+                        "team": resolved.team,
+                    }
+                return rk, {}
+            except asyncio.TimeoutError:
+                return rk, "TIMEOUT"
+            except Exception as e:
+                logger.debug("Player resolve failed for %s: %s", raw_name, e)
+                return rk, {}
+
+        # Fire all resolutions concurrently
+        _resolve_tasks = [
+            _resolve_one(rk, raw_name, home, away, gk)
+            for rk, (raw_name, home, away, gk) in _unique_players.items()
+        ]
+        _resolve_attempted = len(_resolve_tasks)
+
+        # Use overall timeout for the whole batch (3s max)
+        try:
+            _results = await asyncio.wait_for(
+                asyncio.gather(*_resolve_tasks, return_exceptions=True),
+                timeout=3.0
+            )
+            for r in _results:
+                if isinstance(r, Exception):
+                    continue
+                rk, val = r
+                _player_resolve_cache[rk] = val
+                if isinstance(val, dict) and val.get("canonical_player_id"):
+                    _resolve_succeeded += 1
+                elif val == "TIMEOUT":
+                    _resolve_timed_out += 1
+        except asyncio.TimeoutError:
+            logger.warning("PLAYER RESOLVE: Batch timed out after 3s (%d/%d resolved)", _resolve_succeeded, _resolve_attempted)
+            _timed_out_components.append("player_resolution_batch")
+
+    _record("player_resolution", _s)
+    logger.info("PLAYER RESOLVE: %d attempted, %d succeeded, %d timed_out in %.2fs",
+                _resolve_attempted, _resolve_succeeded, _resolve_timed_out, _timings.get("player_resolution", 0))
+
+    # ============================================
+    # CATEGORY 1: GAME PICKS (Spreads, Totals, ML) — runs FIRST (fast, no player resolution)
+    # ============================================
+    _s = time.time()
+    game_picks = []
+
+    try:
+        if raw_games:
+            for game in raw_games:
+                if _past_deadline():
+                    _timed_out_components.append("game_picks_scoring")
+                    logger.warning("TIME BUDGET: Game picks hit deadline after %d picks", len(game_picks))
+                    break
+                home_team = game.get("home_team", "")
+                away_team = game.get("away_team", "")
+                game_key = f"{away_team}@{home_team}"
+                game_str = f"{home_team}{away_team}"
+                sharp_signal = sharp_lookup.get(game_key, {})
+                commence_time = game.get("commence_time", "")
+
+                start_time_et = ""
+                if TIME_FILTERS_AVAILABLE and commence_time:
+                    start_time_et = get_game_start_time_et(commence_time)
+
+                best_odds_by_market = {}
+                for bm in game.get("bookmakers", []):
+                    book_name = bm.get("title", "Unknown")
+                    book_key = bm.get("key", "")
+                    bm_link = AFFILIATE_LINKS.get(book_key, "")
+                    for market in bm.get("markets", []):
+                        market_key = market.get("key", "")
+                        for outcome in market.get("outcomes", []):
+                            pick_name = outcome.get("name", "")
+                            odds = outcome.get("price", -110)
+                            point = outcome.get("point")
+                            outcome_key = f"{market_key}:{pick_name}:{point}"
+                            if outcome_key not in best_odds_by_market or odds > best_odds_by_market[outcome_key][0]:
+                                best_odds_by_market[outcome_key] = (odds, book_name, book_key, bm_link)
+
+                for bm in game.get("bookmakers", [])[:1]:
+                    for market in bm.get("markets", []):
+                        market_key = market.get("key", "")
+                        for outcome in market.get("outcomes", []):
+                            pick_name = outcome.get("name", "")
+                            point = outcome.get("point")
+                            outcome_key = f"{market_key}:{pick_name}:{point}"
+                            best_odds, best_book, best_book_key, best_link = best_odds_by_market.get(
+                                outcome_key, (outcome.get("price", -110), "Unknown", "", "")
+                            )
+
+                            if market_key == "spreads":
+                                pick_type = "SPREAD"
+                                pick_side = f"{pick_name} {point:+.1f}" if point else pick_name
+                                display = pick_side
+                            elif market_key == "h2h":
+                                pick_type = "MONEYLINE"
+                                pick_side = f"{pick_name} ML"
+                                display = pick_side
+                            elif market_key == "totals":
+                                pick_type = "TOTAL"
+                                pick_side = f"{pick_name} {point}" if point else pick_name
+                                display = pick_side
+                            else:
+                                continue
+
+                            score_data = calculate_pick_score(
+                                game_str,
+                                sharp_signal,
+                                base_ai=4.5,
+                                player_name="",
+                                home_team=home_team,
+                                away_team=away_team,
+                                spread=point if market_key == "spreads" and point else 0,
+                                total=point if market_key == "totals" and point else 220,
+                                public_pct=sharp_signal.get("public_pct", sharp_signal.get("ticket_pct", 50)),
+                                pick_type=pick_type,
+                                pick_side=pick_side,
+                                prop_line=point if point else 0
+                            )
+
+                            game_status = "UPCOMING"
+                            if TIME_FILTERS_AVAILABLE and commence_time:
+                                game_status = get_game_status(commence_time)
+
+                            signals_fired = score_data.get("pillars_passed", []).copy()
+                            if sharp_signal.get("signal_strength") in ["STRONG", "MODERATE"]:
+                                signals_fired.append(f"SHARP_{sharp_signal.get('signal_strength')}")
+                            has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
+
+                            game_picks.append({
+                                "sport": sport.upper(),
+                                "league": sport.upper(),
+                                "event_id": game_key,
+                                "pick_type": pick_type,
+                                "pick": display,
+                                "pick_side": pick_side,
+                                "team": pick_name if market_key != "totals" else None,
+                                "line": point,
+                                "odds": best_odds,
+                                "book": best_book,
+                                "book_key": best_book_key,
+                                "book_link": best_link,
+                                "sportsbook_name": best_book,
+                                "sportsbook_event_url": best_link,
+                                "game": f"{away_team} @ {home_team}",
+                                "matchup": f"{away_team} @ {home_team}",
+                                "home_team": home_team,
+                                "away_team": away_team,
+                                "start_time_et": start_time_et,
+                                "game_status": game_status,
+                                "status": game_status.lower() if game_status else "scheduled",
+                                "has_started": has_started,
+                                "is_started_already": has_started,
+                                "is_live": game_status == "MISSED_START",
+                                "is_live_bet_candidate": game_status == "MISSED_START",
+                                "market": market_key,
+                                "recommendation": display,
+                                "best_book": best_book,
+                                "best_book_link": best_link,
+                                "signals_fired": signals_fired,
+                                "signals_firing": signals_fired,
+                                "pillars_hit": score_data.get("pillars_passed", []),
+                                "engine_breakdown": {
+                                    "ai": score_data.get("ai_score", 0),
+                                    "research": score_data.get("research_score", 0),
+                                    "esoteric": score_data.get("esoteric_score", 0),
+                                    "jarvis": score_data.get("jarvis_rs", 0),
+                                },
+                                "titanium_reasons": score_data.get("smash_reasons", []),
+                                "graded": False,
+                                "grade_status": "PENDING",
+                                **score_data,
+                                "sharp_signal": sharp_signal.get("signal_strength", "NONE")
+                            })
+    except Exception as e:
+        logger.warning("Game picks scoring failed: %s", e)
+
+    _record("game_picks_scoring", _s)
+
+    if ghost_game_count > 0:
+        logger.info("GHOST PREVENTION: Excluded %d games not scheduled for today", ghost_game_count)
+
+    # Fallback to sharp money if no game picks
+    if not game_picks and sharp_data.get("data"):
+        for signal in sharp_data.get("data", []):
+            home_team = signal.get("home_team", "")
+            away_team = signal.get("away_team", "")
+            game_str = f"{home_team}{away_team}"
+
+            score_data = calculate_pick_score(
+                game_str,
+                signal,
+                base_ai=5.0,
+                player_name="",
+                home_team=home_team,
+                away_team=away_team,
+                spread=signal.get("line_variance", 0),
+                total=220,
+                public_pct=50,
+                pick_type="SHARP",
+                pick_side=signal.get("side", "HOME"),
+                prop_line=0
+            )
+
+            signals_fired = score_data.get("pillars_passed", []).copy()
+            signals_fired.append(f"SHARP_{signal.get('signal_strength', 'MODERATE')}")
+
+            game_picks.append({
+                "sport": sport.upper(),
+                "league": sport.upper(),
+                "event_id": signal.get("game_id", ""),
+                "pick_type": "SHARP",
+                "pick": f"Sharp on {signal.get('side', 'HOME')}",
+                "pick_side": f"{signal.get('side', 'HOME')} SHARP",
+                "team": home_team if signal.get("side") == "HOME" else away_team,
+                "line": signal.get("line_variance", 0),
+                "odds": -110,
+                "book": "",
+                "book_key": "",
+                "book_link": "",
+                "sportsbook_name": "",
+                "sportsbook_event_url": "",
+                "game": f"{away_team} @ {home_team}",
+                "matchup": f"{away_team} @ {home_team}",
+                "home_team": home_team,
+                "away_team": away_team,
+                "start_time_et": "",
+                "game_status": "UPCOMING",
+                "status": "scheduled",
+                "has_started": False,
+                "is_started_already": False,
+                "is_live": False,
+                "is_live_bet_candidate": False,
+                "market": "sharp_money",
+                "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
+                "best_book": "",
+                "best_book_link": "",
+                "signals_fired": signals_fired,
+                "signals_firing": signals_fired,
+                "pillars_hit": score_data.get("pillars_passed", []),
+                "engine_breakdown": {
+                    "ai": score_data.get("ai_score", 0),
+                    "research": score_data.get("research_score", 0),
+                    "esoteric": score_data.get("esoteric_score", 0),
+                    "jarvis": score_data.get("jarvis_rs", 0),
+                },
+                "titanium_reasons": score_data.get("smash_reasons", []),
+                "graded": False,
+                "grade_status": "PENDING",
+                **score_data,
+                "sharp_signal": signal.get("signal_strength", "MODERATE")
+            })
+
+    # ============================================
+    # CATEGORY 2: PLAYER PROPS (uses pre-resolved player cache — instant lookups)
     # ============================================
     _s = time.time()
     props_picks = []
     invalid_injury_count = 0
-    _skip_ncaab_props = sport_upper == "NCAAB"
-    if _skip_ncaab_props:
-        logger.info("NCAAB props disabled — state legality varies, skipping prop analysis")
     try:
-        props_data = await get_props(sport) if not _skip_ncaab_props else {"data": []}
-
-        # v15.1: Apply ET day gate to props — filter out non-today events
-        raw_prop_games = props_data.get("data", [])
-        _dropped_out_of_window_props = 0
-        _dropped_missing_time_props = 0
-        if TIME_FILTERS_AVAILABLE and raw_prop_games:
-            prop_games, _dropped_props_window, _dropped_props_missing = filter_events_today_et(raw_prop_games, date_str)
-            _dropped_out_of_window_props = len(_dropped_props_window)
-            _dropped_missing_time_props = len(_dropped_props_missing)
-            logger.info("PROPS TODAY GATE: kept=%d, dropped_window=%d, dropped_missing=%d",
-                        len(prop_games), _dropped_out_of_window_props, _dropped_missing_time_props)
-        else:
-            prop_games = raw_prop_games
-
-        # v16.0: Track event counts for date_window_et debug
-        _date_window_et_debug["events_before_props"] = len(raw_prop_games)
-        _date_window_et_debug["events_after_props"] = len(prop_games)
-
-        # v16.0: Apply max_events cap BEFORE iterating props (limits API/scoring work)
-        if len(prop_games) > max_events:
-            logger.info("MAX_EVENTS CAP: Trimming prop events from %d to %d", len(prop_games), max_events)
-            prop_games = prop_games[:max_events]
-
-        # v16.0: Batch player resolution cache (sport, normalized_name, team, opponent) → resolved
-        _player_resolve_cache = {}
-
         for game in prop_games:
             if _past_deadline():
                 _timed_out_components.append("props_scoring")
@@ -2860,12 +3227,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             sharp_signal = sharp_lookup.get(game_key, {})
             commence_time = game.get("commence_time", "")
 
-            # v15.1: Inherit game-level spread/total for props scoring
             _ctx = game_context.get(game_key, {})
             _game_spread = _ctx.get("spread", 0)
             _game_total = _ctx.get("total", 220)
 
-            # Get start time in ET for display
             start_time_et = ""
             if TIME_FILTERS_AVAILABLE and commence_time:
                 start_time_et = get_game_start_time_et(commence_time)
@@ -2884,15 +3249,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 if side not in ["Over", "Under"]:
                     continue
 
-                # v11.08 INJURY ENFORCEMENT: Skip OUT/DOUBTFUL/SUSPENDED players
                 if TIERING_AVAILABLE and is_prop_invalid_injury(injury_status):
-                    logger.info("INJURY EXCLUSION: Skipping %s prop for %s (status: %s)",
-                              market, player, injury_status)
                     invalid_injury_count += 1
                     continue
 
-                # Calculate score with full esoteric integration
-                # v15.1: Props inherit game-level spread/total for esoteric scoring
                 score_data = calculate_pick_score(
                     game_str + player,
                     sharp_signal,
@@ -2908,14 +3268,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     prop_line=line
                 )
 
-                # v11.08 INJURY TIER DOWNGRADE: QUESTIONABLE/PROBABLE downgrades tier
                 tier = score_data.get("tier", "PASS")
                 was_downgraded = False
                 if TIERING_AVAILABLE and injury_status:
                     tier, was_downgraded = apply_injury_downgrade(tier, injury_status)
                     if was_downgraded:
                         score_data["tier"] = tier
-                        # Update units based on new tier
                         new_config = get_tier_config(tier)
                         score_data["units"] = new_config.get("units", 0.0)
                         score_data["action"] = new_config.get("action", "SKIP")
@@ -2927,96 +3285,33 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             "reason": f"Player is {injury_status}"
                         })
 
-                # v11.15: Determine game status (UPCOMING vs MISSED_START)
                 game_status = "UPCOMING"
                 if TIME_FILTERS_AVAILABLE and commence_time:
                     game_status = get_game_status(commence_time)
 
-                # v16.0 BATCH PLAYER IDENTITY RESOLUTION (cached + deadline-aware)
+                # v16.1: Use pre-resolved player cache (instant lookup, no await)
                 canonical_player_id = None
                 provider_ids = {}
                 player_position = None
                 player_team = None
                 resolved_injury_status = injury_status
                 prop_blocked = False
-                blocked_reason = None
 
-                # Cache key: (sport, normalized_name, team, opponent)
                 _resolve_key = (sport_upper, player.lower().strip(), home_team, away_team)
+                _cached_res = _player_resolve_cache.get(_resolve_key)
 
-                if IDENTITY_RESOLVER_AVAILABLE:
-                    if _resolve_key in _player_resolve_cache:
-                        # Use cached resolution
-                        _cached_res = _player_resolve_cache[_resolve_key]
-                        if _cached_res == "SKIPPED_DEADLINE":
-                            # Previous attempt was skipped due to deadline
-                            canonical_player_id = None
-                        elif _cached_res == "BLOCKED":
-                            prop_blocked = True
-                        elif isinstance(_cached_res, dict):
-                            canonical_player_id = _cached_res.get("canonical_player_id")
-                            provider_ids = _cached_res.get("provider_ids", {})
-                            player_position = _cached_res.get("position")
-                            player_team = _cached_res.get("team")
-                    elif _time_left() < 1.0:
-                        # Skip resolution if < 1s left
-                        _player_resolve_cache[_resolve_key] = "SKIPPED_DEADLINE"
-                        if "player_resolution" not in _timed_out_components:
-                            _timed_out_components.append("player_resolution")
-                    else:
-                        try:
-                            resolved = await resolve_player(
-                                sport=sport_upper,
-                                raw_name=player,
-                                team_hint=home_team,
-                                event_id=game_key
-                            )
+                if _cached_res == "BLOCKED":
+                    prop_blocked = True
+                elif isinstance(_cached_res, dict):
+                    canonical_player_id = _cached_res.get("canonical_player_id")
+                    provider_ids = _cached_res.get("provider_ids", {})
+                    player_position = _cached_res.get("position")
+                    player_team = _cached_res.get("team")
+                # TIMEOUT or missing → use fallback ID (don't block the prop)
 
-                            if not resolved.is_resolved or resolved.confidence < 0.8:
-                                resolved_away = await resolve_player(
-                                    sport=sport_upper,
-                                    raw_name=player,
-                                    team_hint=away_team,
-                                    event_id=game_key
-                                )
-                                if resolved_away.confidence > resolved.confidence:
-                                    resolved = resolved_away
-
-                            if resolved.is_resolved:
-                                canonical_player_id = resolved.canonical_player_id
-                                provider_ids = resolved.provider_ids
-                                player_position = resolved.position
-                                if resolved.team:
-                                    player_team = resolved.team
-
-                                resolver = get_player_resolver()
-                                allow_questionable = score_data.get("tier", "PASS") != "TITANIUM_SMASH"
-                                resolved = await resolver.check_injury_guard(resolved, allow_questionable=allow_questionable)
-
-                                if resolved.is_blocked:
-                                    prop_blocked = True
-                                    blocked_reason = resolved.blocked_reason
-                                    _player_resolve_cache[_resolve_key] = "BLOCKED"
-                                    logger.info("PLAYER GUARD: Blocking prop for %s (reason: %s)", player, blocked_reason)
-                                else:
-                                    _player_resolve_cache[_resolve_key] = {
-                                        "canonical_player_id": canonical_player_id,
-                                        "provider_ids": provider_ids,
-                                        "position": player_position,
-                                        "team": player_team,
-                                    }
-                            else:
-                                _player_resolve_cache[_resolve_key] = {}
-                        except Exception as e:
-                            logger.warning("Player resolution failed for %s: %s", player, e)
-                            canonical_player_id = f"{sport_upper}:NAME:{normalize_player_name(player) if IDENTITY_RESOLVER_AVAILABLE else player.lower().replace(' ', '_')}|{home_team.lower().replace(' ', '_')}"
-                            _player_resolve_cache[_resolve_key] = {"canonical_player_id": canonical_player_id, "provider_ids": {}, "position": None, "team": None}
-
-                # Skip blocked props
                 if prop_blocked:
                     continue
 
-                # If no canonical ID generated, create fallback
                 if not canonical_player_id:
                     safe_name = player.lower().replace(" ", "_").replace("'", "").replace(".", "")
                     safe_team = home_team.lower().replace(" ", "_")
@@ -3162,283 +3457,6 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     filtered_props = [p for p in deduplicated_props if p["total_score"] >= COMMUNITY_MIN_SCORE]
     top_props = filtered_props[:max_props]
-
-    # ============================================
-    # CATEGORY 2: GAME PICKS (Spreads, Totals, ML)
-    # ============================================
-    _s = time.time()
-    game_picks = []
-    ghost_game_count = 0
-    _dropped_out_of_window_games = 0
-    _dropped_missing_time_games = 0
-    sport_config = SPORT_MAPPINGS[sport_lower]
-
-    _skip_game_picks = False
-    if _past_deadline():
-        _timed_out_components.append("game_picks")
-        _skip_game_picks = True
-        logger.warning("TIME BUDGET: Skipping game picks entirely (%.1fs elapsed)", _elapsed())
-
-    try:
-        # Fetch game odds (spreads, totals, moneylines)
-        odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
-        resp = await fetch_with_retries(
-            "GET", odds_url,
-            params={
-                "apiKey": ODDS_API_KEY,
-                "regions": "us",
-                "markets": "spreads,h2h,totals",
-                "oddsFormat": "american"
-            }
-        ) if not _skip_game_picks else None
-
-        if resp and resp.status_code == 200:
-            games = resp.json()
-            _date_window_et_debug["events_before_games"] = len(games)
-
-            # v15.1 TODAY-ONLY FILTER: Exclude non-today games with counters
-            _dropped_out_of_window_games = 0
-            _dropped_missing_time_games = 0
-            if TIME_FILTERS_AVAILABLE:
-                games, _dropped_games_window, _dropped_games_missing = filter_events_today_et(games, date_str)
-                _dropped_out_of_window_games = len(_dropped_games_window)
-                _dropped_missing_time_games = len(_dropped_games_missing)
-                ghost_game_count = _dropped_out_of_window_games + _dropped_missing_time_games
-                logger.info("GAMES TODAY GATE: kept=%d, dropped_window=%d, dropped_missing=%d",
-                            len(games), _dropped_out_of_window_games, _dropped_missing_time_games)
-
-            _date_window_et_debug["events_after_games"] = len(games)
-
-            # v16.0: Apply max_events cap to games too
-            if len(games) > max_events:
-                logger.info("MAX_EVENTS CAP: Trimming game events from %d to %d", len(games), max_events)
-                games = games[:max_events]
-
-            for game in games:
-                home_team = game.get("home_team", "")
-                away_team = game.get("away_team", "")
-                game_key = f"{away_team}@{home_team}"
-                game_str = f"{home_team}{away_team}"
-                sharp_signal = sharp_lookup.get(game_key, {})
-                commence_time = game.get("commence_time", "")
-
-                # Get start time in ET for display
-                start_time_et = ""
-                if TIME_FILTERS_AVAILABLE and commence_time:
-                    start_time_et = get_game_start_time_et(commence_time)
-
-                # Track best odds across books
-                best_odds_by_market = {}  # market_key -> {outcome -> (odds, book_name, book_key, book_link)}
-
-                for bm in game.get("bookmakers", []):
-                    book_name = bm.get("title", "Unknown")
-                    book_key = bm.get("key", "")
-                    # Generate affiliate link for this book
-                    bm_link = AFFILIATE_LINKS.get(book_key, "")
-
-                    for market in bm.get("markets", []):
-                        market_key = market.get("key", "")
-
-                        for outcome in market.get("outcomes", []):
-                            pick_name = outcome.get("name", "")
-                            odds = outcome.get("price", -110)
-                            point = outcome.get("point")
-
-                            outcome_key = f"{market_key}:{pick_name}:{point}"
-                            if outcome_key not in best_odds_by_market or odds > best_odds_by_market[outcome_key][0]:
-                                best_odds_by_market[outcome_key] = (odds, book_name, book_key, bm_link)
-
-                # Now build picks using best odds
-                for bm in game.get("bookmakers", [])[:1]:  # Use first book structure
-                    for market in bm.get("markets", []):
-                        market_key = market.get("key", "")
-
-                        for outcome in market.get("outcomes", []):
-                            pick_name = outcome.get("name", "")
-                            point = outcome.get("point")
-
-                            outcome_key = f"{market_key}:{pick_name}:{point}"
-                            best_odds, best_book, best_book_key, best_link = best_odds_by_market.get(
-                                outcome_key, (outcome.get("price", -110), "Unknown", "", "")
-                            )
-
-                            # Build display info
-                            if market_key == "spreads":
-                                pick_type = "SPREAD"
-                                pick_side = f"{pick_name} {point:+.1f}" if point else pick_name
-                                display = pick_side
-                            elif market_key == "h2h":
-                                pick_type = "MONEYLINE"
-                                pick_side = f"{pick_name} ML"
-                                display = pick_side
-                            elif market_key == "totals":
-                                pick_type = "TOTAL"
-                                pick_side = f"{pick_name} {point}" if point else pick_name
-                                display = pick_side
-                            else:
-                                continue
-
-                            # Calculate score with full esoteric integration
-                            score_data = calculate_pick_score(
-                                game_str,
-                                sharp_signal,
-                                base_ai=4.5,
-                                player_name="",
-                                home_team=home_team,
-                                away_team=away_team,
-                                spread=point if market_key == "spreads" and point else 0,
-                                total=point if market_key == "totals" and point else 220,
-                                public_pct=sharp_signal.get("public_pct", sharp_signal.get("ticket_pct", 50)),
-                                pick_type=pick_type,
-                                pick_side=pick_side,
-                                prop_line=point if point else 0
-                            )
-
-                            # v11.15: Determine game status (UPCOMING vs MISSED_START)
-                            game_status = "UPCOMING"
-                            if TIME_FILTERS_AVAILABLE and commence_time:
-                                game_status = get_game_status(commence_time)
-
-                            # v14.9: Build signals_fired array from pillars
-                            signals_fired = score_data.get("pillars_passed", []).copy()
-                            if sharp_signal.get("signal_strength") in ["STRONG", "MODERATE"]:
-                                signals_fired.append(f"SHARP_{sharp_signal.get('signal_strength')}")
-
-                            # v14.9: Determine has_started
-                            has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
-
-                            game_picks.append({
-                                "sport": sport.upper(),
-                                "league": sport.upper(),  # v14.9: Consistent league field
-                                "event_id": game_key,  # v14.9: For tracking consistency with props
-                                "pick_type": pick_type,
-                                "pick": display,
-                                "pick_side": pick_side,
-                                "team": pick_name if market_key != "totals" else None,
-                                "line": point,
-                                "odds": best_odds,
-                                "book": best_book,  # v14.9: Consistent sportsbook field
-                                "book_key": best_book_key,
-                                "book_link": best_link,
-                                # v14.11: Sportsbook aliases for output contract
-                                "sportsbook_name": best_book,
-                                "sportsbook_event_url": best_link,
-                                "game": f"{away_team} @ {home_team}",
-                                "matchup": f"{away_team} @ {home_team}",
-                                "home_team": home_team,
-                                "away_team": away_team,
-                                "start_time_et": start_time_et,
-                                "game_status": game_status,
-                                "status": game_status.lower() if game_status else "scheduled",  # v14.11: Status field
-                                "has_started": has_started,  # v14.9: Boolean for frontend
-                                "is_started_already": has_started,  # v14.11: Alias for frontend
-                                "is_live": game_status == "MISSED_START",  # v14.11: Live mode flag
-                                "is_live_bet_candidate": game_status == "MISSED_START",
-                                "market": market_key,
-                                "recommendation": display,
-                                "best_book": best_book,
-                                "best_book_link": best_link,
-                                "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
-                                "signals_firing": signals_fired,  # v14.11: Alias for output contract
-                                "pillars_hit": score_data.get("pillars_passed", []),  # v14.11: Alias
-                                # v14.11: Engine breakdown for frontend
-                                "engine_breakdown": {
-                                    "ai": score_data.get("ai_score", 0),
-                                    "research": score_data.get("research_score", 0),
-                                    "esoteric": score_data.get("esoteric_score", 0),
-                                    "jarvis": score_data.get("jarvis_rs", 0),
-                                },
-                                # v14.11: Titanium reasons alias
-                                "titanium_reasons": score_data.get("smash_reasons", []),
-                                # v14.11: Grading fields (populated by pick_logger)
-                                "graded": False,
-                                "grade_status": "PENDING",
-                                **score_data,
-                                "sharp_signal": sharp_signal.get("signal_strength", "NONE")
-                            })
-    except Exception as e:
-        logger.warning("Game odds fetch failed: %s", e)
-
-    _record("game_picks_scoring", _s)
-
-    if ghost_game_count > 0:
-        logger.info("GHOST PREVENTION: Excluded %d games not scheduled for today", ghost_game_count)
-
-    # Fallback to sharp money if no game picks
-    if not game_picks and sharp_data.get("data"):
-        for signal in sharp_data.get("data", []):
-            home_team = signal.get("home_team", "")
-            away_team = signal.get("away_team", "")
-            game_str = f"{home_team}{away_team}"
-
-            score_data = calculate_pick_score(
-                game_str,
-                signal,
-                base_ai=5.0,
-                player_name="",
-                home_team=home_team,
-                away_team=away_team,
-                spread=signal.get("line_variance", 0),
-                total=220,
-                public_pct=50,
-                pick_type="SHARP",
-                pick_side=signal.get("side", "HOME"),
-                prop_line=0
-            )
-
-            # v14.9: Build signals_fired array
-            signals_fired = score_data.get("pillars_passed", []).copy()
-            signals_fired.append(f"SHARP_{signal.get('signal_strength', 'MODERATE')}")
-
-            game_picks.append({
-                "sport": sport.upper(),  # v14.9: Consistent field
-                "league": sport.upper(),  # v14.9: Consistent league field
-                "event_id": signal.get("game_id", ""),  # v14.9: Use game_id from signal if available
-                "pick_type": "SHARP",
-                "pick": f"Sharp on {signal.get('side', 'HOME')}",
-                "pick_side": f"{signal.get('side', 'HOME')} SHARP",  # v14.9: Consistent field
-                "team": home_team if signal.get("side") == "HOME" else away_team,
-                "line": signal.get("line_variance", 0),
-                "odds": -110,
-                "book": "",  # v14.9: No book for sharp signals
-                "book_key": "",
-                "book_link": "",
-                # v14.11: Sportsbook aliases for output contract
-                "sportsbook_name": "",
-                "sportsbook_event_url": "",
-                "game": f"{away_team} @ {home_team}",
-                "matchup": f"{away_team} @ {home_team}",  # v14.9: Consistent alias
-                "home_team": home_team,
-                "away_team": away_team,
-                "start_time_et": "",  # v14.9: Not available from sharp data
-                "game_status": "UPCOMING",  # v14.9: Default status
-                "status": "scheduled",  # v14.11: Status field
-                "has_started": False,  # v14.9: Boolean for frontend
-                "is_started_already": False,  # v14.11: Alias for frontend
-                "is_live": False,  # v14.11: Live mode flag
-                "is_live_bet_candidate": False,
-                "market": "sharp_money",
-                "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
-                "best_book": "",  # v14.9: Backward compat
-                "best_book_link": "",
-                "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
-                "signals_firing": signals_fired,  # v14.11: Alias for output contract
-                "pillars_hit": score_data.get("pillars_passed", []),  # v14.11: Alias
-                # v14.11: Engine breakdown for frontend
-                "engine_breakdown": {
-                    "ai": score_data.get("ai_score", 0),
-                    "research": score_data.get("research_score", 0),
-                    "esoteric": score_data.get("esoteric_score", 0),
-                    "jarvis": score_data.get("jarvis_rs", 0),
-                },
-                # v14.11: Titanium reasons alias
-                "titanium_reasons": score_data.get("smash_reasons", []),
-                # v14.11: Grading fields (populated by pick_logger)
-                "graded": False,
-                "grade_status": "PENDING",
-                **score_data,
-                "sharp_signal": signal.get("signal_strength", "MODERATE")
-            })
 
     # v15.3: Deduplicate game picks too
     deduplicated_games, _dupe_dropped_games, _dupe_groups_games = _dedupe_picks(game_picks)
@@ -3719,7 +3737,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "max_events": max_events,
             "max_props": max_props,
             "max_games": max_games,
-            "player_resolve_cache_size": len(_player_resolve_cache) if '_player_resolve_cache' in locals() else 0,
+            "player_resolve_cache_size": len(_player_resolve_cache),
+            "player_resolve_attempted": _resolve_attempted,
+            "player_resolve_succeeded": _resolve_succeeded,
+            "player_resolve_timed_out": _resolve_timed_out,
             "date_window_et": _date_window_et_debug,
             "min_score_used": min_score,
             "community_threshold": 6.5,
