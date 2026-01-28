@@ -256,6 +256,54 @@ Fib and Vortex use `magnitude`, NOT raw `spread`. This ensures props with player
 
 ---
 
+## Pick Deduplication (v15.3)
+
+**Best-bets output is deduplicated to ensure no duplicate picks reach the frontend.**
+
+### How It Works
+
+1. **Stable `pick_id`**: Each pick gets a deterministic 12-char hex ID via SHA-1 hash of canonical bet semantics:
+   ```
+   SHA1(SPORT|event_id|market|SIDE|line|player)[:12]
+   ```
+   - `side` is uppercased, `line` is rounded to 2 decimals
+   - Field fallbacks: `event_id` OR `game_id` OR `matchup`; `market` OR `prop_type` OR `pick_type`; etc.
+
+2. **Priority rule**: When duplicates share the same `pick_id`, keep the one with:
+   - Highest `total_score` (primary)
+   - Preferred book (tiebreaker): draftkings > fanduel > betmgm > caesars > pinnacle > others
+
+3. **Applied to both props AND game picks** separately via `_dedupe_picks()`
+
+### Debug Output
+
+```json
+{
+  "dupe_dropped_props": 3,
+  "dupe_dropped_games": 1,
+  "dupe_groups_props": [
+    {
+      "pick_id": "a1b2c3d4e5f6",
+      "count": 3,
+      "kept_book": "draftkings",
+      "dropped_books": ["fanduel", "betmgm"]
+    }
+  ]
+}
+```
+
+### Where It Lives
+- `live_data_router.py`: `_make_pick_id()`, `_book_priority()`, `_dedupe_picks()` helper functions
+- Applied after scoring, before output filter
+- Tests: `tests/test_dedupe.py` (12 tests)
+
+### If Modifying Dedupe
+1. `pick_id` must remain deterministic — same bet = same ID across requests
+2. Never remove the dedupe step — duplicates confuse the frontend and inflate pick counts
+3. Run `pytest tests/test_dedupe.py` to verify edge cases (different sides, lines, players not deduped)
+
+---
+
 ## Self-Improvement System (Auto-Grader)
 
 The system learns and improves daily through the **Auto-Grader** feedback loop.
