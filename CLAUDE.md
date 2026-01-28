@@ -1433,4 +1433,55 @@ curl -s "https://web-production-7b2a.up.railway.app/live/grader/status" \
   -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | python3 -m json.tool
 ```
 
+### Smoke Check Results (Jan 27-28, 2026)
+
+All 4 checks passing as of `601912b`:
+
+| Check | Result |
+|-------|--------|
+| Uptime monitor | HEAD 200, GET 200 `{"ok":true}` |
+| Pick logging | 8 logged, 7 deduped, errors: `[]`, 6.47s |
+| Grader dry-run | `pre_mode_pass: True`, failed: 0, unresolved: 0, 64 pending |
+| Grader status | available: True, 320 predictions, weights loaded |
+
+---
+
+## TODO: Next Session (Jan 28-29, 2026)
+
+### Morning Autograder Verification
+
+After NBA games from Jan 27 complete, run post-mode dry-run and trigger grading:
+
+```bash
+# 1. Post-mode dry-run (should show graded > 0 after 6 AM audit)
+curl -s -X POST "https://web-production-7b2a.up.railway.app/live/grader/dry-run" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" \
+  -H "Content-Type: application/json" \
+  -d '{"date":"2026-01-27","mode":"post"}' | python3 -m json.tool
+
+# 2. Check if 6 AM audit ran automatically
+curl -s "https://web-production-7b2a.up.railway.app/live/scheduler/status" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | python3 -m json.tool
+
+# 3. Manual audit trigger if needed
+curl -s -X POST "https://web-production-7b2a.up.railway.app/live/grader/run-audit" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" \
+  -H "Content-Type: application/json" \
+  -d '{"days_back": 1, "apply_changes": true}' | python3 -m json.tool
+
+# 4. Check performance after grading
+curl -s "https://web-production-7b2a.up.railway.app/live/grader/performance/nba?days_back=1" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | python3 -m json.tool
+
+# 5. Daily community report
+curl -s "https://web-production-7b2a.up.railway.app/live/grader/daily-report" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | python3 -m json.tool
+```
+
+### Success Criteria
+- `post_mode_pass: true` (all picks graded, none failed)
+- `graded > 0` in dry-run
+- Performance: hit rate tracked, MAE computed
+- Weights adjusted if bias detected
+
 ---
