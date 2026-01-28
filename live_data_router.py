@@ -2999,18 +2999,62 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     if invalid_injury_count > 0:
         logger.info("INJURY ENFORCEMENT: Excluded %d props due to OUT/DOUBTFUL/SUSPENDED status", invalid_injury_count)
 
-    # DEDUPLICATE: Only keep the best side (Over or Under) per player/market
-    # This prevents contradictory picks like "Maxey Over 26.5" AND "Maxey Under 26.5"
-    best_by_player_market = {}
-    for pick in props_picks:
-        key = f"{pick['player']}:{pick['market']}"
-        if key not in best_by_player_market or pick["total_score"] > best_by_player_market[key]["total_score"]:
-            best_by_player_market[key] = pick
+    # ============================================
+    # v15.3 DEDUPLICATE PROPS - stable pick_id + priority rule
+    # ============================================
+    import hashlib as _dedup_hl
+
+    PREFERRED_BOOKS = ["draftkings", "fanduel", "betmgm", "caesars", "pinnacle"]
+
+    def _make_pick_id(p: dict) -> str:
+        """Deterministic pick_id from canonical bet semantics."""
+        canonical = (
+            f"{sport.upper()}"
+            f"|{p.get('event_id', p.get('game_id', p.get('matchup', '')))}"
+            f"|{p.get('market', p.get('prop_type', p.get('pick_type', '')))}"
+            f"|{p.get('side', p.get('direction', p.get('pick_side', ''))).upper()}"
+            f"|{round(float(p.get('line', p.get('prop_line', 0))), 2)}"
+            f"|{p.get('player', p.get('player_name', ''))}"
+        )
+        return _dedup_hl.sha1(canonical.encode()).hexdigest()[:12]
+
+    def _book_priority(p: dict) -> int:
+        bk = (p.get("book_key") or p.get("book") or "").lower()
+        try:
+            return PREFERRED_BOOKS.index(bk)
+        except ValueError:
+            return len(PREFERRED_BOOKS)
+
+    def _dedupe_picks(picks: list) -> tuple:
+        """Dedupe by pick_id. Returns (deduped_list, dropped_count, dupe_groups)."""
+        groups = {}
+        for p in picks:
+            pid = _make_pick_id(p)
+            p["pick_id"] = pid
+            groups.setdefault(pid, []).append(p)
+
+        kept = []
+        dupe_groups_debug = []
+        total_dropped = 0
+        for pid, dupes in groups.items():
+            # Sort: highest score → best book → first seen
+            dupes.sort(key=lambda x: (-x.get("total_score", 0), _book_priority(x)))
+            winner = dupes[0]
+            kept.append(winner)
+            if len(dupes) > 1:
+                total_dropped += len(dupes) - 1
+                dupe_groups_debug.append({
+                    "pick_id": pid,
+                    "count": len(dupes),
+                    "kept_book": winner.get("book_key", ""),
+                    "dropped_books": [d.get("book_key", "") for d in dupes[1:]]
+                })
+        return kept, total_dropped, dupe_groups_debug
+
+    deduplicated_props, _dupe_dropped_props, _dupe_groups_props = _dedupe_picks(props_picks)
 
     # v15.0: Filter to min_score threshold before taking top picks
-    # Production default is 6.5 (EDGE_LEAN+), debug mode can lower to 5.0
     COMMUNITY_MIN_SCORE = min_score
-    deduplicated_props = list(best_by_player_market.values())
     deduplicated_props.sort(key=lambda x: x["total_score"], reverse=True)
 
     # Capture ALL candidates for debug/distribution before filtering
@@ -3279,12 +3323,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "sharp_signal": signal.get("signal_strength", "MODERATE")
             })
 
-    # v15.0: Filter to min_score threshold before taking top 10
-    game_picks.sort(key=lambda x: x["total_score"], reverse=True)
-    _all_game_candidates = game_picks  # Keep ref for debug output
+    # v15.3: Deduplicate game picks too
+    deduplicated_games, _dupe_dropped_games, _dupe_groups_games = _dedupe_picks(game_picks)
+    deduplicated_games.sort(key=lambda x: x["total_score"], reverse=True)
+    _all_game_candidates = deduplicated_games  # Keep ref for debug output
 
-    filtered_game_picks = [p for p in game_picks if p["total_score"] >= COMMUNITY_MIN_SCORE]
+    filtered_game_picks = [p for p in deduplicated_games if p["total_score"] >= COMMUNITY_MIN_SCORE]
     top_game_picks = filtered_game_picks[:10]
+
+    if _dupe_dropped_props + _dupe_dropped_games > 0:
+        logger.info("DEDUPE: dropped %d prop dupes, %d game dupes", _dupe_dropped_props, _dupe_dropped_games)
 
     # ============================================
     # LOG PICKS FOR GRADING (v14.9 + v12.0 auto_grader integration)
@@ -3555,6 +3603,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "dropped_out_of_window_games": _dropped_out_of_window_games,
             "dropped_missing_time_props": _dropped_missing_time_props,
             "dropped_missing_time_games": _dropped_missing_time_games,
+            # v15.3 dedupe telemetry
+            "dupe_dropped_props": _dupe_dropped_props,
+            "dupe_dropped_games": _dupe_dropped_games,
+            "dupe_dropped_count": _dupe_dropped_props + _dupe_dropped_games,
+            "dupe_groups_props": _dupe_groups_props[:10],  # Cap for output size
+            "dupe_groups_games": _dupe_groups_games[:10],
             # v15.1 diagnostics
             "sharp_lookup_size": len(sharp_lookup),
             "sharp_source": sharp_data.get("source", "unknown"),
