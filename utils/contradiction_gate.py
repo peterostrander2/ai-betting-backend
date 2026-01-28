@@ -72,8 +72,8 @@ def is_opposite_side(side_a: str, side_b: str, market: str) -> bool:
 
     market_upper = market.upper()
 
-    if "TOTAL" in market_upper or "PROP" in market_upper:
-        # Over vs Under
+    if "TOTAL" in market_upper or "PROP" in market_upper or "PLAYER_" in market_upper:
+        # Over vs Under (totals and all player props: player_points, player_assists, etc.)
         return (side_a_upper == "OVER" and side_b_upper == "UNDER") or \
                (side_a_upper == "UNDER" and side_b_upper == "OVER")
     elif "SPREAD" in market_upper or "MONEYLINE" in market_upper or "ML" in market_upper:
