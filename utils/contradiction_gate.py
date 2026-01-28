@@ -50,7 +50,11 @@ def make_unique_key(pick) -> str:
     else:
         subject = "Game"
 
-    line_str = f"{line:.1f}" if line else "0.0"
+    # Use absolute value of line for spreads so +1.5 and -1.5 create same key
+    if market in ["SPREAD", "SPREADS"] and line != 0:
+        line_str = f"{abs(line):.1f}"
+    else:
+        line_str = f"{line:.1f}" if line else "0.0"
 
     key = f"{sport}|{date_et}|{event_id}|{market}|{prop_type}|{subject}|{line_str}"
     return key
