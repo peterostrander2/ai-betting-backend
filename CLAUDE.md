@@ -6,6 +6,38 @@
 
 ---
 
+## CRITICAL: Deployment Workflow
+
+**ALWAYS push changes automatically. NEVER ask the user to check deployment status.**
+
+### When You Make Code Changes:
+1. **Commit immediately:**
+   ```bash
+   git add .
+   git commit -m "descriptive message"
+   ```
+2. **Push immediately:**
+   ```bash
+   git push origin main
+   ```
+3. **Railway auto-deploys** - Takes 2-3 minutes, happens automatically
+4. **DO NOT ask user to check** - Railway handles it, user knows the workflow
+
+### Storage Configuration (Railway Volume)
+- Volume: 5GB mounted at `/data`
+- Environment variable: `RAILWAY_VOLUME_MOUNT_PATH=/data`
+- Paths managed by `data_dir.py`:
+  - `/data/pick_logs/` - Published picks (JSONL)
+  - `/data/grader_data/` - Auto-grader predictions and weights (JSON)
+  - `/data/graded_picks/` - Graded picks (JSONL)
+  - `/data/audit_logs/` - Daily audit reports
+
+### SSH Configuration
+- GitHub SSH uses port 443 (not 22) - configured in `~/.ssh/config`
+- This is already set up and working
+
+---
+
 ## Project Overview
 
 **Bookie-o-em** - AI Sports Prop Betting Backend
