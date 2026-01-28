@@ -4888,61 +4888,79 @@ async def grader_status():
         - last_errors: Recent grading errors
         - weight_learning: Auto-grader weight learning status (separate system)
     """
-    from daily_scheduler import get_daily_scheduler
-
     result = {
         "available": True,
         "timestamp": datetime.now().isoformat()
     }
 
     # Pick Logger Stats (actual published picks that need grading)
-    if PICK_LOGGER_AVAILABLE:
-        pick_logger = get_pick_logger()
-        today = get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d")
+    try:
+        if PICK_LOGGER_AVAILABLE:
+            pick_logger = get_pick_logger()
+            today = get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d")
 
-        # Get today's picks
-        today_picks = pick_logger.get_picks_for_date(today)
-        pending_picks = [p for p in today_picks if not p.result]
-        graded_picks = [p for p in today_picks if p.result]
+            # Get today's picks
+            today_picks = pick_logger.get_picks_for_date(today)
+            pending_picks = [p for p in today_picks if not p.result]
+            graded_picks = [p for p in today_picks if p.result]
 
-        result["pick_logger"] = {
-            "predictions_logged": len(today_picks),
-            "pending_to_grade": len(pending_picks),
-            "graded_today": len(graded_picks),
-            "storage_path": pick_logger.storage_path,
-            "date": today
-        }
-    else:
+            result["pick_logger"] = {
+                "predictions_logged": len(today_picks),
+                "pending_to_grade": len(pending_picks),
+                "graded_today": len(graded_picks),
+                "storage_path": pick_logger.storage_path,
+                "date": today
+            }
+        else:
+            result["pick_logger"] = {
+                "available": False,
+                "note": "Pick logger not available"
+            }
+    except Exception as e:
+        logger.error("Pick logger status failed: %s", e)
         result["pick_logger"] = {
             "available": False,
-            "note": "Pick logger not available"
+            "error": str(e)
         }
 
     # Scheduler Stats (last run time and errors)
-    scheduler = get_daily_scheduler()
-    if scheduler and hasattr(scheduler, 'auto_grade_job'):
-        job = scheduler.auto_grade_job
-        result["last_run_at"] = job.last_run.isoformat() if job.last_run else None
-        result["last_errors"] = job.last_errors[-5:] if hasattr(job, 'last_errors') else []
-    else:
+    try:
+        from daily_scheduler import get_daily_scheduler
+        scheduler = get_daily_scheduler()
+        if scheduler and hasattr(scheduler, 'auto_grade_job'):
+            job = scheduler.auto_grade_job
+            result["last_run_at"] = job.last_run.isoformat() if job.last_run else None
+            result["last_errors"] = job.last_errors[-5:] if hasattr(job, 'last_errors') else []
+        else:
+            result["last_run_at"] = None
+            result["last_errors"] = []
+    except Exception as e:
+        logger.error("Scheduler status failed: %s", e)
         result["last_run_at"] = None
-        result["last_errors"] = []
+        result["last_errors"] = [str(e)]
 
     # Auto-Grader Weight Learning Stats (separate system for adjusting prediction weights)
-    if AUTO_GRADER_AVAILABLE:
-        grader = get_grader()  # Use singleton - CRITICAL for data persistence!
-        result["weight_learning"] = {
-            "available": True,
-            "supported_sports": grader.SUPPORTED_SPORTS,
-            "predictions_logged": sum(len(p) for p in grader.predictions.values()),
-            "weights_loaded": bool(grader.weights),
-            "storage_path": grader.storage_path,
-            "note": "Use /grader/weights/{sport} to see learned weights"
-        }
-    else:
+    try:
+        if AUTO_GRADER_AVAILABLE:
+            grader = get_grader()  # Use singleton - CRITICAL for data persistence!
+            result["weight_learning"] = {
+                "available": True,
+                "supported_sports": grader.SUPPORTED_SPORTS,
+                "predictions_logged": sum(len(p) for p in grader.predictions.values()),
+                "weights_loaded": bool(grader.weights),
+                "storage_path": grader.storage_path,
+                "note": "Use /grader/weights/{sport} to see learned weights"
+            }
+        else:
+            result["weight_learning"] = {
+                "available": False,
+                "note": "Auto-grader weight learning not available"
+            }
+    except Exception as e:
+        logger.error("Auto-grader weight learning status failed: %s", e)
         result["weight_learning"] = {
             "available": False,
-            "note": "Auto-grader weight learning not available"
+            "error": str(e)
         }
 
     return result
