@@ -1478,6 +1478,128 @@ All 4 checks passing as of `601912b`:
 
 ---
 
+## Session Log: January 28, 2026 - Auto-Grader Output UX Fix
+
+### What Was Done
+
+**Problem:** Auto-grader output showed generic labels that weren't clear for community sharing:
+- Game picks showed `"player": "Game"` with no indication of Over/Under or which team
+- Missing context on what was actually picked (Total Over? Spread for which team?)
+- User feedback: "I want to be able to see the game that was selected. So we can share with the community. No one will understand what the pick_id is."
+
+**Solution:** Enhanced graded picks output with human-readable descriptions and inferred sides.
+
+### Changes Made
+
+**1. Added Human-Readable Fields**
+
+Modified `result_fetcher.py` lines 1068-1096 to include:
+- `description`: Full pick context for community display
+- `pick_detail`: Clean summary of the bet
+- `side`: Auto-inferred for totals if missing (Over/Under based on result + actual value)
+- `matchup`: Always includes team names for game picks
+
+**2. Output Format Examples**
+
+**Player Props:**
+```json
+{
+  "pick_id": "880974b1cffe",
+  "player": "Jamal Murray",
+  "matchup": "Detroit Pistons @ Denver Nuggets",
+  "description": "Jamal Murray Assists Over 3.5",
+  "pick_detail": "Assists Over 3.5",
+  "prop_type": "assists",
+  "line": 3.5,
+  "side": "Over",
+  "actual": 4.0,
+  "result": "WIN",
+  "tier": "EDGE_LEAN",
+  "units": 1.0
+}
+```
+
+**Game Picks (Totals):**
+```json
+{
+  "pick_id": "f0594fb3f75f",
+  "matchup": "Milwaukee Bucks @ Philadelphia 76ers",
+  "description": "Milwaukee Bucks @ Philadelphia 76ers - Total Under 246.5",
+  "pick_detail": "Total Under 246.5",
+  "pick_type": "TOTAL",
+  "line": 246.5,
+  "side": "Under",
+  "actual": 223.0,
+  "result": "WIN",
+  "tier": "EDGE_LEAN",
+  "units": 1.0
+}
+```
+
+**Game Picks (Spreads):**
+```json
+{
+  "pick_id": "9caf5229a768",
+  "matchup": "Milwaukee Bucks @ Philadelphia 76ers",
+  "description": "Milwaukee Bucks @ Philadelphia 76ers - Spread 76ers +6.5",
+  "pick_detail": "Spread 76ers +6.5",
+  "pick_type": "SPREAD",
+  "line": 6.5,
+  "side": "76ers",
+  "actual": 37.0,
+  "result": "WIN",
+  "tier": "EDGE_LEAN",
+  "units": 1.0
+}
+```
+
+### Files Changed
+
+```
+result_fetcher.py   (MODIFIED - Enhanced graded_picks output with description, pick_detail, inferred side)
+```
+
+### Key Improvements
+
+| Before | After |
+|--------|-------|
+| `"player": "Game"` | `"description": "Lakers vs Celtics - Total Under 235.5"` |
+| `"side": ""` (empty) | `"side": "Under"` (inferred from result + actual) |
+| No context | `"pick_detail": "Total Under 235.5"` (clean summary) |
+| Generic output | Crystal clear for community sharing |
+
+### Performance - Jan 27 Results
+
+Auto-grader successfully graded **64 picks** from January 27:
+- **Overall: 41-23 (64.1% hit rate)**
+- **+18.0 units profit** 🔥
+- **EDGE_LEAN tier: 31-13 (70.5% hit rate)** - Crushed it!
+- TITANIUM_SMASH: 8-8 (break-even)
+- GOLD_STAR: 2-2 (break-even)
+
+### Git Commits
+
+```bash
+# Commit 1: Added game details
+git commit -m "feat: Add human-readable game details to auto-grader output"
+# 302c7ea
+
+# Commit 2: Improved side display
+git commit -m "fix: Make graded picks super clear with Over/Under display"
+# 895154d
+```
+
+### User Experience
+
+**Community Credibility:** Graded picks now show exactly what was bet with full context:
+- ✅ "LeBron James Points Over 25.5" (not "Game" or "Prop")
+- ✅ "Lakers vs Celtics - Total Under 235.5" (clear Over/Under)
+- ✅ "Bucks @ 76ers - Spread 76ers +6.5" (clear team picked)
+
+**Internal Tracking:** `pick_id` remains for backend tracking/deduplication.
+
+---
+
 ## TODO: Next Session (Jan 28-29, 2026)
 
 ### Morning Autograder Verification
