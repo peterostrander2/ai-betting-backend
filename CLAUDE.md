@@ -1284,3 +1284,99 @@ if not resolved.prop_available:
 | Live state | 1 minute | Real-time data |
 
 ---
+
+## Session Log: January 27-28, 2026 - Best-Bets Performance Fix + Pick Logger Pipeline
+
+### What Was Done
+
+**1. Best-Bets Performance Overhaul (v16.1)**
+
+Reduced `/live/best-bets/{sport}` response time from **18.28s → 5.5s** (70% improvement).
+
+| Change | Before | After |
+|--------|--------|-------|
+| Data fetch | Sequential (props then games) | Parallel via `asyncio.gather()` |
+| Player resolution | Sequential per-prop (~1.5s each) | Parallel batch with 0.8s per-call timeout, 3s batch timeout |
+| Stage order | Props → Game picks | Game picks first (fast, no resolver), then props |
+| Time budget | None | 15s hard deadline with `_timed_out_components` |
+
+**2. Debug Instrumentation**
+
+Added `debug=1` query param output:
+
+| Field | Purpose |
+|-------|---------|
+| `debug_timings` | Per-stage timing (props_fetch, game_fetch, player_resolution, props_scoring, game_picks, pick_logging) |
+| `total_elapsed_s` | Wall clock time |
+| `timed_out_components` | List of stages that hit deadline |
+| `date_window_et` | ET day bounds with events_before/after counts |
+| `picks_logged` | Picks successfully written to pick_logger |
+| `picks_skipped_dupes` | Picks skipped due to deduplication |
+| `pick_log_errors` | Any silent pick_logger exceptions |
+| `player_resolution` | attempted/succeeded/timed_out counts |
+| `dropped_out_of_window_props/games` | ET filter drop counts |
+
+**3. ET Day-Window Filter Verified**
+
+- Both props AND game picks pass through `filter_events_today_et()` before scoring
+- `date_window_et` debug block shows `start_et: "00:00:00"`, `end_et: "23:59:59"`, before/after counts
+- `date_str` threaded through full call chain: endpoint → `get_best_bets(date=)` → `_best_bets_inner(date_str=)`
+
+**4. Pick Logger Pipeline Fixed (CRITICAL)**
+
+Three bugs found and fixed in the pick logging path:
+
+| Bug | Root Cause | Fix |
+|-----|------------|-----|
+| `pytz` not defined | `pytz` used in `_enrich_pick_for_logging` but never imported in that scope | Added `import pytz as _pytz` inside the try block |
+| `float(None)` crash | `pick_data.get("field", 0)` returns `None` when key exists with `None` value | Added `_f()`/`_i()` None-safe helpers in `pick_logger.py` |
+| No logging visibility | `logged_count` never included in debug output | Added `picks_logged`, `picks_skipped_dupes`, `pick_log_errors` to debug block |
+
+**5. Autograder Dry-Run Cleanup**
+
+- Dry-run now skips picks with `grade_status="FAILED"` and empty `canonical_player_id` (old test seeds)
+- Reports `skipped_stale_seeds` and `skipped_already_graded` counts
+- 4 old test seeds (LeBron, Brandon Miller, Test Player Seed x2) no longer pollute dry-run
+
+**6. Query Parameters Added**
+
+| Param | Default | Purpose |
+|-------|---------|---------|
+| `max_events` | 12 | Cap events before props fetch |
+| `max_props` | 10 | Cap prop picks in output |
+| `max_games` | 10 | Cap game picks in output |
+| `debug` | 0 | Enable debug output |
+| `date` | today ET | Override date for testing |
+
+### Verification Results (Production)
+
+```
+picks_attempted: 20
+picks_logged: 12        ✅
+picks_skipped_dupes: 8  ✅ (correctly deduped from earlier call)
+pick_log_errors: []     ✅
+total_elapsed_s: 5.57   ✅ (under 15s budget)
+timed_out_components: [] ✅
+
+Dry-run:
+  total: 34, pending: 30, failed: 0, unresolved: 0
+  overall_status: PENDING  ✅
+  skipped_stale_seeds: 4   ✅
+```
+
+### Key Design Decisions
+
+1. **Pick dedupe is DATE-BOUND (ET)**: `pick_hashes` keyed by `get_today_date_et()`. Tomorrow's picks won't be blocked by today's hashes.
+2. **Grader scans ET date window**: `get_picks_for_grading()` defaults to today ET, allows yesterday for morning grading.
+3. **Player resolution graceful degradation**: If BallDontLie times out, falls back to `{SPORT}:NAME:{name}|{team}` canonical ID. Props are never blocked by resolver failures.
+4. **Game picks run before props**: Game picks are fast (no player resolution), so they complete first and aren't at risk of being skipped by the time budget.
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - Performance overhaul, debug instrumentation, pick logging fixes)
+pick_logger.py        (MODIFIED - None-safe float/int conversions)
+time_filters.py       (UNCHANGED - ET bounds already correct)
+```
+
+---
