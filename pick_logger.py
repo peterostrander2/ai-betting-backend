@@ -1203,7 +1203,8 @@ class PickLogger:
             reasons.append("MISSING_MARKET")
 
         line_at_bet = getattr(pick, 'line_at_bet', 0.0)
-        if line_at_bet == 0.0 and pick.line == 0.0:
+        if line_at_bet == 0.0 and pick.line == 0.0 and pick.player_name:
+            # Only flag missing line for prop picks; game picks can have line=0 (pick-em)
             missing_fields.append("line_at_bet")
             reasons.append("MISSING_LINE")
 
