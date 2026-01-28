@@ -112,8 +112,15 @@ class AutoGrader:
     """
     
     SUPPORTED_SPORTS = ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
-    
-    def __init__(self, storage_path: str = "./grader_data"):
+
+    def __init__(self, storage_path: str = None):
+        # Railway volume support: Use /data if RAILWAY_VOLUME_MOUNT_PATH is set
+        if storage_path is None:
+            railway_volume = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
+            if railway_volume:
+                storage_path = os.path.join(railway_volume, "grader_data")
+            else:
+                storage_path = "./grader_data"
         self.storage_path = storage_path
         self.predictions: Dict[str, List[PredictionRecord]] = defaultdict(list)
         self.weights: Dict[str, Dict[str, WeightConfig]] = {}

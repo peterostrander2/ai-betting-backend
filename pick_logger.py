@@ -50,8 +50,15 @@ logger = logging.getLogger("pick_logger")
 # CONFIGURATION
 # =============================================================================
 
-STORAGE_PATH = "./pick_logs"
-GRADED_PATH = "./graded_picks"
+# Railway volume support: Use /data if RAILWAY_VOLUME_MOUNT_PATH is set
+# Otherwise use local paths for development
+RAILWAY_VOLUME_PATH = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
+if RAILWAY_VOLUME_PATH:
+    STORAGE_PATH = os.path.join(RAILWAY_VOLUME_PATH, "pick_logs")
+    GRADED_PATH = os.path.join(RAILWAY_VOLUME_PATH, "graded_picks")
+else:
+    STORAGE_PATH = "./pick_logs"
+    GRADED_PATH = "./graded_picks"
 
 # Books we validate against
 SUPPORTED_BOOKS = {
@@ -85,7 +92,8 @@ class PublishedPick:
     book_link: str = ""
 
     # Timing
-    game_start_time_et: str = ""
+    game_start_time_et: str = ""  # Human-readable time (e.g., "7:30 PM ET")
+    commence_time_iso: str = ""  # Programmatic ISO timestamp (e.g., "2026-01-28T19:30:00Z")
     published_at: str = ""
     already_started: bool = False
     late_pull_reason: str = ""

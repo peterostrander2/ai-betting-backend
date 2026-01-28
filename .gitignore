@@ -39,3 +39,9 @@ Thumbs.db
 
 # Node.js
 node_modules/
+
+# Data directories (stored on Railway volume, not in git)
+pick_logs/
+grader_data/
+graded_picks/
+audit_logs/
