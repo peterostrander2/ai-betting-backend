@@ -4968,6 +4968,81 @@ async def grader_status():
     return result
 
 
+@router.get("/grader/debug-files")
+async def grader_debug_files():
+    """
+    Debug endpoint to prove disk persistence.
+
+    Returns:
+        - Resolved DATA_DIR and PICK_LOGS paths
+        - Today's JSONL file path, existence, size, line count
+        - First and last JSONL rows (with sensitive fields redacted)
+    """
+    import os
+    from data_dir import DATA_DIR, PICK_LOGS
+    from pick_logger import get_today_date_et
+
+    result = {
+        "paths": {
+            "DATA_DIR": DATA_DIR,
+            "PICK_LOGS": PICK_LOGS,
+            "DATA_DIR_source": "RAILWAY_VOLUME_MOUNT_PATH env var" if os.getenv("RAILWAY_VOLUME_MOUNT_PATH") else "fallback"
+        }
+    }
+
+    # Get today's file
+    today = get_today_date_et()
+    today_file = os.path.join(PICK_LOGS, f"picks_{today}.jsonl")
+
+    result["today_file"] = {
+        "path": today_file,
+        "date": today,
+        "exists": os.path.exists(today_file)
+    }
+
+    if os.path.exists(today_file):
+        try:
+            # Get file stats
+            stat = os.stat(today_file)
+            result["today_file"]["size_bytes"] = stat.st_size
+            result["today_file"]["modified_time"] = datetime.fromtimestamp(stat.st_mtime).isoformat()
+
+            # Count lines and get first/last
+            with open(today_file, 'r') as f:
+                lines = f.readlines()
+
+            result["today_file"]["line_count"] = len(lines)
+
+            if lines:
+                # Parse first and last, redact sensitive fields
+                import json
+
+                def redact_pick(line):
+                    try:
+                        pick = json.loads(line)
+                        # Keep only essential fields, redact IDs
+                        return {
+                            "sport": pick.get("sport", ""),
+                            "date": pick.get("date", ""),
+                            "pick_type": pick.get("pick_type", ""),
+                            "player_name": pick.get("player_name", "")[:20] if pick.get("player_name") else "",
+                            "matchup": pick.get("matchup", "")[:40] if pick.get("matchup") else "",
+                            "tier": pick.get("tier", ""),
+                            "final_score": pick.get("final_score", 0),
+                            "result": pick.get("result"),
+                            "pick_id": pick.get("pick_id", "")[:8] + "..." if pick.get("pick_id") else ""
+                        }
+                    except Exception as e:
+                        return {"error": str(e)}
+
+                result["today_file"]["first_pick"] = redact_pick(lines[0])
+                result["today_file"]["last_pick"] = redact_pick(lines[-1])
+        except Exception as e:
+            result["today_file"]["read_error"] = str(e)
+
+    return result
+
+
 @router.get("/grader/weights/{sport}")
 async def grader_weights(sport: str):
     """Get current prediction weights for a sport."""
