@@ -3008,13 +3008,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     def _make_pick_id(p: dict) -> str:
         """Deterministic pick_id from canonical bet semantics."""
+        _side = p.get('side') or p.get('direction') or p.get('pick_side') or ''
+        _line = p.get('line') if p.get('line') is not None else p.get('prop_line', 0)
         canonical = (
             f"{sport.upper()}"
-            f"|{p.get('event_id', p.get('game_id', p.get('matchup', '')))}"
-            f"|{p.get('market', p.get('prop_type', p.get('pick_type', '')))}"
-            f"|{p.get('side', p.get('direction', p.get('pick_side', ''))).upper()}"
-            f"|{round(float(p.get('line', p.get('prop_line', 0))), 2)}"
-            f"|{p.get('player', p.get('player_name', ''))}"
+            f"|{p.get('event_id') or p.get('game_id') or p.get('matchup', '')}"
+            f"|{p.get('market') or p.get('prop_type') or p.get('pick_type', '')}"
+            f"|{_side.upper()}"
+            f"|{round(float(_line or 0), 2)}"
+            f"|{p.get('player') or p.get('player_name', '')}"
         )
         return _dedup_hl.sha1(canonical.encode()).hexdigest()[:12]
 
