@@ -3542,12 +3542,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     filtered_below_6_5_games = len(deduplicated_games) - len(filtered_game_picks)
 
     # v15.0: Apply contradiction gate to prevent both sides of same bet
-    from utils.contradiction_gate import apply_contradiction_gate
-    filtered_props_no_contradict, filtered_games_no_contradict, contradiction_debug = apply_contradiction_gate(
-        filtered_props,
-        filtered_game_picks,
-        debug=debug_mode
-    )
+    contradiction_debug = {"total_dropped": 0, "props_dropped": 0, "games_dropped": 0}
+    try:
+        from utils.contradiction_gate import apply_contradiction_gate
+        filtered_props_no_contradict, filtered_games_no_contradict, contradiction_debug = apply_contradiction_gate(
+            filtered_props,
+            filtered_game_picks,
+            debug=debug_mode
+        )
+    except Exception as e:
+        logger.error("CONTRADICTION_GATE: Failed to apply gate: %s", e)
+        # Fallback: use filtered picks without contradiction gate
+        filtered_props_no_contradict = filtered_props
+        filtered_games_no_contradict = filtered_game_picks
 
     # Take top N after contradiction filtering
     top_props = filtered_props_no_contradict[:max_props]
@@ -3556,9 +3563,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     if _dupe_dropped_props + _dupe_dropped_games > 0:
         logger.info("DEDUPE: dropped %d prop dupes, %d game dupes", _dupe_dropped_props, _dupe_dropped_games)
 
-    if contradiction_debug["total_dropped"] > 0:
+    if contradiction_debug.get("total_dropped", 0) > 0:
         logger.info("CONTRADICTION_GATE: blocked %d props, %d games (opposite sides)",
-                   contradiction_debug["props_dropped"], contradiction_debug["games_dropped"])
+                   contradiction_debug.get("props_dropped", 0), contradiction_debug.get("games_dropped", 0))
 
 
     # ============================================
