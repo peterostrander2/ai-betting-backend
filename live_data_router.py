@@ -872,6 +872,13 @@ async def health_check():
     }
 
 
+@router.get("/smoke-test/alert-status")
+@router.head("/smoke-test/alert-status")
+async def smoke_test_alert_status():
+    """Smoke test endpoint for uptime monitors."""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
+
 @router.get("/cache/stats")
 async def cache_stats():
     """Get cache statistics for debugging."""
