@@ -2295,6 +2295,97 @@ utils/contradiction_gate.py   (MODIFIED - Added PLAYER_ check to is_opposite_sid
 
 ---
 
+## Session Log: January 28, 2026 - Contradiction Gate Spread Fix (Partial)
+
+### Overview
+
+Fixed spread contradictions in the contradiction gate. Moneyline contradictions partially fixed but still appearing in some cases.
+
+**User Request**: "Fix the contradiction gate so NHL game picks don't show both sides of same bet (Colorado -1.5 AND Ottawa +1.5)"
+
+### What Was Fixed
+
+**1. Spread Contradictions - ✅ FIXED**
+
+**Problem**: Colorado -1.5 and Ottawa +1.5 both appeared in output (opposite sides of same bet).
+
+**Root Cause**: Unique keys used signed line values:
+- Colorado -1.5 → key ends with "|-1.5"
+- Ottawa +1.5 → key ends with "|1.5"
+
+Different keys meant gate didn't detect them as contradictions.
+
+**Fix** (commit 7f2dc85):
+```python
+# Use absolute value of line for spreads so +1.5 and -1.5 create same key
+if market in ["SPREAD", "SPREADS"] and line != 0:
+    line_str = f"{abs(line):.1f}"
+else:
+    line_str = f"{line:.1f}" if line else "0.0"
+```
+
+**Result**: Colorado -1.5 and Ottawa +1.5 now create same key → gate detects and blocks lower-scoring pick ✅
+
+**2. Moneyline Subject Fix** (commit f67b42f):
+
+Changed subject from team name to "Game" for moneylines:
+```python
+elif market in ["SPREAD", "MONEYLINE", "ML", "SPREADS"]:
+    subject = "Game"  # Was: subject = side if side else "Game"
+```
+
+This ensures both teams create the same unique key.
+
+### Current Status
+
+**Working**:
+- ✅ Spread contradictions blocked (tested on Colorado @ Ottawa)
+- ✅ Total contradictions blocked (Over/Under)
+- ✅ Player prop contradictions blocked (Over/Under)
+
+**Partially Working**:
+- ⚠️ Moneyline contradictions: Both Columbus ML (6.81) AND Philadelphia ML (6.81) still appearing in output despite having:
+  - Same matchup
+  - Same score
+  - Different sides (should be detected as opposite)
+  - Code change deployed (using "Game" as subject)
+
+### Investigation Needed
+
+Moneylines with identical scores (6.81) are both appearing despite contradiction gate being active. Possible causes:
+1. Gate crashing silently on moneylines
+2. Debug fields showing null (gate not reporting status)
+3. Cache issues (cleared cache, still appears)
+
+**Example moneyline contradiction still in output**:
+```
+Philadelphia Flyers @ Columbus Blue Jackets  Columbus Blue Jackets ML  6.81 (EDGE_LEAN)
+Philadelphia Flyers @ Columbus Blue Jackets  Philadelphia Flyers ML    6.81 (EDGE_LEAN)
+```
+
+### Files Changed
+
+```
+utils/contradiction_gate.py   (MODIFIED - abs(line) for spreads, "Game" for ML subject)
+```
+
+### Git Commits
+
+```bash
+7f2dc85 - fix: Use abs(line) for spread unique keys to detect opposite sides
+f67b42f - fix: Use 'Game' subject for moneylines to detect opposite teams
+e372b46 - debug: Add more logging to contradiction gate for moneyline investigation (caused crash)
+5dd2500 - Revert "debug: Add more logging..." (current deployed build)
+```
+
+### Next Steps
+
+- Investigate why moneylines with identical scores bypass contradiction gate
+- Add debug logging without causing crashes
+- Verify gate is actually running (all debug fields currently null)
+
+---
+
 ## TODO: Next Session (Jan 28-29, 2026)
 
 ### Morning Autograder Verification
