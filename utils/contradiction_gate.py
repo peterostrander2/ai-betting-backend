@@ -42,11 +42,11 @@ def make_unique_key(pick) -> str:
     line = _get("line", 0)
 
     # For props: use player name
-    # For game picks: use "Game" or team name for spreads/ML
+    # For spreads/ML: use "Game" so both sides match
     if player_name:
         subject = player_name
-    elif market in ["SPREAD", "MONEYLINE", "ML"]:
-        subject = side if side else "Game"
+    elif market in ["SPREAD", "MONEYLINE", "ML", "SPREADS"]:
+        subject = "Game"
     else:
         subject = "Game"
 
