@@ -42,12 +42,13 @@ def make_unique_key(pick) -> str:
     line = _get("line", 0)
 
     # For props: use player name
-    # For game picks: use "Game" or team name for spreads/ML
+    # For game picks: use "Game" so both sides of spread/ML have same key
     if player_name:
         subject = player_name
-    elif market in ["SPREAD", "MONEYLINE", "ML"]:
-        subject = side if side else "Game"
     else:
+        # Always use "Game" for totals, spreads, and moneylines
+        # This ensures both sides of same bet (e.g., Lakers -7.5 vs Celtics +7.5)
+        # have identical unique keys and can be detected as contradictions
         subject = "Game"
 
     line_str = f"{line:.1f}" if line else "0.0"
