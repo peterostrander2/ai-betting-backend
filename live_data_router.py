@@ -100,7 +100,8 @@ try:
         log_slate_summary,
         is_game_started,
         get_game_status,
-        filter_events_today_et
+        filter_events_today_et,
+        et_day_bounds
     )
     TIME_FILTERS_AVAILABLE = True
 except ImportError:
@@ -2000,7 +2001,10 @@ async def get_best_bets(
     mode: Optional[str] = None,
     min_score: Optional[float] = None,
     debug: Optional[int] = None,
-    date: Optional[str] = None
+    date: Optional[str] = None,
+    max_events: Optional[int] = None,
+    max_props: Optional[int] = None,
+    max_games: Optional[int] = None,
 ):
     """
     Get best bets using full 8 AI Models + 8 Pillars + JARVIS + Esoteric scoring.
@@ -2013,6 +2017,9 @@ async def get_best_bets(
     - mode: Optional. Set to "live" to filter only is_live==true picks
     - min_score: Override minimum score threshold (default 6.5, min 5.0 for debug)
     - debug: Set to 1 to return top 25 candidates with full engine breakdown
+    - max_events: Max events to process (default 12). Applied before props fetch.
+    - max_props: Max prop picks in output (default 10)
+    - max_games: Max game picks in output (default 10)
     """
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
@@ -2036,6 +2043,11 @@ async def get_best_bets(
     else:
         cache_key = None  # Don't cache debug responses
 
+    # Caps with defaults
+    effective_max_events = max(1, min(max_events or 12, 30))
+    effective_max_props = max(1, min(max_props or 10, 50))
+    effective_max_games = max(1, min(max_games or 10, 50))
+
     import uuid as _uuid
     request_id = _uuid.uuid4().hex[:12]
     _start = time.time()
@@ -2043,7 +2055,10 @@ async def get_best_bets(
         result = await _best_bets_inner(
             sport, sport_lower, live_mode,
             cache_key, effective_min_score, debug_mode,
-            date_str=date
+            date_str=date,
+            max_events=effective_max_events,
+            max_props=effective_max_props,
+            max_games=effective_max_games,
         )
         logger.info("best-bets %s completed in %.1fs (request_id=%s, debug=%s, min=%.1f)",
                      sport, time.time() - _start, request_id, debug_mode, effective_min_score)
@@ -2061,9 +2076,30 @@ async def get_best_bets(
 
 
 async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
-                           min_score=6.5, debug_mode=False, date_str=None):
+                           min_score=6.5, debug_mode=False, date_str=None,
+                           max_events=12, max_props=10, max_games=10):
     sport_upper = sport.upper()
 
+    # --- v16.0 PERFORMANCE: Time budget + per-stage timings ---
+    TIME_BUDGET_S = 15.0
+    _t0 = time.time()
+    _deadline = _t0 + TIME_BUDGET_S
+    _timings = {}  # stage_name → elapsed_seconds
+    _timed_out_components = []
+
+    def _elapsed():
+        return time.time() - _t0
+
+    def _time_left():
+        return max(0, _deadline - time.time())
+
+    def _past_deadline():
+        return time.time() >= _deadline
+
+    def _record(stage, start):
+        _timings[stage] = round(time.time() - start, 3)
+
+    _s = time.time()
     # Get MasterPredictionSystem
     mps = get_master_prediction_system()
     daily_energy = get_daily_energy()
@@ -2082,6 +2118,21 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     # Get learned weights for esoteric scoring
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
+    _record("init_engines", _s)
+
+    # v16.0: Build ET window debug info
+    _date_window_et_debug = {}
+    if TIME_FILTERS_AVAILABLE:
+        try:
+            _et_start, _et_end = et_day_bounds(date_str)
+            _date_window_et_debug = {
+                "date_str": date_str or "today",
+                "start_et": _et_start.strftime("%H:%M:%S"),
+                "end_et": _et_end.strftime("%H:%M:%S"),
+                "date_et": _et_start.strftime("%Y-%m-%d"),
+            }
+        except Exception:
+            pass
 
     # ==========================================================================
     # v15.0 STANDALONE JARVIS ENGINE (0-10 scale)
@@ -2715,6 +2766,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # v15.1: Pre-fetch game lines for game_context (spread/total for props)
     # Uses cached get_lines() to avoid extra API calls
     # ============================================
+    _s = time.time()
     game_context = {}  # game_key → {spread, total}
     try:
         _lines_data = await get_lines(sport)
@@ -2756,11 +2808,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         logger.info("Game context built for props: %d games with spread/total data", len(game_context))
     except Exception as e:
         logger.warning("Failed to build game_context for props: %s", e)
+    _record("game_context", _s)
 
     # ============================================
     # CATEGORY 1: PLAYER PROPS
     # (NCAAB props disabled — state legality varies)
     # ============================================
+    _s = time.time()
     props_picks = []
     invalid_injury_count = 0
     _skip_ncaab_props = sport_upper == "NCAAB"
@@ -2782,7 +2836,23 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         else:
             prop_games = raw_prop_games
 
+        # v16.0: Track event counts for date_window_et debug
+        _date_window_et_debug["events_before_props"] = len(raw_prop_games)
+        _date_window_et_debug["events_after_props"] = len(prop_games)
+
+        # v16.0: Apply max_events cap BEFORE iterating props (limits API/scoring work)
+        if len(prop_games) > max_events:
+            logger.info("MAX_EVENTS CAP: Trimming prop events from %d to %d", len(prop_games), max_events)
+            prop_games = prop_games[:max_events]
+
+        # v16.0: Batch player resolution cache (sport, normalized_name, team, opponent) → resolved
+        _player_resolve_cache = {}
+
         for game in prop_games:
+            if _past_deadline():
+                _timed_out_components.append("props_scoring")
+                logger.warning("TIME BUDGET: Props scoring hit deadline after %d picks (%.1fs)", len(props_picks), _elapsed())
+                break
             home_team = game.get("home_team", "")
             away_team = game.get("away_team", "")
             game_key = f"{away_team}@{home_team}"
@@ -2862,59 +2932,85 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 if TIME_FILTERS_AVAILABLE and commence_time:
                     game_status = get_game_status(commence_time)
 
-                # v14.9 UNIFIED PLAYER IDENTITY RESOLUTION
-                # Resolve player to canonical ID for accurate grading
+                # v16.0 BATCH PLAYER IDENTITY RESOLUTION (cached + deadline-aware)
                 canonical_player_id = None
                 provider_ids = {}
                 player_position = None
-                player_team = None  # Resolved team from identity lookup
+                player_team = None
                 resolved_injury_status = injury_status
                 prop_blocked = False
                 blocked_reason = None
 
-                if IDENTITY_RESOLVER_AVAILABLE:
-                    try:
-                        # Try home team first, then away team for better matching
-                        resolved = await resolve_player(
-                            sport=sport.upper(),
-                            raw_name=player,
-                            team_hint=home_team,
-                            event_id=game_key
-                        )
+                # Cache key: (sport, normalized_name, team, opponent)
+                _resolve_key = (sport_upper, player.lower().strip(), home_team, away_team)
 
-                        # If low confidence with home team, try away team
-                        if not resolved.is_resolved or resolved.confidence < 0.8:
-                            resolved_away = await resolve_player(
-                                sport=sport.upper(),
+                if IDENTITY_RESOLVER_AVAILABLE:
+                    if _resolve_key in _player_resolve_cache:
+                        # Use cached resolution
+                        _cached_res = _player_resolve_cache[_resolve_key]
+                        if _cached_res == "SKIPPED_DEADLINE":
+                            # Previous attempt was skipped due to deadline
+                            canonical_player_id = None
+                        elif _cached_res == "BLOCKED":
+                            prop_blocked = True
+                        elif isinstance(_cached_res, dict):
+                            canonical_player_id = _cached_res.get("canonical_player_id")
+                            provider_ids = _cached_res.get("provider_ids", {})
+                            player_position = _cached_res.get("position")
+                            player_team = _cached_res.get("team")
+                    elif _time_left() < 1.0:
+                        # Skip resolution if < 1s left
+                        _player_resolve_cache[_resolve_key] = "SKIPPED_DEADLINE"
+                        if "player_resolution" not in _timed_out_components:
+                            _timed_out_components.append("player_resolution")
+                    else:
+                        try:
+                            resolved = await resolve_player(
+                                sport=sport_upper,
                                 raw_name=player,
-                                team_hint=away_team,
+                                team_hint=home_team,
                                 event_id=game_key
                             )
-                            if resolved_away.confidence > resolved.confidence:
-                                resolved = resolved_away
 
-                        if resolved.is_resolved:
-                            canonical_player_id = resolved.canonical_player_id
-                            provider_ids = resolved.provider_ids
-                            player_position = resolved.position
-                            # Use resolved team if we got a good match
-                            if resolved.team:
-                                player_team = resolved.team
+                            if not resolved.is_resolved or resolved.confidence < 0.8:
+                                resolved_away = await resolve_player(
+                                    sport=sport_upper,
+                                    raw_name=player,
+                                    team_hint=away_team,
+                                    event_id=game_key
+                                )
+                                if resolved_away.confidence > resolved.confidence:
+                                    resolved = resolved_away
 
-                            # Check injury guard from resolver
-                            resolver = get_player_resolver()
-                            # For TITANIUM tier, don't allow QUESTIONABLE
-                            allow_questionable = score_data.get("tier", "PASS") != "TITANIUM_SMASH"
-                            resolved = await resolver.check_injury_guard(resolved, allow_questionable=allow_questionable)
+                            if resolved.is_resolved:
+                                canonical_player_id = resolved.canonical_player_id
+                                provider_ids = resolved.provider_ids
+                                player_position = resolved.position
+                                if resolved.team:
+                                    player_team = resolved.team
 
-                            if resolved.is_blocked:
-                                prop_blocked = True
-                                blocked_reason = resolved.blocked_reason
-                                logger.info("PLAYER GUARD: Blocking prop for %s (reason: %s)", player, blocked_reason)
-                    except Exception as e:
-                        logger.warning("Player resolution failed for %s: %s", player, e)
-                        # Generate fallback canonical ID
-                        canonical_player_id = f"{sport.upper()}:NAME:{normalize_player_name(player) if IDENTITY_RESOLVER_AVAILABLE else player.lower().replace(' ', '_')}|{home_team.lower().replace(' ', '_')}"
+                                resolver = get_player_resolver()
+                                allow_questionable = score_data.get("tier", "PASS") != "TITANIUM_SMASH"
+                                resolved = await resolver.check_injury_guard(resolved, allow_questionable=allow_questionable)
+
+                                if resolved.is_blocked:
+                                    prop_blocked = True
+                                    blocked_reason = resolved.blocked_reason
+                                    _player_resolve_cache[_resolve_key] = "BLOCKED"
+                                    logger.info("PLAYER GUARD: Blocking prop for %s (reason: %s)", player, blocked_reason)
+                                else:
+                                    _player_resolve_cache[_resolve_key] = {
+                                        "canonical_player_id": canonical_player_id,
+                                        "provider_ids": provider_ids,
+                                        "position": player_position,
+                                        "team": player_team,
+                                    }
+                            else:
+                                _player_resolve_cache[_resolve_key] = {}
+                        except Exception as e:
+                            logger.warning("Player resolution failed for %s: %s", player, e)
+                            canonical_player_id = f"{sport_upper}:NAME:{normalize_player_name(player) if IDENTITY_RESOLVER_AVAILABLE else player.lower().replace(' ', '_')}|{home_team.lower().replace(' ', '_')}"
+                            _player_resolve_cache[_resolve_key] = {"canonical_player_id": canonical_player_id, "provider_ids": {}, "position": None, "team": None}
 
                 # Skip blocked props
                 if prop_blocked:
@@ -2924,7 +3020,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 if not canonical_player_id:
                     safe_name = player.lower().replace(" ", "_").replace("'", "").replace(".", "")
                     safe_team = home_team.lower().replace(" ", "_")
-                    canonical_player_id = f"{sport.upper()}:NAME:{safe_name}|{safe_team}"
+                    canonical_player_id = f"{sport_upper}:NAME:{safe_name}|{safe_team}"
 
                 # v14.9: Build signals_fired array from pillars
                 signals_fired = score_data.get("pillars_passed", []).copy()
@@ -2996,6 +3092,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     except HTTPException:
         logger.warning("Props fetch failed for %s", sport)
 
+    _record("props_scoring", _s)
+
     if invalid_injury_count > 0:
         logger.info("INJURY ENFORCEMENT: Excluded %d props due to OUT/DOUBTFUL/SUSPENDED status", invalid_injury_count)
 
@@ -3063,16 +3161,23 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _all_prop_candidates = deduplicated_props  # Keep ref for debug output
 
     filtered_props = [p for p in deduplicated_props if p["total_score"] >= COMMUNITY_MIN_SCORE]
-    top_props = filtered_props[:10]
+    top_props = filtered_props[:max_props]
 
     # ============================================
     # CATEGORY 2: GAME PICKS (Spreads, Totals, ML)
     # ============================================
+    _s = time.time()
     game_picks = []
     ghost_game_count = 0
     _dropped_out_of_window_games = 0
     _dropped_missing_time_games = 0
     sport_config = SPORT_MAPPINGS[sport_lower]
+
+    _skip_game_picks = False
+    if _past_deadline():
+        _timed_out_components.append("game_picks")
+        _skip_game_picks = True
+        logger.warning("TIME BUDGET: Skipping game picks entirely (%.1fs elapsed)", _elapsed())
 
     try:
         # Fetch game odds (spreads, totals, moneylines)
@@ -3085,10 +3190,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "markets": "spreads,h2h,totals",
                 "oddsFormat": "american"
             }
-        )
+        ) if not _skip_game_picks else None
 
         if resp and resp.status_code == 200:
             games = resp.json()
+            _date_window_et_debug["events_before_games"] = len(games)
 
             # v15.1 TODAY-ONLY FILTER: Exclude non-today games with counters
             _dropped_out_of_window_games = 0
@@ -3100,6 +3206,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 ghost_game_count = _dropped_out_of_window_games + _dropped_missing_time_games
                 logger.info("GAMES TODAY GATE: kept=%d, dropped_window=%d, dropped_missing=%d",
                             len(games), _dropped_out_of_window_games, _dropped_missing_time_games)
+
+            _date_window_et_debug["events_after_games"] = len(games)
+
+            # v16.0: Apply max_events cap to games too
+            if len(games) > max_events:
+                logger.info("MAX_EVENTS CAP: Trimming game events from %d to %d", len(games), max_events)
+                games = games[:max_events]
 
             for game in games:
                 home_team = game.get("home_team", "")
@@ -3246,6 +3359,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     except Exception as e:
         logger.warning("Game odds fetch failed: %s", e)
 
+    _record("game_picks_scoring", _s)
+
     if ghost_game_count > 0:
         logger.info("GHOST PREVENTION: Excluded %d games not scheduled for today", ghost_game_count)
 
@@ -3331,7 +3446,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _all_game_candidates = deduplicated_games  # Keep ref for debug output
 
     filtered_game_picks = [p for p in deduplicated_games if p["total_score"] >= COMMUNITY_MIN_SCORE]
-    top_game_picks = filtered_game_picks[:10]
+    top_game_picks = filtered_game_picks[:max_games]
 
     if _dupe_dropped_props + _dupe_dropped_games > 0:
         logger.info("DEDUPE: dropped %d prop dupes, %d game dupes", _dupe_dropped_props, _dupe_dropped_games)
@@ -3339,6 +3454,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # ============================================
     # LOG PICKS FOR GRADING (v14.9 + v12.0 auto_grader integration)
     # ============================================
+    _s = time.time()
     if PICK_LOGGER_AVAILABLE:
         try:
             pick_logger = get_pick_logger()
@@ -3458,6 +3574,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         except Exception as e:
             logger.error("AUTO_GRADER: Failed to log predictions: %s", e)
 
+    _record("pick_logging", _s)
+
     # ============================================
     # LIVE MODE FILTERING (v14.11)
     # ============================================
@@ -3529,7 +3647,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "learning_active": learning is not None
         },
         "timestamp": datetime.now().isoformat(),
-        "_cached_at": time.time()
+        "_cached_at": time.time(),
+        "_elapsed_s": round(_elapsed(), 2),
+        "_timed_out_components": _timed_out_components if _timed_out_components else None,
     }
 
     # === DEBUG MODE: Return top 25 candidates with full engine breakdown ===
@@ -3592,6 +3712,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             buckets[bucket] = buckets.get(bucket, 0) + 1
 
         result["debug"] = {
+            "debug_timings": _timings,
+            "total_elapsed_s": round(_elapsed(), 2),
+            "timed_out_components": _timed_out_components,
+            "time_budget_s": TIME_BUDGET_S,
+            "max_events": max_events,
+            "max_props": max_props,
+            "max_games": max_games,
+            "player_resolve_cache_size": len(_player_resolve_cache) if '_player_resolve_cache' in locals() else 0,
+            "date_window_et": _date_window_et_debug,
             "min_score_used": min_score,
             "community_threshold": 6.5,
             "total_prop_candidates": len(_all_prop_candidates),
