@@ -1381,6 +1381,56 @@ time_filters.py       (UNCHANGED - ET bounds already correct)
 
 **7. Smoke Test Endpoint**
 
-Added `GET` and `HEAD` `/live/smoke-test/alert-status` — returns `{"status": "ok", "timestamp": "..."}`. Uptime monitors were hitting this path and logging 404s.
+Added `GET` and `HEAD` `/live/smoke-test/alert-status` — returns `{"ok": true}`. Uptime monitors were hitting this path and logging 404s.
+
+**8. Grade-Ready: Allow line=0 for Game Picks**
+
+Game picks can have `line=0` (pick-em spread). `check_grade_ready()` no longer flags `line_at_bet` as missing for game picks (only for prop picks with `player_name`).
+
+---
+
+## Production Readiness Smoke Checks (Backend)
+
+### 0) Required env
+- Base URL (Railway): `https://web-production-7b2a.up.railway.app`
+- API key header: `X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4`
+
+### 1) Uptime monitor endpoint
+Must return **200 for both HEAD and GET**.
+
+```bash
+echo "=== HEAD ===" && \
+curl -I "https://web-production-7b2a.up.railway.app/live/smoke-test/alert-status" && \
+echo && echo "=== GET ===" && \
+curl -s "https://web-production-7b2a.up.railway.app/live/smoke-test/alert-status" && echo
+```
+
+### 2) Best-bets pick logging
+Must show `pick_log_errors: []` and either `picks_logged > 0` (first call) or `picks_skipped_dupes > 0` (repeat).
+
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin)['debug']; \
+    [print(f'{k}: {d[k]}') for k in ['picks_attempted','picks_logged','picks_skipped_dupes','pick_log_errors','total_elapsed_s']]"
+```
+
+### 3) Grader dry-run
+Must show `pre_mode_pass: true`, `failed: 0`, `unresolved: 0`.
+
+```bash
+curl -s -X POST "https://web-production-7b2a.up.railway.app/live/grader/dry-run" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" \
+  -H "Content-Type: application/json" \
+  -d '{"date":"2026-01-27","mode":"pre"}' | python3 -m json.tool
+```
+
+### 4) Grader status
+Must show `available: true`, `weights_loaded: true`, `predictions_logged > 0`.
+
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/grader/status" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | python3 -m json.tool
+```
 
 ---
