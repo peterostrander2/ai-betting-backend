@@ -139,11 +139,10 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
     # DEBUG: Log contradictions found
     if contradictions:
         logger.info(f"Contradiction gate found {len(contradictions)} potential contradiction groups")
-        for key, group in list(contradictions.items())[:5]:  # Log first 5
+        for key, group in list(contradictions.items())[:3]:  # Log first 3
             sports = [_get(p, 'sport') for p in group]
             sides = [_get(p, 'side') for p in group]
-            markets = [_get(p, 'market') or _get(p, 'pick_type') for p in group]
-            logger.info(f"  Group: {key[:70]}... | Markets: {markets} | Sides: {sides}")
+            logger.info(f"  Group: {key[:50]}... | Sports: {sports} | Sides: {sides}")
 
     kept_picks = []
     dropped_picks = []
