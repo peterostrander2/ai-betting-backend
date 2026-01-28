@@ -4897,7 +4897,9 @@ async def grader_status():
     try:
         if PICK_LOGGER_AVAILABLE:
             pick_logger = get_pick_logger()
-            today = get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d")
+            # Use YYYY-MM-DD format (not human-readable) to match pick file names
+            from pick_logger import get_today_date_et
+            today = get_today_date_et()
 
             # Get today's picks
             today_picks = pick_logger.get_picks_for_date(today)
