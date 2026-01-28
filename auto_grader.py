@@ -110,17 +110,13 @@ class AutoGrader:
     4. Adjust weights to correct bias
     5. Persist for next session
     """
-    
-    SUPPORTED_SPORTS = ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
+
+    SUPPORTED_SPORTS = ["NBA", "NFL", "MLB", "NHL", "NCAAB"]  # Kept in sync with data_dir.SUPPORTED_SPORTS
 
     def __init__(self, storage_path: str = None):
-        # Railway volume support: Use /data if RAILWAY_VOLUME_MOUNT_PATH is set
         if storage_path is None:
-            railway_volume = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
-            if railway_volume:
-                storage_path = os.path.join(railway_volume, "grader_data")
-            else:
-                storage_path = "./grader_data"
+            from data_dir import GRADER_DATA
+            storage_path = GRADER_DATA
         self.storage_path = storage_path
         self.predictions: Dict[str, List[PredictionRecord]] = defaultdict(list)
         self.weights: Dict[str, Dict[str, WeightConfig]] = {}

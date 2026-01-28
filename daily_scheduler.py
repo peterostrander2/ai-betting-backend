@@ -39,6 +39,98 @@ except ImportError:
     RESULT_FETCHER_AVAILABLE = False
     logger.warning("result_fetcher not available - auto-grading disabled")
 
+# Best-bets cache pre-warm (v15.0)
+WARM_AVAILABLE = False
+try:
+    from live_data_router import _best_bets_inner, api_cache, SPORT_MAPPINGS
+    WARM_AVAILABLE = True
+except ImportError:
+    logger.warning("live_data_router not available - cache pre-warm disabled")
+
+
+async def warm_best_bets_cache():
+    """Pre-warm best-bets cache for sports with games today. Called by scheduler."""
+    if not WARM_AVAILABLE:
+        logger.warning("WARM skipped: live_data_router not available")
+        return
+
+    import pytz
+    ET = pytz.timezone("America/New_York")
+    now_et = datetime.now(ET)
+    today_str = now_et.strftime("%Y-%m-%d")
+    from data_dir import SUPPORTED_SPORTS
+    sports = [s.lower() for s in SUPPORTED_SPORTS]
+
+    for sport in sports:
+        cache_key = f"best-bets:{sport}"
+        try:
+            # Skip if cache already warm
+            cached = api_cache.get(cache_key)
+            if cached:
+                logger.info("WARM skip cache hot: %s", sport)
+                continue
+
+            # Distributed lock so multiple containers don't warm simultaneously
+            lock_key = f"warm_best_bets:{sport}:{today_str}"
+            if not api_cache.acquire_lock(lock_key, ttl=900):
+                logger.info("WARM skip locked: %s", sport)
+                continue
+
+            # Check if sport has games today (lightweight events fetch)
+            try:
+                import httpx
+                odds_api_key = os.getenv("ODDS_API_KEY", "")
+                odds_base = os.getenv("ODDS_API_BASE", "https://api.the-odds-api.com/v4")
+                sport_config = SPORT_MAPPINGS.get(sport, {})
+                odds_sport = sport_config.get("odds", "")
+                if odds_api_key and odds_sport:
+                    async with httpx.AsyncClient(timeout=15) as client:
+                        resp = await client.get(
+                            f"{odds_base}/sports/{odds_sport}/events",
+                            params={"apiKey": odds_api_key}
+                        )
+                        if resp.status_code == 200:
+                            events = resp.json()
+                            # Filter to today's games (simple date check)
+                            today_events = [e for e in events
+                                          if e.get("commence_time", "")[:10] == today_str]
+                            if not today_events:
+                                logger.info("WARM skip no games: %s", sport)
+                                api_cache.release_lock(lock_key)
+                                continue
+                        else:
+                            logger.warning("WARM events fetch failed for %s: %d", sport, resp.status_code)
+                            api_cache.release_lock(lock_key)
+                            continue
+                else:
+                    logger.info("WARM skip no API key or sport config: %s", sport)
+                    api_cache.release_lock(lock_key)
+                    continue
+            except Exception as e:
+                logger.warning("WARM events check error for %s: %s", sport, e)
+                api_cache.release_lock(lock_key)
+                continue
+
+            # Warm the cache by calling _best_bets_inner directly
+            logger.info("WARM start: %s", sport)
+            _start = time.time()
+            await _best_bets_inner(sport, sport, False, cache_key)
+            duration = time.time() - _start
+            logger.info("WARM done: %s in %.1fs", sport, duration)
+
+            # Store warm metadata
+            api_cache.set(f"warm_meta:{sport}", {
+                "last_warm_time": datetime.now(ET).isoformat(),
+                "duration_seconds": round(duration, 1)
+            }, ttl=86400)
+
+        except Exception as e:
+            logger.error("WARM error for %s: %s", sport, e)
+            try:
+                api_cache.release_lock(f"warm_best_bets:{sport}:{today_str}")
+            except Exception:
+                pass
+
 
 # ============================================
 # CONFIGURATION
@@ -100,7 +192,8 @@ class DailyAuditJob:
             "sports": {}
         }
         
-        for sport in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
+        from data_dir import SUPPORTED_SPORTS
+        for sport in SUPPORTED_SPORTS:
             try:
                 sport_result = self.audit_sport(sport)
                 results["sports"][sport] = sport_result
@@ -197,7 +290,8 @@ class DailyAuditJob:
     
     def _save_audit_log(self, results: Dict):
         """Save audit results to file."""
-        log_dir = "./audit_logs"
+        from data_dir import AUDIT_LOGS
+        log_dir = AUDIT_LOGS
         os.makedirs(log_dir, exist_ok=True)
         
         date_str = datetime.now().strftime("%Y-%m-%d")
@@ -239,7 +333,8 @@ class CleanupJob:
                 removed += original_count - len(self.auto_grader.predictions[sport])
         
         # Cleanup old audit logs
-        log_dir = "./audit_logs"
+        from data_dir import AUDIT_LOGS
+        log_dir = AUDIT_LOGS
         if os.path.exists(log_dir):
             for filename in os.listdir(log_dir):
                 filepath = os.path.join(log_dir, filename)
@@ -314,6 +409,33 @@ class DailyScheduler:
             )
             logger.info("Auto-grading enabled: runs every 30 minutes")
 
+        # Cache pre-warm at 11:00 AM, 4:30 PM, 6:30 PM ET (v15.0)
+        if WARM_AVAILABLE:
+            for hour, minute, label in [(11, 0, "morning"), (16, 30, "afternoon"), (18, 30, "evening")]:
+                self.scheduler.add_job(
+                    self._run_warm_cache,
+                    CronTrigger(hour=hour, minute=minute, timezone="America/New_York"),
+                    id=f"warm_cache_{label}",
+                    name=f"Cache Pre-Warm ({label})"
+                )
+            logger.info("Cache pre-warm enabled: 11:00 AM, 4:30 PM, 6:30 PM ET")
+
+            # Startup warm: 2 minutes after boot (uses same lock path as scheduled warm)
+            def _startup_warm():
+                """Startup warm with stampede guard."""
+                if not WARM_AVAILABLE:
+                    return
+                import pytz
+                ET = pytz.timezone("America/New_York")
+                today_str = datetime.now(ET).strftime("%Y-%m-%d")
+                lock_key = f"warm_startup:{today_str}"
+                if not api_cache.acquire_lock(lock_key, ttl=300):
+                    logger.info("Startup warm skipped: another instance already warming")
+                    return
+                self._run_warm_cache()
+            threading.Timer(120, _startup_warm).start()
+            logger.info("Startup cache warm scheduled in 2 minutes")
+
         self.scheduler.start()
         logger.info("APScheduler started with daily audit at 6 AM")
 
@@ -334,6 +456,20 @@ class DailyScheduler:
         except Exception as e:
             logger.error(f"Auto-grade failed: {e}")
     
+    def _run_warm_cache(self):
+        """Pre-warm best-bets cache in an async context."""
+        if not WARM_AVAILABLE:
+            return
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(warm_best_bets_cache())
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error("Cache warm failed: %s", e)
+
     def _start_simple_scheduler(self):
         """Fallback simple scheduler using threading."""
         def run_scheduler():

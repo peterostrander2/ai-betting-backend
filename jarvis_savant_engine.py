@@ -654,7 +654,10 @@ class JarvisSavantEngine:
         research_score: float,
         esoteric_score: float,
         immortal_detected: bool = False,
-        jarvis_triggered: bool = False
+        jarvis_triggered: bool = False,
+        jarvis_active: bool = False,
+        research_sharp_present: bool = False,
+        jason_sim_boost: float = 0.0
     ) -> Dict[str, Any]:
         """
         THE HEART - Calculate confluence using dual-score alignment.
@@ -697,11 +700,23 @@ class JarvisSavantEngine:
             boost = 5
             color = "purple"
             action = "PERFECT CONFLUENCE - PLAY"
-        elif (both_high or either_high) and aligned_70:
-            level = "STRONG"
-            boost = 3
-            color = "green"
-            action = "STRONG CONFLUENCE - LEAN"
+        elif aligned_70:
+            # v15.3: STRONG requires alignment >= 80% AND at least one active signal
+            _strong_eligible = (
+                alignment_pct >= 80 and
+                (jarvis_active or research_sharp_present or jason_sim_boost != 0)
+            )
+            if _strong_eligible:
+                level = "STRONG"
+                boost = 3
+                color = "green"
+                action = "STRONG CONFLUENCE - LEAN"
+            else:
+                # Downgrade: high alignment but no active signals backing it
+                level = "MODERATE"
+                boost = 1
+                color = "blue"
+                action = "MODERATE - MONITOR (STRONG downgraded: missing active signal)"
         elif aligned_60:
             level = "MODERATE"
             boost = 1

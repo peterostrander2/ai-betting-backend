@@ -101,6 +101,33 @@ curl "https://web-production-7b2a.up.railway.app/live/api-usage" -H "X-API-Key: 
 
 ---
 
+## CRITICAL: Today-Only ET Gate (NEVER skip this)
+
+**Every data path that touches Odds API events MUST filter to today-only in ET before processing.**
+
+### Rules
+1. **Props AND game picks** must both pass through `filter_events_today_et()` before iteration
+2. The day boundary is **00:00:00 ET to 23:59:59 ET** — never 12:01 AM
+3. `filter_events_today_et(events, date_str)` returns `(kept, dropped_window, dropped_missing)` — always log the drop counts
+4. `date_str` (YYYY-MM-DD) must be threaded through the full call chain: endpoint → `get_best_bets(date=)` → `_best_bets_inner(date_str=)` → `filter_events_today_et(events, date_str)`
+5. Debug output must include `dropped_out_of_window_props`, `dropped_out_of_window_games`, `dropped_missing_time_props`, `dropped_missing_time_games`
+
+### Why
+Without the gate, `get_props()` returns ALL upcoming events from Odds API (could be 60+ games across multiple days). This causes:
+- Inflated candidate counts
+- Ghost picks for games not happening today
+- Score distribution skewed by tomorrow's games
+
+### Where it lives
+- `time_filters.py`: `et_day_bounds()`, `is_in_et_day()`, `filter_events_today_et()`
+- `live_data_router.py` `_best_bets_inner()`: applied to both props loop (~line 2536) and game picks (~line 2790)
+- `main.py` `/ops/score-distribution`: passes `date=date` to `get_best_bets()`
+
+### If adding a new data path
+If you add ANY new endpoint or function that processes Odds API events, you MUST apply `filter_events_today_et()` before iteration. No exceptions.
+
+---
+
 ## Architecture
 
 ### Core Files (Active)
@@ -121,27 +148,159 @@ curl "https://web-production-7b2a.up.railway.app/live/api-usage" -H "X-API-Key: 
 
 ---
 
-## Signal Architecture (Dual Engine)
+## Signal Architecture (4-Engine v15.3)
 
 ### Scoring Formula
 ```
-SMASH PICK = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
+FINAL = (AI × 0.25) + (Research × 0.30) + (Esoteric × 0.20) + (Jarvis × 0.15) + confluence_boost
+       + jason_sim_boost (post-pick)
 ```
 
-### Components
+All engines score 0-10. Min output threshold: **6.5** (picks below this are filtered out).
 
-1. **8 AI Models** (max 8 pts) - `advanced_ml_backend.py`
-   - Ensemble, LSTM, Matchup, Monte Carlo, Line Movement, Rest/Fatigue, Injury, Betting Edge
+### Engine 1: AI Score (25%)
+- 8 AI Models (0-8 scaled to 0-10) - `advanced_ml_backend.py`
+- Dynamic calibration: +0.5 sharp present, +0.25-1.0 signal strength, +0.5 favorable spread, +0.25 player data
 
-2. **8 Pillars** (max 8 pts) - `advanced_ml_backend.py`
-   - Sharp Split, Reverse Line, Hospital Fade, Situational Spot, Expert Consensus, Prop Correlation, Hook Discipline, Volume Discipline
+### Engine 2: Research Score (30%)
+- Sharp Money (0-3 pts): STRONG/MODERATE/MILD signal from Playbook splits
+- Line Variance (0-3 pts): Cross-book spread variance from Odds API
+- Public Fade (0-2 pts): Contrarian signal at ≥65% public + ticket-money divergence ≥5%
+- Base (2-3 pts): 2.0 default, 3.0 when real splits data present with money-ticket divergence
 
-3. **JARVIS Triggers** (max 4 pts) - `live_data_router.py:233-239`
-   - Gematria signals: 2178, 201, 33, 93, 322
-   - Weight: `boost / 5` (doubled from original /10)
+### Engine 3: Esoteric Score (20%)
+- **See CRITICAL section below for rules**
 
-4. **Esoteric Edge** (18 modules) - `live_data_router.py`
-   - NOOSPHERE VELOCITY, GANN PHYSICS, SCALAR-SAVANT, OMNI-GLITCH
+### Engine 4: Jarvis Score (15%)
+- Gematria triggers: 2178, 201, 33, 93, 322
+- Mid-spread Goldilocks, trap detection
+- `jarvis_savant_engine.py`
+
+### Confluence (v15.3 — with STRONG eligibility gate)
+- Alignment = `1 - abs(research - esoteric) / 10`
+- **STRONG (+3)**: alignment ≥ 80% **AND** at least one active signal (`jarvis_active`, `research_sharp_present`, or `jason_sim_boost != 0`). If alignment ≥70% but no active signal, downgrades to MODERATE.
+- MODERATE (+1): alignment ≥ 60%
+- DIVERGENT (+0): below 60%
+- PERFECT/IMMORTAL: both ≥7.5 + jarvis ≥7.5 + alignment ≥80%
+
+**Why the gate**: Without it, two engines that are both mediocre (e.g., R=4.0, E=4.0) get 100% alignment and STRONG +3 boost for free, inflating scores without real conviction.
+
+### CRITICAL: GOLD_STAR Hard Gates (v15.3)
+
+**GOLD_STAR tier requires ALL of these engine minimums. If any fails, downgrade to EDGE_LEAN.**
+
+| Gate | Threshold | Why |
+|------|-----------|-----|
+| `ai_gte_6.8` | AI ≥ 6.8 | AI models must show conviction |
+| `research_gte_5.5` | Research ≥ 5.5 | Must have real market signals (sharp/splits/variance) |
+| `jarvis_gte_6.5` | Jarvis ≥ 6.5 | Jarvis triggers must fire |
+| `esoteric_gte_4.0` | Esoteric ≥ 4.0 | Esoteric components must contribute |
+
+**Output includes**: `scoring_breakdown.gold_star_gates` (dict of gate→bool), `gold_star_eligible` (bool), `gold_star_failed` (list of failed gate names).
+
+**Where it lives**: `live_data_router.py` `calculate_pick_score()`, after `tier_from_score()` call.
+
+### Tier Hierarchy
+| Tier | Score Threshold | Additional Requirements |
+|------|----------------|------------------------|
+| TITANIUM_SMASH | 3/4 engines ≥ 8.0 | Overrides all other tiers |
+| GOLD_STAR | ≥ 7.5 | Must pass ALL hard gates |
+| EDGE_LEAN | ≥ 6.5 | Default for picks above output filter |
+| MONITOR | ≥ 5.5 | Below output filter (hidden) |
+| PASS | < 5.5 | Below output filter (hidden) |
+
+### If modifying confluence or tiers
+1. Do NOT remove STRONG eligibility gate — it prevents inflation from aligned-but-weak engines
+2. Do NOT remove GOLD_STAR hard gates — they ensure only picks with real multi-engine conviction get top tier
+3. Run debug mode and verify gates show in `scoring_breakdown`
+4. Check that STRONG only fires with alignment ≥80% + active signal
+
+---
+
+## CRITICAL: Esoteric Engine Rules (v15.2)
+
+**Esoteric is a per-pick differentiator, NOT a constant boost. Never modify it to inflate scores uniformly.**
+
+### Components & Weights
+| Component | Weight | Max Pts | Input Source |
+|-----------|--------|---------|--------------|
+| Numerology | 35% | 3.5 | 40% daily (day_of_year) + 60% pick-specific (SHA-256 of game_str\|prop_line\|player_name) |
+| Astro | 25% | 2.5 | Vedic astro `overall_score` mapped linearly 0-100 → 0-10 (50 = 5.0) |
+| Fibonacci | 15% | 1.5 | Jarvis `calculate_fibonacci_alignment(magnitude)` → scaled 6× in esoteric layer, capped at 0.6 |
+| Vortex | 15% | 1.5 | Jarvis `calculate_vortex_pattern(magnitude×10)` → scaled 5× in esoteric layer, capped at 0.7 |
+| Daily Edge | 10% | 1.0 | `get_daily_energy()` score: ≥85→1.0, ≥70→0.7, ≥55→0.4, <55→0 |
+
+### Magnitude Fallback (props MUST NOT use spread=0)
+```
+magnitude = abs(spread) → abs(prop_line) → abs(total/10) → 0
+```
+Fib and Vortex use `magnitude`, NOT raw `spread`. This ensures props with player lines (2.5, 24.5, etc.) get meaningful fib/vortex input.
+
+### Guardrails
+- Numerology uses `hashlib.sha256` for deterministic per-pick seeding (NOT `hash()`)
+- Fib+Vortex combined contribution capped at their weight share (3.0 max)
+- Fib/Vortex scaling is done in the esoteric layer in `live_data_router.py`, NOT in `jarvis_savant_engine.py`
+- Expected range: 2.0-5.5 (median ~3.5). Average must NOT exceed 7.0
+- `esoteric_breakdown` in debug output shows all components + `magnitude_input`
+
+### Where it lives
+- `live_data_router.py` `calculate_pick_score()`: lines ~2352-2435
+- Jarvis provides raw fib/vortex modifiers (unchanged), esoteric layer scales them
+- Tests: `tests/test_esoteric.py` (10 tests covering bounds, variability, determinism)
+
+### If modifying Esoteric
+1. Do NOT change Jarvis fib/vortex modifiers — scale in the esoteric layer only
+2. Run `pytest tests/test_esoteric.py` to verify median ≥2.0, avg ≤7.0, cap ≤10, variability
+3. Check confluence still produces DIVERGENT when research >> esoteric by 4+ pts
+4. Deploy and verify `esoteric_breakdown` in debug output shows per-pick variation
+
+---
+
+## Pick Deduplication (v15.3)
+
+**Best-bets output is deduplicated to ensure no duplicate picks reach the frontend.**
+
+### How It Works
+
+1. **Stable `pick_id`**: Each pick gets a deterministic 12-char hex ID via SHA-1 hash of canonical bet semantics:
+   ```
+   SHA1(SPORT|event_id|market|SIDE|line|player)[:12]
+   ```
+   - `side` is uppercased, `line` is rounded to 2 decimals
+   - Field fallbacks: `event_id` OR `game_id` OR `matchup`; `market` OR `prop_type` OR `pick_type`; etc.
+
+2. **Priority rule**: When duplicates share the same `pick_id`, keep the one with:
+   - Highest `total_score` (primary)
+   - Preferred book (tiebreaker): draftkings > fanduel > betmgm > caesars > pinnacle > others
+
+3. **Applied to both props AND game picks** separately via `_dedupe_picks()`
+
+### Debug Output
+
+```json
+{
+  "dupe_dropped_props": 3,
+  "dupe_dropped_games": 1,
+  "dupe_groups_props": [
+    {
+      "pick_id": "a1b2c3d4e5f6",
+      "count": 3,
+      "kept_book": "draftkings",
+      "dropped_books": ["fanduel", "betmgm"]
+    }
+  ]
+}
+```
+
+### Where It Lives
+- `live_data_router.py`: `_make_pick_id()`, `_book_priority()`, `_dedupe_picks()` helper functions
+- Applied after scoring, before output filter
+- Tests: `tests/test_dedupe.py` (12 tests)
+
+### If Modifying Dedupe
+1. `pick_id` must remain deterministic — same bet = same ID across requests
+2. Never remove the dedupe step — duplicates confuse the frontend and inflate pick counts
+3. Run `pytest tests/test_dedupe.py` to verify edge cases (different sides, lines, players not deduped)
 
 ---
 
@@ -1123,5 +1282,206 @@ if not resolved.prop_available:
 | Injuries | 30 minutes | Status can change pre-game |
 | Props availability | 5 minutes | Books update frequently |
 | Live state | 1 minute | Real-time data |
+
+---
+
+## Session Log: January 27-28, 2026 - Best-Bets Performance Fix + Pick Logger Pipeline
+
+### What Was Done
+
+**1. Best-Bets Performance Overhaul (v16.1)**
+
+Reduced `/live/best-bets/{sport}` response time from **18.28s → 5.5s** (70% improvement).
+
+| Change | Before | After |
+|--------|--------|-------|
+| Data fetch | Sequential (props then games) | Parallel via `asyncio.gather()` |
+| Player resolution | Sequential per-prop (~1.5s each) | Parallel batch with 0.8s per-call timeout, 3s batch timeout |
+| Stage order | Props → Game picks | Game picks first (fast, no resolver), then props |
+| Time budget | None | 15s hard deadline with `_timed_out_components` |
+
+**2. Debug Instrumentation**
+
+Added `debug=1` query param output:
+
+| Field | Purpose |
+|-------|---------|
+| `debug_timings` | Per-stage timing (props_fetch, game_fetch, player_resolution, props_scoring, game_picks, pick_logging) |
+| `total_elapsed_s` | Wall clock time |
+| `timed_out_components` | List of stages that hit deadline |
+| `date_window_et` | ET day bounds with events_before/after counts |
+| `picks_logged` | Picks successfully written to pick_logger |
+| `picks_skipped_dupes` | Picks skipped due to deduplication |
+| `pick_log_errors` | Any silent pick_logger exceptions |
+| `player_resolution` | attempted/succeeded/timed_out counts |
+| `dropped_out_of_window_props/games` | ET filter drop counts |
+
+**3. ET Day-Window Filter Verified**
+
+- Both props AND game picks pass through `filter_events_today_et()` before scoring
+- `date_window_et` debug block shows `start_et: "00:00:00"`, `end_et: "23:59:59"`, before/after counts
+- `date_str` threaded through full call chain: endpoint → `get_best_bets(date=)` → `_best_bets_inner(date_str=)`
+
+**4. Pick Logger Pipeline Fixed (CRITICAL)**
+
+Three bugs found and fixed in the pick logging path:
+
+| Bug | Root Cause | Fix |
+|-----|------------|-----|
+| `pytz` not defined | `pytz` used in `_enrich_pick_for_logging` but never imported in that scope | Added `import pytz as _pytz` inside the try block |
+| `float(None)` crash | `pick_data.get("field", 0)` returns `None` when key exists with `None` value | Added `_f()`/`_i()` None-safe helpers in `pick_logger.py` |
+| No logging visibility | `logged_count` never included in debug output | Added `picks_logged`, `picks_skipped_dupes`, `pick_log_errors` to debug block |
+
+**5. Autograder Dry-Run Cleanup**
+
+- Dry-run now skips picks with `grade_status="FAILED"` and empty `canonical_player_id` (old test seeds)
+- Reports `skipped_stale_seeds` and `skipped_already_graded` counts
+- 4 old test seeds (LeBron, Brandon Miller, Test Player Seed x2) no longer pollute dry-run
+
+**6. Query Parameters Added**
+
+| Param | Default | Purpose |
+|-------|---------|---------|
+| `max_events` | 12 | Cap events before props fetch |
+| `max_props` | 10 | Cap prop picks in output |
+| `max_games` | 10 | Cap game picks in output |
+| `debug` | 0 | Enable debug output |
+| `date` | today ET | Override date for testing |
+
+### Verification Results (Production)
+
+```
+picks_attempted: 20
+picks_logged: 12        ✅
+picks_skipped_dupes: 8  ✅ (correctly deduped from earlier call)
+pick_log_errors: []     ✅
+total_elapsed_s: 5.57   ✅ (under 15s budget)
+timed_out_components: [] ✅
+
+Dry-run:
+  total: 34, pending: 30, failed: 0, unresolved: 0
+  overall_status: PENDING  ✅
+  skipped_stale_seeds: 4   ✅
+```
+
+### Key Design Decisions
+
+1. **Pick dedupe is DATE-BOUND (ET)**: `pick_hashes` keyed by `get_today_date_et()`. Tomorrow's picks won't be blocked by today's hashes.
+2. **Grader scans ET date window**: `get_picks_for_grading()` defaults to today ET, allows yesterday for morning grading.
+3. **Player resolution graceful degradation**: If BallDontLie times out, falls back to `{SPORT}:NAME:{name}|{team}` canonical ID. Props are never blocked by resolver failures.
+4. **Game picks run before props**: Game picks are fast (no player resolution), so they complete first and aren't at risk of being skipped by the time budget.
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - Performance overhaul, debug instrumentation, pick logging fixes, smoke test endpoint)
+pick_logger.py        (MODIFIED - None-safe float/int conversions)
+time_filters.py       (UNCHANGED - ET bounds already correct)
+```
+
+**7. Smoke Test Endpoint**
+
+Added `GET` and `HEAD` `/live/smoke-test/alert-status` — returns `{"ok": true}`. Uptime monitors were hitting this path and logging 404s.
+
+**8. Grade-Ready: Allow line=0 for Game Picks**
+
+Game picks can have `line=0` (pick-em spread). `check_grade_ready()` no longer flags `line_at_bet` as missing for game picks (only for prop picks with `player_name`).
+
+---
+
+## Production Readiness Smoke Checks (Backend)
+
+### 0) Required env
+- Base URL (Railway): `https://web-production-7b2a.up.railway.app`
+- API key header: `X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4`
+
+### 1) Uptime monitor endpoint
+Must return **200 for both HEAD and GET**.
+
+```bash
+echo "=== HEAD ===" && \
+curl -I "https://web-production-7b2a.up.railway.app/live/smoke-test/alert-status" && \
+echo && echo "=== GET ===" && \
+curl -s "https://web-production-7b2a.up.railway.app/live/smoke-test/alert-status" && echo
+```
+
+### 2) Best-bets pick logging
+Must show `pick_log_errors: []` and either `picks_logged > 0` (first call) or `picks_skipped_dupes > 0` (repeat).
+
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin)['debug']; \
+    [print(f'{k}: {d[k]}') for k in ['picks_attempted','picks_logged','picks_skipped_dupes','pick_log_errors','total_elapsed_s']]"
+```
+
+### 3) Grader dry-run
+Must show `pre_mode_pass: true`, `failed: 0`, `unresolved: 0`.
+
+```bash
+curl -s -X POST "https://web-production-7b2a.up.railway.app/live/grader/dry-run" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" \
+  -H "Content-Type: application/json" \
+  -d '{"date":"2026-01-27","mode":"pre"}' | python3 -m json.tool
+```
+
+### 4) Grader status
+Must show `available: true`, `weights_loaded: true`, `predictions_logged > 0`.
+
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/grader/status" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | python3 -m json.tool
+```
+
+### Smoke Check Results (Jan 27-28, 2026)
+
+All 4 checks passing as of `601912b`:
+
+| Check | Result |
+|-------|--------|
+| Uptime monitor | HEAD 200, GET 200 `{"ok":true}` |
+| Pick logging | 8 logged, 7 deduped, errors: `[]`, 6.47s |
+| Grader dry-run | `pre_mode_pass: True`, failed: 0, unresolved: 0, 64 pending |
+| Grader status | available: True, 320 predictions, weights loaded |
+
+---
+
+## TODO: Next Session (Jan 28-29, 2026)
+
+### Morning Autograder Verification
+
+After NBA games from Jan 27 complete, run post-mode dry-run and trigger grading:
+
+```bash
+# 1. Post-mode dry-run (should show graded > 0 after 6 AM audit)
+curl -s -X POST "https://web-production-7b2a.up.railway.app/live/grader/dry-run" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" \
+  -H "Content-Type: application/json" \
+  -d '{"date":"2026-01-27","mode":"post"}' | python3 -m json.tool
+
+# 2. Check if 6 AM audit ran automatically
+curl -s "https://web-production-7b2a.up.railway.app/live/scheduler/status" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | python3 -m json.tool
+
+# 3. Manual audit trigger if needed
+curl -s -X POST "https://web-production-7b2a.up.railway.app/live/grader/run-audit" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" \
+  -H "Content-Type: application/json" \
+  -d '{"days_back": 1, "apply_changes": true}' | python3 -m json.tool
+
+# 4. Check performance after grading
+curl -s "https://web-production-7b2a.up.railway.app/live/grader/performance/nba?days_back=1" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | python3 -m json.tool
+
+# 5. Daily community report
+curl -s "https://web-production-7b2a.up.railway.app/live/grader/daily-report" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | python3 -m json.tool
+```
+
+### Success Criteria
+- `post_mode_pass: true` (all picks graded, none failed)
+- `graded > 0` in dry-run
+- Performance: hit rate tracked, MAE computed
+- Weights adjusted if bias detected
 
 ---

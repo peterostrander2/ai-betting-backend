@@ -29,7 +29,7 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple, Set
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict, field, fields as dataclass_fields
 from collections import defaultdict
 import logging
 
@@ -50,15 +50,10 @@ logger = logging.getLogger("pick_logger")
 # CONFIGURATION
 # =============================================================================
 
-# Railway volume support: Use /data if RAILWAY_VOLUME_MOUNT_PATH is set
-# Otherwise use local paths for development
-RAILWAY_VOLUME_PATH = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
-if RAILWAY_VOLUME_PATH:
-    STORAGE_PATH = os.path.join(RAILWAY_VOLUME_PATH, "pick_logs")
-    GRADED_PATH = os.path.join(RAILWAY_VOLUME_PATH, "graded_picks")
-else:
-    STORAGE_PATH = "./pick_logs"
-    GRADED_PATH = "./graded_picks"
+from data_dir import PICK_LOGS, GRADED_PICKS
+
+STORAGE_PATH = PICK_LOGS
+GRADED_PATH = GRADED_PICKS
 
 # Books we validate against
 SUPPORTED_BOOKS = {
@@ -177,7 +172,12 @@ class PublishedPick:
     pick_hash: str = ""  # SHA256 hash of pick key fields
 
     # Grade status for verification
-    grade_status: str = "PENDING"  # PENDING, GRADED, FAILED, UNRESOLVED
+    grade_status: str = "PENDING"  # PENDING, WAITING_FINAL, GRADED, FAILED, UNRESOLVED
+
+    # Retry tracking for grading state machine
+    retry_count: int = 0
+    last_error: str = ""
+    last_attempt_at: str = ""
 
     # Book/market fields for grade-ready checklist
     book_key: str = ""  # Canonical book identifier
@@ -215,6 +215,11 @@ class PublishedPick:
 
     # Tier badge for frontend
     tier_badge: str = ""  # SMASH, GOLD, EDGE, etc.
+
+    # v15.1 - Grading metadata
+    game_time_utc: str = ""  # ISO UTC game start time
+    minutes_since_start: int = 0  # Minutes since game start (0 if not started)
+    raw_inputs_snapshot: Dict[str, Any] = field(default_factory=dict)  # Key features used
 
 
 # =============================================================================
@@ -505,20 +510,15 @@ class PickLogger:
         today_file = self._get_today_file()
 
         if os.path.exists(today_file):
+            valid_field_names = {f.name for f in dataclass_fields(PublishedPick)}
             try:
                 with open(today_file, 'r') as f:
                     for line in f:
                         if line.strip():
                             data = json.loads(line)
-                            # Handle missing new fields with defaults
-                            for field_name in ['run_id', 'pick_hash', 'grade_status', 'book_key', 'market',
-                                               'jason_sim_available', 'variance_flag', 'injury_state', 'sim_count',
-                                               'signals_firing', 'engine_breakdown', 'vacuum_flags', 'titanium_reasons',
-                                               'is_live', 'live_context', 'is_started_already', 'sportsbook_name',
-                                               'sportsbook_event_url', 'league', 'status', 'base_score', 'tier_badge']:
-                                if field_name not in data:
-                                    data[field_name] = None  # Will use dataclass default
-                            pick = PublishedPick(**{k: v for k, v in data.items() if v is not None or k in data})
+                            # Filter to known fields so schema changes don't crash
+                            filtered = {k: v for k, v in data.items() if k in valid_field_names}
+                            pick = PublishedPick(**filtered)
                             self.picks[today].append(pick)
                             # Build pick_hash index
                             if hasattr(pick, 'pick_hash') and pick.pick_hash:
@@ -568,7 +568,7 @@ class PickLogger:
         # Check for duplicates
         is_dup, dup_reason = self.is_duplicate(
             pick_hash, today,
-            line=float(pick_data.get("line", 0)),
+            line=float(pick_data.get("line") or 0),
             allow_line_change=True
         )
 
@@ -613,12 +613,14 @@ class PickLogger:
             validation_errors.append(book_error)
 
         # Compute base_score (pre-jason)
-        ai = float(pick_data.get("ai_score", 0))
-        research = float(pick_data.get("research_score", 0))
-        esoteric = float(pick_data.get("esoteric_score", 0))
-        jarvis = float(pick_data.get("jarvis_score", pick_data.get("jarvis_rs", 0)))
-        jason_boost = float(pick_data.get("jason_sim_boost", 0))
-        final = float(pick_data.get("final_score", pick_data.get("total_score", 0)))
+        def _f(v, default=0): return float(v if v is not None else default)
+        def _i(v, default=0): return int(v if v is not None else default)
+        ai = _f(pick_data.get("ai_score", 0))
+        research = _f(pick_data.get("research_score", 0))
+        esoteric = _f(pick_data.get("esoteric_score", 0))
+        jarvis = _f(pick_data.get("jarvis_score", pick_data.get("jarvis_rs", 0)))
+        jason_boost = _f(pick_data.get("jason_sim_boost", 0))
+        final = _f(pick_data.get("final_score", pick_data.get("total_score", 0)))
         base_score = final - jason_boost if jason_boost else final
 
         # Determine tier badge
@@ -650,9 +652,9 @@ class PickLogger:
             home_team=pick_data.get("home_team", ""),
             away_team=pick_data.get("away_team", ""),
             prop_type=prop_type,
-            line=float(pick_data.get("line", 0)),
+            line=_f(pick_data.get("line", 0)),
             side=pick_data.get("side", pick_data.get("over_under", "")),
-            odds=int(pick_data.get("odds", -110)),
+            odds=_i(pick_data.get("odds", -110), -110),
             book=book,
             book_link=pick_data.get("best_book_link", ""),
             game_start_time_et=pick_data.get("start_time_et", ""),
@@ -666,7 +668,7 @@ class PickLogger:
             final_score=final,
             tier=tier,
             titanium_flag=pick_data.get("titanium_triggered", False),
-            units=float(pick_data.get("units", 0)),
+            units=_f(pick_data.get("units", 0)),
             research_breakdown=pick_data.get("research_breakdown", {}),
             research_reasons=pick_data.get("research_reasons", []),
             pillars_passed=pick_data.get("pillars_passed", []),
@@ -674,8 +676,8 @@ class PickLogger:
             jason_ran=pick_data.get("jason_ran", False),
             jason_sim_boost=jason_boost,
             jason_blocked=pick_data.get("jason_blocked", False),
-            jason_win_pct_home=float(pick_data.get("jason_win_pct_home", 50)),
-            jason_win_pct_away=float(pick_data.get("jason_win_pct_away", 50)),
+            jason_win_pct_home=_f(pick_data.get("jason_win_pct_home", 50), 50),
+            jason_win_pct_away=_f(pick_data.get("jason_win_pct_away", 50), 50),
             confluence_reasons=pick_data.get("confluence_reasons", []),
             jarvis_triggers_hit=pick_data.get("jarvis_triggers_hit", []),
             jarvis_reasons=pick_data.get("jarvis_reasons", []),
@@ -689,8 +691,8 @@ class PickLogger:
             provider_event_ids=pick_data.get("provider_event_ids", {}),
             canonical_player_id=pick_data.get("canonical_player_id", ""),
             provider_player_ids=pick_data.get("provider_player_ids", pick_data.get("provider_ids", {})),
-            line_at_bet=float(pick_data.get("line", 0)),
-            odds_at_bet=int(pick_data.get("odds", -110)),
+            line_at_bet=_f(pick_data.get("line", 0)),
+            odds_at_bet=_i(pick_data.get("odds", -110), -110),
             timestamp_at_bet=now_et.isoformat(),
             closing_line=None,
             closing_odds=None,
@@ -705,7 +707,7 @@ class PickLogger:
             jason_sim_available=pick_data.get("jason_sim_available", pick_data.get("jason_ran", False)),
             variance_flag=pick_data.get("variance_flag", ""),
             injury_state=pick_data.get("injury_state", "CONFIRMED_ONLY"),
-            sim_count=int(pick_data.get("sim_count", 1000 if pick_data.get("jason_ran") else 0)),
+            sim_count=_i(pick_data.get("sim_count", 1000 if pick_data.get("jason_ran") else 0)),
             signals_firing=pick_data.get("signals_firing", []),
             engine_breakdown=pick_data.get("engine_breakdown", {
                 "ai_score": ai,
@@ -724,7 +726,11 @@ class PickLogger:
             league=pick_data.get("league", pick_data.get("sport", "")),
             status=status,
             base_score=base_score,
-            tier_badge=tier_badge
+            tier_badge=tier_badge,
+            # v15.1 grading metadata
+            game_time_utc=pick_data.get("game_time_utc", ""),
+            minutes_since_start=_i(pick_data.get("minutes_since_start", 0)),
+            raw_inputs_snapshot=pick_data.get("raw_inputs_snapshot", {}),
         )
 
         # Store and persist
@@ -784,12 +790,11 @@ class PickLogger:
         Returns:
             List of PublishedPick objects for that date
         """
-        picks = self.picks.get(date, [])
-
-        # Also try to load from file if not in memory
-        if not picks:
+        # Load from file if this date has never been loaded
+        if date not in self.picks:
             self._load_picks_from_file(date)
-            picks = self.picks.get(date, [])
+
+        picks = self.picks.get(date, [])
 
         if sport:
             picks = [p for p in picks if p.sport.upper() == sport.upper()]
@@ -800,14 +805,18 @@ class PickLogger:
         """Load picks from JSONL file for a given date."""
         log_file = os.path.join(self.storage_path, f"picks_{date}.jsonl")
         if os.path.exists(log_file):
+            valid_field_names = {f.name for f in dataclass_fields(PublishedPick)}
             picks = []
             with open(log_file, 'r') as f:
                 for line in f:
                     try:
                         data = json.loads(line.strip())
-                        pick = PublishedPick(**data)
+                        # Filter to known fields so schema changes don't crash loading
+                        filtered = {k: v for k, v in data.items() if k in valid_field_names}
+                        pick = PublishedPick(**filtered)
                         picks.append(pick)
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("Failed to parse pick line: %s", e)
                         continue
             self.picks[date] = picks
 
@@ -815,7 +824,8 @@ class PickLogger:
         self,
         pick_id: str,
         result: str,
-        actual_value: Optional[float] = None
+        actual_value: Optional[float] = None,
+        date: Optional[str] = None
     ) -> Optional[Dict]:
         """
         Grade a pick with actual result.
@@ -824,46 +834,70 @@ class PickLogger:
             pick_id: The pick ID to grade
             result: WIN, LOSS, or PUSH
             actual_value: Optional actual stat value for props
+            date: Date to search (default: today, also checks yesterday)
 
         Returns:
             Grading result or None if pick not found
         """
-        today = get_today_date_et()
+        # Search today and yesterday
+        dates_to_search = []
+        if date:
+            dates_to_search.append(date)
+        else:
+            today = get_today_date_et()
+            yesterday = (get_now_et() - timedelta(days=1)).strftime("%Y-%m-%d")
+            dates_to_search = [today, yesterday]
 
-        for pick in self.picks.get(today, []):
-            if pick.pick_id == pick_id:
-                pick.result = result.upper()
-                pick.actual_value = actual_value
-                pick.graded_at = get_now_et().isoformat()
-                # v14.10: Set graded flag and grade_result
-                pick.graded = True
-                pick.grade_result = pick.result
+        for search_date in dates_to_search:
+            # Ensure picks are loaded for this date
+            if search_date not in self.picks:
+                self._load_picks_from_file(search_date)
 
-                # Calculate units won/lost
-                if pick.result == "WIN":
-                    if pick.odds > 0:
-                        pick.units_won_lost = pick.units * (pick.odds / 100)
-                    else:
-                        pick.units_won_lost = pick.units * (100 / abs(pick.odds))
-                elif pick.result == "LOSS":
-                    pick.units_won_lost = -pick.units
-                else:  # PUSH
-                    pick.units_won_lost = 0
+            for pick in self.picks.get(search_date, []):
+                if pick.pick_id == pick_id:
+                    pick.result = result.upper()
+                    pick.actual_value = actual_value
+                    pick.graded_at = get_now_et().isoformat()
+                    pick.graded = True
+                    pick.grade_result = pick.result
+                    pick.grade_status = "GRADED"
 
-                # Save updated picks
-                self._save_graded_picks(today)
+                    # Calculate units won/lost
+                    if pick.result == "WIN":
+                        if pick.odds > 0:
+                            pick.units_won_lost = pick.units * (pick.odds / 100)
+                        else:
+                            pick.units_won_lost = pick.units * (100 / abs(pick.odds))
+                    elif pick.result == "LOSS":
+                        pick.units_won_lost = -pick.units
+                    else:  # PUSH
+                        pick.units_won_lost = 0
 
-                return {
-                    "pick_id": pick_id,
-                    "result": pick.result,
-                    "units_won_lost": pick.units_won_lost,
-                    "graded_at": pick.graded_at
-                }
+                    # Save to BOTH canonical log and graded file
+                    self._rewrite_pick_log(search_date)
+                    self._save_graded_picks(search_date)
+
+                    return {
+                        "pick_id": pick_id,
+                        "result": pick.result,
+                        "units_won_lost": pick.units_won_lost,
+                        "graded_at": pick.graded_at
+                    }
 
         return None
 
+    def _rewrite_pick_log(self, date: str):
+        """Rewrite the canonical pick log so graded status survives redeploy."""
+        log_file = os.path.join(self.storage_path, f"picks_{date}.jsonl")
+        picks = self.picks.get(date, [])
+        if not picks:
+            return
+        with open(log_file, 'w') as f:
+            for pick in picks:
+                f.write(json.dumps(asdict(pick)) + "\n")
+
     def _save_graded_picks(self, date: str):
-        """Save graded picks to separate file."""
+        """Save graded picks to separate file (secondary copy)."""
         graded_file = os.path.join(self.graded_path, f"graded_{date}.jsonl")
 
         graded = [p for p in self.picks.get(date, []) if p.result is not None]
@@ -1170,7 +1204,8 @@ class PickLogger:
             reasons.append("MISSING_MARKET")
 
         line_at_bet = getattr(pick, 'line_at_bet', 0.0)
-        if line_at_bet == 0.0 and pick.line == 0.0:
+        if line_at_bet == 0.0 and pick.line == 0.0 and pick.player_name:
+            # Only flag missing line for prop picks; game picks can have line=0 (pick-em)
             missing_fields.append("line_at_bet")
             reasons.append("MISSING_LINE")
 
