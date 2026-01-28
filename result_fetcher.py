@@ -1067,9 +1067,26 @@ async def auto_grade_picks(
 
             if grade_result:
                 results["picks_graded"] += 1
+
+                # Build human-readable description for community
+                if pick.player_name:
+                    # Prop pick: "LeBron James - Points Over 25.5"
+                    description = f"{pick.player_name} - {pick.prop_type or 'Prop'} {pick.side} {pick.line}"
+                    display_label = pick.player_name
+                else:
+                    # Game pick: "Lakers vs Celtics - Total Under 235.5"
+                    matchup = pick.matchup or f"{pick.away_team} @ {pick.home_team}"
+                    pick_detail = f"{pick.pick_type or 'Pick'} {pick.side} {pick.line}"
+                    description = f"{matchup} - {pick_detail}"
+                    display_label = matchup
+
                 results["graded_picks"].append({
                     "pick_id": pick.pick_id,
-                    "player": pick.player_name or "Game",
+                    "matchup": pick.matchup or f"{pick.away_team} @ {pick.home_team}",
+                    "player": display_label,
+                    "description": description,
+                    "pick_type": pick.pick_type or "",
+                    "prop_type": pick.prop_type or "",
                     "line": pick.line,
                     "side": pick.side,
                     "actual": actual_value,
