@@ -1068,27 +1068,46 @@ async def auto_grade_picks(
             if grade_result:
                 results["picks_graded"] += 1
 
-                # Build human-readable description for community
+                # Build human-readable description and infer side if missing
+                matchup = pick.matchup or f"{pick.away_team} @ {pick.home_team}"
+
+                # Infer the side picked if it's missing (for totals)
+                display_side = pick.side
+                if not display_side and pick.pick_type and "total" in pick.pick_type.lower():
+                    # Infer from result and actual value
+                    if result == "WIN":
+                        display_side = "Over" if actual_value > pick.line else "Under"
+                    elif result == "LOSS":
+                        display_side = "Under" if actual_value > pick.line else "Over"
+                    else:  # PUSH
+                        display_side = "Push"
+
                 if pick.player_name:
                     # Prop pick: "LeBron James - Points Over 25.5"
-                    description = f"{pick.player_name} - {pick.prop_type or 'Prop'} {pick.side} {pick.line}"
+                    prop_name = pick.prop_type or 'Prop'
+                    description = f"{pick.player_name} {prop_name} {display_side} {pick.line}"
                     display_label = pick.player_name
+                    pick_detail = f"{prop_name} {display_side} {pick.line}"
                 else:
                     # Game pick: "Lakers vs Celtics - Total Under 235.5"
-                    matchup = pick.matchup or f"{pick.away_team} @ {pick.home_team}"
-                    pick_detail = f"{pick.pick_type or 'Pick'} {pick.side} {pick.line}"
+                    pick_type_name = pick.pick_type or 'Pick'
+                    if display_side:
+                        pick_detail = f"{pick_type_name} {display_side} {pick.line}"
+                    else:
+                        pick_detail = f"{pick_type_name} {pick.line}"
                     description = f"{matchup} - {pick_detail}"
                     display_label = matchup
 
                 results["graded_picks"].append({
                     "pick_id": pick.pick_id,
-                    "matchup": pick.matchup or f"{pick.away_team} @ {pick.home_team}",
+                    "matchup": matchup,
                     "player": display_label,
                     "description": description,
                     "pick_type": pick.pick_type or "",
                     "prop_type": pick.prop_type or "",
                     "line": pick.line,
-                    "side": pick.side,
+                    "side": display_side or "",
+                    "pick_detail": pick_detail,
                     "actual": actual_value,
                     "result": result,
                     "tier": pick.tier,
