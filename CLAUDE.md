@@ -148,27 +148,80 @@ If you add ANY new endpoint or function that processes Odds API events, you MUST
 
 ---
 
-## Signal Architecture (Dual Engine)
+## Signal Architecture (4-Engine v15.2)
 
 ### Scoring Formula
 ```
-SMASH PICK = AI_Models (0-8) + Pillars (0-8) + JARVIS (0-4) + Esoteric_Boost
+FINAL = (AI × 0.25) + (Research × 0.30) + (Esoteric × 0.20) + (Jarvis × 0.15) + confluence_boost
+       + jason_sim_boost (post-pick)
 ```
 
-### Components
+All engines score 0-10. Confluence boost: STRONG +3, MODERATE +1, DIVERGENT +0.
+Min output threshold: **6.5** (picks below this are filtered out).
 
-1. **8 AI Models** (max 8 pts) - `advanced_ml_backend.py`
-   - Ensemble, LSTM, Matchup, Monte Carlo, Line Movement, Rest/Fatigue, Injury, Betting Edge
+### Engine 1: AI Score (25%)
+- 8 AI Models (0-8 scaled to 0-10) - `advanced_ml_backend.py`
+- Dynamic calibration: +0.5 sharp present, +0.25-1.0 signal strength, +0.5 favorable spread, +0.25 player data
 
-2. **8 Pillars** (max 8 pts) - `advanced_ml_backend.py`
-   - Sharp Split, Reverse Line, Hospital Fade, Situational Spot, Expert Consensus, Prop Correlation, Hook Discipline, Volume Discipline
+### Engine 2: Research Score (30%)
+- Sharp Money (0-3 pts): STRONG/MODERATE/MILD signal from Playbook splits
+- Line Variance (0-3 pts): Cross-book spread variance from Odds API
+- Public Fade (0-2 pts): Contrarian signal at ≥65% public + ticket-money divergence ≥5%
+- Base (2-3 pts): 2.0 default, 3.0 when real splits data present with money-ticket divergence
 
-3. **JARVIS Triggers** (max 4 pts) - `live_data_router.py:233-239`
-   - Gematria signals: 2178, 201, 33, 93, 322
-   - Weight: `boost / 5` (doubled from original /10)
+### Engine 3: Esoteric Score (20%)
+- **See CRITICAL section below for rules**
 
-4. **Esoteric Edge** (18 modules) - `live_data_router.py`
-   - NOOSPHERE VELOCITY, GANN PHYSICS, SCALAR-SAVANT, OMNI-GLITCH
+### Engine 4: Jarvis Score (15%)
+- Gematria triggers: 2178, 201, 33, 93, 322
+- Mid-spread Goldilocks, trap detection
+- `jarvis_savant_engine.py`
+
+### Confluence
+- Alignment = `1 - abs(research - esoteric) / 10`
+- STRONG (+3): alignment ≥ 70%
+- MODERATE (+1): alignment ≥ 60%
+- DIVERGENT (+0): below 60%
+- PERFECT/IMMORTAL: both ≥7.5 + jarvis ≥7.5 + alignment ≥80%
+
+---
+
+## CRITICAL: Esoteric Engine Rules (v15.2)
+
+**Esoteric is a per-pick differentiator, NOT a constant boost. Never modify it to inflate scores uniformly.**
+
+### Components & Weights
+| Component | Weight | Max Pts | Input Source |
+|-----------|--------|---------|--------------|
+| Numerology | 35% | 3.5 | 40% daily (day_of_year) + 60% pick-specific (SHA-256 of game_str\|prop_line\|player_name) |
+| Astro | 25% | 2.5 | Vedic astro `overall_score` mapped linearly 0-100 → 0-10 (50 = 5.0) |
+| Fibonacci | 15% | 1.5 | Jarvis `calculate_fibonacci_alignment(magnitude)` → scaled 6× in esoteric layer, capped at 0.6 |
+| Vortex | 15% | 1.5 | Jarvis `calculate_vortex_pattern(magnitude×10)` → scaled 5× in esoteric layer, capped at 0.7 |
+| Daily Edge | 10% | 1.0 | `get_daily_energy()` score: ≥85→1.0, ≥70→0.7, ≥55→0.4, <55→0 |
+
+### Magnitude Fallback (props MUST NOT use spread=0)
+```
+magnitude = abs(spread) → abs(prop_line) → abs(total/10) → 0
+```
+Fib and Vortex use `magnitude`, NOT raw `spread`. This ensures props with player lines (2.5, 24.5, etc.) get meaningful fib/vortex input.
+
+### Guardrails
+- Numerology uses `hashlib.sha256` for deterministic per-pick seeding (NOT `hash()`)
+- Fib+Vortex combined contribution capped at their weight share (3.0 max)
+- Fib/Vortex scaling is done in the esoteric layer in `live_data_router.py`, NOT in `jarvis_savant_engine.py`
+- Expected range: 2.0-5.5 (median ~3.5). Average must NOT exceed 7.0
+- `esoteric_breakdown` in debug output shows all components + `magnitude_input`
+
+### Where it lives
+- `live_data_router.py` `calculate_pick_score()`: lines ~2352-2435
+- Jarvis provides raw fib/vortex modifiers (unchanged), esoteric layer scales them
+- Tests: `tests/test_esoteric.py` (10 tests covering bounds, variability, determinism)
+
+### If modifying Esoteric
+1. Do NOT change Jarvis fib/vortex modifiers — scale in the esoteric layer only
+2. Run `pytest tests/test_esoteric.py` to verify median ≥2.0, avg ≤7.0, cap ≤10, variability
+3. Check confluence still produces DIVERGENT when research >> esoteric by 4+ pts
+4. Deploy and verify `esoteric_breakdown` in debug output shows per-pick variation
 
 ---
 
