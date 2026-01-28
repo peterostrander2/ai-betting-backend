@@ -2434,17 +2434,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         logger.debug("Esoteric[%s]: mag=%.1f num=%.2f astro=%.2f fib=%.2f vortex=%.2f daily=%.2f trap=%.2f → raw=%.2f",
                      game_str[:30], _eso_magnitude, numerology_score, astro_score, fib_score, vortex_score, daily_edge_score, trap_mod, esoteric_raw)
 
-        # --- v15.0 FOUR-ENGINE CONFLUENCE ---
-        # Now considers all 4 engines for confluence determination
+        # --- v15.3 FOUR-ENGINE CONFLUENCE (with STRONG eligibility gate) ---
+        _research_sharp_present = bool(sharp_signal and sharp_signal.get("signal_strength", "NONE") != "NONE")
         if jarvis:
             confluence = jarvis.calculate_confluence(
                 research_score=research_score,
                 esoteric_score=esoteric_score,
                 immortal_detected=immortal_detected,
-                jarvis_triggered=jarvis_triggered
+                jarvis_triggered=jarvis_triggered,
+                jarvis_active=jarvis_active,
+                research_sharp_present=_research_sharp_present,
+                jason_sim_boost=0.0  # Jason hasn't run yet; will be checked post-hoc
             )
         else:
-            # Fallback confluence calculation with 4 engines
+            # Fallback confluence calculation with STRONG eligibility gate
             alignment = 1 - abs(research_score - esoteric_score) / 10
             alignment_pct = alignment * 100
             both_high = research_score >= 7.5 and esoteric_score >= 7.5
@@ -2456,7 +2459,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             elif both_high and jarvis_high and alignment_pct >= 80:
                 confluence = {"level": "PERFECT", "boost": 5, "alignment_pct": alignment_pct}
             elif alignment_pct >= 70:
-                confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
+                # v15.3: STRONG requires alignment >= 80% AND active signal
+                _strong_ok = alignment_pct >= 80 and (jarvis_active or _research_sharp_present)
+                if _strong_ok:
+                    confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
+                else:
+                    confluence = {"level": "MODERATE", "boost": 1, "alignment_pct": alignment_pct}
             elif alignment_pct >= 60:
                 confluence = {"level": "MODERATE", "boost": 1, "alignment_pct": alignment_pct}
             else:
@@ -2565,6 +2573,28 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             else:
                 bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
 
+        # --- v15.3 GOLD_STAR HARD GATES ---
+        # GOLD_STAR requires ALL engine minimums. If any gate fails, downgrade to EDGE_LEAN.
+        _gold_gates = {
+            "ai_gte_6.8": ai_scaled >= 6.8,
+            "research_gte_5.5": research_score >= 5.5,
+            "jarvis_gte_6.5": jarvis_rs >= 6.5,
+            "esoteric_gte_4.0": esoteric_score >= 4.0,
+        }
+        _gold_gates_passed = all(_gold_gates.values())
+        _gold_gates_failed = [k for k, v in _gold_gates.items() if not v]
+
+        if bet_tier.get("tier") == "GOLD_STAR" and not _gold_gates_passed:
+            logger.info("GOLD_STAR downgrade: gates failed=%s (ai=%.1f R=%.1f J=%.1f E=%.1f)",
+                       _gold_gates_failed, ai_scaled, research_score, jarvis_rs, esoteric_score)
+            bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY",
+                        "badge": "EDGE LEAN", "gold_star_downgrade": True,
+                        "gold_star_failed_gates": _gold_gates_failed}
+            # Also update explanation
+            bet_tier["explanation"] = f"EDGE_LEAN (GOLD_STAR downgraded: {', '.join(_gold_gates_failed)})"
+            bet_tier["final_score"] = round(final_score, 2)
+            bet_tier["confluence_level"] = confluence_level
+
         # Map to confidence levels for backward compatibility
         if TIERING_AVAILABLE:
             confidence, confidence_score = get_confidence_from_tier(bet_tier.get("tier", "PASS"))
@@ -2621,7 +2651,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "ai_score": round(ai_scaled, 2),
                 "pillars": round(pillar_score, 2),
                 "confluence_boost": confluence_boost,
-                "alignment_pct": confluence.get("alignment_pct", 0)
+                "alignment_pct": confluence.get("alignment_pct", 0),
+                "gold_star_gates": _gold_gates,
+                "gold_star_eligible": _gold_gates_passed,
+                "gold_star_failed": _gold_gates_failed
             },
             # v14.9 Research breakdown (clean engine separation)
             "research_breakdown": {
