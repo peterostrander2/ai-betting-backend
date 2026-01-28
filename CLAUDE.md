@@ -24,13 +24,13 @@
 4. **DO NOT ask user to check** - Railway handles it, user knows the workflow
 
 ### Storage Configuration (Railway Volume)
-- Volume: 5GB mounted at `/data`
-- Environment variable: `RAILWAY_VOLUME_MOUNT_PATH=/data`
+- Volume: 5GB mounted at `/app/grader_data`
+- Environment variable: `RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data`
 - Paths managed by `data_dir.py`:
-  - `/data/pick_logs/` - Published picks (JSONL)
-  - `/data/grader_data/` - Auto-grader predictions and weights (JSON)
-  - `/data/graded_picks/` - Graded picks (JSONL)
-  - `/data/audit_logs/` - Daily audit reports
+  - `/app/grader_data/pick_logs/` - Published picks (JSONL)
+  - `/app/grader_data/grader_data/` - Auto-grader predictions and weights (JSON)
+  - `/app/grader_data/graded_picks/` - Graded picks (JSONL)
+  - `/app/grader_data/audit_logs/` - Daily audit reports
 
 ### SSH Configuration
 - GitHub SSH uses port 443 (not 22) - configured in `~/.ssh/config`
@@ -2370,10 +2370,10 @@ def _save_pick(self, pick: PublishedPick):
 3. `data_dir.py` line 55: `STORAGE_PATH = PICK_LOGS`
 4. `pick_logger.py` line 441: `self.storage_path = storage_path`
 
-**Final Path**: `/data/pick_logs/picks_{YYYY-MM-DD}.jsonl`
-- Example: `/data/pick_logs/picks_2026-01-28.jsonl`
+**Final Path**: `/app/grader_data/pick_logs/picks_{YYYY-MM-DD}.jsonl`
+- Example: `/app/grader_data/pick_logs/picks_2026-01-28.jsonl`
 - Format: JSONL (one JSON object per line)
-- Railway volume: `RAILWAY_VOLUME_MOUNT_PATH=/data` (5GB mounted volume)
+- Railway volume: `RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data` (5GB mounted volume)
 
 #### 2. End-to-End Persistence Proof
 
@@ -2475,17 +2475,17 @@ Result:
 #### 4. Verified Grader Reads from Same Path
 
 **Pick Logger Storage**:
-- Path: `/data/pick_logs/`
+- Path: `/app/grader_data/pick_logs/`
 - Used by: `pick_logger._save_pick()` (writes), `pick_logger.get_picks_for_date()` (reads)
 
 **Auto-Grader Storage**:
-- Path: `/data/grader_data/`
+- Path: `/app/grader_data/grader_data/`
 - Used by: Weight learning system (separate from pick logging)
 
 **Grader Uses Pick Logger**: ✅ Confirmed
 - Dry-run endpoint: Calls `pick_logger.get_picks_for_grading()`
 - Grading summary: Calls `pick_logger.get_picks_for_date()`
-- Both read from `/data/pick_logs/` (correct path)
+- Both read from `/app/grader_data/pick_logs/` (correct path)
 
 ### Files Changed
 
@@ -2502,7 +2502,7 @@ live_data_router.py   (MODIFIED - Fixed date format in grader status)
 ### Storage Architecture
 
 ```
-/data/  (Railway 5GB volume - persists across restarts)
+/app/grader_data/  (Railway 5GB volume - persists across restarts)
 ├── pick_logs/
 │   ├── picks_2026-01-27.jsonl  (68 picks, 64 graded)
 │   ├── picks_2026-01-28.jsonl  (159 picks, 42 graded, 117 pending)
@@ -2518,7 +2518,7 @@ live_data_router.py   (MODIFIED - Fixed date format in grader status)
 
 | Test | Status | Evidence |
 |------|--------|----------|
-| **Logging** | ✅ PASS | Picks written to `/data/pick_logs/picks_{date}.jsonl` |
+| **Logging** | ✅ PASS | Picks written to `/app/grader_data/pick_logs/picks_{date}.jsonl` |
 | **Persistence across restart** | ✅ PASS | 159 today, 68 yesterday, survive multiple deployments |
 | **Manual grading ≥1 pick** | ✅ PASS | 64 picks graded yesterday (41-23 record, +18 units) |
 | **Path verification** | ✅ PASS | Grader reads from same path as logger writes |

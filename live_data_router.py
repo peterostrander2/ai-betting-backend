@@ -4969,14 +4969,17 @@ async def grader_status():
 
 
 @router.get("/grader/debug-files")
-async def grader_debug_files():
+async def grader_debug_files(api_key: str = Depends(verify_api_key)):
     """
-    Debug endpoint to prove disk persistence.
+    Debug endpoint to prove disk persistence (PROTECTED).
 
     Returns:
         - Resolved DATA_DIR and PICK_LOGS paths
         - Today's JSONL file path, existence, size, line count
         - First and last JSONL rows (with sensitive fields redacted)
+
+    Requires:
+        - X-API-Key header for authentication
     """
     import os
     from data_dir import DATA_DIR, PICK_LOGS
