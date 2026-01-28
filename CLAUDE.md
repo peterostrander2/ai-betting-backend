@@ -2569,3 +2569,142 @@ curl "https://web-production-7b2a.up.railway.app/live/grader/status" \
 None - Persistence and grading fully proven and working. System is production-ready with 159 picks logged today and 64 picks from yesterday successfully graded.
 
 ---
+
+## Session Log: January 28, 2026 - Pre-Frontend Cleanup
+
+### Overview
+
+Final cleanup before frontend integration: fixed documentation path discrepancy and secured debug endpoint.
+
+**User Request**: "Fix documentation + lock down the debug endpoint. Update docs to reflect real volume mount path: /app/grader_data (not /data). Ensure /live/grader/debug-files is protected."
+
+### What Was Done
+
+#### 1. Fixed Documentation Path Discrepancy
+
+**Issue Found**: During hard checks, discovered Railway mounts volume at `/app/grader_data`, but all documentation referenced `/data`.
+
+**Root Cause**: Documentation written before Railway deployment showed expected path `/data`, but Railway actually uses `/app/grader_data` as mount point.
+
+**Impact**: No functional issues (code uses env var correctly), but documentation was misleading for future maintenance.
+
+**Files Updated**:
+
+**CLAUDE.md** (8 references updated):
+- Storage Configuration section: Volume mount path
+- Persistence architecture examples
+- Session logs path references
+- Final path examples in Jan 28 session
+
+**FRONTEND_READY.md** (4 references updated):
+- File paths for pick storage
+- Graded picks paths
+- Volume mount documentation
+- Persistence verification notes
+
+**Changes**:
+```diff
+- RAILWAY_VOLUME_MOUNT_PATH=/data
++ RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data
+
+- /data/pick_logs/picks_{date}.jsonl
++ /app/grader_data/pick_logs/picks_{date}.jsonl
+
+- /data/graded_picks/graded_{date}.jsonl
++ /app/grader_data/graded_picks/graded_{date}.jsonl
+```
+
+#### 2. Secured Debug Endpoint
+
+**Endpoint**: `/live/grader/debug-files` (created in hard checks for persistence proof)
+
+**Security Issue**: Debug endpoint was public, exposing:
+- File system paths
+- Storage configuration
+- Pick counts and samples
+- Internal system details
+
+**Fix Applied** (live_data_router.py line 4972):
+```python
+# BEFORE
+@router.get("/grader/debug-files")
+async def grader_debug_files():
+
+# AFTER
+@router.get("/grader/debug-files")
+async def grader_debug_files(api_key: str = Depends(verify_api_key)):
+```
+
+**Result**: Endpoint now requires `X-API-Key` header, returns 403 Forbidden without valid key.
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - Added API key protection to debug endpoint)
+CLAUDE.md             (MODIFIED - Updated 8 path references)
+FRONTEND_READY.md     (MODIFIED - Updated 4 path references)
+```
+
+### Git Commits
+
+```bash
+0483dc0 - docs: Fix volume mount path + secure debug endpoint
+```
+
+### Verification
+
+**Test protected endpoint**:
+```bash
+# With API key - should work
+curl "https://web-production-7b2a.up.railway.app/live/grader/debug-files" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+
+# Without API key - should return 403
+curl "https://web-production-7b2a.up.railway.app/live/grader/debug-files"
+```
+
+**Actual vs Documented Paths**:
+| Component | Old Docs | Actual | Status |
+|-----------|----------|--------|--------|
+| Volume mount | `/data` | `/app/grader_data` | ✅ Fixed |
+| Pick logs | `/data/pick_logs/` | `/app/grader_data/pick_logs/` | ✅ Fixed |
+| Graded picks | `/data/graded_picks/` | `/app/grader_data/graded_picks/` | ✅ Fixed |
+| Grader data | `/data/grader_data/` | `/app/grader_data/grader_data/` | ✅ Fixed |
+
+### Why This Matters for Frontend
+
+1. **Accurate Documentation**: Frontend devs referencing backend docs will see correct paths
+2. **Security**: Debug endpoint can't be scraped or abused without API key
+3. **Maintenance**: Future debugging won't be confused by path mismatches
+4. **Production Ready**: No loose ends before launch
+
+### Storage Architecture (Corrected)
+
+```
+/app/grader_data/  (Railway 5GB volume - persists across restarts)
+├── pick_logs/
+│   ├── picks_2026-01-27.jsonl  (68 picks, 64 graded)
+│   ├── picks_2026-01-28.jsonl  (159 picks, 42 graded, 117 pending)
+│   └── ...
+├── graded_picks/
+│   └── graded_2026-01-27.jsonl
+├── grader_data/
+│   ├── predictions.json  (auto-grader weight learning)
+│   └── weights.json
+└── audit_logs/
+    └── audit_2026-01-28.json
+```
+
+### Next Steps
+
+**System is 100% ready for frontend integration.**
+
+All hard checks passed:
+- ✅ A) Disk persistence proven
+- ✅ B) Restart survival verified
+- ✅ C) 502 errors eliminated (20/20 passed)
+- ✅ D) Autograder source documented
+- ✅ Documentation corrected
+- ✅ Debug endpoint secured
+
+---
