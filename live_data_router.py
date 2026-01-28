@@ -3473,10 +3473,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # LOG PICKS FOR GRADING (v14.9 + v12.0 auto_grader integration)
     # ============================================
     _s = time.time()
+    _picks_logged = 0
+    _picks_skipped = 0
+    _pick_log_errors = []
     if PICK_LOGGER_AVAILABLE:
         try:
             pick_logger = get_pick_logger()
             logged_count = 0
+            skipped_count = 0
             validation_warnings = []
             _now_for_log = datetime.now(pytz.timezone("America/New_York"))
 
@@ -3517,6 +3521,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 )
                 if log_result.get("logged"):
                     logged_count += 1
+                elif log_result.get("skipped"):
+                    skipped_count += 1
                 if log_result.get("validation_errors"):
                     validation_warnings.extend(log_result["validation_errors"])
 
@@ -3529,15 +3535,22 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 )
                 if log_result.get("logged"):
                     logged_count += 1
+                elif log_result.get("skipped"):
+                    skipped_count += 1
                 if log_result.get("validation_errors"):
                     validation_warnings.extend(log_result["validation_errors"])
 
+            _picks_logged = logged_count
+            _picks_skipped = skipped_count
             if logged_count > 0:
-                logger.info("PICK_LOGGER: Logged %d picks for grading", logged_count)
+                logger.info("PICK_LOGGER: Logged %d picks, skipped %d dupes", logged_count, skipped_count)
+            elif skipped_count > 0:
+                logger.info("PICK_LOGGER: All %d picks skipped (duplicates)", skipped_count)
             if validation_warnings:
                 logger.warning("PICK_LOGGER: Validation warnings: %s", validation_warnings[:5])
         except Exception as e:
             logger.error("PICK_LOGGER: Failed to log picks: %s", e)
+            _pick_log_errors.append(str(e))
 
     # LOG TO AUTO_GRADER for weight learning (v12.0)
     # ============================================
@@ -3768,6 +3781,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "splits_present_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("research_breakdown", {}).get("sharp_boost", 0) > 0),
             "jarvis_active_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("jarvis_hits_count", 0) > 0),
             "jason_ran_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("jason_ran", False)),
+            "picks_logged": _picks_logged,
+            "picks_skipped_dupes": _picks_skipped,
+            "picks_attempted": len(top_props) + len(top_game_picks),
+            "pick_log_errors": _pick_log_errors,
             "top_prop_candidates": debug_props,
             "top_game_candidates": debug_games,
         }
