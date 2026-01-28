@@ -612,12 +612,14 @@ class PickLogger:
             validation_errors.append(book_error)
 
         # Compute base_score (pre-jason)
-        ai = float(pick_data.get("ai_score", 0))
-        research = float(pick_data.get("research_score", 0))
-        esoteric = float(pick_data.get("esoteric_score", 0))
-        jarvis = float(pick_data.get("jarvis_score", pick_data.get("jarvis_rs", 0)))
-        jason_boost = float(pick_data.get("jason_sim_boost", 0))
-        final = float(pick_data.get("final_score", pick_data.get("total_score", 0)))
+        def _f(v, default=0): return float(v if v is not None else default)
+        def _i(v, default=0): return int(v if v is not None else default)
+        ai = _f(pick_data.get("ai_score", 0))
+        research = _f(pick_data.get("research_score", 0))
+        esoteric = _f(pick_data.get("esoteric_score", 0))
+        jarvis = _f(pick_data.get("jarvis_score", pick_data.get("jarvis_rs", 0)))
+        jason_boost = _f(pick_data.get("jason_sim_boost", 0))
+        final = _f(pick_data.get("final_score", pick_data.get("total_score", 0)))
         base_score = final - jason_boost if jason_boost else final
 
         # Determine tier badge
@@ -649,9 +651,9 @@ class PickLogger:
             home_team=pick_data.get("home_team", ""),
             away_team=pick_data.get("away_team", ""),
             prop_type=prop_type,
-            line=float(pick_data.get("line", 0)),
+            line=_f(pick_data.get("line", 0)),
             side=pick_data.get("side", pick_data.get("over_under", "")),
-            odds=int(pick_data.get("odds", -110)),
+            odds=_i(pick_data.get("odds", -110), -110),
             book=book,
             book_link=pick_data.get("best_book_link", ""),
             game_start_time_et=pick_data.get("start_time_et", ""),
@@ -665,7 +667,7 @@ class PickLogger:
             final_score=final,
             tier=tier,
             titanium_flag=pick_data.get("titanium_triggered", False),
-            units=float(pick_data.get("units", 0)),
+            units=_f(pick_data.get("units", 0)),
             research_breakdown=pick_data.get("research_breakdown", {}),
             research_reasons=pick_data.get("research_reasons", []),
             pillars_passed=pick_data.get("pillars_passed", []),
@@ -673,8 +675,8 @@ class PickLogger:
             jason_ran=pick_data.get("jason_ran", False),
             jason_sim_boost=jason_boost,
             jason_blocked=pick_data.get("jason_blocked", False),
-            jason_win_pct_home=float(pick_data.get("jason_win_pct_home", 50)),
-            jason_win_pct_away=float(pick_data.get("jason_win_pct_away", 50)),
+            jason_win_pct_home=_f(pick_data.get("jason_win_pct_home", 50), 50),
+            jason_win_pct_away=_f(pick_data.get("jason_win_pct_away", 50), 50),
             confluence_reasons=pick_data.get("confluence_reasons", []),
             jarvis_triggers_hit=pick_data.get("jarvis_triggers_hit", []),
             jarvis_reasons=pick_data.get("jarvis_reasons", []),
@@ -688,8 +690,8 @@ class PickLogger:
             provider_event_ids=pick_data.get("provider_event_ids", {}),
             canonical_player_id=pick_data.get("canonical_player_id", ""),
             provider_player_ids=pick_data.get("provider_player_ids", pick_data.get("provider_ids", {})),
-            line_at_bet=float(pick_data.get("line", 0)),
-            odds_at_bet=int(pick_data.get("odds", -110)),
+            line_at_bet=_f(pick_data.get("line", 0)),
+            odds_at_bet=_i(pick_data.get("odds", -110), -110),
             timestamp_at_bet=now_et.isoformat(),
             closing_line=None,
             closing_odds=None,
