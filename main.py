@@ -138,9 +138,9 @@ async def health():
 @app.get("/grader/status")
 async def grader_status():
     """
-    Grader status: prediction counts, storage info, last run time.
+    Grader status: prediction counts, storage info, container details.
 
-    REQUIREMENT: Must show predictions_total > 0 after picks generated.
+    REQUIREMENT: Must show predictions_loaded_count > 0 after picks generated.
     """
     try:
         stats = grader_store.get_storage_stats()
@@ -154,19 +154,41 @@ async def grader_status():
 
         return {
             "available": True,
-            "storage_path": stats["storage_path"],
-            "storage_exists": stats["exists"],
-            "storage_writable": stats.get("writable", False),
-            "storage_size_bytes": stats.get("size_bytes", 0),
-            "predictions_total": stats["prediction_count"],
+            "predictions_file": stats["predictions_file"],
+            "predictions_file_exists": stats["predictions_file_exists"],
+            "predictions_file_size_bytes": stats["predictions_file_size_bytes"],
+            "predictions_loaded_count": stats["predictions_loaded_count"],
             "pending_total": len(pending),
             "graded_total": len(graded),
+            "cwd": stats["cwd"],
+            "storage_root": stats["storage_root"],
+            "storage_root_writable": stats.get("storage_root_writable", False),
+            "container_hostname": stats["container_hostname"],
             "last_run_time_et": now_et().isoformat(),
             "last_errors": []
         }
     except Exception as e:
         return {
             "available": False,
+            "error": str(e)
+        }
+
+
+# Grader self-check endpoint
+@app.post("/grader/selfcheck/write-read")
+async def grader_selfcheck():
+    """
+    Self-check: Write synthetic prediction and immediately read back.
+
+    Tests the full write+read cycle to verify persistence is working.
+    """
+    try:
+        result = grader_store.selfcheck_write_read()
+        result["status"] = "pass" if result["found_in_loaded"] else "fail"
+        return result
+    except Exception as e:
+        return {
+            "status": "error",
             "error": str(e)
         }
 

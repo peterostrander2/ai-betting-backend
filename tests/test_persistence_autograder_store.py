@@ -16,10 +16,11 @@ import grader_store
 def temp_storage():
     """Create temporary storage directory for testing."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        predictions_file = os.path.join(tmpdir, "predictions.json")
-        with patch.object(grader_store, 'STORAGE_DIR', tmpdir):
+        predictions_file = os.path.join(tmpdir, "predictions.jsonl")
+        with patch.object(grader_store, 'STORAGE_ROOT', tmpdir):
             with patch.object(grader_store, 'PREDICTIONS_FILE', predictions_file):
-                yield predictions_file
+                with patch.object(grader_store, 'AUDIT_DIR', os.path.join(tmpdir, "audits")):
+                    yield predictions_file
 
 
 def test_persist_pick_creates_file(temp_storage):
@@ -110,9 +111,9 @@ def test_get_storage_stats_returns_count(temp_storage):
 
     stats = grader_store.get_storage_stats()
 
-    assert stats["exists"] is True
-    assert stats["writable"] is True
-    assert stats["prediction_count"] == 2
+    assert stats["predictions_file_exists"] is True
+    assert stats["storage_root_writable"] is True
+    assert stats["predictions_loaded_count"] == 2
 
 
 def test_load_predictions_parses_jsonl_format(temp_storage):
