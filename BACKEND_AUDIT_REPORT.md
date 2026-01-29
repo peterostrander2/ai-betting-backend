@@ -286,12 +286,13 @@ Line 2998: return await fetch_with_retries("GET", odds_url, ...)
 
 ---
 
-### C. BallDontLie GOAT ✅ CONFIGURED
+### C. BallDontLie ✅ CONFIGURED (ENV VAR REQUIRED)
 
 **Evidence of Usage:**
 ```python
 # alt_data_sources/balldontlie.py
-BDL_API_KEY = "1cbb16a0-3060-4caf-ac17-ff11352540bc"
+BDL_API_KEY = os.getenv("BALLDONTLIE_API_KEY", os.getenv("BDL_API_KEY", ""))
+# No hardcoded fallback - env var REQUIRED
 ```
 
 **Functions Available:**

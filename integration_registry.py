@@ -585,30 +585,88 @@ async def get_all_integrations_status() -> Dict[str, Any]:
     Get status of ALL integrations.
 
     This is the main function called by /debug/integrations endpoint.
+
+    Status Categories:
+    (A) VALIDATED - Configured AND reachable (connectivity confirmed)
+    (B) CONFIGURED - Env var set but connectivity not tested or failed
+    (C) UNREACHABLE - Configured but API not responding (FAIL LOUD)
+    (D) DISABLED - Intentionally disabled via feature flag (only for optional)
+    (E) NOT_CONFIGURED - Required env var not set (FAIL LOUD)
     """
     results = {}
-    required_missing = []
-    optional_missing = []
+
+    # Status buckets
+    validated = []      # (A) Configured + reachable
+    configured = []     # (B) Configured, not tested
+    unreachable = []    # (C) Configured but failed connectivity
+    disabled = []       # (D) Intentionally disabled
+    not_configured = [] # (E) Missing required config
 
     for name, integration in INTEGRATIONS.items():
         status = await check_integration_health(name)
         results[name] = status
 
-        # Track missing required integrations
-        if not status["is_configured"]:
-            if integration.required:
-                required_missing.append(name)
-            else:
-                optional_missing.append(name)
+        is_configured = status.get("is_configured", False)
+        is_reachable = status.get("is_reachable")
+        validation = status.get("validation", {})
+
+        # Check for intentionally disabled (feature flag)
+        reason = validation.get("reason", "")
+        if "DISABLED" in reason or "WEATHER_ENABLED=false" in reason:
+            disabled.append(name)
+            status["status_category"] = "DISABLED"
+        elif not is_configured:
+            not_configured.append(name)
+            status["status_category"] = "NOT_CONFIGURED"
+        elif is_reachable is True:
+            validated.append(name)
+            status["status_category"] = "VALIDATED"
+        elif is_reachable is False:
+            unreachable.append(name)
+            status["status_category"] = "UNREACHABLE"
+        else:
+            # is_reachable is None - not tested
+            configured.append(name)
+            status["status_category"] = "CONFIGURED"
+
+    # Determine overall health
+    required_not_configured = [n for n in not_configured if INTEGRATIONS[n].required]
+    required_unreachable = [n for n in unreachable if INTEGRATIONS[n].required]
+
+    if len(required_not_configured) > 0 or len(required_unreachable) > 0:
+        overall_status = "CRITICAL"
+        overall_message = f"Required integrations failing: {required_not_configured + required_unreachable}"
+    elif len(unreachable) > 0:
+        overall_status = "DEGRADED"
+        overall_message = f"Some integrations unreachable: {unreachable}"
+    elif len(not_configured) > 0:
+        overall_status = "DEGRADED"
+        overall_message = f"Some optional integrations not configured: {not_configured}"
+    else:
+        overall_status = "HEALTHY"
+        overall_message = "All integrations operational"
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "overall_status": overall_status,
+        "overall_message": overall_message,
         "total_integrations": len(INTEGRATIONS),
         "required_count": len([i for i in INTEGRATIONS.values() if i.required]),
         "optional_count": len([i for i in INTEGRATIONS.values() if not i.required]),
-        "required_missing": required_missing,
-        "optional_missing": optional_missing,
-        "all_required_configured": len(required_missing) == 0,
+        "status_counts": {
+            "validated": len(validated),
+            "configured": len(configured),
+            "unreachable": len(unreachable),
+            "disabled": len(disabled),
+            "not_configured": len(not_configured),
+        },
+        "by_status": {
+            "validated": validated,        # (A) Green - working
+            "configured": configured,      # (B) Yellow - not tested
+            "unreachable": unreachable,    # (C) Red - failing
+            "disabled": disabled,          # (D) Gray - intentionally off
+            "not_configured": not_configured,  # (E) Red - missing
+        },
         "integrations": results,
     }
 

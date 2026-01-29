@@ -1543,9 +1543,16 @@ curl "https://web-production-7b2a.up.railway.app/live/api-usage" -H "X-API-Key: 
 
 **Module:** `integration_registry.py` - Declares ALL 14 external API integrations
 
+**Canonical Mapping:** See `docs/ENV_VAR_MAPPING.md` for exact file→function→endpoint mapping
+
 **Endpoint:** `GET /live/debug/integrations` - Returns status of all integrations
 - `?quick=true` - Fast summary (configured/not_configured lists)
-- Full mode - Detailed status with is_reachable, last_ok, last_error
+- Full mode - Detailed status with categories:
+  - **(A) VALIDATED** - Configured AND reachable
+  - **(B) CONFIGURED** - Env var set, connectivity not tested
+  - **(C) UNREACHABLE** - Configured but failing (FAIL LOUD)
+  - **(D) DISABLED** - Intentionally disabled via feature flag
+  - **(E) NOT_CONFIGURED** - Missing required config (FAIL LOUD)
 
 ### All 14 Required Integrations
 
@@ -1553,8 +1560,8 @@ curl "https://web-production-7b2a.up.railway.app/live/api-usage" -H "X-API-Key: 
 |---|-------------|----------|---------|--------|
 | 1 | `odds_api` | `ODDS_API_KEY` | Live odds, props, lines | ✅ Configured |
 | 2 | `playbook_api` | `PLAYBOOK_API_KEY` | Sharp money, splits, injuries | ✅ Configured |
-| 3 | `balldontlie` | `BDL_API_KEY` | NBA grading (GOAT tier key hardcoded) | ✅ Working |
-| 4 | `weather_api` | `WEATHER_API_KEY` | Outdoor sports (stub) | ✅ Configured |
+| 3 | `balldontlie` | `BALLDONTLIE_API_KEY`, `BDL_API_KEY` | NBA grading (env var REQUIRED) | ✅ Required |
+| 4 | `weather_api` | `WEATHER_API_KEY` | Outdoor sports (DISABLED) | ⚠️ Stubbed |
 | 5 | `astronomy_api` | `ASTRONOMY_API_ID` | Moon phases for esoteric | ✅ Configured |
 | 6 | `noaa_space_weather` | `NOAA_BASE_URL` | Solar activity for esoteric | ✅ Configured |
 | 7 | `fred_api` | `FRED_API_KEY` | Economic sentiment | ✅ Configured |
