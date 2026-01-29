@@ -1539,6 +1539,73 @@ curl "https://web-production-7b2a.up.railway.app/live/api-usage" -H "X-API-Key: 
 
 ---
 
+## 🔌 INTEGRATION REGISTRY (Single Source of Truth)
+
+**Module:** `integration_registry.py` - Declares ALL 14 external API integrations
+
+**Endpoint:** `GET /live/debug/integrations` - Returns status of all integrations
+- `?quick=true` - Fast summary (configured/not_configured lists)
+- Full mode - Detailed status with is_reachable, last_ok, last_error
+
+### All 14 Required Integrations
+
+| # | Integration | Env Vars | Purpose | Status |
+|---|-------------|----------|---------|--------|
+| 1 | `odds_api` | `ODDS_API_KEY` | Live odds, props, lines | ✅ Configured |
+| 2 | `playbook_api` | `PLAYBOOK_API_KEY` | Sharp money, splits, injuries | ✅ Configured |
+| 3 | `balldontlie` | `BDL_API_KEY` | NBA grading (GOAT tier key hardcoded) | ✅ Working |
+| 4 | `weather_api` | `WEATHER_API_KEY` | Outdoor sports (stub) | ✅ Configured |
+| 5 | `astronomy_api` | `ASTRONOMY_API_ID` | Moon phases for esoteric | ✅ Configured |
+| 6 | `noaa_space_weather` | `NOAA_BASE_URL` | Solar activity for esoteric | ✅ Configured |
+| 7 | `fred_api` | `FRED_API_KEY` | Economic sentiment | ✅ Configured |
+| 8 | `finnhub_api` | `FINNHUB_KEY` | Sportsbook stocks | ✅ Configured |
+| 9 | `serpapi` | `SERPAPI_KEY` | News aggregation | ✅ Configured |
+| 10 | `twitter_api` | `TWITTER_BEARER` | Real-time news | ✅ Configured |
+| 11 | `whop_api` | `WHOP_API_KEY` | Membership auth | ✅ Configured |
+| 12 | `database` | `DATABASE_URL` | PostgreSQL | ✅ Configured |
+| 13 | `redis` | `REDIS_URL` | Caching | ✅ Configured |
+| 14 | `railway_storage` | `RAILWAY_VOLUME_MOUNT_PATH` | Picks persistence | ✅ Configured |
+
+### Behavior: "No 500s"
+
+- **Endpoints:** FAIL SOFT (graceful degradation, return partial data, never crash)
+- **Health checks:** FAIL LOUD (clear error messages showing what's missing)
+
+### Key Functions
+
+```python
+from integration_registry import (
+    get_all_integrations_status,  # Full status of all integrations
+    get_integrations_summary,      # Quick configured/not_configured lists
+    get_health_check_loud,         # Fail-loud health check for monitoring
+    record_success,                # Track successful API call
+    record_failure,                # Track failed API call
+)
+```
+
+### Verification Commands
+
+```bash
+# Quick summary
+curl "https://web-production-7b2a.up.railway.app/live/debug/integrations?quick=true" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+
+# Full details with reachability
+curl "https://web-production-7b2a.up.railway.app/live/debug/integrations" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+```
+
+### BallDontLie GOAT Key
+
+The BallDontLie integration has a **hardcoded GOAT tier key** in `alt_data_sources/balldontlie.py`:
+```python
+BDL_API_KEY = "1cbb16a0-3060-4caf-ac17-ff11352540bc"
+```
+
+This key is always available even if the env var isn't set. Used for NBA prop grading.
+
+---
+
 ## Authentication
 
 **API Authentication is ENABLED.** Key stored in Railway environment variables (`API_AUTH_KEY`).
