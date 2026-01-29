@@ -746,6 +746,68 @@ if (data.debug) {
 3. **Railway auto-deploys** - Takes 2-3 minutes, happens automatically
 4. **DO NOT ask user to check** - Railway handles it, user knows the workflow
 
+---
+
+## 📅 SCHEDULED DATA FETCHES & CACHE TTLs
+
+**IMPORTANT:** This is the system's automated schedule. DO NOT ask when to run best-bets - check this section first.
+
+### Scheduled Tasks (All Times ET)
+
+| Time | Task | Description |
+|------|------|-------------|
+| **5:00 AM** | Grading + Tuning | Grade yesterday's picks, adjust weights based on results |
+| **5:30 AM** | Smoke Test | Verify system health before picks go out |
+| **6:00 AM** | JSONL Grading | Grade predictions from logs (auto-grader) |
+| **6:30 AM** | Daily Audit | Full audit for all sports, update weights |
+| **10:00 AM** | Props Fetch | Fresh morning props data for all sports |
+| **12:00 PM** | Props Fetch (Weekends Only) | Noon games (NBA/NCAAB) |
+| **2:00 PM** | Props Fetch (Weekends Only) | Afternoon games (NBA/NCAAB) |
+| **6:00 PM** | Props Fetch | Evening refresh for all sports |
+
+### Cache TTLs
+
+| Data Type | TTL | Reason |
+|-----------|-----|--------|
+| **Props** | 8 hours | Props don't change frequently, conserve API quota |
+| **Best-bets** | 5-10 minutes | Balance freshness with API usage |
+| **Live scores** | 2 minutes | Near real-time game updates |
+| **Splits/Lines** | 5 minutes | Market moves frequently |
+
+### On-Demand Fetching
+
+Best-bets are **generated on-demand** when `/live/best-bets/{sport}` is called:
+- First call: Fresh fetch from APIs (slow, ~5-6 seconds)
+- Subsequent calls: Served from cache (fast, ~100ms)
+- Cache expires after 5-10 minutes, then next call triggers fresh fetch
+
+### Daily Workflow
+
+```
+5:00 AM  → Grade yesterday's picks, adjust weights
+5:30 AM  → Smoke test (health check)
+6:00 AM  → JSONL grading
+6:30 AM  → Daily audit (all sports)
+         ↓
+10:00 AM → Props fetch (morning)
+         ↓
+12:00 PM → Props fetch (weekends only)
+2:00 PM  → Props fetch (weekends only)
+         ↓
+6:00 PM  → Props fetch (evening)
+         ↓
+Throughout day → Best-bets served on-demand (cached 5-10 min)
+```
+
+**Key Points:**
+- Morning grading/audit happens BEFORE 10 AM props fetch
+- Weights are updated daily based on yesterday's results
+- Props fetches are scheduled to catch different game windows
+- Weekend schedule includes noon/afternoon fetches for daytime games
+- Live scores update every 2 minutes during games
+
+---
+
 ### Storage Configuration (Railway Volume) - UNIFIED JANUARY 29, 2026
 
 **🚨 CRITICAL: READ THIS BEFORE TOUCHING STORAGE/AUTOGRADER CODE 🚨**
