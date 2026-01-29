@@ -3311,6 +3311,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             away_team = signal.get("away_team", "")
             game_str = f"{home_team}{away_team}"
 
+            # Look up commence_time from raw_games for start_time_et
+            commence_time = ""
+            signal_game_id = signal.get("game_id", "")
+            if signal_game_id and raw_games:
+                for g in raw_games:
+                    if g.get("id") == signal_game_id:
+                        commence_time = g.get("commence_time", "")
+                        break
+
             score_data = calculate_pick_score(
                 game_str,
                 signal,
@@ -3328,6 +3337,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
             signals_fired = score_data.get("pillars_passed", []).copy()
             signals_fired.append(f"SHARP_{signal.get('signal_strength', 'MODERATE')}")
+
+            # Derive start_time_et from commence_time
+            start_time_et = ""
+            if commence_time:
+                try:
+                    start_time_et = get_game_start_time_et(commence_time) if TIME_FILTERS_AVAILABLE else ""
+                except Exception:
+                    start_time_et = ""
 
             game_picks.append({
                 "sport": sport.upper(),
@@ -3349,7 +3366,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "matchup": f"{away_team} @ {home_team}",
                 "home_team": home_team,
                 "away_team": away_team,
-                "start_time_et": "",
+                "start_time_et": start_time_et,
                 "game_status": "UPCOMING",
                 "status": "scheduled",
                 "has_started": False,
