@@ -42,10 +42,10 @@ def make_unique_key(pick) -> str:
     line = _get("line", 0)
 
     # For props: use player name
-    # For spreads/ML: use "Game" so both sides match
+    # For spreads/ML/H2H: use "Game" so both sides match
     if player_name:
         subject = player_name
-    elif market in ["SPREAD", "MONEYLINE", "ML", "SPREADS"]:
+    elif market in ["SPREAD", "MONEYLINE", "ML", "SPREADS", "H2H"]:
         subject = "Game"
     else:
         subject = "Game"
@@ -80,8 +80,8 @@ def is_opposite_side(side_a: str, side_b: str, market: str) -> bool:
         # Over vs Under (totals and all player props: player_points, player_assists, etc.)
         return (side_a_upper == "OVER" and side_b_upper == "UNDER") or \
                (side_a_upper == "UNDER" and side_b_upper == "OVER")
-    elif "SPREAD" in market_upper or "MONEYLINE" in market_upper or "ML" in market_upper:
-        # Different teams
+    elif "SPREAD" in market_upper or "MONEYLINE" in market_upper or "ML" in market_upper or "H2H" in market_upper:
+        # Different teams (spreads, moneylines, h2h markets)
         return side_a_upper != side_b_upper
     else:
         return False
