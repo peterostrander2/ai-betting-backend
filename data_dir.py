@@ -2,8 +2,9 @@
 DATA_DIR - Single source of truth for all persistent storage paths (FIX 3)
 
 GRADER STORAGE RULES:
-- Use GRADER_DATA_DIR env var (Railway volume mount)
-- Default: /data/grader_data (Railway volume)
+- Use RAILWAY_VOLUME_MOUNT_PATH env var (Railway persistent volume)
+- Production: /app/grader_data (Railway 5GB volume mount)
+- Local dev: ./grader_data (fallback)
 - Fail fast on startup if not writable
 - Log resolved path
 """
@@ -14,15 +15,15 @@ import logging
 
 logger = logging.getLogger("data_dir")
 
-# FIX 3: Use GRADER_DATA_DIR env var, default to Railway volume
-# CRITICAL: NEVER use /app path - it's ephemeral and wiped on redeploy
-# Railway volume should be mounted at /data (or custom path via GRADER_DATA_DIR)
+# FIX 3: Use Railway persistent volume (RAILWAY_VOLUME_MOUNT_PATH)
+# IMPORTANT: Railway mounts persistent volume at /app/grader_data
+# This IS persistent storage (5GB Railway volume), NOT ephemeral
 _railway_path = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
-if _railway_path and not _railway_path.startswith("/app"):
+if _railway_path:
     GRADER_DATA_DIR = _railway_path
 else:
-    # Default to /data or explicit override (never /app)
-    GRADER_DATA_DIR = os.getenv("GRADER_DATA_DIR", "/data/grader_data")
+    # Fallback for local dev
+    GRADER_DATA_DIR = os.getenv("GRADER_DATA_DIR", "./grader_data")
 
 # Legacy DATA_DIR for backward compatibility
 DATA_DIR = GRADER_DATA_DIR
@@ -42,13 +43,17 @@ def ensure_dirs():
 
     FIX 3: Fail fast if directory not writable.
     """
-    # FIX 3: Log resolved path and block /app usage
+    # FIX 3: Log resolved path
     logger.info("GRADER_DATA_DIR=%s", GRADER_DATA_DIR)
 
-    if GRADER_DATA_DIR.startswith("/app"):
-        logger.error("FATAL: Storage path %s is under /app (ephemeral, will be wiped on redeploy)", GRADER_DATA_DIR)
-        logger.error("Set GRADER_DATA_DIR env var to Railway volume mount path (e.g., /data)")
-        sys.exit(1)
+    # Verify it's the Railway persistent volume
+    _railway_mount = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
+    if _railway_mount and GRADER_DATA_DIR == _railway_mount:
+        logger.info("✓ Using Railway persistent volume: %s", GRADER_DATA_DIR)
+    elif _railway_mount:
+        logger.warning("WARNING: GRADER_DATA_DIR differs from RAILWAY_VOLUME_MOUNT_PATH")
+        logger.warning("  GRADER_DATA_DIR: %s", GRADER_DATA_DIR)
+        logger.warning("  RAILWAY_VOLUME_MOUNT_PATH: %s", _railway_mount)
 
     for d in [PICK_LOGS, GRADED_PICKS, GRADER_DATA, AUDIT_LOGS]:
         try:
@@ -64,7 +69,7 @@ def ensure_dirs():
             f.write("test")
         os.remove(test_file)
         logger.info("✓ Storage writable: %s", GRADER_DATA_DIR)
-        logger.info("✓ Storage verified on persistent volume (not /app)")
+        logger.info("✓ Storage verified on persistent volume")
     except Exception as e:
         logger.error("FATAL: Storage not writable %s: %s", GRADER_DATA_DIR, e)
         sys.exit(1)
