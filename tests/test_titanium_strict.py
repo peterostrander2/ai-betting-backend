@@ -45,10 +45,11 @@ class TestTitaniumStrictEnforcement:
 
         assert triggered is True, "Titanium should trigger with 3/4 engines >= 8.0"
         assert len(qualifying) == 3, f"Expected 3 qualifying engines, got {len(qualifying)}"
-        assert "AI" in qualifying
-        assert "Research" in qualifying
-        assert "Esoteric" in qualifying
-        assert "Jarvis" not in qualifying
+        # Engine names are lowercase in core/titanium.py
+        assert "ai" in qualifying
+        assert "research" in qualifying
+        assert "esoteric" in qualifying
+        assert "jarvis" not in qualifying
 
     def test_titanium_not_triggered_with_2_engines_above_8(self):
         """FAIL: Only 2 engines >= 8.0 does NOT trigger Titanium"""
@@ -186,11 +187,12 @@ class TestTitaniumFailureReasons:
         )
 
         assert triggered is False
-        assert len(qualifying) == 1  # Only AI qualified
-        assert "AI" in qualifying
-        assert "Research" not in qualifying
-        assert "Esoteric" not in qualifying
-        assert "Jarvis" not in qualifying
+        assert len(qualifying) == 1  # Only ai qualified
+        # Engine names are lowercase in core/titanium.py
+        assert "ai" in qualifying
+        assert "research" not in qualifying
+        assert "esoteric" not in qualifying
+        assert "jarvis" not in qualifying
 
     def test_titanium_fail_when_final_score_low(self):
         """tier_reason should say 'final_score < 8.0' when that's the blocker"""
