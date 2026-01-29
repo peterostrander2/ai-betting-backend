@@ -3173,14 +3173,23 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 commence_time = game.get("commence_time", "")
 
                 start_time_et = ""
-                if TIME_FILTERS_AVAILABLE and commence_time:
-                    start_time_et = get_game_start_time_et(commence_time)
+                if commence_time:
+                    try:
+                        start_time_et = get_game_start_time_et(commence_time) if TIME_FILTERS_AVAILABLE else ""
+                    except Exception:
+                        start_time_et = ""
 
                 best_odds_by_market = {}
                 for bm in game.get("bookmakers", []):
                     book_name = bm.get("title", "Unknown")
                     book_key = bm.get("key", "") or "consensus"  # FIX: Never store empty book_key
                     bm_link = AFFILIATE_LINKS.get(book_key, "")
+                    # Convert dict to URL string: base_url + sport_paths.get(sport, '')
+                    if isinstance(bm_link, dict):
+                        base_url = bm_link.get("base_url", "")
+                        sport_paths = bm_link.get("sport_paths", {})
+                        sport_path = sport_paths.get(sport_lower, "")
+                        bm_link = base_url + sport_path if base_url else ""
                     for market in bm.get("markets", []):
                         market_key = market.get("key", "")
                         for outcome in market.get("outcomes", []):
@@ -3391,8 +3400,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             _game_total = _ctx.get("total", 220)
 
             start_time_et = ""
-            if TIME_FILTERS_AVAILABLE and commence_time:
-                start_time_et = get_game_start_time_et(commence_time)
+            if commence_time:
+                try:
+                    start_time_et = get_game_start_time_et(commence_time) if TIME_FILTERS_AVAILABLE else ""
+                except Exception:
+                    start_time_et = ""
 
             for prop in game.get("props", []):
                 player = prop.get("player", "Unknown")
