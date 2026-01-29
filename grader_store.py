@@ -19,16 +19,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Import data_dir to get correct Railway volume path
-from data_dir import GRADER_DATA_DIR
+# Import storage_paths - SINGLE SOURCE OF TRUTH for Railway volume
+from storage_paths import get_store_dir, get_predictions_file, get_weights_file, get_audit_dir
 
 # =============================================================================
-# SINGLE SOURCE OF TRUTH: Use data_dir.py paths (Railway volume)
+# SINGLE SOURCE OF TRUTH: All paths from storage_paths.py (Railway volume)
 # =============================================================================
-STORAGE_ROOT = os.path.join(GRADER_DATA_DIR, "grader")
-PREDICTIONS_FILE = os.path.join(STORAGE_ROOT, "predictions.jsonl")
-WEIGHTS_FILE = os.path.join(STORAGE_ROOT, "weights.json")
-AUDIT_DIR = os.path.join(STORAGE_ROOT, "audits")
+STORAGE_ROOT = get_store_dir()
+PREDICTIONS_FILE = get_predictions_file()
+WEIGHTS_FILE = get_weights_file()
+AUDIT_DIR = get_audit_dir()
 
 
 def ensure_storage_writable():

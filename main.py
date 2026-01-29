@@ -29,6 +29,7 @@ from auto_grader import get_grader
 from data_dir import ensure_dirs, DATA_DIR
 from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILABLE
 import grader_store
+from storage_paths import ensure_persistent_storage_ready, get_storage_health
 
 app = FastAPI(
     title="Bookie-o-em API",
@@ -47,16 +48,28 @@ app.add_middleware(
 
 
 # =============================================================================
-# STARTUP: Initialize grader store
+# STARTUP: Validate Railway volume storage (CRASH if not persistent)
 # =============================================================================
 @app.on_event("startup")
 async def startup_event():
-    """Initialize grader store and verify storage writable."""
+    """
+    CRITICAL: Validate storage is on Railway persistent volume.
+    CRASHES if storage is ephemeral (prevents data loss).
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info("=" * 60)
+    logger.info("STORAGE VALIDATION (CRASH IF NOT PERSISTENT)")
+    logger.info("=" * 60)
+
     try:
-        grader_store.ensure_storage_writable()
+        # This MUST succeed or app won't start
+        ensure_persistent_storage_ready()
+        logger.info("✓ Storage validation PASSED")
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error("FATAL: Grader storage not writable: %s", e)
+        logger.error("FATAL: Storage validation FAILED: %s", e)
+        logger.error("App will NOT start - storage must be persistent")
         raise
 
 
@@ -132,6 +145,26 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "version": "14.2", "database": database.DB_ENABLED}
+
+
+@app.get("/internal/storage/health")
+async def storage_health():
+    """
+    Storage health diagnostics.
+
+    Returns:
+    - mount_root: Railway volume mount path
+    - store_dir: Grader storage directory
+    - writable: Can write to storage
+    - predictions_file: Full path to predictions.jsonl
+    - predictions_exists: File exists
+    - predictions_size_bytes: File size
+    - predictions_last_modified: Last modification timestamp
+    - predictions_line_count: Number of picks in file
+    - sentinel_exists: Volume sentinel file exists
+    - sentinel_timestamp: When sentinel was written
+    """
+    return get_storage_health()
 
 
 # Grader status endpoint

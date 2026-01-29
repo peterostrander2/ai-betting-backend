@@ -6481,36 +6481,42 @@ async def get_grading_summary(date: Optional[str] = None):
     Query params:
     - date: Date to summarize (default: today in ET)
     """
-    if not PICK_LOGGER_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Pick logger not available")
+    if not GRADER_STORE_AVAILABLE:
+        return {
+            "error": "Grader store not available",
+            "date": date or "unknown",
+            "total_picks": 0,
+            "graded": 0,
+            "pending": 0
+        }
 
     try:
-        from datetime import datetime as dt
-        import pytz
-
-        pick_logger = get_pick_logger()
-
+        # Get date (default to today in ET)
         if not date:
-            ET = pytz.timezone("America/New_York")
-            date = dt.now(ET).strftime("%Y-%m-%d")
+            from core.time_et import now_et
+            date = now_et().strftime("%Y-%m-%d")
 
-        picks = pick_logger.get_picks_for_date(date)
-        graded = [p for p in picks if p.result]
-        pending = [p for p in picks if not p.result]
+        # Load picks from grader_store (SINGLE SOURCE OF TRUTH)
+        picks = grader_store.load_predictions(date_et=date)
+        graded = [p for p in picks if p.get("grade_status") == "GRADED"]
+        pending = [p for p in picks if p.get("grade_status") != "GRADED"]
 
         # Calculate by tier
         tier_results = {}
         for pick in graded:
-            tier = pick.tier or "UNKNOWN"
+            tier = pick.get("tier", "UNKNOWN")
             if tier not in tier_results:
                 tier_results[tier] = {"wins": 0, "losses": 0, "pushes": 0, "units_won": 0, "units_lost": 0}
 
-            if pick.result == "WIN":
+            result = pick.get("result")
+            units = pick.get("units", 1.0)
+
+            if result == "WIN":
                 tier_results[tier]["wins"] += 1
-                tier_results[tier]["units_won"] += pick.units or 0
-            elif pick.result == "LOSS":
+                tier_results[tier]["units_won"] += units
+            elif result == "LOSS":
                 tier_results[tier]["losses"] += 1
-                tier_results[tier]["units_lost"] += pick.units or 0
+                tier_results[tier]["units_lost"] += units
             else:
                 tier_results[tier]["pushes"] += 1
 
@@ -6539,19 +6545,19 @@ async def get_grading_summary(date: Optional[str] = None):
             "by_tier": tier_results,
             "graded_picks": [
                 {
-                    "pick_id": p.pick_id,
-                    "player": p.player_name or "Game",
-                    "matchup": p.matchup,
-                    "line": p.line,
-                    "side": p.side,
-                    "tier": p.tier,
-                    "result": p.result,
-                    "actual_value": p.actual_value,
-                    "units": p.units
+                    "pick_id": p.get("pick_id"),
+                    "player": p.get("player_name") or "Game",
+                    "matchup": p.get("matchup"),
+                    "line": p.get("line"),
+                    "side": p.get("side"),
+                    "tier": p.get("tier"),
+                    "result": p.get("result"),
+                    "actual_value": p.get("actual_value"),
+                    "units": p.get("units", 1.0)
                 }
                 for p in graded
             ],
-            "timestamp": dt.now().isoformat()
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         logger.exception("Failed to get grading summary: %s", e)
