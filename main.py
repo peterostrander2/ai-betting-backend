@@ -50,29 +50,6 @@ app.add_middleware(
 # =============================================================================
 # STARTUP: Validate Railway volume storage (CRASH if not persistent)
 # =============================================================================
-@app.on_event("startup")
-async def startup_event():
-    """
-    CRITICAL: Validate storage is on Railway persistent volume.
-    CRASHES if storage is ephemeral (prevents data loss).
-    """
-    import logging
-    logger = logging.getLogger(__name__)
-
-    logger.info("=" * 60)
-    logger.info("STORAGE VALIDATION (CRASH IF NOT PERSISTENT)")
-    logger.info("=" * 60)
-
-    try:
-        # This MUST succeed or app won't start
-        ensure_persistent_storage_ready()
-        logger.info("✓ Storage validation PASSED")
-    except Exception as e:
-        logger.error("FATAL: Storage validation FAILED: %s", e)
-        logger.error("App will NOT start - storage must be persistent")
-        raise
-
-
 # =============================================================================
 # ADMIN GATING for debug/admin endpoints
 # =============================================================================
@@ -98,12 +75,34 @@ def alert_status():
 app.include_router(live_router)
 app.include_router(scheduler_router)
 
-# Startup event - initialize database and scheduler
+# Startup event - validate storage, initialize database and scheduler
 @app.on_event("startup")
 async def startup_event():
+    """
+    CRITICAL: Validate storage is on Railway persistent volume FIRST.
+    CRASHES if storage is ephemeral (prevents data loss).
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # STEP 1: Validate storage (MUST succeed or app won't start)
+    logger.info("=" * 60)
+    logger.info("STORAGE VALIDATION (CRASH IF NOT PERSISTENT)")
+    logger.info("=" * 60)
+
+    try:
+        ensure_persistent_storage_ready()
+        logger.info("✓ Storage validation PASSED")
+    except Exception as e:
+        logger.error("FATAL: Storage validation FAILED: %s", e)
+        logger.error("App will NOT start - storage must be persistent")
+        raise
+
+    # STEP 2: Initialize database and directories
     ensure_dirs()
     database.init_database()
-    # Initialize and start daily scheduler with auto_grader connection
+
+    # STEP 3: Initialize and start daily scheduler with auto_grader connection
     # CRITICAL: Pass grader so scheduler can adjust weights on audit
     grader = get_grader()
     scheduler = init_scheduler(auto_grader=grader)
