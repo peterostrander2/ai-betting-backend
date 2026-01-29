@@ -1124,8 +1124,6 @@ async def auto_grade_picks(
             results["errors"].append(str(e))
 
     # Note: grader_store updates picks in-place, no need to rewrite log
-    except Exception as e:
-        logger.error("Failed to persist retry state: %s", e)
 
     # Calculate summary stats
     graded = results["graded_picks"]
