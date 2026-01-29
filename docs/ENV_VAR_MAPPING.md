@@ -81,23 +81,45 @@ This document maps EVERY environment variable to its exact usage in code.
 
 ---
 
-### 4. WEATHER_API_KEY / OPENWEATHER_API_KEY (OPTIONAL - DISABLED)
+### 4. OPENWEATHER_API_KEY (OPTIONAL - Feature Flagged)
 
 | Attribute | Value |
 |-----------|-------|
 | **Integration** | weather_api |
 | **Required** | ❌ No (feature flagged) |
 | **Feature Flag** | `WEATHER_ENABLED=false` (default) |
-| **Status** | STUBBED - returns `{"available": false, "reason": "FEATURE_DISABLED"}` |
+| **Cache TTL** | 10 minutes by stadium_id |
+| **Scoring Impact** | ±1.0 max modifier (bounded) |
+| **Status** | REAL INTEGRATION (v16.0) - OpenWeather API with caching |
 
 | File | Line | Usage |
 |------|------|-------|
-| `alt_data_sources/weather.py` | 30-31 | `WEATHER_ENABLED`, `OPENWEATHER_API_KEY` |
+| `alt_data_sources/weather.py` | 32-33 | `WEATHER_ENABLED`, `OPENWEATHER_API_KEY` |
+| `alt_data_sources/stadium.py` | 10-150 | `VENUE_REGISTRY` (62 NFL/MLB venues with lat/lon) |
+| `live_data_router.py` | 194-204 | Weather import + integration |
 
 | Endpoint | Purpose |
 |----------|---------|
-| `/live/best-bets/NFL` | (when enabled) Outdoor weather impact |
-| `/live/best-bets/MLB` | (when enabled) Outdoor weather impact |
+| `/live/best-bets/NFL` | Outdoor weather impact scoring |
+| `/live/best-bets/MLB` | Outdoor weather impact scoring |
+| `/live/debug/integrations` | Weather API status (DISABLED/VALIDATED/UNREACHABLE) |
+
+**How It Works:**
+1. When `WEATHER_ENABLED=true` and `OPENWEATHER_API_KEY` is set
+2. For each outdoor game (NFL/MLB), fetch weather from OpenWeather API
+3. Weather is cached by stadium_id for 10 minutes
+4. Calculate weather_modifier (cold, wind, rain = negative impact)
+5. Apply bounded modifier (±1.0 cap) to pick's final_score
+
+**Modifier Rules:**
+| Condition | Modifier |
+|-----------|----------|
+| Cold (<32°F) | -0.5 |
+| Hot (>90°F) | -0.2 |
+| High wind (>20 mph) | -0.4 |
+| Heavy rain (>0.5 in) | -0.6 |
+| **Combined cap** | **±1.0** |
+| Indoor venue | 0.0 |
 
 ---
 

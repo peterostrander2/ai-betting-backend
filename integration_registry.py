@@ -467,16 +467,89 @@ async def validate_balldontlie() -> Dict[str, Any]:
 
 
 async def validate_weather_api() -> Dict[str, Any]:
-    """Validate Weather API configuration."""
+    """
+    Validate Weather API configuration.
+
+    Returns status categories:
+    - DISABLED: Feature flag is false (WEATHER_ENABLED=false)
+    - NOT_CONFIGURED: Missing API key
+    - VALIDATED: API key present and OpenWeather reachable
+    - UNREACHABLE: API key present but ping failed
+    """
     try:
-        from alt_data_sources.weather import WEATHER_ENABLED, OPENWEATHER_API_KEY
-        if not WEATHER_ENABLED:
-            return {"configured": False, "reachable": False, "reason": "WEATHER_ENABLED=false"}
-        if not OPENWEATHER_API_KEY:
-            return {"configured": False, "reachable": False, "error": "API key not set"}
-        return {"configured": True, "reachable": None, "note": "Not tested (stub module)"}
+        from alt_data_sources.weather import WEATHER_ENABLED, OPENWEATHER_API_KEY, OPENWEATHER_BASE_URL
     except ImportError:
-        return {"configured": False, "reachable": False, "error": "Module not available"}
+        return {"configured": False, "reachable": False, "status": "NOT_CONFIGURED", "error": "Module not available"}
+
+    # Check feature flag first
+    if not WEATHER_ENABLED:
+        return {
+            "configured": False,
+            "reachable": False,
+            "status": "DISABLED",
+            "reason": "WEATHER_ENABLED=false",
+            "message": "Weather feature is intentionally disabled"
+        }
+
+    # Check API key
+    if not OPENWEATHER_API_KEY:
+        return {
+            "configured": False,
+            "reachable": False,
+            "status": "NOT_CONFIGURED",
+            "error": "OPENWEATHER_API_KEY not set"
+        }
+
+    # Ping OpenWeather API to verify key and connectivity
+    try:
+        import httpx
+        # Test with minimal API call (get weather for arbitrary coordinates)
+        test_url = f"{OPENWEATHER_BASE_URL}?lat=40.7128&lon=-74.0060&appid={OPENWEATHER_API_KEY}&units=imperial"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(test_url)
+            if response.status_code == 200:
+                record_success("weather_api")
+                return {
+                    "configured": True,
+                    "reachable": True,
+                    "status": "VALIDATED",
+                    "message": "OpenWeather API responding",
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000)
+                }
+            elif response.status_code == 401:
+                record_failure("weather_api", "Invalid API key")
+                return {
+                    "configured": True,
+                    "reachable": False,
+                    "status": "UNREACHABLE",
+                    "error": "Invalid API key (401)",
+                    "http_status": 401
+                }
+            else:
+                record_failure("weather_api", f"HTTP {response.status_code}")
+                return {
+                    "configured": True,
+                    "reachable": False,
+                    "status": "UNREACHABLE",
+                    "error": f"HTTP {response.status_code}",
+                    "http_status": response.status_code
+                }
+    except httpx.TimeoutException:
+        record_failure("weather_api", "Timeout")
+        return {
+            "configured": True,
+            "reachable": False,
+            "status": "UNREACHABLE",
+            "error": "Request timeout (5s)"
+        }
+    except Exception as e:
+        record_failure("weather_api", str(e))
+        return {
+            "configured": True,
+            "reachable": False,
+            "status": "UNREACHABLE",
+            "error": str(e)[:100]
+        }
 
 
 async def validate_storage() -> Dict[str, Any]:

@@ -191,6 +191,19 @@ except ImportError:
     SIGNALS_AVAILABLE = False
     logger.warning("signals module not available - using inline calculations")
 
+# Import Weather Module for outdoor sports scoring (v16.0)
+try:
+    from alt_data_sources.weather import (
+        get_weather_modifier,
+        is_outdoor_sport,
+        WEATHER_ENABLED,
+    )
+    WEATHER_MODULE_AVAILABLE = True
+except ImportError:
+    WEATHER_MODULE_AVAILABLE = False
+    WEATHER_ENABLED = False
+    logger.warning("weather module not available - weather scoring disabled")
+
 # Redis import with fallback
 try:
     import redis
@@ -3173,6 +3186,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _s = time.time()
     game_picks = []
 
+    # v16.0: Weather cache per game (fetch once, apply to all markets)
+    _weather_cache: Dict[str, Dict[str, Any]] = {}
+    _weather_fetched = 0
+    _weather_cache_hits = 0
+
     try:
         if raw_games:
             for game in raw_games:
@@ -3193,6 +3211,38 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         start_time_et = get_game_start_time_et(commence_time) if TIME_FILTERS_AVAILABLE else ""
                     except Exception:
                         start_time_et = ""
+
+                # v16.0: Fetch weather once per game (async, cached by game_key)
+                _game_weather = _weather_cache.get(game_key)
+                if _game_weather is None and WEATHER_MODULE_AVAILABLE:
+                    try:
+                        _game_weather = await get_weather_modifier(
+                            sport=sport_upper,
+                            home_team=home_team,
+                            venue="",
+                            game_time=commence_time
+                        )
+                        _weather_cache[game_key] = _game_weather
+                        _weather_fetched += 1
+                    except Exception as e:
+                        logger.debug("Weather fetch failed for %s: %s", game_key, e)
+                        _game_weather = {
+                            "available": False,
+                            "reason": "FETCH_ERROR",
+                            "weather_modifier": 0.0,
+                            "weather_reasons": []
+                        }
+                        _weather_cache[game_key] = _game_weather
+                elif _game_weather is not None:
+                    _weather_cache_hits += 1
+                else:
+                    # Weather module not available
+                    _game_weather = {
+                        "available": False,
+                        "reason": "MODULE_UNAVAILABLE",
+                        "weather_modifier": 0.0,
+                        "weather_reasons": []
+                    }
 
                 best_odds_by_market = {}
                 for bm in game.get("bookmakers", []):
@@ -3255,6 +3305,25 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 pick_side=pick_side,
                                 prop_line=point if point else 0
                             )
+
+                            # v16.0: Apply weather modifier to score (capped at ±1.0)
+                            _weather_mod = _game_weather.get("weather_modifier", 0.0) if _game_weather else 0.0
+                            _weather_reasons = _game_weather.get("weather_reasons", []) if _game_weather else []
+                            _weather_available = _game_weather.get("available", False) if _game_weather else False
+
+                            # Apply weather modifier to total_score and final_score
+                            if _weather_mod != 0.0:
+                                _old_score = score_data.get("total_score", 0)
+                                _old_final = score_data.get("final_score", _old_score)
+                                score_data["total_score"] = round(_old_score + _weather_mod, 2)
+                                score_data["final_score"] = round(_old_final + _weather_mod, 2)
+                                logger.debug("Weather modifier applied: %s -> %.2f + %.2f = %.2f",
+                                           game_key, _old_score, _weather_mod, score_data["total_score"])
+
+                            # Add weather fields to score_data
+                            score_data["weather_modifier"] = round(_weather_mod, 2)
+                            score_data["weather_reasons"] = _weather_reasons
+                            score_data["weather_available"] = _weather_available
 
                             game_status = "UPCOMING"
                             if TIME_FILTERS_AVAILABLE and commence_time:
@@ -3438,6 +3507,37 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 except Exception:
                     start_time_et = ""
 
+            # v16.0: Fetch weather for props game (use existing cache or fetch)
+            _prop_game_weather = _weather_cache.get(game_key)
+            if _prop_game_weather is None and WEATHER_MODULE_AVAILABLE:
+                try:
+                    _prop_game_weather = await get_weather_modifier(
+                        sport=sport_upper,
+                        home_team=home_team,
+                        venue="",
+                        game_time=commence_time
+                    )
+                    _weather_cache[game_key] = _prop_game_weather
+                    _weather_fetched += 1
+                except Exception as e:
+                    logger.debug("Weather fetch failed for props %s: %s", game_key, e)
+                    _prop_game_weather = {
+                        "available": False,
+                        "reason": "FETCH_ERROR",
+                        "weather_modifier": 0.0,
+                        "weather_reasons": []
+                    }
+                    _weather_cache[game_key] = _prop_game_weather
+            elif _prop_game_weather is not None:
+                _weather_cache_hits += 1
+            else:
+                _prop_game_weather = {
+                    "available": False,
+                    "reason": "MODULE_UNAVAILABLE",
+                    "weather_modifier": 0.0,
+                    "weather_reasons": []
+                }
+
             for prop in game.get("props", []):
                 player = prop.get("player", "Unknown")
                 market = prop.get("market", "")
@@ -3470,6 +3570,23 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     pick_side=side,
                     prop_line=line
                 )
+
+                # v16.0: Apply weather modifier to props (capped at ±1.0)
+                _prop_weather_mod = _prop_game_weather.get("weather_modifier", 0.0) if _prop_game_weather else 0.0
+                _prop_weather_reasons = _prop_game_weather.get("weather_reasons", []) if _prop_game_weather else []
+                _prop_weather_available = _prop_game_weather.get("available", False) if _prop_game_weather else False
+
+                # Apply weather modifier to total_score and final_score
+                if _prop_weather_mod != 0.0:
+                    _old_prop_score = score_data.get("total_score", 0)
+                    _old_prop_final = score_data.get("final_score", _old_prop_score)
+                    score_data["total_score"] = round(_old_prop_score + _prop_weather_mod, 2)
+                    score_data["final_score"] = round(_old_prop_final + _prop_weather_mod, 2)
+
+                # Add weather fields to score_data
+                score_data["weather_modifier"] = round(_prop_weather_mod, 2)
+                score_data["weather_reasons"] = _prop_weather_reasons
+                score_data["weather_available"] = _prop_weather_available
 
                 tier = score_data.get("tier", "PASS")
                 was_downgraded = False
@@ -4028,6 +4145,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "pick_log_errors": _pick_log_errors,
             "top_prop_candidates": debug_props,
             "top_game_candidates": debug_games,
+            # v16.0 Weather telemetry
+            "weather": {
+                "enabled": WEATHER_ENABLED,
+                "module_available": WEATHER_MODULE_AVAILABLE,
+                "games_fetched": _weather_fetched,
+                "cache_hits": _weather_cache_hits,
+                "cache_size": len(_weather_cache),
+                "picks_with_weather": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("weather_available", False)),
+                "picks_with_modifier": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("weather_modifier", 0) != 0),
+            },
         }
         # Don't cache debug responses
         return result
