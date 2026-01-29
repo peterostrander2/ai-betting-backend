@@ -19,15 +19,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Import data_dir to get correct Railway volume path
+from data_dir import GRADER_DATA_DIR
+
 # =============================================================================
-# SINGLE SOURCE OF TRUTH: Absolute storage paths
+# SINGLE SOURCE OF TRUTH: Use data_dir.py paths (Railway volume)
 # =============================================================================
-# Railway volume mount: /app/grader_data (Railway env: RAILWAY_VOLUME_MOUNT_PATH)
-# Using absolute path on Railway volume for persistence across restarts
-STORAGE_ROOT = "/app/grader_data/grader"
-PREDICTIONS_FILE = "/app/grader_data/grader/predictions.jsonl"
-WEIGHTS_FILE = "/app/grader_data/grader/weights.json"
-AUDIT_DIR = "/app/grader_data/grader/audits"
+STORAGE_ROOT = os.path.join(GRADER_DATA_DIR, "grader")
+PREDICTIONS_FILE = os.path.join(STORAGE_ROOT, "predictions.jsonl")
+WEIGHTS_FILE = os.path.join(STORAGE_ROOT, "weights.json")
+AUDIT_DIR = os.path.join(STORAGE_ROOT, "audits")
 
 
 def ensure_storage_writable():
