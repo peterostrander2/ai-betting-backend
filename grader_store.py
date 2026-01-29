@@ -22,12 +22,12 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # SINGLE SOURCE OF TRUTH: Absolute storage paths
 # =============================================================================
-# Railway volume mount: /data
-# NEVER use relative paths or environment variable overrides
-STORAGE_ROOT = "/data/grader"
-PREDICTIONS_FILE = "/data/grader/predictions.jsonl"
-WEIGHTS_FILE = "/data/grader/weights.json"
-AUDIT_DIR = "/data/grader/audits"
+# Railway volume mount: /app/grader_data (Railway env: RAILWAY_VOLUME_MOUNT_PATH)
+# Using absolute path on Railway volume for persistence across restarts
+STORAGE_ROOT = "/app/grader_data/grader"
+PREDICTIONS_FILE = "/app/grader_data/grader/predictions.jsonl"
+WEIGHTS_FILE = "/app/grader_data/grader/weights.json"
+AUDIT_DIR = "/app/grader_data/grader/audits"
 
 
 def ensure_storage_writable():
