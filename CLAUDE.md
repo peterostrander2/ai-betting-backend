@@ -1,5 +1,417 @@
 # CLAUDE.md - Project Instructions for AI Assistants
 
+## 🚨 MASTER SYSTEM INVARIANTS (NEVER VIOLATE) 🚨
+
+**READ THIS FIRST BEFORE TOUCHING ANYTHING**
+
+This section contains ALL critical invariants that must NEVER be violated. Breaking any of these will crash production.
+
+---
+
+### INVARIANT 1: Storage Persistence (MANDATORY)
+
+**RULE:** ALL persistent data MUST live on Railway volume at `/app/grader_data`
+
+**Canonical Storage Locations (DO NOT CHANGE):**
+```
+/app/grader_data/  (Railway 5GB persistent volume - NEVER use /data in production)
+├── grader/
+│   └── predictions.jsonl           ← Picks (grader_store.py) - WRITE PATH
+├── grader_data/
+│   ├── weights.json                ← Learned weights (data_dir.py)
+│   └── predictions.json            ← Weight learning data
+└── audit_logs/
+    └── audit_{YYYY-MM-DD}.json     ← Daily audits (data_dir.py)
+```
+
+**CRITICAL FACTS:**
+1. `RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data` (set by Railway automatically)
+2. `/app/grader_data` IS THE PERSISTENT VOLUME (verified `os.path.ismount() = True`)
+3. **NEVER** add code to block `/app/*` paths - this crashes production
+4. Both `storage_paths.py` AND `data_dir.py` MUST use `RAILWAY_VOLUME_MOUNT_PATH`
+5. Picks MUST persist across container restarts (verified: 14+ picks survived Jan 28-29 crash)
+
+**Startup Requirements:**
+```python
+# data_dir.py and storage_paths.py MUST log on startup:
+GRADER_DATA_DIR=/app/grader_data
+✓ Storage writable: /app/grader_data
+✓ Is mountpoint: True
+```
+
+**VERIFICATION:**
+```bash
+curl https://web-production-7b2a.up.railway.app/internal/storage/health
+# MUST show: is_mountpoint: true, is_ephemeral: false, predictions_line_count > 0
+```
+
+---
+
+### INVARIANT 2: Titanium 3-of-4 Rule (STRICT)
+
+**RULE:** `titanium_triggered=true` ONLY when >= 3 of 4 engines >= 8.0
+
+**Implementation:** `core/titanium.py` → `compute_titanium_flag(ai, research, esoteric, jarvis)`
+
+**NEVER:**
+- 1/4 engines ≥ 8.0 → `titanium=False` (ALWAYS)
+- 2/4 engines ≥ 8.0 → `titanium=False` (ALWAYS)
+
+**ALWAYS:**
+- 3/4 engines ≥ 8.0 → `titanium=True` (MANDATORY)
+- 4/4 engines ≥ 8.0 → `titanium=True` (MANDATORY)
+
+**Boundary:** Score of exactly 8.0 DOES qualify. Score of 7.99 does NOT.
+
+**Output Fields (MANDATORY in every pick):**
+```python
+{
+    "titanium_triggered": bool,
+    "titanium_count": int,  # 0-4
+    "titanium_qualified_engines": List[str],  # ["ai", "research", ...]
+    "titanium_threshold": 8.0
+}
+```
+
+**Tests:** `tests/test_titanium_fix.py` (7 tests enforce this rule)
+
+---
+
+### INVARIANT 3: EST Today-Only Gating (MANDATORY)
+
+**RULE:** ALL picks MUST be for games in today's ET window ONLY
+
+**Window:** 12:01 AM ET (00:01:00) to 11:59 PM ET (23:59:00) - INCLUSIVE bounds
+
+**Single Source of Truth:** `core/time_et.py` (ONLY 2 functions allowed)
+```python
+from core.time_et import now_et, et_day_bounds
+
+start_et, end_et, et_date = et_day_bounds()  # "2026-01-29"
+```
+
+**MANDATORY Application Points:**
+1. Props fetch → `filter_events_et(props_events, date_str=et_date)`
+2. Games fetch → `filter_events_et(game_events, date_str=et_date)`
+3. Autograder → Uses "yesterday ET" not UTC for grading
+
+**NEVER:**
+- Use `datetime.now()` or `utcnow()` for slate filtering
+- Use pytz (ONLY zoneinfo allowed)
+- Create new date helper functions
+- Skip ET filtering on ANY data path touching Odds API
+
+**Verification:**
+```bash
+curl /live/debug/time | jq '.et_date'  # "2026-01-29"
+curl /live/best-bets/NBA?debug=1 | jq '.debug.date_window_et.filter_date'  # MUST MATCH
+```
+
+---
+
+### INVARIANT 4: 4-Engine Scoring (NO DOUBLE COUNTING)
+
+**RULE:** Every pick MUST run through ALL 4 engines + Jason Sim 2.0
+
+**Engine Weights (IMMUTABLE):**
+```python
+AI_WEIGHT = 0.25        # 25% - 8 AI models
+RESEARCH_WEIGHT = 0.30  # 30% - Sharp/splits/variance/public fade
+ESOTERIC_WEIGHT = 0.20  # 20% - Numerology/astro/fib/vortex/daily
+JARVIS_WEIGHT = 0.15    # 15% - Gematria/triggers/mid-spread
+# Total: 0.90 (remaining 0.10 from variable confluence_boost)
+```
+
+**Scoring Formula (EXACT):**
+```python
+BASE = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15)
+FINAL = BASE + confluence_boost + jason_sim_boost
+```
+
+**Engine Separation Rules:**
+1. **Research Engine** - ALL market signals ONLY (sharp, splits, variance, public fade)
+   - Public Fade lives ONLY here, NOT in Jarvis or Esoteric
+2. **Esoteric Engine** - NON-JARVIS ritual environment (astro, fib, vortex, daily edge)
+   - For PROPS: Use `prop_line` for fib/vortex magnitude (NOT spread=0)
+   - Expected range: 2.0-5.5 (median ~3.5), average MUST NOT exceed 7.0
+3. **Jarvis Engine** - Standalone gematria + sacred triggers + Jarvis-specific logic
+   - MUST always return meaningful output with 7 required fields (see below)
+4. **Jason Sim 2.0** - Post-pick confluence layer (NO ODDS)
+   - Spread/ML: Boost if pick-side win% ≥61%, block if ≤52% and base < 7.2
+   - Totals: Reduce confidence if variance HIGH
+   - Props: Boost ONLY if base_prop_score ≥6.8 AND environment supports prop
+
+**Required Output Fields (ALL picks):**
+```python
+{
+    "ai_score": float,           # 0-10
+    "research_score": float,     # 0-10
+    "esoteric_score": float,     # 0-10
+    "jarvis_score": float,       # 0-10
+    "base_score": float,         # Weighted sum before boosts
+    "confluence_boost": float,   # STRONG (+3), MODERATE (+1), DIVERGENT (+0)
+    "jason_sim_boost": float,    # Can be negative
+    "final_score": float,        # BASE + confluence + jason_sim
+
+    # Breakdown fields (MANDATORY)
+    "ai_reasons": List[str],
+    "research_reasons": List[str],
+    "esoteric_reasons": List[str],
+    "jarvis_reasons": List[str],
+    "jason_sim_reasons": List[str],
+
+    # Jarvis 7-field contract (see Invariant 5)
+    "jarvis_rs": float | None,
+    "jarvis_active": bool,
+    "jarvis_hits_count": int,
+    "jarvis_triggers_hit": List[str],
+    "jarvis_fail_reasons": List[str],
+    "jarvis_inputs_used": Dict[str, Any],
+}
+```
+
+---
+
+### INVARIANT 5: Jarvis 7-Field Contract (MANDATORY)
+
+**RULE:** Jarvis MUST ALWAYS return these 7 fields, even when no triggers fire
+
+**Required Fields:**
+```python
+{
+    "jarvis_rs": float | None,        # 0-10 when active, None when inputs missing
+    "jarvis_active": bool,            # True if triggers fired
+    "jarvis_hits_count": int,         # Count of triggers hit
+    "jarvis_triggers_hit": List[str], # Names of triggers that fired
+    "jarvis_reasons": List[str],      # Why it triggered (or didn't)
+    "jarvis_fail_reasons": List[str], # Explain low score / no triggers
+    "jarvis_inputs_used": Dict,       # Tracks all inputs (spread, total, etc.)
+}
+```
+
+**Baseline Floor:** If inputs present but no triggers fire, `jarvis_rs` ≥ 4.5 (NEVER 0)
+
+**Validation:** `tests/test_jarvis_transparency.py` (13 tests enforce this)
+
+---
+
+### INVARIANT 6: Output Filtering (6.5 MINIMUM)
+
+**RULE:** NEVER return any pick with `final_score < 6.5` to frontend
+
+**Filter Pipeline (in order):**
+```python
+# 1. Deduplicate by pick_id (same bet, different books)
+deduplicated = _dedupe_picks(all_picks)
+
+# 2. Filter to 6.5 minimum score
+filtered = [p for p in deduplicated if p["final_score"] >= 6.5]
+
+# 3. Apply contradiction gate (prevent opposite sides)
+no_contradictions = apply_contradiction_gate(filtered)
+
+# 4. Take top N picks
+top_picks = no_contradictions[:max_picks]
+```
+
+**GOLD_STAR Hard Gates:**
+- If tier == "GOLD_STAR", MUST pass ALL gates:
+  - `ai_score >= 6.8`
+  - `research_score >= 5.5`
+  - `jarvis_score >= 6.5`
+  - `esoteric_score >= 4.0`
+- If ANY gate fails, downgrade to "EDGE_LEAN"
+
+**Tier Hierarchy:**
+1. TITANIUM_SMASH (3/4 engines ≥ 8.0) - Overrides all others
+2. GOLD_STAR (≥ 7.5 + passes all gates)
+3. EDGE_LEAN (≥ 6.5)
+4. MONITOR (≥ 5.5) - HIDDEN (not returned)
+5. PASS (< 5.5) - HIDDEN (not returned)
+
+---
+
+### INVARIANT 7: Contradiction Gate (MANDATORY)
+
+**RULE:** NEVER return both sides of same bet (Over AND Under, Team A AND Team B)
+
+**Unique Key Format:**
+```
+{sport}|{date_et}|{event_id}|{market}|{prop_type}|{player_id/team_id}|{line}
+```
+
+**Detection Rules:**
+1. **Totals/Props:** Detect Over vs Under on same line
+2. **Spreads:** Use `abs(line)` so +1.5 and -1.5 match
+3. **Moneylines:** Use "Game" as subject for both teams
+4. **Player Props:** Check markets with "PLAYER_" prefix (player_points, player_assists, etc.)
+
+**Priority When Duplicates Found:**
+- Keep pick with higher `final_score`
+- Tiebreaker: Preferred book (draftkings > fanduel > betmgm > caesars > pinnacle)
+
+**Implementation:** `utils/contradiction_gate.py` → `apply_contradiction_gate(props, games)`
+
+**Tests:** 8 tests verify all cases (totals, props, spreads, player props)
+
+---
+
+### INVARIANT 8: Best-Bets Response Contract (NO KeyErrors)
+
+**RULE:** `/live/best-bets/{sport}` MUST ALWAYS return JSON with these keys
+
+**Required Structure:**
+```json
+{
+  "sport": "NBA",
+  "props": {
+    "count": 0,
+    "picks": []
+  },
+  "game_picks": {
+    "count": 0,
+    "picks": []
+  },
+  "meta": {}
+}
+```
+
+**NEVER:**
+- Missing `props` key (even when 0 props available)
+- Missing `game_picks` key (even when 0 game picks)
+- Missing `meta` key
+
+**Why:** NHL often has 0 props. Frontend MUST NOT get KeyError.
+
+**Implementation:** `models/best_bets_response.py` → `build_best_bets_response()`
+
+**Tests:** `tests/test_best_bets_contract.py` (5 tests enforce this)
+
+---
+
+### INVARIANT 9: Pick Persistence Contract (AutoGrader)
+
+**RULE:** Every pick MUST include ALL required fields for AutoGrader to grade it
+
+**Required Fields:**
+```python
+[
+    "prediction_id",        # Stable 12-char deterministic ID
+    "sport",                # NBA, NHL, NFL, MLB, NCAAB
+    "market_type",          # SPREAD, TOTAL, MONEYLINE, PROP
+    "line_at_bet",          # Line when bet placed
+    "odds_at_bet",          # Odds when bet placed (American format)
+    "book",                 # Sportsbook name
+    "event_start_time_et",  # Game start time in ET
+    "created_at",           # Pick creation timestamp
+    "final_score",          # Pick score (≥ 6.5)
+    "tier",                 # TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN
+
+    # All 4 engine scores
+    "ai_score",
+    "research_score",
+    "esoteric_score",
+    "jarvis_score",
+
+    # All 4 engine reasons
+    "ai_reasons",
+    "research_reasons",
+    "esoteric_reasons",
+    "jarvis_reasons",
+]
+```
+
+**Storage Format:** JSONL (one pick per line) at `/app/grader_data/grader/predictions.jsonl`
+
+**Write Path:** `grader_store.persist_pick()` called from `/live/best-bets/{sport}`
+
+**Read Path:** AutoGrader reads from same file via `grader_store.load_predictions()`
+
+---
+
+### INVARIANT 10: Frontend-Ready Output (Human Readable)
+
+**RULE:** Every pick MUST include clear human-readable fields
+
+**Required Human-Readable Fields:**
+```python
+{
+    "description": str,        # "Jamal Murray Assists Over 3.5"
+    "pick_detail": str,        # "Assists Over 3.5"
+    "matchup": str,            # "Away @ Home"
+    "sport": str,              # "NBA"
+    "market": str,             # "PROP", "TOTAL", "SPREAD", "MONEYLINE"
+    "side": str,               # "Over", "Under", "Lakers", etc.
+    "line": float,             # 3.5, 246.5, +6.5, etc.
+    "odds_american": int,      # -110, +135, etc.
+    "book": str,               # "draftkings"
+    "start_time_et": str,      # ISO timestamp in ET
+    "game_status": str,        # "SCHEDULED", "LIVE", "FINAL"
+}
+```
+
+**NEVER:**
+- Generic labels like "Game" without context
+- Missing Over/Under for totals
+- Missing team name for spreads/ML
+- Missing player name for props
+
+**Backfill:** If old picks missing fields, compute from primitives (see `models/pick_converter.py`)
+
+---
+
+### MASTER VERIFICATION CHECKLIST
+
+**Before ANY storage/autograder/scheduler change, verify ALL of these:**
+
+```bash
+# 1. Storage health
+curl /internal/storage/health
+# MUST show: is_mountpoint: true, predictions_line_count > 0
+
+# 2. Grader status
+curl /live/grader/status -H "X-API-Key: KEY"
+# MUST show: predictions_logged > 0, weights_loaded: true
+
+# 3. Best-bets has all keys
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY"
+# MUST have: props, game_picks, meta keys
+# MUST have: filtered_below_6_5_total, contradiction_blocked_total
+
+# 4. ET date consistency
+diff <(curl -s /live/debug/time | jq -r '.et_date') \
+     <(curl -s /live/best-bets/NBA?debug=1 | jq -r '.debug.date_window_et.filter_date')
+# MUST be empty (dates match)
+
+# 5. Autograder dry-run
+curl -X POST /live/grader/dry-run -H "X-API-Key: KEY" \
+  -d '{"date":"2026-01-29","mode":"pre"}'
+# MUST show: pre_mode_pass: true, failed: 0
+
+# 6. Run tests
+pytest tests/test_titanium_fix.py tests/test_best_bets_contract.py
+# MUST pass: 12/12 tests
+```
+
+---
+
+### NEVER BREAK THESE RULES
+
+1. ✅ Read CLAUDE.md BEFORE touching storage/autograder/scheduler
+2. ✅ Verify production health BEFORE making assumptions
+3. ✅ Run verification checklist BEFORE committing
+4. ✅ Check that RAILWAY_VOLUME_MOUNT_PATH is used everywhere
+5. ✅ Ensure all 4 engines + Jason Sim run on every pick
+6. ✅ Filter to >= 6.5 BEFORE returning to frontend
+7. ✅ Apply contradiction gate to prevent opposite sides
+8. ✅ Include ALL required fields for autograder
+9. ✅ Use `core/time_et.py` ONLY for ET timezone logic
+10. ✅ Test with `pytest` BEFORE deploying
+
+**If you violate ANY of these invariants, production WILL crash.**
+
+---
+
 ## ⚠️ BACKEND FROZEN - DO NOT MODIFY
 
 **As of January 29, 2026, the backend is production-ready and FROZEN.**
