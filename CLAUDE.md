@@ -4090,3 +4090,183 @@ None - All 4 critical fixes implemented, tested, and documented. Mistakes preven
 
 ---
 
+
+## Session Log: January 29, 2026 - Storage Unification (SINGLE SOURCE OF TRUTH)
+
+### Overview
+
+**Unified persistence to `/data/grader/predictions.jsonl` as the SINGLE SOURCE OF TRUTH.**
+
+Previously had TWO storage paths:
+- ❌ `/data/grader_data/pick_logs/` (pick_logger)
+- ❌ `/data/grader/predictions.jsonl` (grader_store)
+
+Auto-grader was reading from pick_logger but best-bets was writing to grader_store → broken.
+
+**Build:** f19ee08
+
+---
+
+### What Was Done
+
+#### 1. Removed pick_logger Persistence
+
+**File:** `live_data_router.py`
+
+Removed all pick_logger.log_pick() calls. All picks now persist ONLY to grader_store via lines 3862-3863.
+
+#### 2. Auto-Grader Reads from grader_store
+
+**File:** `result_fetcher.py`
+
+**Before:**
+```python
+from pick_logger import get_pick_logger
+pending_picks = [p for p in pick_logger.get_picks_for_date(date) if not p.result]
+```
+
+**After:**
+```python
+import grader_store
+all_picks = grader_store.load_predictions(date_et=date)
+pending_picks = [p for p in all_picks if p.get("grade_status") != "GRADED"]
+```
+
+#### 3. Auto-Grader Writes Grades to grader_store
+
+**File:** `result_fetcher.py`
+
+**Before:**
+```python
+grade_result = pick_logger.grade_pick(pick_id, result, actual_value, date)
+```
+
+**After:**
+```python
+from core.time_et import now_et
+grade_result = grader_store.mark_graded(pick_id, result, actual_value, now_et().isoformat())
+```
+
+#### 4. Updated /grader/status Endpoint
+
+**File:** `live_data_router.py`
+
+Now reports from `grader_store` instead of `pick_logger`.
+
+---
+
+### Storage Architecture (Unified)
+
+```
+/data/grader/  (Railway volume - SINGLE SOURCE OF TRUTH)
+├── predictions.jsonl     ← All picks written here (JSONL format)
+├── weights.json          ← Weight learning
+└── audits/
+    └── audit_{date}.json
+```
+
+**Write Path:**
+- `/live/best-bets/{sport}` → `grader_store.persist_pick()` (live_data_router.py line 3862)
+
+**Read Path:**
+- Auto-grader → `grader_store.load_predictions()` (result_fetcher.py line 941)
+- `/grader/status` → `grader_store.load_predictions()` (live_data_router.py line 5023)
+
+---
+
+### Files Changed
+
+```
+live_data_router.py   (MODIFIED - Removed pick_logger, updated /grader/status)
+result_fetcher.py     (MODIFIED - Reads/writes from grader_store)
+grader_store.py       (ALREADY UPDATED - Absolute paths, selfcheck endpoint)
+main.py              (ALREADY UPDATED - /grader/status, /grader/selfcheck/write-read)
+tests/               (ALREADY UPDATED - 7 persistence tests passing)
+```
+
+---
+
+### Git Commits
+
+```bash
+76aab2d - fix: Enforce SINGLE SOURCE OF TRUTH for persistence paths
+f19ee08 - fix: Unify storage to /data/grader/predictions.jsonl (SINGLE SOURCE OF TRUTH)
+```
+
+---
+
+### Verification (Production)
+
+**Deployed and working (Build f19ee08):**
+
+```bash
+curl "https://web-production-7b2a.up.railway.app/grader/status"
+```
+
+**Response:**
+```json
+{
+  "grader_store": {
+    "predictions_logged": 3,
+    "pending_to_grade": 3,
+    "graded_today": 0,
+    "storage_path": "/data/grader",
+    "predictions_file": "/data/grader/predictions.jsonl",
+    "date": "2026-01-28"
+  }
+}
+```
+
+---
+
+### API Contract Clarification
+
+`/live/best-bets/{sport}` response structure:
+
+```json
+{
+  "props": {
+    "count": N,
+    "picks": [...]
+  },
+  "game_picks": {
+    "count": N,
+    "picks": [...]
+  }
+}
+```
+
+**Frontend integration:**
+```javascript
+const props = response.props.picks;
+const games = response.game_picks.picks;  // Note: game_picks, not games
+```
+
+---
+
+### Tomorrow's Verification
+
+Auto-grader will run after games complete (6 AM ET audit).
+
+**Expected:**
+- ✅ Auto-grader will see pending picks (NOT "No pending picks to grade")
+- ✅ Grades will write to `/data/grader/predictions.jsonl`
+- ✅ `/grader/status` will show `graded_today > 0`
+
+---
+
+### Summary
+
+**Before:**
+- ❌ Two storage paths (duplicated persistence)
+- ❌ Auto-grader reading from wrong path
+- ❌ "No pending picks to grade" error
+
+**After:**
+- ✅ ONE storage path: `/data/grader/predictions.jsonl`
+- ✅ Auto-grader reads/writes to same file
+- ✅ All persistence flows unified
+- ✅ Backend FRONTEND-READY
+
+---
+
