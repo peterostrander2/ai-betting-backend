@@ -1,2 +1,6 @@
 # Models package
-from .api_models import *
+try:
+    from .api_models import *
+except ImportError:
+    # pydantic not available (OK for tests)
+    pass

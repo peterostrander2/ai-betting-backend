@@ -48,6 +48,9 @@ from .time_et import (
     filter_events_et,
 )
 
+# Import titanium (SINGLE SOURCE OF TRUTH for titanium flag - FIX 2)
+from .titanium import compute_titanium_flag
+
 # Import runtime modules (optional - graceful fallback if not available)
 try:
     from . import scoring_pipeline
@@ -79,6 +82,9 @@ __all__ = [
     'et_day_bounds',
     'is_in_et_day',
     'filter_events_et',
+
+    # Titanium (SINGLE SOURCE OF TRUTH - FIX 2)
+    'compute_titanium_flag',
 
     # Runtime modules
     'scoring_pipeline',

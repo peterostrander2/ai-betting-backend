@@ -52,13 +52,15 @@ def et_day_bounds(date_str: str = None) -> Tuple[datetime, datetime, str]:
     """
     Get ET day bounds [start, end) and date string.
 
+    FIX 4: Daily slate window is 12:01 AM ET to 11:59 PM ET.
+
     Args:
         date_str: Optional date "YYYY-MM-DD". If None, uses today in ET.
 
     Returns:
         Tuple of (start_et, end_et, et_date)
-        - start_et: datetime at 00:00:00 ET
-        - end_et: datetime at 00:00:00 ET next day (EXCLUSIVE upper bound)
+        - start_et: datetime at 12:01 AM ET (00:01:00)
+        - end_et: datetime at 11:59 PM ET (23:59:00) same day (INCLUSIVE upper bound)
         - et_date: "YYYY-MM-DD" format
 
     Example:
@@ -66,10 +68,10 @@ def et_day_bounds(date_str: str = None) -> Tuple[datetime, datetime, str]:
         >>> et_date
         "2026-01-28"
         >>> start
-        datetime(2026, 1, 28, 0, 0, 0, tzinfo=ZoneInfo('America/New_York'))
+        datetime(2026, 1, 28, 0, 1, 0, tzinfo=ZoneInfo('America/New_York'))
         >>> end
-        datetime(2026, 1, 29, 0, 0, 0, tzinfo=ZoneInfo('America/New_York'))
-        >>> start <= some_event < end  # Exclusive upper bound
+        datetime(2026, 1, 28, 23, 59, 0, tzinfo=ZoneInfo('America/New_York'))
+        >>> start <= some_event <= end  # Inclusive bounds
     """
     # Get target date
     if date_str:
@@ -77,11 +79,9 @@ def et_day_bounds(date_str: str = None) -> Tuple[datetime, datetime, str]:
     else:
         day = now_et().date()
 
-    # Start of day in ET
-    start = datetime.combine(day, time(0, 0, 0), tzinfo=ET)
-
-    # End is start of NEXT day (exclusive upper bound)
-    end = start + timedelta(days=1)
+    # FIX 4: 12:01 AM to 11:59 PM ET (daily slate window)
+    start = datetime.combine(day, time(0, 1, 0), tzinfo=ET)  # 12:01 AM
+    end = datetime.combine(day, time(23, 59, 0), tzinfo=ET)  # 11:59 PM
 
     # ISO date string
     et_date = day.isoformat()
@@ -98,7 +98,7 @@ def is_in_et_day(event_time: str, date_str: str = None) -> bool:
         date_str: Optional date "YYYY-MM-DD". If None, uses today.
 
     Returns:
-        bool: True if event is within [start, end) bounds
+        bool: True if event is within [start, end] bounds (FIX 4: inclusive)
 
     Example:
         >>> is_in_et_day("2026-01-28T19:30:00Z", "2026-01-28")
@@ -128,8 +128,8 @@ def is_in_et_day(event_time: str, date_str: str = None) -> bool:
         # Get day bounds
         start, end, _ = et_day_bounds(date_str)
 
-        # Check if in bounds [start, end)
-        return start <= event_et < end
+        # FIX 4: Inclusive bounds [start, end]
+        return start <= event_et <= end
 
     except (ValueError, AttributeError):
         return False
