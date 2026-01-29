@@ -150,6 +150,8 @@ def load_predictions(date_et: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Load all predictions from store, optionally filtered by date.
 
+    Supports both JSONL (one JSON object per line) and legacy JSON array format.
+
     Args:
         date_et: Filter to specific ET date (YYYY-MM-DD), or None for all
 
@@ -165,11 +167,45 @@ def load_predictions(date_et: Optional[str] = None) -> List[Dict[str, Any]]:
         with open(PREDICTIONS_FILE, 'r') as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_SH)
             try:
-                for line in f:
-                    if line.strip():
-                        pred = json.loads(line)
-                        if date_et is None or pred.get("date_et") == date_et:
-                            predictions.append(pred)
+                # Read entire file content
+                content = f.read()
+
+                # If empty, return empty list
+                if not content.strip():
+                    return predictions
+
+                # Check if legacy JSON array format
+                if content.lstrip().startswith('['):
+                    # Parse as JSON array (legacy support)
+                    try:
+                        all_preds = json.loads(content)
+                        if isinstance(all_preds, list):
+                            predictions = all_preds
+                    except json.JSONDecodeError as e:
+                        logger.error("Failed to parse legacy JSON array: %s", e)
+                        return predictions
+                else:
+                    # Parse as JSONL (one JSON object per line)
+                    for line_num, line in enumerate(content.splitlines(), 1):
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        try:
+                            pred = json.loads(line)
+                            # Validate it's a dict with pick_id
+                            if isinstance(pred, dict) and "pick_id" in pred:
+                                predictions.append(pred)
+                            else:
+                                logger.warning("Line %d: Not a valid pick dict (missing pick_id)", line_num)
+                        except json.JSONDecodeError as e:
+                            logger.error("Line %d: Failed to parse JSON: %s", line_num, e)
+                            # Skip corrupted line, continue processing
+
+                # Filter by date if specified
+                if date_et is not None:
+                    predictions = [p for p in predictions if p.get("date_et") == date_et]
+
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     except Exception as e:

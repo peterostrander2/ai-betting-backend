@@ -113,3 +113,44 @@ def test_get_storage_stats_returns_count(temp_storage):
     assert stats["exists"] is True
     assert stats["writable"] is True
     assert stats["prediction_count"] == 2
+
+
+def test_load_predictions_parses_jsonl_format(temp_storage):
+    """Loading predictions correctly parses JSONL format (one JSON per line)."""
+    # Write 2 JSONL lines directly to file
+    jsonl_content = (
+        '{"pick_id": "abc123", "sport": "NBA", "event_id": "game1", "date_et": "2026-01-28", "final_score": 8.0}\n'
+        '{"pick_id": "def456", "sport": "NHL", "event_id": "game2", "date_et": "2026-01-28", "final_score": 7.5}\n'
+    )
+
+    with open(temp_storage, 'w') as f:
+        f.write(jsonl_content)
+
+    # Load predictions
+    loaded = grader_store.load_predictions()
+
+    assert len(loaded) == 2
+    assert loaded[0]["pick_id"] == "abc123"
+    assert loaded[1]["pick_id"] == "def456"
+    assert all(p["date_et"] == "2026-01-28" for p in loaded)
+
+
+def test_load_predictions_skips_corrupted_lines(temp_storage):
+    """Loading predictions skips corrupted lines and logs errors without crashing."""
+    # Write JSONL with one corrupted line
+    jsonl_content = (
+        '{"pick_id": "abc123", "sport": "NBA", "event_id": "game1", "date_et": "2026-01-28", "final_score": 8.0}\n'
+        '{"pick_id": "CORRUPTED_LINE", invalid json here\n'  # Corrupted
+        '{"pick_id": "def456", "sport": "NHL", "event_id": "game2", "date_et": "2026-01-28", "final_score": 7.5}\n'
+    )
+
+    with open(temp_storage, 'w') as f:
+        f.write(jsonl_content)
+
+    # Load predictions - should skip corrupted line
+    loaded = grader_store.load_predictions()
+
+    # Should load 2 valid lines, skip 1 corrupted
+    assert len(loaded) == 2
+    assert loaded[0]["pick_id"] == "abc123"
+    assert loaded[1]["pick_id"] == "def456"
