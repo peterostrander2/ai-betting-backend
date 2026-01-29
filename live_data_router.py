@@ -5505,6 +5505,54 @@ async def debug_time(api_key: str = Depends(verify_api_key)):
         }
 
 
+@router.get("/debug/integrations")
+async def debug_integrations(
+    api_key: str = Depends(verify_api_key),
+    quick: bool = False
+):
+    """
+    Get status of ALL external integrations.
+
+    This endpoint provides comprehensive visibility into:
+    - Which APIs are configured (env vars set)
+    - Which APIs are reachable (can connect)
+    - Last success/error timestamps
+    - Which modules and endpoints depend on each integration
+
+    Args:
+        quick: If true, returns fast summary without connectivity checks
+
+    Returns:
+        Complete integration status for monitoring and debugging.
+
+    Requires:
+        X-API-Key header
+    """
+    try:
+        from integration_registry import (
+            get_all_integrations_status,
+            get_integrations_summary
+        )
+
+        if quick:
+            return get_integrations_summary()
+        else:
+            return await get_all_integrations_status()
+
+    except ImportError as e:
+        return {
+            "error": "Integration registry not available",
+            "detail": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception("Error getting integrations status: %s", e)
+        return {
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 @router.get("/grader/weights/{sport}")
 async def grader_weights(sport: str):
     """Get current prediction weights for a sport."""
