@@ -16,20 +16,20 @@ echo
 
 # Check 1: Health endpoint
 echo "1. HEALTH CHECK"
-HEALTH=$(curl -s "$BASE_URL/health")
+HEALTH=$(curl -s "${BASE_URL}/health")
 echo "   $HEALTH"
 echo
 
 # Check 2: /debug/time
 echo "2. ET TIMEZONE (/debug/time)"
-TIME_DATA=$(curl -s "$BASE_URL/live/debug/time" -H "X-API-Key: $API_KEY")
+TIME_DATA=$(curl -s "${BASE_URL}/live/debug/time" -H "X-API-Key: $API_KEY")
 ET_DATE=$(echo "$TIME_DATA" | python3 -c "import json, sys; print(json.load(sys.stdin)['et_date'])")
 echo "   et_date: $ET_DATE"
 echo
 
 # Check 3: Best-bets NBA
 echo "3. BEST-BETS NBA"
-NBA_DATA=$(curl -s "$BASE_URL/live/best-bets/NBA?max_props=3&max_games=3" -H "X-API-Key: $API_KEY")
+NBA_DATA=$(curl -s "${BASE_URL}/live/best-bets/NBA?max_props=3&max_games=3" -H "X-API-Key: $API_KEY")
 # Verify required keys exist
 NBA_PROPS=$(echo "$NBA_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); assert 'props' in d, 'Missing props key'; assert 'count' in d['props'], 'Missing props.count'; print(d['props']['count'])" 2>&1)
 if [ $? -ne 0 ]; then
@@ -47,7 +47,7 @@ echo
 
 # Check 4: Best-bets NHL
 echo "4. BEST-BETS NHL"
-NHL_DATA=$(curl -s "$BASE_URL/live/best-bets/NHL?max_props=3&max_games=3" -H "X-API-Key: $API_KEY")
+NHL_DATA=$(curl -s "${BASE_URL}/live/best-bets/NHL?max_props=3&max_games=3" -H "X-API-Key: $API_KEY")
 # Verify required keys exist
 NHL_PROPS=$(echo "$NHL_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); assert 'props' in d, 'Missing props key'; assert 'count' in d['props'], 'Missing props.count'; print(d['props']['count'])" 2>&1)
 if [ $? -ne 0 ]; then
@@ -65,7 +65,7 @@ echo
 
 # Check 5: ET filtering match
 echo "5. ET FILTERING VERIFICATION"
-NBA_DEBUG=$(curl -s "$BASE_URL/live/best-bets/NBA?debug=1" -H "X-API-Key: $API_KEY")
+NBA_DEBUG=$(curl -s "${BASE_URL}/live/best-bets/NBA?debug=1" -H "X-API-Key: $API_KEY")
 FILTER_DATE=$(echo "$NBA_DEBUG" | python3 -c "import json, sys; d=json.load(sys.stdin); print(d['debug']['date_window_et']['filter_date'])")
 if [ "$ET_DATE" == "$FILTER_DATE" ]; then
     echo "   ✓ PASS: filter_date ($FILTER_DATE) == et_date ($ET_DATE)"
@@ -77,7 +77,7 @@ echo
 
 # Check 6: Autograder
 echo "6. AUTOGRADER STATUS"
-GRADER=$(curl -s "$BASE_URL/live/grader/status" -H "X-API-Key: $API_KEY")
+GRADER=$(curl -s "${BASE_URL}/live/grader/status" -H "X-API-Key: $API_KEY")
 GRADER_AVAILABLE=$(echo "$GRADER" | python3 -c "import json, sys; print(json.load(sys.stdin)['available'])")
 PREDICTIONS=$(echo "$GRADER" | python3 -c "import json, sys; print(json.load(sys.stdin)['pick_logger']['predictions_logged'])")
 PENDING=$(echo "$GRADER" | python3 -c "import json, sys; print(json.load(sys.stdin)['pick_logger']['pending_to_grade'])")
@@ -108,7 +108,7 @@ echo "7. AUTOGRADER DRY-RUN (pre-mode)"
 cat > /tmp/dry_run.json <<EOF
 {"date":"$ET_DATE","mode":"pre"}
 EOF
-DRYRUN=$(curl -sS -X POST "$BASE_URL/live/grader/dry-run" \
+DRYRUN=$(curl -sS -X POST "${BASE_URL}/live/grader/dry-run" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   --data-binary @/tmp/dry_run.json)

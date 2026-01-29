@@ -46,6 +46,43 @@ except ImportError:
 
 logger = logging.getLogger("pick_logger")
 
+
+# =============================================================================
+# BOOK FIELD ENFORCEMENT (CRITICAL FIX)
+# =============================================================================
+
+def _ensure_book_fields(pick_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Enforce book_key, book, sportsbook_name, sportsbook_event_url defaults.
+
+    CRITICAL FIX: Never allow empty book_key (breaks grading).
+    Fallback: "consensus" for all book fields if missing.
+
+    Applied at:
+    1. Serialization before API response
+    2. Before writing to pick_logs
+    3. When loading from pick_logs (auto-heal legacy rows)
+    """
+    book = pick_data.get("book", "")
+    book_key = pick_data.get("book_key", "")
+
+    # If book_key is empty, use fallback
+    if not book_key:
+        book_key = "consensus"
+
+    # If book is empty, use fallback
+    if not book:
+        book = "Consensus"
+
+    # Update pick_data with corrected values
+    pick_data["book_key"] = book_key
+    pick_data["book"] = book
+    pick_data["sportsbook_name"] = pick_data.get("sportsbook_name") or book
+    pick_data["sportsbook_event_url"] = pick_data.get("sportsbook_event_url") or ""
+
+    return pick_data
+
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -593,6 +630,9 @@ class PickLogger:
         Returns:
             Dict with pick_id, validation status, dedup info, and any warnings
         """
+        # CRITICAL FIX: Enforce book_key defaults BEFORE processing
+        pick_data = _ensure_book_fields(pick_data)
+
         today = get_today_date_et()
         now_et = get_now_et()
 
@@ -971,11 +1011,28 @@ class PickLogger:
         if not picks:
             pick_file = os.path.join(self.storage_path, f"picks_{date}.jsonl")
             if os.path.exists(pick_file):
+                healed_picks = []
+                needs_rewrite = False
                 with open(pick_file, 'r') as f:
                     for line in f:
                         if line.strip():
                             data = json.loads(line)
-                            picks.append(PublishedPick(**data))
+                            # AUTO-HEAL: Enforce book_key defaults on legacy rows
+                            original_book_key = data.get("book_key", "")
+                            data = _ensure_book_fields(data)
+                            if original_book_key != data.get("book_key"):
+                                needs_rewrite = True
+                                logger.info(f"Auto-healed book_key: {data.get('pick_id', 'unknown')} -> {data.get('book_key')}")
+                            healed_picks.append(PublishedPick(**data))
+
+                # Rewrite file if any picks were healed (idempotent)
+                if needs_rewrite:
+                    logger.info(f"Rewriting {pick_file} with healed picks")
+                    with open(pick_file, 'w') as f:
+                        for pick in healed_picks:
+                            f.write(json.dumps(asdict(pick)) + "\n")
+
+                picks = healed_picks
                 self.picks[date] = picks
 
         # Filter by sport if specified
