@@ -162,23 +162,6 @@ except ImportError:
     IDENTITY_RESOLVER_AVAILABLE = False
     logger.warning("identity module not available - player resolution disabled")
 
-# Import CORE modules - Single source of truth (v15.0 NEVER BREAK AGAIN)
-try:
-    from core import (
-        TITANIUM_ENGINE_COUNT,
-        TITANIUM_ENGINE_THRESHOLD,
-        TITANIUM_MIN_ENGINES,
-        COMMUNITY_MIN_SCORE,
-        validate_titanium_assignment,
-        validate_score_threshold,
-    )
-    from core import scoring_pipeline, persistence
-    CORE_MODULES_AVAILABLE = True
-except ImportError:
-    CORE_MODULES_AVAILABLE = False
-    COMMUNITY_MIN_SCORE = 6.5
-    logger.warning("core modules not available - using fallback constants")
-
 # Import Centralized Signal Calculators (v14.11 - Single-calculation policy)
 try:
     from signals import (
@@ -2331,53 +2314,598 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             }
         }
 
-    # v15.0 SCORING WRAPPER - Uses core.scoring_pipeline (single source of truth)
+    # Helper function to calculate scores with v15.0 4-engine architecture + Jason Sim
     def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0):
-        """
-        WRAPPER: Calls core.scoring_pipeline.score_candidate() with proper dict construction.
-        This eliminates duplicate scoring logic while preserving the function signature.
-        """
-        if not CORE_MODULES_AVAILABLE:
-            # Fallback: return minimal score data
-            logger.error("CORE_MODULES not available - scoring disabled")
-            return {
-                "total_score": 0.0,
-                "final_score": 0.0,
-                "tier": "PASS",
-                "ai_score": 0.0,
-                "research_score": 0.0,
-                "esoteric_score": 0.0,
-                "jarvis_score": 0.0,
-                "titanium_triggered": False,
+        # =====================================================================
+        # v15.0 FOUR-ENGINE ARCHITECTURE (Clean Separation)
+        # =====================================================================
+        # ENGINE 1 - AI SCORE (0-10): Pure 8 AI Models (0-8 scaled to 0-10)
+        # ENGINE 2 - RESEARCH SCORE (0-10): Sharp money + RLM + Public Fade
+        # ENGINE 3 - ESOTERIC SCORE (0-10): Numerology + Astro + Fib + Vortex + Daily
+        #            (NO Jarvis, NO Gematria, NO Public Fade - those are separate)
+        # ENGINE 4 - JARVIS SCORE (0-10): Gematria + Sacred Triggers + Mid-Spread
+        #
+        # FINAL = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15) + confluence_boost
+        # Then: FINAL += jason_sim_boost (post-pick confluence)
+        # =====================================================================
+
+        # --- ESOTERIC WEIGHTS (v15.0 - Clean Separation, NO Jarvis/Gematria) ---
+        ESOTERIC_WEIGHTS = {
+            "numerology": 0.35,   # 35% - Generic numerology (MANDATORY)
+            "astro": 0.25,        # 25% - Vedic astrology
+            "fib": 0.15,          # 15% - Fibonacci alignment
+            "vortex": 0.15,       # 15% - Tesla 3-6-9 patterns
+            "daily_edge": 0.10    # 10% - Daily energy
+        }
+
+        # --- ENGINE SEPARATION (v15.0 Clean Architecture) ---
+        # AI Score: Pure model output (0-8 scale) - NO external signals
+        # Research Score: Sharp money + Line variance + Public betting (0-10 scale)
+        # Esoteric Score: Numerology + Astro + Fib + Vortex + Daily (0-10 scale)
+        # Jarvis Score: Gematria + Sacred Triggers + Mid-Spread (0-10 scale)
+        # The four engines are combined for final score
+
+        research_reasons = []
+        pillars_passed = []
+        pillars_failed = []
+
+        # --- AI SCORE (Dynamic Model - 0-8 scale) ---
+        # v15.1: AI score is calibrated based on data quality signals
+        # Base AI (5.0 props, 4.5 games) + boosts for data availability
+        _ai_boost = 0.0
+        # Odds data present: +0.5
+        if sharp_signal:
+            _ai_boost += 0.5
+        # Strong/moderate sharp signal aligns with model: +1.0 / +0.5
+        _ss = sharp_signal.get("signal_strength", "NONE")
+        if _ss == "STRONG":
+            _ai_boost += 1.0
+        elif _ss == "MODERATE":
+            _ai_boost += 0.5
+        elif _ss == "MILD":
+            _ai_boost += 0.25
+        # Favorable line value (spread in predictable range 3-10): +0.5
+        if 3 <= abs(spread) <= 10:
+            _ai_boost += 0.5
+        # Player name present for props (more data = better model): +0.25
+        if player_name:
+            _ai_boost += 0.25
+        ai_score = min(8.0, base_ai + _ai_boost)
+        # Scale AI to 0-10 for use in base_score formula
+        ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
+
+        # --- RESEARCH SCORE (Market Intelligence - 0-10 scale) ---
+        # Pillar 1: Sharp Money Detection (0-3 pts)
+        sharp_boost = 0.0
+        sig_strength = sharp_signal.get("signal_strength", "NONE")
+        if sig_strength == "STRONG":
+            sharp_boost = 3.0
+            research_reasons.append("Sharp signal STRONG (+3.0)")
+            pillars_passed.append("Sharp Money Detection")
+        elif sig_strength == "MODERATE":
+            sharp_boost = 1.5
+            research_reasons.append("Sharp signal MODERATE (+1.5)")
+            pillars_passed.append("Sharp Money Detection")
+        elif sig_strength == "MILD":
+            sharp_boost = 0.5
+            research_reasons.append("Sharp signal MILD (+0.5)")
+            pillars_passed.append("Sharp Money Detection")
+        else:
+            research_reasons.append("No sharp signal detected")
+            pillars_failed.append("Sharp Money Detection")
+
+        # Pillar 2: Line Movement/Value (0-3 pts)
+        line_variance = sharp_signal.get("line_variance", 0)
+        line_boost = 0.0
+        if line_variance > 1.5:
+            line_boost = 3.0
+            research_reasons.append(f"Line variance {line_variance:.1f}pts (strong RLM)")
+            pillars_passed.append("Reverse Line Movement")
+            pillars_passed.append("Line Value Detection")
+        elif line_variance > 0.5:
+            line_boost = 1.5
+            research_reasons.append(f"Line variance {line_variance:.1f}pts (moderate)")
+            pillars_passed.append("Line Value Detection")
+        else:
+            research_reasons.append(f"Line variance {line_variance:.1f}pts (minimal)")
+            pillars_failed.append("Reverse Line Movement")
+
+        # Pillar 3: Public Betting Fade (0-2 pts) - fading heavy public action
+        # v14.11: Use centralized public fade calculator (single-calculation policy)
+        public_pct_val = sharp_signal.get("public_pct", 50)
+        ticket_pct_val = sharp_signal.get("ticket_pct")
+        money_pct_val = sharp_signal.get("money_pct")
+
+        if SIGNALS_AVAILABLE:
+            pf_signal = calculate_public_fade(public_pct_val, ticket_pct_val, money_pct_val)
+            public_boost = pf_signal.research_boost
+            pf_context = get_public_fade_context(pf_signal)
+            if pf_signal.reason:
+                research_reasons.append(pf_signal.reason)
+            if pf_signal.is_fade_opportunity:
+                pillars_passed.append("Public Fade Opportunity")
+        else:
+            # Fallback to inline calculation
+            public_boost = 0.0
+            pf_context = {"public_overload": False}
+            if public_pct_val >= 75:
+                public_boost = 2.0
+                research_reasons.append(f"Public at {public_pct_val}% (fade signal)")
+                pillars_passed.append("Public Fade Opportunity")
+                pf_context = {"public_overload": True}
+            elif public_pct_val >= 65:
+                public_boost = 1.0
+                research_reasons.append(f"Public at {public_pct_val}% (mild fade)")
+                pf_context = {"public_overload": True}
+
+        # Pillar 4: Base research floor (2 pts baseline)
+        # v15.2: Boost base when real splits data is present (not default 50/50)
+        base_research = 2.0
+        _has_real_splits = sharp_signal and (sharp_signal.get("ticket_pct") is not None or sharp_signal.get("money_pct") is not None)
+        if _has_real_splits:
+            _mt_diff = abs((sharp_signal.get("money_pct") or 50) - (sharp_signal.get("ticket_pct") or 50))
+            if _mt_diff >= 3:
+                base_research = 3.0  # Real splits with money-ticket divergence
+                research_reasons.append(f"Splits data present (m/t diff={_mt_diff:.0f}%)")
+            else:
+                base_research = 2.5  # Real splits but minimal divergence
+                research_reasons.append("Splits data present (minimal divergence)")
+
+        # Research score: Sum of pillars normalized to 0-10
+        # Max possible: 3 (sharp) + 3 (line) + 2 (public) + 3 (base) = 11 → capped at 10
+        research_score = min(10.0, base_research + sharp_boost + line_boost + public_boost)
+        research_reasons.append(f"Research: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + Base:{base_research})")
+
+        # Pillar score for backwards compatibility (used in scoring_breakdown)
+        pillar_score = sharp_boost + line_boost + public_boost
+
+        # =================================================================
+        # v15.1 JARVIS ENGINE (Standalone 0-10) - Called FIRST
+        # =================================================================
+        jarvis_data = calculate_jarvis_engine_score(
+            jarvis_engine=jarvis,
+            game_str=game_str,
+            player_name=player_name,
+            home_team=home_team,
+            away_team=away_team,
+            spread=spread,
+            total=total,
+            prop_line=prop_line,
+            date_et=get_today_date_et() if 'get_today_date_et' in dir() else ""
+        )
+        jarvis_rs = jarvis_data["jarvis_rs"]
+        jarvis_active = jarvis_data["jarvis_active"]
+        jarvis_hits_count = jarvis_data["jarvis_hits_count"]
+        jarvis_triggers_hit = jarvis_data["jarvis_triggers_hit"]
+        jarvis_reasons = jarvis_data["jarvis_reasons"]
+        jarvis_fail_reasons = jarvis_data.get("jarvis_fail_reasons", [])
+        jarvis_inputs_used = jarvis_data.get("jarvis_inputs_used", {})
+        immortal_detected = jarvis_data["immortal_detected"]
+        jarvis_triggered = jarvis_hits_count > 0
+
+        # =================================================================
+        # v15.2 ESOTERIC SCORE (0-10) - Per-Pick Differentiation
+        # =================================================================
+        # Components: Numerology (35%) + Astro (25%) + Fib (15%) + Vortex (15%) + Daily (10%)
+        import hashlib as _hl
+        numerology_score = 0.0    # 0-3.5 pts (35%)
+        astro_score = 0.0         # 0-2.5 pts (25%)
+        fib_score = 0.0           # 0-1.5 pts (15%)
+        vortex_score = 0.0        # 0-1.5 pts (15%)
+        daily_edge_score = 0.0    # 0-1.0 pts (10%)
+        trap_mod = 0.0            # Modifier (negative)
+
+        # --- A) MAGNITUDE for fib/vortex (never 0 for props) ---
+        # v15.0: For props, prioritize prop_line FIRST; for game picks, use spread/total
+        if player_name:
+            # PROP PICK: Use prop line first, game context as fallback
+            _eso_magnitude = abs(prop_line) if prop_line else 0
+            if _eso_magnitude == 0 and spread:
+                _eso_magnitude = abs(spread)
+            if _eso_magnitude == 0 and total:
+                _eso_magnitude = abs(total / 10) if total != 220 else 0
+        else:
+            # GAME PICK: Use spread/total first (normal flow)
+            _eso_magnitude = abs(spread) if spread else 0
+            if _eso_magnitude == 0 and total:
+                _eso_magnitude = abs(total / 10) if total != 220 else 0
+            if _eso_magnitude == 0 and prop_line:
+                _eso_magnitude = abs(prop_line)
+
+        # --- B) NUMEROLOGY (35% weight, max 3.5 pts) - Pick-specific ---
+        from datetime import datetime as dt_now
+        day_of_year = dt_now.now().timetuple().tm_yday
+        daily_base = (day_of_year % 9 + 1) / 9  # 0.11 to 1.0
+
+        # Pick-specific seed (deterministic via SHA-256)
+        _pick_hash = _hl.sha256(f"{game_str}|{prop_line}|{player_name}".encode()).hexdigest()
+        _pick_seed = int(_pick_hash[:8], 16) % 9 + 1  # 1-9
+        pick_factor = _pick_seed / 9  # 0.11 to 1.0
+
+        # Blend: 40% daily + 60% pick-specific
+        numerology_raw = (daily_base * 0.4) + (pick_factor * 0.6)
+
+        # Master number boost
+        if "11" in game_str or "22" in game_str or "33" in game_str:
+            numerology_raw = min(1.0, numerology_raw * 1.3)
+        numerology_score = numerology_raw * 10 * ESOTERIC_WEIGHTS["numerology"]
+
+        if jarvis:
+            # --- TRAP DEDUCTION (negative modifier) ---
+            trap = jarvis.calculate_large_spread_trap(spread, total)
+            trap_mod = trap.get("modifier", 0)  # Usually negative
+
+            # --- E) FIBONACCI (15% weight, max 1.5 pts) - scaled in esoteric path ---
+            fib_alignment = jarvis.calculate_fibonacci_alignment(float(_eso_magnitude) if _eso_magnitude else 0)
+            fib_raw = fib_alignment.get("modifier", 0)
+            # Scale up fib modifier in esoteric layer (Jarvis returns 0.05-0.15)
+            _fib_scaled = min(0.6, fib_raw * 6.0) if fib_raw > 0 else 0.0
+            fib_score = _fib_scaled * 10 * ESOTERIC_WEIGHTS["fib"]
+
+            # --- E) VORTEX (15% weight, max 1.5 pts) - scaled in esoteric path ---
+            vortex_value = int(abs(_eso_magnitude * 10)) if _eso_magnitude else 0
+            vortex_pattern = jarvis.calculate_vortex_pattern(vortex_value)
+            vortex_raw = vortex_pattern.get("modifier", 0)
+            # Scale up vortex modifier in esoteric layer (Jarvis returns 0.08-0.15)
+            _vortex_scaled = min(0.7, vortex_raw * 5.0) if vortex_raw > 0 else 0.0
+            vortex_score = _vortex_scaled * 10 * ESOTERIC_WEIGHTS["vortex"]
+
+        # --- C) ASTRO (25% weight, max 2.5 pts) - Linear 0-100 → 0-10 ---
+        astro = vedic.calculate_astro_score() if vedic else {"overall_score": 50}
+        # Map 0-100 directly to 0-10 (50 ≈ 5.0, not 0.0)
+        astro_score = (astro["overall_score"] / 100) * 10 * ESOTERIC_WEIGHTS["astro"]
+
+        # --- D) DAILY EDGE (10% weight, max 1.0 pts) - Lower thresholds ---
+        _de = daily_energy.get("overall_score", 50)
+        if _de >= 85:
+            daily_edge_score = 10 * ESOTERIC_WEIGHTS["daily_edge"]   # 1.0 pts
+        elif _de >= 70:
+            daily_edge_score = 7 * ESOTERIC_WEIGHTS["daily_edge"]    # 0.7 pts
+        elif _de >= 55:
+            daily_edge_score = 4 * ESOTERIC_WEIGHTS["daily_edge"]    # 0.4 pts
+
+        # --- ESOTERIC SCORE: Sum of weighted components + trap modifier ---
+        esoteric_raw = (
+            numerology_score +    # 35% weight (0-3.5)
+            astro_score +         # 25% weight (0-2.5)
+            fib_score +           # 15% weight (0-1.5)
+            vortex_score +        # 15% weight (0-1.5)
+            daily_edge_score +    # 10% weight (0-1.0)
+            trap_mod              # Modifier (negative)
+        )
+        # Clamp to 0-10
+        esoteric_score = max(0, min(10, esoteric_raw))
+        logger.debug("Esoteric[%s]: mag=%.1f num=%.2f astro=%.2f fib=%.2f vortex=%.2f daily=%.2f trap=%.2f → raw=%.2f",
+                     game_str[:30], _eso_magnitude, numerology_score, astro_score, fib_score, vortex_score, daily_edge_score, trap_mod, esoteric_raw)
+
+        # --- v15.3 FOUR-ENGINE CONFLUENCE (with STRONG eligibility gate) ---
+        _research_sharp_present = bool(sharp_signal and sharp_signal.get("signal_strength", "NONE") != "NONE")
+        if jarvis:
+            confluence = jarvis.calculate_confluence(
+                research_score=research_score,
+                esoteric_score=esoteric_score,
+                immortal_detected=immortal_detected,
+                jarvis_triggered=jarvis_triggered,
+                jarvis_active=jarvis_active,
+                research_sharp_present=_research_sharp_present,
+                jason_sim_boost=0.0  # Jason hasn't run yet; will be checked post-hoc
+            )
+        else:
+            # Fallback confluence calculation with STRONG eligibility gate
+            alignment = 1 - abs(research_score - esoteric_score) / 10
+            alignment_pct = alignment * 100
+            both_high = research_score >= 7.5 and esoteric_score >= 7.5
+            jarvis_high = jarvis_rs >= 7.5
+            if immortal_detected and both_high and jarvis_high and alignment_pct >= 80:
+                confluence = {"level": "IMMORTAL", "boost": 10, "alignment_pct": alignment_pct}
+            elif jarvis_triggered and both_high and jarvis_high and alignment_pct >= 80:
+                confluence = {"level": "JARVIS_PERFECT", "boost": 7, "alignment_pct": alignment_pct}
+            elif both_high and jarvis_high and alignment_pct >= 80:
+                confluence = {"level": "PERFECT", "boost": 5, "alignment_pct": alignment_pct}
+            elif alignment_pct >= 70:
+                # v15.3: STRONG requires alignment >= 80% AND active signal
+                _strong_ok = alignment_pct >= 80 and (jarvis_active or _research_sharp_present)
+                if _strong_ok:
+                    confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
+                else:
+                    confluence = {"level": "MODERATE", "boost": 1, "alignment_pct": alignment_pct}
+            elif alignment_pct >= 60:
+                confluence = {"level": "MODERATE", "boost": 1, "alignment_pct": alignment_pct}
+            else:
+                confluence = {"level": "DIVERGENT", "boost": 0, "alignment_pct": alignment_pct}
+
+        confluence_level = confluence.get("level", "DIVERGENT")
+        confluence_boost = confluence.get("boost", 0)
+
+        # --- v15.1 BASE SCORE FORMULA (4 Engines + AI) ---
+        # BASE = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15) + confluence_boost
+        # AI models now directly contribute 25% of the score
+        # If jarvis_rs is None (inputs missing), use 0 for jarvis contribution
+        jarvis_contribution = (jarvis_rs * 0.15) if jarvis_rs is not None else 0
+        base_score = (ai_scaled * 0.25) + (research_score * 0.30) + (esoteric_score * 0.20) + jarvis_contribution + confluence_boost
+
+        # --- v11.08 JASON SIM CONFLUENCE (runs after base score, before tier assignment) ---
+        # Jason simulates game outcomes and applies boost/downgrade based on win probability
+        jason_output = {}
+        if JASON_SIM_AVAILABLE:
+            try:
+                # Determine actual pick_type from context if not provided
+                actual_pick_type = pick_type
+                if player_name and actual_pick_type == "GAME":
+                    actual_pick_type = "PROP"
+
+                jason_output = run_jason_confluence(
+                    base_score=base_score,
+                    pick_type=actual_pick_type,
+                    pick_side=pick_side if pick_side else (player_name if player_name else home_team),
+                    home_team=home_team,
+                    away_team=away_team,
+                    spread=spread,
+                    total=total,
+                    prop_line=prop_line,
+                    player_name=player_name,
+                    injury_state="CONFIRMED_ONLY"
+                )
+            except Exception as e:
+                logger.warning("Jason Sim failed: %s", e)
+                jason_output = get_default_jason_output()
+                jason_output["base_score"] = base_score
+        else:
+            # Default Jason output when module not available
+            jason_output = {
                 "jason_ran": False,
                 "jason_sim_boost": 0.0,
+                "jason_blocked": False,
+                "jason_win_pct_home": 50.0,
+                "jason_win_pct_away": 50.0,
+                "projected_total": total,
+                "projected_pace": "NEUTRAL",
+                "variance_flag": "MED",
+                "injury_state": "UNKNOWN",
+                "confluence_reasons": ["Jason module not available"],
+                "base_score": base_score
             }
 
-        # Construct candidate dict (matching scoring_pipeline.score_candidate signature)
-        candidate = {
-            "game_str": game_str,
-            "pick_type": pick_type,
-            "side": pick_side,  # renamed from pick_side
-            "player_name": player_name,
-            "spread": spread,
-            "total": total,
-            "prop_line": prop_line,
-            "line": prop_line if player_name else (spread if pick_type == "SPREAD" else total),
-            "odds": -110,  # default American odds
+        # FINAL = BASE + JASON_BOOST
+        jason_sim_boost = jason_output.get("jason_sim_boost", 0.0)
+        final_score = base_score + jason_sim_boost
+
+        # Check if Jason blocked this pick
+        jason_blocked = jason_output.get("jason_blocked", False)
+
+        # --- v15.0: jarvis_rs already calculated by standalone function above ---
+        # jarvis_rs, jarvis_active, jarvis_hits_count, jarvis_triggers_hit, jarvis_reasons
+        # are all set from calculate_jarvis_engine_score() call
+
+        # --- v15.0 TITANIUM CHECK (3 of 4 engines >= 8.0) ---
+        titanium_triggered = False
+        titanium_explanation = ""
+        # If jarvis_rs is None (inputs missing), treat as 0 for Titanium check
+        jarvis_for_titanium = jarvis_rs if jarvis_rs is not None else 0
+        if TIERING_AVAILABLE:
+            titanium_triggered, titanium_explanation, qualifying_engines = check_titanium_rule(
+                ai_score=ai_scaled,
+                research_score=research_score,
+                esoteric_score=esoteric_score,
+                jarvis_score=jarvis_for_titanium
+            )
+        else:
+            # Fallback check without tiering module
+            engines_above_8 = sum([
+                ai_scaled >= 8.0,
+                research_score >= 8.0,
+                esoteric_score >= 8.0,
+                jarvis_for_titanium >= 8.0
+            ])
+            titanium_triggered = engines_above_8 >= 3
+            titanium_explanation = f"Titanium: {engines_above_8}/4 engines >= 8.0 (need 3)"
+
+        # --- v11.08 BET TIER DETERMINATION (Single Source of Truth) ---
+        if TIERING_AVAILABLE:
+            bet_tier = tier_from_score(
+                final_score=final_score,
+                confluence=confluence,
+                nhl_dog_protocol=False,
+                titanium_triggered=titanium_triggered
+            )
+        else:
+            # Fallback tier determination (v12.0 thresholds)
+            if titanium_triggered:
+                bet_tier = {"tier": "TITANIUM_SMASH", "units": 2.5, "action": "SMASH", "badge": "TITANIUM SMASH"}
+            elif final_score >= 7.5:  # v12.0: was 9.0
+                bet_tier = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
+            elif final_score >= 6.5:  # v12.0: was 7.5
+                bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
+            elif final_score >= 5.5:  # v12.0: was 6.0
+                bet_tier = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
+            else:
+                bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
+
+        # --- v15.3 GOLD_STAR HARD GATES ---
+        # GOLD_STAR requires ALL engine minimums. If any gate fails, downgrade to EDGE_LEAN.
+        _gold_gates = {
+            "ai_gte_6.8": ai_scaled >= 6.8,
+            "research_gte_5.5": research_score >= 5.5,
+            "jarvis_gte_6.5": (jarvis_rs >= 6.5) if jarvis_rs is not None else False,
+            "esoteric_gte_4.0": esoteric_score >= 4.0,
         }
+        _gold_gates_passed = all(_gold_gates.values())
+        _gold_gates_failed = [k for k, v in _gold_gates.items() if not v]
 
-        # Construct context dict (add home/away teams)
-        context = {
-            "sharp_signal": sharp_signal,
-            "public_pct": public_pct,
-            "home_team": home_team,
-            "away_team": away_team,
+        if bet_tier.get("tier") == "GOLD_STAR" and not _gold_gates_passed:
+            logger.info("GOLD_STAR downgrade: gates failed=%s (ai=%.1f R=%.1f J=%.1f E=%.1f)",
+                       _gold_gates_failed, ai_scaled, research_score, jarvis_rs, esoteric_score)
+            bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY",
+                        "badge": "EDGE LEAN", "gold_star_downgrade": True,
+                        "gold_star_failed_gates": _gold_gates_failed}
+            # Also update explanation
+            bet_tier["explanation"] = f"EDGE_LEAN (GOLD_STAR downgraded: {', '.join(_gold_gates_failed)})"
+            bet_tier["final_score"] = round(final_score, 2)
+            bet_tier["confluence_level"] = confluence_level
+
+        # Map to confidence levels for backward compatibility
+        if TIERING_AVAILABLE:
+            confidence, confidence_score = get_confidence_from_tier(bet_tier.get("tier", "PASS"))
+        else:
+            confidence_map = {
+                "TITANIUM_SMASH": "SMASH",
+                "GOLD_STAR": "SMASH",
+                "EDGE_LEAN": "HIGH",
+                "MONITOR": "MEDIUM",
+                "PASS": "LOW"
+            }
+            confidence = confidence_map.get(bet_tier.get("tier", "PASS"), "LOW")
+            confidence_score_map = {"SMASH": 95, "HIGH": 80, "MEDIUM": 60, "LOW": 30}
+            confidence_score = confidence_score_map.get(confidence, 30)
+
+        # Build smash_reasons for Titanium (which engines cleared 8.0)
+        smash_reasons = []
+        if titanium_triggered:
+            if ai_scaled >= 8.0:
+                smash_reasons.append(f"AI Engine: {round(ai_scaled, 2)}/10")
+            if research_score >= 8.0:
+                smash_reasons.append(f"Research Engine: {round(research_score, 2)}/10")
+            if esoteric_score >= 8.0:
+                smash_reasons.append(f"Esoteric Engine: {round(esoteric_score, 2)}/10")
+            if jarvis_rs is not None and jarvis_rs >= 8.0:
+                smash_reasons.append(f"Jarvis Engine: {round(jarvis_rs, 2)}/10")
+
+        # Build penalties array from modifiers
+        # v15.0: public_fade_mod removed (now only in Research as positive boost)
+        penalties = []
+        if trap_mod < 0:
+            penalties.append({"name": "Large Spread Trap", "magnitude": round(trap_mod, 2)})
+
+        # --- v15.3 TIER_REASON (Transparency for frontend) ---
+        # Explain why this tier was assigned, especially for downgrades
+        tier_reason = []
+        actual_tier = bet_tier.get("tier", "PASS")
+
+        if actual_tier == "TITANIUM_SMASH":
+            tier_reason.append(f"TITANIUM: {sum([ai_scaled >= 8.0, research_score >= 8.0, esoteric_score >= 8.0, (jarvis_rs >= 8.0) if jarvis_rs is not None else False])}/4 engines >= 8.0")
+        elif actual_tier == "GOLD_STAR":
+            if _gold_gates_passed:
+                tier_reason.append(f"GOLD_STAR: Score {final_score:.2f} >= 7.5, passed all hard gates")
+            else:
+                # This shouldn't happen (downgrade should have occurred), but log it
+                tier_reason.append(f"GOLD_STAR: Score {final_score:.2f}, but gates may be marginal")
+        elif actual_tier == "EDGE_LEAN":
+            if final_score >= 7.5:
+                # High score but downgraded to EDGE_LEAN - explain why
+                if not _gold_gates_passed:
+                    failed_gate_names = [g.replace("_gte_", " >= ").replace("_", " ").title() for g in _gold_gates_failed]
+                    tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} >= 7.5 but failed GOLD gates: {', '.join(failed_gate_names)}")
+                else:
+                    tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} >= 7.5 but other criteria not met")
+            elif final_score >= 6.5:
+                tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} in 6.5-7.5 range")
+            else:
+                tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} (should not be returned)")
+        elif actual_tier == "MONITOR":
+            tier_reason.append(f"MONITOR: Score {final_score:.2f} in 5.5-6.5 range (below output threshold)")
+        elif actual_tier == "PASS":
+            tier_reason.append(f"PASS: Score {final_score:.2f} < 5.5 (should not be returned)")
+
+        # Add specific gate failures for transparency
+        if _gold_gates_failed and final_score >= 7.5:
+            for gate in _gold_gates_failed:
+                if gate == "ai_gte_6.8":
+                    tier_reason.append(f"  - AI {ai_scaled:.1f} < 6.8")
+                elif gate == "research_gte_5.5":
+                    tier_reason.append(f"  - Research {research_score:.1f} < 5.5")
+                elif gate == "jarvis_gte_6.5":
+                    if jarvis_rs is not None:
+                        tier_reason.append(f"  - Jarvis {jarvis_rs:.1f} < 6.5")
+                    else:
+                        tier_reason.append(f"  - Jarvis inputs missing (None)")
+                elif gate == "esoteric_gte_4.0":
+                    tier_reason.append(f"  - Esoteric {esoteric_score:.1f} < 4.0")
+
+        return {
+            "total_score": round(final_score, 2),
+            "final_score": round(final_score, 2),  # Alias for frontend
+            "confidence": confidence,
+            "confidence_score": confidence_score,
+            "confluence_level": confluence_level,
+            "bet_tier": bet_tier,
+            "tier": bet_tier.get("tier", "PASS"),
+            "tier_reason": tier_reason,  # v15.3 Transparency: why this tier was assigned
+            "action": bet_tier.get("action", "SKIP"),
+            "units": bet_tier.get("units", bet_tier.get("unit_size", 0.0)),
+            # v11.08 Engine scores (all 0-10 scale)
+            "ai_score": round(ai_scaled, 2),
+            "research_score": round(research_score, 2),
+            "esoteric_score": round(esoteric_score, 2),
+            "jarvis_score": round(jarvis_rs, 2),  # Alias for jarvis_rs
+            # Detailed breakdowns
+            "scoring_breakdown": {
+                "research_score": round(research_score, 2),
+                "esoteric_score": round(esoteric_score, 2),
+                "ai_models": round(ai_score, 2),
+                "ai_score": round(ai_scaled, 2),
+                "pillars": round(pillar_score, 2),
+                "confluence_boost": confluence_boost,
+                "alignment_pct": confluence.get("alignment_pct", 0),
+                "gold_star_gates": _gold_gates,
+                "gold_star_eligible": _gold_gates_passed,
+                "gold_star_failed": _gold_gates_failed
+            },
+            # v14.9 Research breakdown (clean engine separation)
+            "research_breakdown": {
+                "sharp_boost": round(sharp_boost, 2),
+                "line_boost": round(line_boost, 2),
+                "public_boost": round(public_boost, 2),
+                "base_research": 2.0,
+                "signal_strength": sig_strength,
+                "total": round(research_score, 2)
+            },
+            # v15.0 Esoteric breakdown (NO gematria, NO jarvis, NO public_fade - clean separation)
+            "esoteric_breakdown": {
+                "magnitude_input": round(_eso_magnitude, 2),
+                "numerology": round(numerology_score, 2),
+                "astro": round(astro_score, 2),
+                "fibonacci": round(fib_score, 2),
+                "vortex": round(vortex_score, 2),
+                "daily_edge": round(daily_edge_score, 2),
+                "trap_mod": round(trap_mod, 2)
+            },
+            # v15.0 Jarvis breakdown (standalone engine)
+            "jarvis_breakdown": jarvis_data.get("jarvis_breakdown", {}),
+            "jarvis_triggers": jarvis_triggers_hit,
+            "immortal_detected": immortal_detected,
+            # v15.1 JARVIS fields (MUST always exist - full transparency)
+            "jarvis_rs": round(jarvis_rs, 2) if jarvis_rs is not None else None,
+            "jarvis_active": jarvis_active,
+            "jarvis_hits_count": jarvis_hits_count,
+            "jarvis_triggers_hit": jarvis_triggers_hit,
+            "jarvis_reasons": jarvis_reasons,
+            "jarvis_fail_reasons": jarvis_fail_reasons,
+            "jarvis_inputs_used": jarvis_inputs_used,
+            # v11.08 TITANIUM fields
+            "titanium_triggered": titanium_triggered,
+            "titanium_explanation": titanium_explanation,
+            "smash_reasons": smash_reasons,
+            # v11.08 JASON SIM CONFLUENCE fields (MUST always exist)
+            "jason_ran": jason_output.get("jason_ran", False),
+            "jason_sim_boost": round(jason_sim_boost, 2),
+            "jason_blocked": jason_blocked,
+            "jason_win_pct_home": jason_output.get("jason_win_pct_home", 50.0),
+            "jason_win_pct_away": jason_output.get("jason_win_pct_away", 50.0),
+            "projected_total": jason_output.get("projected_total", total),
+            "projected_pace": jason_output.get("projected_pace", "NEUTRAL"),
+            "variance_flag": jason_output.get("variance_flag", "MED"),
+            "injury_state": jason_output.get("injury_state", "UNKNOWN"),
+            "confluence_reasons": jason_output.get("confluence_reasons", []),
+            "base_score": round(base_score, 2),  # Score before Jason boost
+            # v11.08 Stack/Penalty fields
+            "penalties": penalties,
+            "stack_complete": not jason_blocked,  # Stack incomplete if Jason blocked
+            "partial_stack_reasons": ["Jason blocked pick"] if jason_blocked else [],
+            # v11.08 Research/Pillar tracking
+            "research_reasons": research_reasons,
+            "pillars_passed": pillars_passed,
+            "pillars_failed": pillars_failed
         }
-
-        # Call scoring pipeline (single source of truth)
-        return scoring_pipeline.score_candidate(candidate, context)
-
-    # ============================================
 
     # ============================================
     # v15.1: Pre-fetch game lines for game_context (spread/total for props)
