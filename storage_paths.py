@@ -93,6 +93,18 @@ def ensure_persistent_storage_ready():
     logger.info("Mount root: %s", mount_root)
     logger.info("Store dir: %s", store_dir)
 
+    # Check if mount_root is actually a mountpoint (not just a directory)
+    try:
+        is_mount = os.path.ismount(mount_root)
+        logger.info("Is mountpoint: %s", is_mount)
+
+        if not is_mount:
+            logger.warning("WARNING: %s is NOT a mountpoint", mount_root)
+            logger.warning("This may be ephemeral storage")
+            # Don't crash on this - some Railway setups use directories
+    except Exception as e:
+        logger.warning("Could not check if mountpoint: %s", e)
+
     # Create storage directories
     try:
         os.makedirs(store_dir, exist_ok=True)
@@ -154,6 +166,13 @@ def get_storage_health() -> dict:
         predictions_file = get_predictions_file()
         sentinel_file = os.path.join(store_dir, ".volume_sentinel")
 
+        # Check if mountpoint
+        is_mountpoint = os.path.ismount(mount_root)
+
+        # Get environment variables for diagnostics
+        env_railway_mount = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "NOT_SET")
+        env_grader_mount = os.getenv("GRADER_MOUNT_ROOT", "NOT_SET")
+
         # Check predictions file
         pred_exists = os.path.exists(predictions_file)
         pred_size = os.path.getsize(predictions_file) if pred_exists else 0
@@ -182,9 +201,16 @@ def get_storage_health() -> dict:
         except:
             writable = False
 
+        # Determine if storage is ephemeral
+        is_ephemeral = mount_root.startswith("/app")
+
         return {
             "ok": True,
             "mount_root": mount_root,
+            "is_mountpoint": is_mountpoint,
+            "is_ephemeral": is_ephemeral,
+            "env_railway_volume_mount_path": env_railway_mount,
+            "env_grader_mount_root": env_grader_mount,
             "store_dir": store_dir,
             "writable": writable,
             "predictions_file": predictions_file,
@@ -201,6 +227,8 @@ def get_storage_health() -> dict:
             "ok": False,
             "error": str(e),
             "mount_root": None,
+            "is_mountpoint": False,
+            "is_ephemeral": None,
             "store_dir": None,
             "writable": False,
         }
