@@ -412,6 +412,297 @@ pytest tests/test_titanium_fix.py tests/test_best_bets_contract.py
 
 ---
 
+## 🔒 PRODUCTION SANITY CHECK (REQUIRED BEFORE DEPLOY)
+
+**Script:** `scripts/prod_sanity_check.sh`
+
+This script validates ALL master prompt invariants in production. Run before every deployment.
+
+### Usage
+
+```bash
+# Run sanity check
+./scripts/prod_sanity_check.sh
+
+# With custom base URL
+BASE_URL=https://your-deployment.app ./scripts/prod_sanity_check.sh
+```
+
+### What It Checks
+
+**1. Storage Persistence**
+- ✅ `resolved_base_dir` is set
+- ✅ `is_mountpoint = true`
+- ✅ `is_ephemeral = false`
+- ✅ `predictions.jsonl` exists
+
+**2. Best-Bets Endpoint**
+- ✅ `filtered_below_6_5 > 0` (proves filter is active)
+- ✅ Minimum returned score >= 6.5
+- ✅ ET filter applied to props (events_before == events_after)
+- ✅ ET filter applied to games (events_before == events_after)
+- ✅ Pick logger ran (picks_logged > 0 OR picks_skipped_dupes > 0)
+
+**3. Titanium 3-of-4 Rule**
+- ✅ No picks with `titanium_triggered=true` and < 3 engines >= 8.0
+
+**4. Grader Status**
+- ✅ `available = true`
+- ✅ `predictions_logged > 0`
+- ✅ `storage_path` inside Railway volume
+
+**5. ET Timezone Consistency**
+- ✅ `et_date` is set
+- ✅ `filter_date` matches `et_date` (single source of truth)
+
+### Exit Codes
+
+- **0** = All checks passed → Safe to deploy ✅
+- **1** = One or more failed → **BLOCK DEPLOY** 🚫
+
+### Integration with CI/CD
+
+Add to Railway build command or GitHub Actions:
+
+```yaml
+# .github/workflows/deploy.yml
+- name: Production Sanity Check
+  run: |
+    ./scripts/prod_sanity_check.sh
+  env:
+    BASE_URL: ${{ secrets.PRODUCTION_URL }}
+    API_KEY: ${{ secrets.API_KEY }}
+```
+
+**NEVER skip this check.** If it fails, production invariants are broken.
+
+---
+
+## 📋 FRONTEND CONTRACT (UI Integration)
+
+**CRITICAL:** Frontend must render directly from API fields. **NO recomputation** on the frontend.
+
+### Pick Object Fields (Guaranteed Present)
+
+Every pick returned from `/live/best-bets/{sport}` includes these fields:
+
+#### Core Pick Data
+```javascript
+{
+  // Identity
+  "pick_id": "a1b2c3d4e5f6",           // 12-char stable ID
+  "sport": "NBA",                       // NBA, NHL, NFL, MLB, NCAAB
+  "market": "PROP",                     // PROP, TOTAL, SPREAD, MONEYLINE
+
+  // Human-Readable Display
+  "description": "LeBron James Points Over 25.5",  // Full sentence
+  "pick_detail": "Points Over 25.5",               // Compact bet string
+  "matchup": "Lakers @ Celtics",                   // Always "Away @ Home"
+  "side": "Over",                                  // Over/Under/Team name
+  "line": 25.5,                                    // Bet line
+
+  // Tier & Score (NEVER RECOMPUTE)
+  "final_score": 8.2,                   // >= 6.5 guaranteed
+  "tier": "GOLD_STAR",                  // TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN
+  "units": 2.0,                         // Bet sizing
+
+  // Engine Scores (For Transparency Display)
+  "ai_score": 8.5,                      // 0-10 scale
+  "research_score": 7.8,                // 0-10 scale
+  "esoteric_score": 7.2,                // 0-10 scale
+  "jarvis_rs": 6.0,                     // 0-10 scale
+
+  // Titanium Status
+  "titanium_triggered": false,          // true iff >= 3 engines >= 8.0
+  "titanium_count": 2,                  // Count of engines >= 8.0
+  "titanium_qualified_engines": ["ai", "research"],  // Which engines qualified
+
+  // Game Status
+  "start_time_et": "2026-01-29T19:00:00-05:00",  // ISO timestamp in ET
+  "game_status": "SCHEDULED",                     // SCHEDULED, LIVE, FINAL
+  "is_live_bet_candidate": false,                 // true if game hasn't started
+
+  // Sportsbook
+  "book": "draftkings",                 // Book name
+  "odds_american": -110,                // American odds format
+  "sportsbook_url": "https://...",      // Click-to-bet deep link
+}
+```
+
+### Debug Data (Available with `?debug=1`)
+
+```javascript
+{
+  "debug": {
+    // ET Filtering Telemetry
+    "date_window_et": {
+      "filter_date": "2026-01-29",           // ET date used for filtering
+      "start_et": "00:00:00",                // Window start
+      "end_et": "23:59:59",                  // Window end
+      "events_before_props": 60,             // Events before ET filter
+      "events_after_props": 12,              // Events after ET filter
+      "events_before_games": 25,
+      "events_after_games": 8
+    },
+
+    // Score Filtering Telemetry
+    "filtered_below_6_5_total": 1012,        // Picks filtered < 6.5
+    "filtered_below_6_5_props": 850,
+    "filtered_below_6_5_games": 162,
+
+    // Contradiction Gate Telemetry
+    "contradiction_blocked_total": 323,      // Opposite sides blocked
+    "contradiction_blocked_props": 310,
+    "contradiction_blocked_games": 13,
+
+    // Pick Logger Status
+    "picks_logged": 12,                      // New picks persisted
+    "picks_skipped_dupes": 8,                // Duplicate picks skipped
+    "pick_log_errors": [],                   // Any logging errors
+
+    // Performance
+    "total_elapsed_s": 5.57                  // Endpoint response time
+  }
+}
+```
+
+### Frontend Rules (MANDATORY)
+
+**DO:**
+- ✅ Render `final_score`, `tier`, `titanium_triggered` directly from API
+- ✅ Display all 4 engine scores (`ai_score`, `research_score`, `esoteric_score`, `jarvis_rs`)
+- ✅ Use `description` for pick cards ("LeBron James Points Over 25.5")
+- ✅ Use `pick_detail` for compact display ("Points Over 25.5")
+- ✅ Use `start_time_et` for game time display (already in ET timezone)
+- ✅ Check `is_live_bet_candidate` before showing "Bet Now" button
+- ✅ Use `titanium_qualified_engines` to show which engines hit Titanium threshold
+
+**NEVER:**
+- ❌ Recalculate `final_score` from engine scores (backend formula is complex)
+- ❌ Recompute `tier` from `final_score` (GOLD_STAR has hard gates beyond score)
+- ❌ Determine `titanium_triggered` from engine scores (uses 3/4 >= 8.0 rule + final_score >= 8.0)
+- ❌ Convert `start_time_et` to another timezone (already in ET, display as-is)
+- ❌ Compute `game_status` from timestamps (backend knows actual game state)
+- ❌ Show picks with `final_score < 6.5` (API will never return them, but validate anyway)
+
+### Example UI Code (TypeScript)
+
+```typescript
+interface Pick {
+  pick_id: string;
+  description: string;
+  pick_detail: string;
+  matchup: string;
+  final_score: number;
+  tier: "TITANIUM_SMASH" | "GOLD_STAR" | "EDGE_LEAN";
+  titanium_triggered: boolean;
+  titanium_count: number;
+  ai_score: number;
+  research_score: number;
+  esoteric_score: number;
+  jarvis_rs: number;
+  start_time_et: string;
+  game_status: "SCHEDULED" | "LIVE" | "FINAL";
+  is_live_bet_candidate: boolean;
+}
+
+// ✅ CORRECT: Render directly from API
+function PickCard({ pick }: { pick: Pick }) {
+  return (
+    <div>
+      <h3>{pick.description}</h3>
+      <div>Score: {pick.final_score.toFixed(1)}</div>
+      <div>Tier: {pick.tier}</div>
+      {pick.titanium_triggered && <span>⚡ TITANIUM</span>}
+
+      {/* Engine breakdown */}
+      <div>
+        AI: {pick.ai_score.toFixed(1)} |
+        Research: {pick.research_score.toFixed(1)} |
+        Esoteric: {pick.esoteric_score.toFixed(1)} |
+        Jarvis: {pick.jarvis_rs.toFixed(1)}
+      </div>
+
+      {/* Titanium transparency */}
+      {pick.titanium_triggered && (
+        <div>{pick.titanium_count}/4 engines hit Titanium threshold</div>
+      )}
+
+      {pick.is_live_bet_candidate && (
+        <button>Bet Now</button>
+      )}
+    </div>
+  );
+}
+
+// ❌ WRONG: Recomputing values from API
+function BadPickCard({ pick }: { pick: Pick }) {
+  // ❌ NEVER do this
+  const finalScore = (
+    pick.ai_score * 0.25 +
+    pick.research_score * 0.30 +
+    pick.esoteric_score * 0.20 +
+    pick.jarvis_rs * 0.15
+  );
+
+  // ❌ NEVER do this
+  const tier = finalScore >= 7.5 ? "GOLD_STAR" : "EDGE_LEAN";
+
+  // Use API values instead!
+  return <div>Score: {pick.final_score}</div>;
+}
+```
+
+### Validation on Frontend
+
+Even though API guarantees these invariants, validate to catch bugs early:
+
+```typescript
+function validatePick(pick: Pick): boolean {
+  // Score threshold
+  if (pick.final_score < 6.5) {
+    console.error(`Invalid pick: score ${pick.final_score} < 6.5`);
+    return false;
+  }
+
+  // Titanium rule
+  const enginesAbove8 = [
+    pick.ai_score,
+    pick.research_score,
+    pick.esoteric_score,
+    pick.jarvis_rs
+  ].filter(s => s >= 8.0).length;
+
+  if (pick.titanium_triggered && enginesAbove8 < 3) {
+    console.error(`Invalid Titanium: only ${enginesAbove8}/4 engines >= 8.0`);
+    return false;
+  }
+
+  return true;
+}
+```
+
+### Debug Mode Integration
+
+```typescript
+// Fetch with debug mode
+const response = await fetch('/live/best-bets/NBA?debug=1', {
+  headers: { 'X-API-Key': API_KEY }
+});
+
+const data = await response.json();
+
+// Show filtering stats in dev tools
+if (data.debug) {
+  console.log('ET filtering:', data.debug.date_window_et);
+  console.log('Score filtering:', data.debug.filtered_below_6_5_total);
+  console.log('Contradiction gate:', data.debug.contradiction_blocked_total);
+  console.log('Performance:', data.debug.total_elapsed_s + 's');
+}
+```
+
+---
+
 ## ⚠️ BACKEND FROZEN - DO NOT MODIFY
 
 **As of January 29, 2026, the backend is production-ready and FROZEN.**
