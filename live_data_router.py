@@ -872,67 +872,8 @@ async def health_check():
     }
 
 
-@router.get("/smoke-test/alert-status")
-@router.head("/smoke-test/alert-status")
-async def smoke_test_alert_status():
-    """
-    Smoke test and alert status endpoint for frontend monitors.
-
-    Returns system health status including:
-    - API availability
-    - Pick logging status
-    - Auto-grading status
-    - Last errors
-    """
-    result = {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "alerts": []
-    }
-
-    # Check pick logger
-    if PICK_LOGGER_AVAILABLE:
-        pick_logger = get_pick_logger()
-        today = get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d")
-        today_picks = pick_logger.get_picks_for_date(today)
-
-        result["pick_logger"] = {
-            "available": True,
-            "picks_logged_today": len(today_picks)
-        }
-    else:
-        result["pick_logger"] = {"available": False}
-        result["alerts"].append("Pick logger unavailable")
-        result["status"] = "degraded"
-
-    # Check auto-grader scheduler
-    from daily_scheduler import get_daily_scheduler
-    scheduler = get_daily_scheduler()
-    if scheduler and hasattr(scheduler, 'auto_grade_job'):
-        job = scheduler.auto_grade_job
-        last_run = job.last_run.isoformat() if job.last_run else None
-        result["auto_grader"] = {
-            "available": True,
-            "last_run_at": last_run
-        }
-
-        # Alert if no run in last 2 hours
-        if job.last_run and (datetime.now() - job.last_run).total_seconds() > 7200:
-            result["alerts"].append("Auto-grader hasn't run in 2+ hours")
-            result["status"] = "warning"
-    else:
-        result["auto_grader"] = {"available": False}
-        result["alerts"].append("Auto-grader scheduler unavailable")
-        result["status"] = "degraded"
-
-    # Check API keys
-    api_keys_ok = bool(ODDS_API_KEY and PLAYBOOK_API_KEY)
-    result["api_keys_configured"] = api_keys_ok
-    if not api_keys_ok:
-        result["alerts"].append("Missing API keys")
-        result["status"] = "critical"
-
-    return result
+# Smoke test endpoint moved to main.py to avoid route conflicts
+# See main.py line 64-66 for /live/smoke-test/alert-status endpoint
 
 
 @router.get("/cache/stats")
