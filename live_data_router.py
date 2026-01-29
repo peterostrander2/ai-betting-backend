@@ -2153,12 +2153,22 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         player_name: str = "",
         home_team: str = "",
         away_team: str = "",
-        spread: float = 0
+        spread: float = 0,
+        total: float = 0,
+        prop_line: float = 0,
+        date_et: str = ""
     ) -> Dict[str, Any]:
         """
-        JARVIS ENGINE (0-10 standalone) - v15.0
+        JARVIS ENGINE (0-10 standalone) - v15.1 with full transparency
 
         Returns standalone jarvis_score plus all required output fields.
+
+        v15.1 Changes:
+        - Always outputs jarvis_rs, jarvis_active, jarvis_hits_count, jarvis_triggers_hit,
+          jarvis_reasons, jarvis_fail_reasons, jarvis_inputs_used
+        - If inputs missing: jarvis_active=False, jarvis_rs=None
+        - If inputs present: baseline floor 4.5 + boosts for triggers
+        - If jarvis_rs < 2.0: jarvis_fail_reasons explains why
         """
         JARVIS_WEIGHTS = {
             "gematria": 0.40,     # 40% - Gematria signal (0-4 pts)
@@ -2166,11 +2176,48 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "mid_spread": 0.20    # 20% - Goldilocks zone amplifier (0-2 pts)
         }
 
+        JARVIS_BASELINE_FLOOR = 4.5  # Baseline when inputs present but no triggers
+
         jarvis_triggers_hit = []
+        jarvis_fail_reasons = []
         immortal_detected = False
         gematria_score = 0.0
         trigger_score = 0.0
         mid_spread_score = 0.0
+
+        # Track inputs used for transparency
+        jarvis_inputs_used = {
+            "matchup_str": game_str if game_str else None,
+            "date_et": date_et if date_et else None,
+            "spread": spread if spread != 0 else None,
+            "total": total if total != 0 else None,
+            "player_line": prop_line if prop_line != 0 else None,
+            "home_team": home_team if home_team else None,
+            "away_team": away_team if away_team else None,
+            "player_name": player_name if player_name else None
+        }
+
+        # Check if critical inputs are missing
+        inputs_missing = not game_str or (not home_team and not away_team)
+
+        if inputs_missing:
+            # CRITICAL INPUTS MISSING - Cannot run Jarvis
+            jarvis_fail_reasons.append("Missing critical inputs (matchup_str or teams)")
+            return {
+                "jarvis_rs": None,
+                "jarvis_active": False,
+                "jarvis_hits_count": 0,
+                "jarvis_triggers_hit": [],
+                "jarvis_reasons": ["Inputs missing - cannot run"],
+                "jarvis_fail_reasons": jarvis_fail_reasons,
+                "jarvis_inputs_used": jarvis_inputs_used,
+                "immortal_detected": False,
+                "jarvis_breakdown": {
+                    "gematria": 0.0,
+                    "triggers": 0.0,
+                    "mid_spread": 0.0
+                }
+            }
 
         if jarvis_engine:
             # 1. Sacred Triggers (40% weight, max 4 pts)
@@ -2218,20 +2265,47 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             trigger_score = min(4.0, trigger_score)  # Cap at 40% max
 
         # Total Jarvis Engine Score (0-10)
-        jarvis_rs = gematria_score + trigger_score + mid_spread_score
+        jarvis_hits_count = len(jarvis_triggers_hit)
+
+        # v15.1 FLOOR BEHAVIOR:
+        # If inputs present, set baseline floor (4.5) + boosts for triggers
+        # This ensures jarvis_rs is never absurdly low when inputs are provided
+        if jarvis_hits_count > 0 or gematria_score >= 1.0:
+            # Triggers or gematria active - calculate score normally
+            jarvis_rs = gematria_score + trigger_score + mid_spread_score
+            jarvis_active = True
+        else:
+            # No triggers, no gematria - use baseline floor
+            jarvis_rs = JARVIS_BASELINE_FLOOR
+            jarvis_active = True  # Inputs present, so Jarvis ran
+            jarvis_fail_reasons.append(f"No triggers fired - using baseline floor {JARVIS_BASELINE_FLOOR}")
+
+        # Cap at 0-10 range
         jarvis_rs = max(0, min(10, jarvis_rs))
 
-        # If no triggers and no gematria, return default neutral score
-        jarvis_hits_count = len(jarvis_triggers_hit)
-        if jarvis_hits_count == 0 and gematria_score < 0.5:
-            jarvis_rs = DEFAULT_JARVIS_RS if TIERING_AVAILABLE else 5.0
+        # Build jarvis_reasons
+        if jarvis_hits_count > 0:
+            jarvis_reasons = [t.get("name", "Unknown") for t in jarvis_triggers_hit]
+        elif gematria_score >= 1.0:
+            jarvis_reasons = ["Gematria alignment"]
+        else:
+            jarvis_reasons = [f"Baseline floor {JARVIS_BASELINE_FLOOR} (no triggers)"]
+
+        # If jarvis_rs < 2.0, explain why in jarvis_fail_reasons
+        if jarvis_rs < 2.0:
+            if jarvis_hits_count == 0:
+                jarvis_fail_reasons.append(f"Score {jarvis_rs:.1f} < 2.0: Zero triggers fired")
+            if gematria_score < 0.5:
+                jarvis_fail_reasons.append(f"Score {jarvis_rs:.1f} < 2.0: Gematria score {gematria_score:.2f} < 0.5")
 
         return {
             "jarvis_rs": round(jarvis_rs, 2),
-            "jarvis_active": jarvis_hits_count > 0 or gematria_score >= 1.0,
+            "jarvis_active": jarvis_active,
             "jarvis_hits_count": jarvis_hits_count,
             "jarvis_triggers_hit": jarvis_triggers_hit,
-            "jarvis_reasons": [t.get("name", "Unknown") for t in jarvis_triggers_hit] if jarvis_hits_count > 0 else (["Gematria alignment"] if gematria_score >= 1.0 else ["No triggers hit"]),
+            "jarvis_reasons": jarvis_reasons,
+            "jarvis_fail_reasons": jarvis_fail_reasons,
+            "jarvis_inputs_used": jarvis_inputs_used,
             "immortal_detected": immortal_detected,
             "jarvis_breakdown": {
                 "gematria": round(gematria_score, 2),
@@ -2386,7 +2460,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         pillar_score = sharp_boost + line_boost + public_boost
 
         # =================================================================
-        # v15.0 JARVIS ENGINE (Standalone 0-10) - Called FIRST
+        # v15.1 JARVIS ENGINE (Standalone 0-10) - Called FIRST
         # =================================================================
         jarvis_data = calculate_jarvis_engine_score(
             jarvis_engine=jarvis,
@@ -2394,13 +2468,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             player_name=player_name,
             home_team=home_team,
             away_team=away_team,
-            spread=spread
+            spread=spread,
+            total=total,
+            prop_line=prop_line,
+            date_et=get_today_date_et() if 'get_today_date_et' in dir() else ""
         )
         jarvis_rs = jarvis_data["jarvis_rs"]
         jarvis_active = jarvis_data["jarvis_active"]
         jarvis_hits_count = jarvis_data["jarvis_hits_count"]
         jarvis_triggers_hit = jarvis_data["jarvis_triggers_hit"]
         jarvis_reasons = jarvis_data["jarvis_reasons"]
+        jarvis_fail_reasons = jarvis_data.get("jarvis_fail_reasons", [])
+        jarvis_inputs_used = jarvis_data.get("jarvis_inputs_used", {})
         immortal_detected = jarvis_data["immortal_detected"]
         jarvis_triggered = jarvis_hits_count > 0
 
@@ -2541,7 +2620,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # --- v15.1 BASE SCORE FORMULA (4 Engines + AI) ---
         # BASE = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15) + confluence_boost
         # AI models now directly contribute 25% of the score
-        base_score = (ai_scaled * 0.25) + (research_score * 0.30) + (esoteric_score * 0.20) + (jarvis_rs * 0.15) + confluence_boost
+        # If jarvis_rs is None (inputs missing), use 0 for jarvis contribution
+        jarvis_contribution = (jarvis_rs * 0.15) if jarvis_rs is not None else 0
+        base_score = (ai_scaled * 0.25) + (research_score * 0.30) + (esoteric_score * 0.20) + jarvis_contribution + confluence_boost
 
         # --- v11.08 JASON SIM CONFLUENCE (runs after base score, before tier assignment) ---
         # Jason simulates game outcomes and applies boost/downgrade based on win probability
@@ -2599,12 +2680,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # --- v15.0 TITANIUM CHECK (3 of 4 engines >= 8.0) ---
         titanium_triggered = False
         titanium_explanation = ""
+        # If jarvis_rs is None (inputs missing), treat as 0 for Titanium check
+        jarvis_for_titanium = jarvis_rs if jarvis_rs is not None else 0
         if TIERING_AVAILABLE:
             titanium_triggered, titanium_explanation, qualifying_engines = check_titanium_rule(
                 ai_score=ai_scaled,
                 research_score=research_score,
                 esoteric_score=esoteric_score,
-                jarvis_score=jarvis_rs
+                jarvis_score=jarvis_for_titanium
             )
         else:
             # Fallback check without tiering module
@@ -2612,7 +2695,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 ai_scaled >= 8.0,
                 research_score >= 8.0,
                 esoteric_score >= 8.0,
-                jarvis_rs >= 8.0
+                jarvis_for_titanium >= 8.0
             ])
             titanium_triggered = engines_above_8 >= 3
             titanium_explanation = f"Titanium: {engines_above_8}/4 engines >= 8.0 (need 3)"
@@ -2643,7 +2726,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         _gold_gates = {
             "ai_gte_6.8": ai_scaled >= 6.8,
             "research_gte_5.5": research_score >= 5.5,
-            "jarvis_gte_6.5": jarvis_rs >= 6.5,
+            "jarvis_gte_6.5": (jarvis_rs >= 6.5) if jarvis_rs is not None else False,
             "esoteric_gte_4.0": esoteric_score >= 4.0,
         }
         _gold_gates_passed = all(_gold_gates.values())
@@ -2684,7 +2767,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 smash_reasons.append(f"Research Engine: {round(research_score, 2)}/10")
             if esoteric_score >= 8.0:
                 smash_reasons.append(f"Esoteric Engine: {round(esoteric_score, 2)}/10")
-            if jarvis_rs >= 8.0:
+            if jarvis_rs is not None and jarvis_rs >= 8.0:
                 smash_reasons.append(f"Jarvis Engine: {round(jarvis_rs, 2)}/10")
 
         # Build penalties array from modifiers
@@ -2699,7 +2782,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         actual_tier = bet_tier.get("tier", "PASS")
 
         if actual_tier == "TITANIUM_SMASH":
-            tier_reason.append(f"TITANIUM: {sum([ai_scaled >= 8.0, research_score >= 8.0, esoteric_score >= 8.0, jarvis_rs >= 8.0])}/4 engines >= 8.0")
+            tier_reason.append(f"TITANIUM: {sum([ai_scaled >= 8.0, research_score >= 8.0, esoteric_score >= 8.0, (jarvis_rs >= 8.0) if jarvis_rs is not None else False])}/4 engines >= 8.0")
         elif actual_tier == "GOLD_STAR":
             if _gold_gates_passed:
                 tier_reason.append(f"GOLD_STAR: Score {final_score:.2f} >= 7.5, passed all hard gates")
@@ -2731,7 +2814,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 elif gate == "research_gte_5.5":
                     tier_reason.append(f"  - Research {research_score:.1f} < 5.5")
                 elif gate == "jarvis_gte_6.5":
-                    tier_reason.append(f"  - Jarvis {jarvis_rs:.1f} < 6.5")
+                    if jarvis_rs is not None:
+                        tier_reason.append(f"  - Jarvis {jarvis_rs:.1f} < 6.5")
+                    else:
+                        tier_reason.append(f"  - Jarvis inputs missing (None)")
                 elif gate == "esoteric_gte_4.0":
                     tier_reason.append(f"  - Esoteric {esoteric_score:.1f} < 4.0")
 
@@ -2787,12 +2873,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "jarvis_breakdown": jarvis_data.get("jarvis_breakdown", {}),
             "jarvis_triggers": jarvis_triggers_hit,
             "immortal_detected": immortal_detected,
-            # v11.08 JARVIS fields (MUST always exist)
-            "jarvis_rs": round(jarvis_rs, 2),
+            # v15.1 JARVIS fields (MUST always exist - full transparency)
+            "jarvis_rs": round(jarvis_rs, 2) if jarvis_rs is not None else None,
             "jarvis_active": jarvis_active,
             "jarvis_hits_count": jarvis_hits_count,
             "jarvis_triggers_hit": jarvis_triggers_hit,
             "jarvis_reasons": jarvis_reasons,
+            "jarvis_fail_reasons": jarvis_fail_reasons,
+            "jarvis_inputs_used": jarvis_inputs_used,
             # v11.08 TITANIUM fields
             "titanium_triggered": titanium_triggered,
             "titanium_explanation": titanium_explanation,
@@ -3730,7 +3818,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     # v14.9 Version metadata for frontend
     build_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:8] or "local"
-    deploy_version = "15.0"
+    deploy_version = "15.1"
 
     # v14.9: Date and timestamp in ET
     date_et = get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d")
