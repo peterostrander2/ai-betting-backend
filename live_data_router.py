@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 import math
 import json
 import numpy as np
+import grader_store
 
 # Import MasterPredictionSystem for comprehensive AI scoring
 try:
@@ -3839,7 +3840,6 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _grader_store_persisted = 0
     _grader_store_duplicates = 0
     try:
-        import grader_store
         from core.time_et import et_day_bounds
 
         # Get today's ET date for persistence
@@ -3847,6 +3847,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         # Persist all picks (props + games)
         all_picks_to_persist = top_props + top_game_picks
+
+        logger.info("GRADER_STORE: Attempting to persist %d picks (date_et=%s)",
+                    len(all_picks_to_persist), date_et_for_store)
 
         for pick in all_picks_to_persist:
             # Ensure required fields for grading
@@ -3861,10 +3864,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             else:
                 _grader_store_duplicates += 1
 
-        if _grader_store_persisted > 0:
-            logger.info("GRADER_STORE: Persisted %d picks, %d duplicates", _grader_store_persisted, _grader_store_duplicates)
+        logger.info("GRADER_STORE: Persisted %d picks, %d duplicates",
+                    _grader_store_persisted, _grader_store_duplicates)
     except Exception as e:
-        logger.error("GRADER_STORE: Failed to persist picks: %s", e)
+        logger.exception("GRADER_STORE: Failed to persist picks: %s", e)
 
     # ============================================
     # LIVE MODE FILTERING (v14.11)
