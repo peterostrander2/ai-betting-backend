@@ -29,7 +29,13 @@ from datetime import datetime, timedelta
 import math
 import json
 import numpy as np
-import grader_store
+
+# Import grader_store - SINGLE SOURCE OF TRUTH for persistence
+try:
+    import grader_store
+    GRADER_STORE_AVAILABLE = True
+except ImportError:
+    GRADER_STORE_AVAILABLE = False
 
 # Import MasterPredictionSystem for comprehensive AI scoring
 try:
