@@ -3699,84 +3699,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # ============================================
     _s = time.time()
     _picks_logged = 0
+    # REMOVED: pick_logger persistence (grader_store is now the SINGLE SOURCE OF TRUTH)
+    _picks_logged = 0
     _picks_skipped = 0
     _pick_log_errors = []
-    if PICK_LOGGER_AVAILABLE:
-        try:
-            pick_logger = get_pick_logger()
-            import pytz as _pytz
-            logged_count = 0
-            skipped_count = 0
-            validation_warnings = []
-            _et_tz = _pytz.timezone("America/New_York")
-            _now_for_log = datetime.now(_et_tz)
-
-            def _enrich_pick_for_logging(p):
-                """Add game_time_utc, minutes_since_start, raw_inputs_snapshot."""
-                start_et = p.get("start_time_et", "")
-                game_time_utc = ""
-                mins_since = 0
-                if start_et:
-                    try:
-                        gt = datetime.fromisoformat(start_et.replace("Z", "+00:00"))
-                        if gt.tzinfo is None:
-                            gt = _et_tz.localize(gt)
-                        game_time_utc = gt.astimezone(_pytz.utc).isoformat()
-                        delta = (_now_for_log - gt.astimezone(_et_tz)).total_seconds()
-                        if delta > 0:
-                            mins_since = int(delta / 60)
-                    except Exception:
-                        pass
-                p["game_time_utc"] = game_time_utc
-                p["minutes_since_start"] = mins_since
-                p["raw_inputs_snapshot"] = {
-                    "line": p.get("line"),
-                    "odds": p.get("odds", -110),
-                    "matchup": p.get("matchup", p.get("game", "")),
-                    "injury_status": p.get("injury_status", "HEALTHY"),
-                    "sharp_signal": p.get("sharp_signal", ""),
-                    "tier": p.get("tier", ""),
-                }
-
-            # Log prop picks
-            for pick in top_props:
-                _enrich_pick_for_logging(pick)
-                log_result = pick_logger.log_pick(
-                    pick_data=pick,
-                    game_start_time=pick.get("start_time_et", "")
-                )
-                if log_result.get("logged"):
-                    logged_count += 1
-                elif log_result.get("skipped"):
-                    skipped_count += 1
-                if log_result.get("validation_errors"):
-                    validation_warnings.extend(log_result["validation_errors"])
-
-            # Log game picks
-            for pick in top_game_picks:
-                _enrich_pick_for_logging(pick)
-                log_result = pick_logger.log_pick(
-                    pick_data=pick,
-                    game_start_time=pick.get("start_time_et", "")
-                )
-                if log_result.get("logged"):
-                    logged_count += 1
-                elif log_result.get("skipped"):
-                    skipped_count += 1
-                if log_result.get("validation_errors"):
-                    validation_warnings.extend(log_result["validation_errors"])
-
-            _picks_logged = logged_count
-            _picks_skipped = skipped_count
-            if logged_count > 0:
-                logger.info("PICK_LOGGER: Logged %d picks, skipped %d dupes", logged_count, skipped_count)
-            elif skipped_count > 0:
-                logger.info("PICK_LOGGER: All %d picks skipped (duplicates)", skipped_count)
-            if validation_warnings:
-                logger.warning("PICK_LOGGER: Validation warnings: %s", validation_warnings[:5])
-        except Exception as e:
-            logger.error("PICK_LOGGER: Failed to log picks: %s", e)
-            _pick_log_errors.append(str(e))
 
     # LOG TO AUTO_GRADER for weight learning (v12.0)
     # ============================================
@@ -5087,34 +5013,30 @@ async def grader_status():
         "timestamp": datetime.now().isoformat()
     }
 
-    # Pick Logger Stats (actual published picks that need grading)
+    # Grader Store Stats (SINGLE SOURCE OF TRUTH for persistence)
     try:
-        if PICK_LOGGER_AVAILABLE:
-            pick_logger = get_pick_logger()
-            # Use YYYY-MM-DD format (not human-readable) to match pick file names
-            from pick_logger import get_today_date_et
-            today = get_today_date_et()
+        import grader_store
+        from core.time_et import et_day_bounds
 
-            # Get today's picks
-            today_picks = pick_logger.get_picks_for_date(today)
-            pending_picks = [p for p in today_picks if not p.result]
-            graded_picks = [p for p in today_picks if p.result]
+        # Get today's date in ET
+        _, _, today = et_day_bounds()
 
-            result["pick_logger"] = {
-                "predictions_logged": len(today_picks),
-                "pending_to_grade": len(pending_picks),
-                "graded_today": len(graded_picks),
-                "storage_path": pick_logger.storage_path,
-                "date": today
-            }
-        else:
-            result["pick_logger"] = {
-                "available": False,
-                "note": "Pick logger not available"
-            }
+        # Load predictions from grader_store
+        all_predictions = grader_store.load_predictions(date_et=today)
+        pending = [p for p in all_predictions if p.get("grade_status") != "GRADED"]
+        graded = [p for p in all_predictions if p.get("grade_status") == "GRADED"]
+
+        result["grader_store"] = {
+            "predictions_logged": len(all_predictions),
+            "pending_to_grade": len(pending),
+            "graded_today": len(graded),
+            "storage_path": grader_store.STORAGE_ROOT,
+            "predictions_file": grader_store.PREDICTIONS_FILE,
+            "date": today
+        }
     except Exception as e:
-        logger.error("Pick logger status failed: %s", e)
-        result["pick_logger"] = {
+        logger.error("Grader store status failed: %s", e)
+        result["grader_store"] = {
             "available": False,
             "error": str(e)
         }

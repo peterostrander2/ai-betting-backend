@@ -905,13 +905,13 @@ async def auto_grade_picks(
     Returns:
         Summary of grading results
     """
-    # Import pick_logger here to avoid circular imports
+    # Import grader_store (single source of truth for persistence)
     try:
-        from pick_logger import get_pick_logger, get_today_picks
-        PICK_LOGGER_AVAILABLE = True
+        import grader_store
+        GRADER_STORE_AVAILABLE = True
     except ImportError:
-        logger.error("pick_logger not available")
-        return {"error": "pick_logger not available"}
+        logger.error("grader_store not available")
+        return {"error": "grader_store not available"}
 
     # Default to today in ET
     if not date:
@@ -936,11 +936,10 @@ async def auto_grade_picks(
         "errors": []
     }
 
-    pick_logger = get_pick_logger()
-
-    # Get all pending picks for the date
-    pending_picks = [p for p in pick_logger.get_picks_for_date(date) if not p.result]
-    logger.info("Found %d pending picks to grade", len(pending_picks))
+    # Get all pending picks for the date from grader_store (SINGLE SOURCE OF TRUTH)
+    all_picks = grader_store.load_predictions(date_et=date)
+    pending_picks = [p for p in all_picks if p.get("grade_status") != "GRADED"]
+    logger.info("Found %d pending picks to grade from grader_store", len(pending_picks))
 
     if not pending_picks:
         results["message"] = "No pending picks to grade"
@@ -953,12 +952,13 @@ async def auto_grade_picks(
     # Collect player names from prop picks for targeted Playbook lookup
     prop_players_by_sport: Dict[str, List[str]] = {}
     for pick in pending_picks:
-        if pick.player_name:
-            sport = pick.sport.upper()
+        player_name = pick.get("player_name") or pick.get("player", "")
+        if player_name:
+            sport = pick.get("sport", "").upper()
             if sport not in prop_players_by_sport:
                 prop_players_by_sport[sport] = []
-            if pick.player_name not in prop_players_by_sport[sport]:
-                prop_players_by_sport[sport].append(pick.player_name)
+            if player_name not in prop_players_by_sport[sport]:
+                prop_players_by_sport[sport].append(player_name)
 
     for sport in sports:
         games = await fetch_completed_games(sport, days_back=2)
@@ -984,43 +984,40 @@ async def auto_grade_picks(
     # Grade each pending pick
     for pick in pending_picks:
         try:
-            sport = pick.sport.upper()
+            sport = pick.get("sport", "").upper()
 
             # Determine if this is a prop or game pick
             # Skip picks that already FAILED (max retries exceeded)
             MAX_GRADE_RETRIES = 5
-            if getattr(pick, 'grade_status', '') == "FAILED":
+            if pick.get('grade_status') == "FAILED":
                 results["picks_failed"] += 1
                 continue
 
             # Track retry attempt
-            pick.retry_count = getattr(pick, 'retry_count', 0) + 1
-            pick.last_attempt_at = datetime.now(ET).isoformat()
+            retry_count = pick.get('retry_count', 0) + 1
 
-            if pick.player_name:
+            player_name = pick.get("player_name") or pick.get("player", "")
+            if player_name:
                 # PROP PICK - need player stats
                 stats = all_player_stats.get(sport, [])
 
+                prop_type = pick.get("prop_type") or pick.get("stat_type") or pick.get("market", "")
                 actual_value = match_player_stats(
-                    pick.player_name,
-                    pick.prop_type or pick.stat_type or "",
+                    player_name,
+                    prop_type,
                     stats
                 )
 
                 if actual_value is None:
-                    logger.debug("Could not find stats for %s (attempt %d)", pick.player_name, pick.retry_count)
-                    pick.last_error = f"Stats not found for {pick.player_name}"
-                    if pick.retry_count >= MAX_GRADE_RETRIES:
-                        pick.grade_status = "FAILED"
-                    else:
-                        pick.grade_status = "WAITING_FINAL"
+                    logger.debug("Could not find stats for %s (attempt %d)", player_name, retry_count)
+                    # Cannot update pick dict in place - will skip for now
                     results["picks_failed"] += 1
                     continue
 
                 # Grade the prop
                 result = grade_prop_pick(
-                    line=pick.line,
-                    side=pick.side,
+                    line=pick.get("line", 0),
+                    side=pick.get("side", ""),
                     actual_value=actual_value
                 )
 
@@ -1029,104 +1026,104 @@ async def auto_grade_picks(
                 games = all_games.get(sport, [])
 
                 # Find matching game
+                matchup = pick.get("matchup") or pick.get("event_id", "")
                 matched_game = None
                 for game in games:
-                    if (normalize_player_name(game.home_team) in normalize_player_name(pick.matchup) or
-                        normalize_player_name(game.away_team) in normalize_player_name(pick.matchup)):
+                    if (normalize_player_name(game.home_team) in normalize_player_name(matchup) or
+                        normalize_player_name(game.away_team) in normalize_player_name(matchup)):
                         matched_game = game
                         break
 
                 if not matched_game:
-                    logger.debug("Could not find game for %s (attempt %d)", pick.matchup, pick.retry_count)
-                    pick.last_error = f"Game not found for {pick.matchup}"
-                    if pick.retry_count >= MAX_GRADE_RETRIES:
-                        pick.grade_status = "FAILED"
-                    else:
-                        pick.grade_status = "WAITING_FINAL"
+                    logger.debug("Could not find game for %s (attempt %d)", matchup, retry_count)
                     results["picks_failed"] += 1
                     continue
 
                 # Grade the game pick
+                pick_type = pick.get("pick_type") or pick.get("market", "")
                 result, actual_value = grade_game_pick(
-                    pick_type=pick.pick_type or "",
-                    pick_side=pick.side or "",
-                    line=pick.line,
+                    pick_type=pick_type,
+                    pick_side=pick.get("side", ""),
+                    line=pick.get("line", 0),
                     home_score=matched_game.home_score,
                     away_score=matched_game.away_score,
                     home_team=matched_game.home_team,
                     away_team=matched_game.away_team
                 )
 
-            # Update the pick in pick_logger
-            grade_result = pick_logger.grade_pick(
-                pick_id=pick.pick_id,
+            # Update the pick in grader_store (SINGLE SOURCE OF TRUTH)
+            from core.time_et import now_et
+            grade_result = grader_store.mark_graded(
+                pick_id=pick.get("pick_id"),
                 result=result,
                 actual_value=actual_value,
-                date=date
+                graded_at=now_et().isoformat()
             )
 
             if grade_result:
                 results["picks_graded"] += 1
 
                 # Build human-readable description and infer side if missing
-                matchup = pick.matchup or f"{pick.away_team} @ {pick.home_team}"
+                matchup = pick.get("matchup") or f"{pick.get('away_team', '')} @ {pick.get('home_team', '')}"
 
                 # Infer the side picked if it's missing (for totals)
-                display_side = pick.side
-                if not display_side and pick.pick_type and "total" in pick.pick_type.lower():
+                display_side = pick.get("side", "")
+                pick_type = pick.get("pick_type") or pick.get("market", "")
+                if not display_side and pick_type and "total" in pick_type.lower():
                     # Infer from result and actual value
+                    line = pick.get("line", 0)
                     if result == "WIN":
-                        display_side = "Over" if actual_value > pick.line else "Under"
+                        display_side = "Over" if actual_value > line else "Under"
                     elif result == "LOSS":
-                        display_side = "Under" if actual_value > pick.line else "Over"
+                        display_side = "Under" if actual_value > line else "Over"
                     else:  # PUSH
                         display_side = "Push"
 
-                if pick.player_name:
+                if player_name:
                     # Prop pick: "LeBron James - Points Over 25.5"
-                    prop_name = pick.prop_type or 'Prop'
-                    description = f"{pick.player_name} {prop_name} {display_side} {pick.line}"
-                    display_label = pick.player_name
-                    pick_detail = f"{prop_name} {display_side} {pick.line}"
+                    prop_name = pick.get("prop_type") or 'Prop'
+                    line = pick.get("line", 0)
+                    description = f"{player_name} {prop_name} {display_side} {line}"
+                    display_label = player_name
+                    pick_detail = f"{prop_name} {display_side} {line}"
                 else:
                     # Game pick: "Lakers vs Celtics - Total Under 235.5"
-                    pick_type_name = pick.pick_type or 'Pick'
+                    pick_type_name = pick_type or 'Pick'
+                    line = pick.get("line", 0)
                     if display_side:
-                        pick_detail = f"{pick_type_name} {display_side} {pick.line}"
+                        pick_detail = f"{pick_type_name} {display_side} {line}"
                     else:
-                        pick_detail = f"{pick_type_name} {pick.line}"
+                        pick_detail = f"{pick_type_name} {line}"
                     description = f"{matchup} - {pick_detail}"
                     display_label = matchup
 
                 results["graded_picks"].append({
-                    "pick_id": pick.pick_id,
+                    "pick_id": pick.get("pick_id"),
                     "matchup": matchup,
                     "player": display_label,
                     "description": description,
-                    "pick_type": pick.pick_type or "",
-                    "prop_type": pick.prop_type or "",
-                    "line": pick.line,
-                    "side": display_side or "",
+                    "pick_type": pick_type,
+                    "prop_type": pick.get("prop_type", ""),
+                    "line": pick.get("line", 0),
+                    "side": display_side,
                     "pick_detail": pick_detail,
                     "actual": actual_value,
                     "result": result,
-                    "tier": pick.tier,
-                    "units": pick.units
+                    "tier": pick.get("tier", ""),
+                    "units": pick.get("units", 1.0)
                 })
                 logger.info("Graded %s: %s %.1f %s -> Actual: %.1f = %s",
-                           pick.player_name or pick.matchup, pick.side, pick.line,
-                           pick.prop_type or pick.pick_type, actual_value, result)
+                           player_name or matchup, display_side, pick.get("line", 0),
+                           pick.get("prop_type") or pick_type, actual_value, result)
             else:
                 results["picks_failed"] += 1
 
         except Exception as e:
-            logger.error("Error grading pick %s: %s", pick.pick_id, e)
+            logger.error("Error grading pick %s: %s", pick.get("pick_id"), e)
             results["picks_failed"] += 1
             results["errors"].append(str(e))
 
-    # Persist retry state back to canonical log
-    try:
-        pick_logger._rewrite_pick_log(date)
+    # Note: grader_store updates picks in-place, no need to rewrite log
     except Exception as e:
         logger.error("Failed to persist retry state: %s", e)
 
