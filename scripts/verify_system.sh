@@ -86,13 +86,18 @@ echo "   Available: $GRADER_AVAILABLE"
 echo "   Predictions logged: $PREDICTIONS"
 echo "   Pending to grade: $PENDING"
 echo "   Storage path: $STORAGE_PATH"
-# Verify storage is on mounted volume (not /app root)
-if [[ "$STORAGE_PATH" == *"/app/grader_data/"* ]]; then
-    echo "   ✓ Storage on mounted volume"
+# Verify storage is on mounted volume (not /app root - ephemeral!)
+if [[ "$STORAGE_PATH" == /app/* ]]; then
+    echo "   ✗ FAIL: Storage path under /app (ephemeral, wiped on redeploy): $STORAGE_PATH"
+    echo "   Required: Storage must be on /data or persistent volume mount"
+    exit 1
+elif [[ "$STORAGE_PATH" == /data/* ]]; then
+    echo "   ✓ Storage on persistent volume: $STORAGE_PATH"
 elif [[ "$STORAGE_PATH" == "./grader_data/"* ]] || [[ "$STORAGE_PATH" == "grader_data/"* ]]; then
-    echo "   ⚠ Local storage (expected for dev)"
+    echo "   ⚠ Local storage (expected for dev only): $STORAGE_PATH"
 else
-    echo "   ✗ FAIL: Storage path not on mounted volume: $STORAGE_PATH"
+    echo "   ✗ FAIL: Storage path location unknown: $STORAGE_PATH"
+    echo "   Required: /data/grader_data or persistent volume mount"
     exit 1
 fi
 echo
