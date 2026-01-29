@@ -125,22 +125,17 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
     Returns:
         Tuple of (filtered_picks, debug_info)
     """
-    try:
-        logger.info(f"GATE: filter_contradictions called with {len(picks) if picks else 0} picks")
-        if not picks:
-            return [], {}
+    logger.info(f"GATE: filter_contradictions called with {len(picks) if picks else 0} picks")
+    if not picks:
+        return [], {}
 
-        # Helper function to get field from dict or object
-        def _get(pick, key, default=""):
-            if isinstance(pick, dict):
-                val = pick.get(key, default)
-                return val if val is not None else default
-            return getattr(pick, key, default)
+    # Helper function to get field from dict or object
+    def _get(pick, key, default=""):
+        if isinstance(pick, dict):
+            return pick.get(key, default)
+        return getattr(pick, key, default)
 
-        contradictions = detect_contradictions(picks)
-    except Exception as e:
-        logger.error(f"GATE ERROR in setup: {e}", exc_info=True)
-        return picks, {"contradictions_detected": 0, "picks_dropped": 0, "contradiction_groups": []}
+    contradictions = detect_contradictions(picks)
 
     # DEBUG: Log contradictions found
     if contradictions:
@@ -247,17 +242,14 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
                 f"Dropped: {loser_strs}"
             )
 
-        debug_info = {
-            "contradictions_detected": len(contradictions),
-            "picks_dropped": len(dropped_picks),
-            "contradiction_groups": contradiction_groups if debug else []
-        }
+    debug_info = {
+        "contradictions_detected": len(contradictions),
+        "picks_dropped": len(dropped_picks),
+        "contradiction_groups": contradiction_groups if debug else []
+    }
 
-        logger.info(f"GATE: Returning {len(kept_picks)} kept, {len(dropped_picks)} dropped")
-        return kept_picks, debug_info
-    except Exception as e:
-        logger.error(f"GATE ERROR during filtering: {e}", exc_info=True)
-        return picks, {"contradictions_detected": 0, "picks_dropped": 0, "contradiction_groups": []}
+    logger.info(f"GATE: Returning {len(kept_picks)} kept, {len(dropped_picks)} dropped")
+    return kept_picks, debug_info
 
 
 def apply_contradiction_gate(props: List[Any], game_picks: List[Any], debug: bool = False) -> Tuple[List[Any], List[Any], Dict[str, Any]]:
