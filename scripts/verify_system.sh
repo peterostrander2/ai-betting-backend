@@ -30,8 +30,17 @@ echo
 # Check 3: Best-bets NBA
 echo "3. BEST-BETS NBA"
 NBA_DATA=$(curl -s "$BASE_URL/live/best-bets/NBA?max_props=3&max_games=3" -H "X-API-Key: $API_KEY")
-NBA_PROPS=$(echo "$NBA_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); print(d['props']['count'])")
-NBA_GAMES=$(echo "$NBA_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); print(d['game_picks']['count'])")
+# Verify required keys exist
+NBA_PROPS=$(echo "$NBA_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); assert 'props' in d, 'Missing props key'; assert 'count' in d['props'], 'Missing props.count'; print(d['props']['count'])" 2>&1)
+if [ $? -ne 0 ]; then
+    echo "   ✗ FAIL: NBA response missing required keys: $NBA_PROPS"
+    exit 1
+fi
+NBA_GAMES=$(echo "$NBA_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); assert 'game_picks' in d, 'Missing game_picks key'; assert 'count' in d['game_picks'], 'Missing game_picks.count'; print(d['game_picks']['count'])" 2>&1)
+if [ $? -ne 0 ]; then
+    echo "   ✗ FAIL: NBA response missing required keys: $NBA_GAMES"
+    exit 1
+fi
 echo "   Props: $NBA_PROPS"
 echo "   Game picks: $NBA_GAMES"
 echo
@@ -39,8 +48,17 @@ echo
 # Check 4: Best-bets NHL
 echo "4. BEST-BETS NHL"
 NHL_DATA=$(curl -s "$BASE_URL/live/best-bets/NHL?max_props=3&max_games=3" -H "X-API-Key: $API_KEY")
-NHL_PROPS=$(echo "$NHL_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); print(d['props']['count'])")
-NHL_GAMES=$(echo "$NHL_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); print(d['game_picks']['count'])")
+# Verify required keys exist
+NHL_PROPS=$(echo "$NHL_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); assert 'props' in d, 'Missing props key'; assert 'count' in d['props'], 'Missing props.count'; print(d['props']['count'])" 2>&1)
+if [ $? -ne 0 ]; then
+    echo "   ✗ FAIL: NHL response missing required keys: $NHL_PROPS"
+    exit 1
+fi
+NHL_GAMES=$(echo "$NHL_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); assert 'game_picks' in d, 'Missing game_picks key'; assert 'count' in d['game_picks'], 'Missing game_picks.count'; print(d['game_picks']['count'])" 2>&1)
+if [ $? -ne 0 ]; then
+    echo "   ✗ FAIL: NHL response missing required keys: $NHL_GAMES"
+    exit 1
+fi
 echo "   Props: $NHL_PROPS"
 echo "   Game picks: $NHL_GAMES"
 echo
@@ -63,9 +81,20 @@ GRADER=$(curl -s "$BASE_URL/live/grader/status" -H "X-API-Key: $API_KEY")
 GRADER_AVAILABLE=$(echo "$GRADER" | python3 -c "import json, sys; print(json.load(sys.stdin)['available'])")
 PREDICTIONS=$(echo "$GRADER" | python3 -c "import json, sys; print(json.load(sys.stdin)['pick_logger']['predictions_logged'])")
 PENDING=$(echo "$GRADER" | python3 -c "import json, sys; print(json.load(sys.stdin)['pick_logger']['pending_to_grade'])")
+STORAGE_PATH=$(echo "$GRADER" | python3 -c "import json, sys; print(json.load(sys.stdin).get('pick_logger', {}).get('storage_path', 'UNKNOWN'))")
 echo "   Available: $GRADER_AVAILABLE"
 echo "   Predictions logged: $PREDICTIONS"
 echo "   Pending to grade: $PENDING"
+echo "   Storage path: $STORAGE_PATH"
+# Verify storage is on mounted volume (not /app root)
+if [[ "$STORAGE_PATH" == *"/app/grader_data/"* ]]; then
+    echo "   ✓ Storage on mounted volume"
+elif [[ "$STORAGE_PATH" == "./grader_data/"* ]] || [[ "$STORAGE_PATH" == "grader_data/"* ]]; then
+    echo "   ⚠ Local storage (expected for dev)"
+else
+    echo "   ✗ FAIL: Storage path not on mounted volume: $STORAGE_PATH"
+    exit 1
+fi
 echo
 
 # Check 7: Autograder dry-run
