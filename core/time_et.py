@@ -52,15 +52,15 @@ def et_day_bounds(date_str: str = None) -> Tuple[datetime, datetime, str]:
     """
     Get ET day bounds [start, end) and date string.
 
-    FIX 4: Daily slate window is 12:01 AM ET to 11:59 PM ET.
+    MASTER FIX: Daily slate window is 00:00:00 AM ET to 23:59:59 PM ET.
 
     Args:
         date_str: Optional date "YYYY-MM-DD". If None, uses today in ET.
 
     Returns:
         Tuple of (start_et, end_et, et_date)
-        - start_et: datetime at 12:01 AM ET (00:01:00)
-        - end_et: datetime at 11:59 PM ET (23:59:00) same day (INCLUSIVE upper bound)
+        - start_et: datetime at 00:00:00 AM ET (midnight start of day)
+        - end_et: datetime at 00:00:00 AM ET next day (exclusive upper bound)
         - et_date: "YYYY-MM-DD" format
 
     Example:
@@ -68,10 +68,10 @@ def et_day_bounds(date_str: str = None) -> Tuple[datetime, datetime, str]:
         >>> et_date
         "2026-01-28"
         >>> start
-        datetime(2026, 1, 28, 0, 1, 0, tzinfo=ZoneInfo('America/New_York'))
+        datetime(2026, 1, 28, 0, 0, 0, tzinfo=ZoneInfo('America/New_York'))
         >>> end
-        datetime(2026, 1, 28, 23, 59, 0, tzinfo=ZoneInfo('America/New_York'))
-        >>> start <= some_event <= end  # Inclusive bounds
+        datetime(2026, 1, 29, 0, 0, 0, tzinfo=ZoneInfo('America/New_York'))
+        >>> start <= some_event < end  # start inclusive, end exclusive
     """
     # Get target date
     if date_str:
@@ -79,9 +79,9 @@ def et_day_bounds(date_str: str = None) -> Tuple[datetime, datetime, str]:
     else:
         day = now_et().date()
 
-    # FIX 4: 12:01 AM to 11:59 PM ET (daily slate window)
-    start = datetime.combine(day, time(0, 1, 0), tzinfo=ET)  # 12:01 AM
-    end = datetime.combine(day, time(23, 59, 0), tzinfo=ET)  # 11:59 PM
+    # MASTER FIX: 00:00:00 to 00:00:00 next day (midnight to midnight, end exclusive)
+    start = datetime.combine(day, time(0, 0, 0), tzinfo=ET)
+    end = datetime.combine(day + timedelta(days=1), time(0, 0, 0), tzinfo=ET)
 
     # ISO date string
     et_date = day.isoformat()
@@ -128,8 +128,8 @@ def is_in_et_day(event_time: str, date_str: str = None) -> bool:
         # Get day bounds
         start, end, _ = et_day_bounds(date_str)
 
-        # FIX 4: Inclusive bounds [start, end]
-        return start <= event_et <= end
+        # MASTER FIX: Inclusive start, exclusive end [start, end)
+        return start <= event_et < end
 
     except (ValueError, AttributeError):
         return False

@@ -28,6 +28,7 @@ from daily_scheduler import scheduler_router, init_scheduler, get_scheduler
 from auto_grader import get_grader
 from data_dir import ensure_dirs, DATA_DIR
 from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILABLE
+import grader_store
 
 app = FastAPI(
     title="Bookie-o-em API",
@@ -43,6 +44,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# =============================================================================
+# STARTUP: Initialize grader store
+# =============================================================================
+@app.on_event("startup")
+async def startup_event():
+    """Initialize grader store and verify storage writable."""
+    try:
+        grader_store.ensure_storage_writable()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error("FATAL: Grader storage not writable: %s", e)
+        raise
+
 
 # =============================================================================
 # ADMIN GATING for debug/admin endpoints
@@ -116,6 +132,51 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "version": "14.2", "database": database.DB_ENABLED}
+
+
+# Grader status endpoint
+@app.get("/grader/status")
+async def grader_status():
+    """
+    Grader status: prediction counts, storage info, last run time.
+
+    REQUIREMENT: Must show predictions_total > 0 after picks generated.
+    """
+    try:
+        stats = grader_store.get_storage_stats()
+
+        # Load predictions and count by status
+        all_predictions = grader_store.load_predictions()
+        pending = [p for p in all_predictions if p.get("grade_status") == "PENDING"]
+        graded = [p for p in all_predictions if p.get("grade_status") == "GRADED"]
+
+        from core.time_et import now_et
+
+        return {
+            "available": True,
+            "storage_path": stats["storage_path"],
+            "storage_exists": stats["exists"],
+            "storage_writable": stats.get("writable", False),
+            "storage_size_bytes": stats.get("size_bytes", 0),
+            "predictions_total": stats["prediction_count"],
+            "pending_total": len(pending),
+            "graded_total": len(graded),
+            "last_run_time_et": now_et().isoformat(),
+            "last_errors": []
+        }
+    except Exception as e:
+        return {
+            "available": False,
+            "error": str(e)
+        }
+
+
+# Smoke test endpoint (for uptime monitors)
+@app.get("/live/smoke-test/alert-status")
+@app.head("/live/smoke-test/alert-status")
+async def smoke_test_alert_status():
+    """Smoke test endpoint for uptime monitoring (HEAD and GET)."""
+    return {"ok": True, "status": "operational"}
 
 
 # Database status endpoint

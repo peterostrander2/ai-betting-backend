@@ -3833,6 +3833,40 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _record("pick_logging", _s)
 
     # ============================================
+    # PERSIST TO GRADER STORE (v15.1 MASTER FIX)
+    # ============================================
+    # Persist picks so autograder can grade tomorrow
+    _grader_store_persisted = 0
+    _grader_store_duplicates = 0
+    try:
+        import grader_store
+        from core.time_et import et_day_bounds
+
+        # Get today's ET date for persistence
+        _, _, date_et_for_store = et_day_bounds(date_str)
+
+        # Persist all picks (props + games)
+        all_picks_to_persist = top_props + top_game_picks
+
+        for pick in all_picks_to_persist:
+            # Ensure required fields for grading
+            pick.setdefault("pick_id", "")
+            pick.setdefault("date_et", date_et_for_store)
+            pick.setdefault("grade_status", "PENDING")
+            pick.setdefault("persisted_at", "")
+
+            # Persist (idempotent by pick_id)
+            if grader_store.persist_pick(pick, date_et_for_store):
+                _grader_store_persisted += 1
+            else:
+                _grader_store_duplicates += 1
+
+        if _grader_store_persisted > 0:
+            logger.info("GRADER_STORE: Persisted %d picks, %d duplicates", _grader_store_persisted, _grader_store_duplicates)
+    except Exception as e:
+        logger.error("GRADER_STORE: Failed to persist picks: %s", e)
+
+    # ============================================
     # LIVE MODE FILTERING (v14.11)
     # ============================================
     # When mode=live, filter to only picks marked as is_live==true
