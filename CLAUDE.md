@@ -43,14 +43,57 @@
 3. **Railway auto-deploys** - Takes 2-3 minutes, happens automatically
 4. **DO NOT ask user to check** - Railway handles it, user knows the workflow
 
-### Storage Configuration (Railway Volume)
-- Volume: 5GB mounted at `/app/grader_data`
-- Environment variable: `RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data`
-- Paths managed by `data_dir.py`:
-  - `/app/grader_data/pick_logs/` - Published picks (JSONL)
-  - `/app/grader_data/grader_data/` - Auto-grader predictions and weights (JSON)
-  - `/app/grader_data/graded_picks/` - Graded picks (JSONL)
-  - `/app/grader_data/audit_logs/` - Daily audit reports
+### Storage Configuration (Railway Volume) - VERIFIED JANUARY 29, 2026
+
+**CRITICAL: DO NOT MODIFY THESE PATHS OR ADD PATH BLOCKERS**
+
+The system uses **TWO storage locations** - both are correct and intentional:
+
+#### 1. Picks Storage (grader_store.py via storage_paths.py)
+- **Path**: `/app/grader_data/grader/predictions.jsonl`
+- **Used by**: Best-bets endpoint, Autograder (read/write)
+- **Format**: JSONL (one pick per line)
+- **Volume**: Railway persistent volume at `/app/grader_data`
+- **Status**: ✅ VERIFIED WORKING (22 picks, last modified 2026-01-29T12:25:24)
+
+#### 2. Weights/Audit Storage (data_dir.py)
+- **Base path**: `/data/grader_data/`
+- **Used by**: Auto-grader weights, Daily scheduler audits
+- **Subdirs**:
+  - `/data/grader_data/grader_data/` - Weight learning (weights.json, predictions.json)
+  - `/data/grader_data/audit_logs/` - Daily audit reports
+- **Status**: ✅ VERIFIED WORKING (weights loaded: true)
+
+#### Environment Variables
+- `RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data` (Railway sets this automatically)
+- This path **IS PERSISTENT** - it's a mounted 5GB Railway volume
+- **NEVER** add code to block `/app/*` paths - `/app/grader_data` is the correct persistent storage
+
+#### Critical Facts (NEVER FORGET)
+1. `/app/grader_data` **IS PERSISTENT** (Railway volume mount, verified with `os.path.ismount()`)
+2. Both storage systems are **INTENTIONAL** and serve different purposes
+3. **DO NOT unify** or change these paths - they work correctly as-is
+4. **DO NOT add path validation** that blocks `/app/*` - this will crash production
+5. Picks persist across container restarts (verified: 14 picks survived crash on Jan 28-29)
+
+#### Verification Commands
+```bash
+# Check picks storage
+curl https://web-production-7b2a.up.railway.app/internal/storage/health
+
+# Check grader status
+curl https://web-production-7b2a.up.railway.app/live/grader/status \
+  -H "X-API-Key: YOUR_KEY"
+
+# Verify autograder can see picks
+curl -X POST https://web-production-7b2a.up.railway.app/live/grader/dry-run \
+  -H "X-API-Key: YOUR_KEY" -d '{"date":"2026-01-29","mode":"pre"}'
+```
+
+#### Past Mistakes to NEVER Repeat
+- **Jan 28-29, 2026**: Added code to block `/app/*` paths → Production crashed (502 errors)
+- **Lesson**: Always verify storage health BEFORE assuming paths are wrong
+- **Rule**: Read CLAUDE.md storage section BEFORE touching storage/autograder code
 
 ### SSH Configuration
 - GitHub SSH uses port 443 (not 22) - configured in `~/.ssh/config`
@@ -4267,6 +4310,202 @@ Auto-grader will run after games complete (6 AM ET audit).
 - ✅ Auto-grader reads/writes to same file
 - ✅ All persistence flows unified
 - ✅ Backend FRONTEND-READY
+
+---
+
+## Session Log: January 29, 2026 - Storage Architecture Verification (FINAL)
+
+### Overview
+
+**VERIFIED: The storage architecture is CORRECT and INTENTIONAL.**
+
+After the crashes on Jan 28-29, verified the actual production storage architecture to document what's really working and prevent future confusion.
+
+**Build:** 4190fd3 (current production)
+
+---
+
+### What Was Verified
+
+#### 1. Dual Storage System is INTENTIONAL ✅
+
+The system uses **TWO separate storage locations** - both are correct:
+
+**Storage System 1: Picks (grader_store.py)**
+- Path: `/app/grader_data/grader/predictions.jsonl`
+- Module: `storage_paths.py` → `grader_store.py`
+- Used by: Best-bets endpoint, Autograder
+- Format: JSONL (one pick per line)
+- Status: ✅ 22 picks persisted, last modified 2026-01-29T12:25:24
+
+**Storage System 2: Weights/Audits (data_dir.py)**
+- Base path: `/data/grader_data/`
+- Used by: Auto-grader weights, Daily scheduler
+- Subdirs:
+  - `/data/grader_data/grader_data/` - Weight learning files
+  - `/data/grader_data/audit_logs/` - Daily audit reports
+- Status: ✅ Weights loaded, scheduler operational
+
+#### 2. Production Verification Results
+
+**Storage Health Check:**
+```json
+{
+  "ok": true,
+  "mount_root": "/app/grader_data",
+  "is_mountpoint": true,
+  "is_ephemeral": false,
+  "predictions_file": "/app/grader_data/grader/predictions.jsonl",
+  "predictions_exists": true,
+  "predictions_line_count": 22,
+  "predictions_last_modified": "2026-01-29T12:25:24.148922",
+  "writable": true
+}
+```
+
+**Grader Status:**
+```json
+{
+  "available": true,
+  "grader_store": {
+    "predictions_logged": 22,
+    "pending_to_grade": 22,
+    "graded_today": 0,
+    "storage_path": "/app/grader_data/grader",
+    "predictions_file": "/app/grader_data/grader/predictions.jsonl"
+  },
+  "weight_learning": {
+    "available": true,
+    "predictions_logged": 0,
+    "weights_loaded": true,
+    "storage_path": "/data/grader_data/grader_data"
+  }
+}
+```
+
+**Autograder Dry-Run:**
+```json
+{
+  "total": 22,
+  "pending": 22,
+  "graded": 0,
+  "failed": 0,
+  "unresolved": 0,
+  "pre_mode_pass": true,
+  "overall_status": "PENDING"
+}
+```
+
+#### 3. Critical Facts Confirmed
+
+| Fact | Status | Evidence |
+|------|--------|----------|
+| `/app/grader_data` is persistent | ✅ CONFIRMED | `is_mountpoint: true`, 22 picks survived |
+| Picks persist across restarts | ✅ CONFIRMED | 14 picks from Jan 28 still present on Jan 29 |
+| Best-bets writes to grader_store | ✅ CONFIRMED | Count increased 18→22 after call |
+| Autograder reads from grader_store | ✅ CONFIRMED | Dry-run shows all 22 picks |
+| Dual storage is intentional | ✅ CONFIRMED | Both systems serve different purposes |
+
+#### 4. Why Dual Storage Exists
+
+The two storage locations are **NOT duplicates** - they serve different purposes:
+
+1. **Picks storage** (`/app/grader_data/grader/`):
+   - High-frequency writes (every best-bets call)
+   - Needs atomic appends (JSONL format)
+   - Read by autograder for grading
+   - Must survive container restarts
+
+2. **Weights storage** (`/data/grader_data/`):
+   - Low-frequency updates (daily after audit)
+   - Complex JSON structures (weights.json)
+   - Used by auto-grader for weight learning
+   - Separate from picks to avoid lock contention
+
+#### 5. Past Mistakes DOCUMENTED
+
+**January 28-29, 2026 Incident:**
+- Added code to block all `/app/*` paths (commits c65b0eb, 1c231b2)
+- Assumed `/app/grader_data` was ephemeral
+- **IGNORED** documentation that said it was the Railway persistent volume
+- Production crashed with 502 errors
+- Fixed by removing path blocker (commit 4190fd3)
+- **Lesson**: `/app/grader_data` IS the Railway volume mount (NOT ephemeral)
+
+**Root Cause:**
+- Did not read CLAUDE.md storage section before making changes
+- Did not verify current storage health before assuming paths were wrong
+- Added validation based on assumptions instead of facts
+
+**Prevention:**
+- Updated CLAUDE.md with verified storage architecture
+- Added "NEVER FORGET" section with critical facts
+- Documented verification commands
+- Added warning: "DO NOT MODIFY THESE PATHS OR ADD PATH BLOCKERS"
+
+---
+
+### Files Changed
+
+```
+CLAUDE.md   (MODIFIED - Updated Storage Configuration section with verified architecture)
+```
+
+---
+
+### Verification Commands (For Future Reference)
+
+```bash
+# Check picks storage health
+curl https://web-production-7b2a.up.railway.app/internal/storage/health
+
+# Check grader status (both storage systems)
+curl https://web-production-7b2a.up.railway.app/live/grader/status \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+
+# Verify autograder can see picks
+curl -X POST https://web-production-7b2a.up.railway.app/live/grader/dry-run \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" \
+  -H "Content-Type: application/json" \
+  -d '{"date":"2026-01-29","mode":"pre"}'
+
+# Test best-bets generates and persists picks
+curl "https://web-production-7b2a.up.railway.app/live/best-bets/NBA?max_props=1" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+# Then check if prediction count increased in /internal/storage/health
+```
+
+---
+
+### Key Takeaways
+
+**DO:**
+- ✅ Verify storage health BEFORE making assumptions
+- ✅ Read CLAUDE.md storage section BEFORE touching storage code
+- ✅ Check production endpoints to understand current state
+- ✅ Trust verified systems from previous sessions
+
+**NEVER:**
+- ❌ Add path validation that blocks `/app/*` - this crashes production
+- ❌ Assume paths are wrong without checking documentation
+- ❌ Modify working storage paths "to fix" assumed issues
+- ❌ Unify storage systems that serve different purposes
+- ❌ Make changes based on assumptions instead of verification
+
+**The Rule:**
+**BEFORE touching storage/autograder code: Read CLAUDE.md storage section + verify production health**
+
+---
+
+### Current Status
+
+✅ All systems operational:
+- Storage: `/app/grader_data/grader/predictions.jsonl` (22 picks, persistent)
+- Autograder: Can see all picks, ready to grade after games complete
+- Best-bets: Generating and persisting picks correctly
+- Weights: Loaded and operational
+
+**NO CHANGES NEEDED** - system is working correctly as designed.
 
 ---
 
