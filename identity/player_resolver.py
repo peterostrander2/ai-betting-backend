@@ -40,11 +40,8 @@ from .player_index_store import (
 
 logger = logging.getLogger(__name__)
 
-# BallDontLie GOAT API Key
-BALLDONTLIE_API_KEY = os.getenv(
-    "BALLDONTLIE_API_KEY",
-    "1cbb16a0-3060-4caf-ac17-ff11352540bc"  # GOAT tier key
-)
+# BallDontLie API Key - REQUIRED (no hardcoding)
+BALLDONTLIE_API_KEY = os.getenv("BALLDONTLIE_API_KEY", os.getenv("BDL_API_KEY", ""))
 BALLDONTLIE_BASE_URL = "https://api.balldontlie.io/v1"
 
 

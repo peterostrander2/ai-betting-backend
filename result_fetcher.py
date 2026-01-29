@@ -496,11 +496,8 @@ async def fetch_player_stats_playbook(
 # BALLDONTLIE API - NBA PLAYER STATS (GOAT TIER - PRIMARY FOR NBA)
 # =============================================================================
 
-# GOAT Tier subscription key - premium access for all NBA grading
-BALLDONTLIE_API_KEY = os.getenv(
-    "BALLDONTLIE_API_KEY",
-    "1cbb16a0-3060-4caf-ac17-ff11352540bc"  # GOAT tier key
-)
+# BallDontLie API Key - REQUIRED (no hardcoding)
+BALLDONTLIE_API_KEY = os.getenv("BALLDONTLIE_API_KEY", os.getenv("BDL_API_KEY", ""))
 BALLDONTLIE_BASE_URL = "https://api.balldontlie.io/v1"
 
 

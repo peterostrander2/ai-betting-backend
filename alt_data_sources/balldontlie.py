@@ -32,15 +32,13 @@ logger = logging.getLogger("balldontlie")
 # CONFIGURATION
 # =============================================================================
 
-# GOAT Tier subscription key - premium access for all NBA data
-BDL_API_KEY = os.getenv(
-    "BALLDONTLIE_API_KEY",
-    os.getenv("BDL_API_KEY", "1cbb16a0-3060-4caf-ac17-ff11352540bc")  # GOAT tier key
-)
+# BallDontLie API Key - REQUIRED (no hardcoding)
+# Set BALLDONTLIE_API_KEY or BDL_API_KEY in environment
+BDL_API_KEY = os.getenv("BALLDONTLIE_API_KEY", os.getenv("BDL_API_KEY", ""))
 BDL_BASE_URL = "https://api.balldontlie.io/v1"
 
-# Feature flag - GOAT key is always available
-BDL_ENABLED = bool(BDL_API_KEY and BDL_API_KEY != "your_key_here")
+# Feature flag - only enabled if API key is set in environment
+BDL_ENABLED = bool(BDL_API_KEY and BDL_API_KEY not in ("", "your_key_here", "your_balldontlie_api_key_here"))
 
 # Cache for API responses (in-memory, short TTL)
 _cache: Dict[str, Any] = {}

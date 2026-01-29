@@ -1,6 +1,9 @@
 """
 WEATHER MODULE - Weather data for outdoor sports
 
+STATUS: EXPLICITLY DISABLED (WEATHER_ENABLED=false by default)
+REASON: OpenWeather API not yet integrated
+
 FEATURE FLAG: Weather analysis for outdoor games (NFL, MLB, NHL outdoor)
 
 REQUIREMENTS:
@@ -10,7 +13,11 @@ REQUIREMENTS:
 
 DATA SOURCE:
 - OpenWeather API (when implemented)
-- For now: Stub with explicit "not implemented" status
+- Currently: Stub returns FEATURE_DISABLED with neutral defaults
+
+INTEGRATION:
+- Set WEATHER_ENABLED=true and OPENWEATHER_API_KEY to enable
+- Until then, returns {"available": false, "reason": "FEATURE_DISABLED"}
 """
 
 from typing import Dict, Any, Optional

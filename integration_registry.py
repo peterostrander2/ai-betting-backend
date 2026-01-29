@@ -193,13 +193,13 @@ register_integration(
     notes="Provides research engine signals (sharp money, public splits)."
 )
 
-# --- NBA SPECIFIC (REQUIRED - GOAT TIER) ---
+# --- NBA SPECIFIC (REQUIRED) ---
 
 register_integration(
     name="balldontlie",
-    description="BallDontLie GOAT API - NBA stats, box scores, player lookup, grading",
+    description="BallDontLie API - NBA stats, box scores, player lookup, grading",
     env_vars=["BDL_API_KEY", "BALLDONTLIE_API_KEY"],
-    required=True,  # REQUIRED - Key is hardcoded, essential for NBA grading
+    required=True,  # REQUIRED - Essential for NBA prop grading. Must set env var.
     modules=["alt_data_sources/balldontlie.py", "result_fetcher.py", "identity/player_resolver.py"],
     endpoints=[
         "/live/best-bets/NBA",
@@ -208,21 +208,21 @@ register_integration(
     ],
     jobs=["daily_grading_6am", "nba_prop_grading"],
     validate_fn="validate_balldontlie",
-    notes="GOAT tier key: 1cbb16a0-3060-4caf-ac17-ff11352540bc. REQUIRED for NBA prop grading."
+    notes="REQUIRED: Set BALLDONTLIE_API_KEY or BDL_API_KEY in environment. No hardcoded fallback."
 )
 
-# --- ESOTERIC ENGINE DATA (REQUIRED for 20% scoring weight) ---
+# --- ESOTERIC ENGINE DATA (OPTIONAL - Feature Flagged) ---
 
 register_integration(
     name="weather_api",
     description="OpenWeather API - Weather data for outdoor sports (NFL, MLB)",
-    env_vars=["WEATHER_API_KEY", "EXPO_PUBLIC_WEATHER_API_KEY", "OPENWEATHER_API_KEY"],
-    required=True,  # REQUIRED - Feeds esoteric engine for outdoor sports
-    modules=["alt_data_sources/weather.py", "live_data_router.py"],
+    env_vars=["WEATHER_API_KEY", "OPENWEATHER_API_KEY"],
+    required=False,  # OPTIONAL - Explicitly disabled by default (WEATHER_ENABLED=false)
+    modules=["alt_data_sources/weather.py"],
     endpoints=["/live/best-bets/NFL", "/live/best-bets/MLB"],
-    jobs=["scheduled_weather_update"],
+    jobs=[],
     validate_fn="validate_weather_api",
-    notes="Feature flagged (WEATHER_ENABLED). Critical for NFL/MLB outdoor game analysis."
+    notes="EXPLICITLY DISABLED: WEATHER_ENABLED=false by default. Stub returns deterministic 'FEATURE_DISABLED' reason. Enable when OpenWeather API integrated."
 )
 
 register_integration(

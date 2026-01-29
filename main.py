@@ -555,7 +555,9 @@ async def debug_e2e_proof():
         now_et = datetime.now(ET)
         yesterday = (now_et - timedelta(days=1)).strftime("%Y-%m-%d")
 
-        BDL_KEY = _os.getenv("BALLDONTLIE_API_KEY", "1cbb16a0-3060-4caf-ac17-ff11352540bc")
+        BDL_KEY = _os.getenv("BALLDONTLIE_API_KEY", _os.getenv("BDL_API_KEY", ""))
+        if not BDL_KEY:
+            return {"error": "BALLDONTLIE_API_KEY or BDL_API_KEY not set in environment"}
         headers = {"Authorization": BDL_KEY}
 
         async with httpx.AsyncClient(timeout=30) as client:

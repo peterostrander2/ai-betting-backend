@@ -34,12 +34,13 @@ except ImportError:
     REGISTRY_AVAILABLE = False
 
 
-# The 14 required integrations (from AUDIT_MAP.md)
+# The 14 integrations registered (from AUDIT_MAP.md)
+# Note: weather_api is optional (WEATHER_ENABLED=false by default)
 REQUIRED_INTEGRATIONS = [
     "odds_api",            # Live odds, props, lines
     "playbook_api",        # Sharp money, splits, injuries
-    "balldontlie",         # NBA grading (GOAT tier)
-    "weather_api",         # Outdoor sports
+    "balldontlie",         # NBA grading (requires env var)
+    "weather_api",         # Outdoor sports (OPTIONAL - disabled by default)
     "astronomy_api",       # Moon phases for esoteric
     "noaa_space_weather",  # Solar activity for esoteric
     "fred_api",            # Economic sentiment
@@ -157,16 +158,22 @@ class TestRequiredVsOptional:
             assert required is True, \
                 f"{integration} should be marked as required"
 
-    def test_esoteric_apis_are_optional(self):
-        """Esoteric/enhancement APIs can be optional"""
-        esoteric_optional = ["weather_api", "astronomy_api", "noaa_space_weather"]
+    def test_esoteric_apis_are_registered(self):
+        """Esoteric/enhancement APIs should be registered"""
+        esoteric_apis = ["weather_api", "astronomy_api", "noaa_space_weather"]
 
-        for integration in esoteric_optional:
+        for integration in esoteric_apis:
             config = get_integration(integration)
             assert config is not None, f"{integration} not found"
-            # These can be either required or optional based on implementation
             assert hasattr(config, "required"), \
                 f"{integration} should have required field"
+
+    def test_weather_api_is_optional(self):
+        """Weather API should be marked as optional (explicitly disabled by default)"""
+        config = get_integration("weather_api")
+        assert config is not None, "weather_api integration not found"
+        required = config.required if hasattr(config, 'required') else None
+        assert required is False, "weather_api should be marked as optional (required=False)"
 
     def test_get_required_integrations_function(self):
         """get_required_integrations should return list"""
@@ -253,13 +260,13 @@ class TestHealthCheckFunctions:
 class TestSpecificIntegrations:
     """Test specific integration configurations"""
 
-    def test_balldontlie_has_goat_tier_note(self):
-        """BallDontLie should note GOAT tier key is hardcoded"""
+    def test_balldontlie_is_for_nba(self):
+        """BallDontLie should be for NBA stats/grading"""
         config = get_integration("balldontlie")
         assert config is not None, "balldontlie integration not found"
         desc = config.description.lower() if hasattr(config, 'description') else ""
         # Should mention it's for NBA or grading
-        assert "nba" in desc or "goat" in desc or "grading" in desc or "player" in desc
+        assert "nba" in desc or "grading" in desc or "player" in desc or "stats" in desc
 
     def test_railway_storage_is_for_persistence(self):
         """Railway storage should be for picks persistence"""

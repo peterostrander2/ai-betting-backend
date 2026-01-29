@@ -1595,14 +1595,13 @@ curl "https://web-production-7b2a.up.railway.app/live/debug/integrations" \
   -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
 ```
 
-### BallDontLie GOAT Key
+### BallDontLie API Key
 
-The BallDontLie integration has a **hardcoded GOAT tier key** in `alt_data_sources/balldontlie.py`:
-```python
-BDL_API_KEY = "1cbb16a0-3060-4caf-ac17-ff11352540bc"
-```
+The BallDontLie integration **requires** the API key to be set in environment variables:
+- `BALLDONTLIE_API_KEY` (primary)
+- `BDL_API_KEY` (fallback)
 
-This key is always available even if the env var isn't set. Used for NBA prop grading.
+**No hardcoded fallback.** The API will not function without a valid key in the environment. Used for NBA prop grading.
 
 ---
 
@@ -2672,14 +2671,14 @@ Created new `identity/` module with 3 core files:
 4. BallDontLie API lookup (NBA only)
 5. Fallback name-based ID
 
-**2. BallDontLie GOAT Tier Integration**
+**2. BallDontLie API Integration**
 
-Updated `alt_data_sources/balldontlie.py` with GOAT subscription key:
+Updated `alt_data_sources/balldontlie.py` to require API key from environment:
 ```python
-BALLDONTLIE_API_KEY = "1cbb16a0-3060-4caf-ac17-ff11352540bc"
+BALLDONTLIE_API_KEY = os.getenv("BALLDONTLIE_API_KEY", os.getenv("BDL_API_KEY", ""))
 ```
 
-Added new GOAT-tier functions:
+Available functions:
 - `search_player()` - Player lookup by name
 - `get_player_season_averages()` - Season stats
 - `get_player_game_stats()` - Box score for specific game
