@@ -3776,9 +3776,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _grader_store_persisted = 0
     _grader_store_duplicates = 0
     try:
-        from core.time_et import et_day_bounds
-
-        # Get today's ET date for persistence
+        # Use top-level import (already imported at line 99)
         _, _, date_et_for_store = et_day_bounds(date_str)
 
         # Persist all picks (props + games)
@@ -5026,9 +5024,7 @@ async def grader_status():
     # Grader Store Stats (SINGLE SOURCE OF TRUTH for persistence)
     try:
         import grader_store
-        from core.time_et import et_day_bounds
-
-        # Get today's date in ET
+        # Use top-level import (already imported at line 99)
         _, _, today = et_day_bounds()
 
         # Load predictions from grader_store
