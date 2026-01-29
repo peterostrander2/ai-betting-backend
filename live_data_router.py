@@ -85,7 +85,20 @@ except ImportError:
     DEFAULT_JARVIS_RS = 5.0
     logger.warning("tiering module not available - using legacy tier logic")
 
-# Import Time Filters - TODAY-only slate gating (v11.08)
+# Import Time ET - SINGLE SOURCE OF TRUTH for ET timezone
+try:
+    from core.time_et import (
+        now_et,
+        et_day_bounds,
+        is_in_et_day,
+        filter_events_et,
+    )
+    TIME_ET_AVAILABLE = True
+except ImportError:
+    TIME_ET_AVAILABLE = False
+    logger.warning("core.time_et module not available - ET filtering disabled")
+
+# Import legacy time_filters for compatibility (will be deprecated)
 try:
     from time_filters import (
         is_game_today,
@@ -98,15 +111,12 @@ try:
         get_today_date_str,
         get_today_range_et,
         log_slate_summary,
-        is_game_started,
         get_game_status,
-        filter_events_today_et,
-        et_day_bounds
     )
     TIME_FILTERS_AVAILABLE = True
 except ImportError:
     TIME_FILTERS_AVAILABLE = False
-    logger.warning("time_filters module not available - TODAY-only gating disabled")
+    logger.warning("time_filters module not available")
 
 # Import Jason Sim Confluence - Win probability simulation (v11.08)
 try:
@@ -2124,16 +2134,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
     _record("init_engines", _s)
 
-    # v16.0: Build ET window debug info (v15.1: uses ISO date from et_day_bounds)
+    # v16.0: Build ET window debug info (uses single source of truth: core.time_et)
     _date_window_et_debug = {}
-    if TIME_FILTERS_AVAILABLE:
+    _filter_date = None
+    if TIME_ET_AVAILABLE:
         try:
             _et_start, _et_end, _iso_date = et_day_bounds(date_str)
+            _filter_date = _iso_date  # Single source of truth for filter date
             _date_window_et_debug = {
                 "date_str": date_str or "today",
                 "start_et": _et_start.strftime("%H:%M:%S"),
                 "end_et": _et_end.strftime("%H:%M:%S"),
-                "date_et": _iso_date,  # Use ISO date from bounds (YYYY-MM-DD)
+                "filter_date": _filter_date,  # This MUST match /debug/time.et_date
             }
         except Exception:
             pass
@@ -3004,8 +3016,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     raw_prop_games = props_data.get("data", []) if isinstance(props_data, dict) else []
     _dropped_out_of_window_props = 0
     _dropped_missing_time_props = 0
-    if TIME_FILTERS_AVAILABLE and raw_prop_games:
-        prop_games, _dropped_props_window, _dropped_props_missing = filter_events_today_et(raw_prop_games, date_str)
+    if TIME_ET_AVAILABLE and raw_prop_games:
+        prop_games, _dropped_props_window, _dropped_props_missing = filter_events_et(raw_prop_games, date_str)
         _dropped_out_of_window_props = len(_dropped_props_window)
         _dropped_missing_time_props = len(_dropped_props_missing)
         logger.info("PROPS TODAY GATE: kept=%d, dropped_window=%d, dropped_missing=%d",
@@ -3028,8 +3040,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     if game_odds_resp and hasattr(game_odds_resp, 'status_code') and game_odds_resp.status_code == 200:
         raw_games = game_odds_resp.json()
         _date_window_et_debug["events_before_games"] = len(raw_games)
-        if TIME_FILTERS_AVAILABLE:
-            raw_games, _dropped_games_window, _dropped_games_missing = filter_events_today_et(raw_games, date_str)
+        if TIME_ET_AVAILABLE:
+            raw_games, _dropped_games_window, _dropped_games_missing = filter_events_et(raw_games, date_str)
             _dropped_out_of_window_games = len(_dropped_games_window)
             _dropped_missing_time_games = len(_dropped_games_missing)
             ghost_game_count = _dropped_out_of_window_games + _dropped_missing_time_games
@@ -5433,6 +5445,56 @@ async def debug_system_health(api_key: str = Depends(verify_api_key)):
         "checks": checks,
         "timestamp": datetime.now().isoformat()
     }
+
+
+@router.get("/debug/time")
+async def debug_time(api_key: str = Depends(verify_api_key)):
+    """
+    ET timezone debug endpoint (PROTECTED).
+
+    Returns current time info from single source of truth (core.time_et).
+
+    Returns:
+        - now_utc_iso: Current UTC time
+        - now_et_iso: Current ET time
+        - et_date: Today's date in ET (YYYY-MM-DD)
+        - et_day_start_iso: Start of ET day (00:00:00)
+        - et_day_end_iso: End of ET day (00:00:00 next day, exclusive)
+        - build_sha: Git commit SHA
+        - deploy_version: Deployment version
+
+    Requires:
+        X-API-Key header
+    """
+    try:
+        from core.time_et import now_et, et_day_bounds
+        from datetime import datetime, timezone
+
+        # Current times
+        now_utc = datetime.now(timezone.utc)
+        now_et_dt = now_et()
+
+        # ET day bounds
+        start_et, end_et, et_date = et_day_bounds()
+
+        # Build info
+        build_sha = BUILD_SHA if 'BUILD_SHA' in globals() else "unknown"
+        deploy_version = DEPLOY_VERSION if 'DEPLOY_VERSION' in globals() else "unknown"
+
+        return {
+            "now_utc_iso": now_utc.isoformat(),
+            "now_et_iso": now_et_dt.isoformat(),
+            "et_date": et_date,
+            "et_day_start_iso": start_et.isoformat(),
+            "et_day_end_iso": end_et.isoformat(),
+            "build_sha": build_sha,
+            "deploy_version": deploy_version,
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @router.get("/grader/weights/{sport}")

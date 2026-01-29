@@ -40,10 +40,17 @@ from .invariants import (
     validate_score_threshold,
 )
 
+# Import time_et (SINGLE SOURCE OF TRUTH for ET timezone)
+from .time_et import (
+    now_et,
+    et_day_bounds,
+    is_in_et_day,
+    filter_events_et,
+)
+
 # Import runtime modules (optional - graceful fallback if not available)
 try:
     from . import scoring_pipeline
-    from . import time_window_et
     from . import persistence
     RUNTIME_MODULES_AVAILABLE = True
 except ImportError:
@@ -67,8 +74,13 @@ __all__ = [
     'validate_pick_storage',
     'validate_score_threshold',
 
+    # Time handling (SINGLE SOURCE OF TRUTH)
+    'now_et',
+    'et_day_bounds',
+    'is_in_et_day',
+    'filter_events_et',
+
     # Runtime modules
     'scoring_pipeline',
-    'time_window_et',
     'persistence',
 ]
