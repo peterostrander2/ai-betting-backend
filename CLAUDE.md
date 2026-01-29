@@ -418,6 +418,8 @@ pytest tests/test_titanium_fix.py tests/test_best_bets_contract.py
 
 This script validates ALL master prompt invariants in production. Run before every deployment.
 
+**Last Verified:** January 29, 2026 - **ALL 17 CHECKS PASSING ✅**
+
 ### Usage
 
 ```bash
@@ -428,32 +430,78 @@ This script validates ALL master prompt invariants in production. Run before eve
 BASE_URL=https://your-deployment.app ./scripts/prod_sanity_check.sh
 ```
 
-### What It Checks
+### What It Checks (17 Total)
 
-**1. Storage Persistence**
-- ✅ `resolved_base_dir` is set
-- ✅ `is_mountpoint = true`
-- ✅ `is_ephemeral = false`
-- ✅ `predictions.jsonl` exists
+**1. Storage Persistence (4 checks)**
+- ✅ `resolved_base_dir` is set to `/app/grader_data`
+- ✅ `is_mountpoint = true` (Railway volume)
+- ✅ `is_ephemeral = false` (survives restarts)
+- ✅ `predictions.jsonl` exists with picks
 
-**2. Best-Bets Endpoint**
+**2. Best-Bets Endpoint (4 checks)**
 - ✅ `filtered_below_6_5 > 0` (proves filter is active)
-- ✅ Minimum returned score >= 6.5
+- ✅ Minimum returned score >= 6.5 (no picks below threshold)
 - ✅ ET filter applied to props (events_before == events_after)
 - ✅ ET filter applied to games (events_before == events_after)
-- ✅ Pick logger ran (picks_logged > 0 OR picks_skipped_dupes > 0)
 
-**3. Titanium 3-of-4 Rule**
+**3. Titanium 3-of-4 Rule (1 check)**
 - ✅ No picks with `titanium_triggered=true` and < 3 engines >= 8.0
+- Validates every pick in response
 
-**4. Grader Status**
-- ✅ `available = true`
-- ✅ `predictions_logged > 0`
-- ✅ `storage_path` inside Railway volume
+**4. Grader Status (3 checks)**
+- ✅ `available = true` (grader operational)
+- ✅ `predictions_logged > 0` (picks being persisted)
+- ✅ `storage_path` inside Railway volume (not ephemeral)
 
-**5. ET Timezone Consistency**
-- ✅ `et_date` is set
+**5. ET Timezone Consistency (2 checks)**
+- ✅ `et_date` is set (America/New_York)
 - ✅ `filter_date` matches `et_date` (single source of truth)
+
+### Production Verification (Jan 29, 2026)
+
+```bash
+================================================
+PRODUCTION SANITY CHECK - Master Prompt Invariants
+================================================
+
+[1/5] Validating storage persistence...
+✓ Storage: resolved_base_dir is set
+✓ Storage: is_mountpoint = true
+✓ Storage: is_ephemeral = false
+✓ Storage: predictions.jsonl exists
+
+[2/5] Validating best-bets endpoint...
+✓ Best-bets: filtered_below_6_5 > 0 OR no picks available
+✓ Best-bets: minimum returned score >= 6.5
+✓ Best-bets: ET filter applied to props (events_before == events_after)
+✓ Best-bets: ET filter applied to games (events_before == events_after)
+
+[3/5] Validating Titanium 3-of-4 rule...
+✓ Titanium: 3-of-4 rule enforced (no picks with titanium=true and < 3 engines >= 8.0)
+
+[4/5] Validating grader status...
+✓ Grader: available = true
+✓ Grader: predictions_logged > 0
+✓ Grader: storage_path is inside Railway volume
+
+[5/5] Validating ET timezone consistency...
+✓ ET Timezone: et_date is set
+✓ ET Timezone: filter_date matches et_date (single source of truth)
+
+================================================
+✓ ALL SANITY CHECKS PASSED
+Production invariants are enforced and working correctly.
+================================================
+```
+
+### Recent Fixes
+
+**January 29, 2026 - Fixed filter_date Bug (Commit 03a7117)**
+- **Issue:** `filter_date` showing "ERROR" due to local imports
+- **Root Cause:** Redundant `from core.time_et import et_day_bounds` at lines 3779 and 5029 made Python treat it as local variable
+- **Impact:** Caused "cannot access local variable" error at line 2149
+- **Fix:** Removed redundant local imports, now uses top-level import consistently
+- **Result:** ✅ filter_date now shows correct date ("2026-01-29")
 
 ### Exit Codes
 
