@@ -104,10 +104,18 @@ echo
 
 # Check 7: Autograder dry-run
 echo "7. AUTOGRADER DRY-RUN (pre-mode)"
-DRYRUN=$(curl -s -X POST "$BASE_URL/live/grader/dry-run" \
+# Write payload to temp file (avoid curl quoting issues)
+cat > /tmp/dry_run.json <<EOF
+{"date":"$ET_DATE","mode":"pre"}
+EOF
+DRYRUN=$(curl -sS -X POST "$BASE_URL/live/grader/dry-run" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"date":"'$ET_DATE'","mode":"pre"}')
+  --data-binary @/tmp/dry_run.json)
+if [ $? -ne 0 ]; then
+    echo "   ✗ FAIL: Dry-run endpoint failed"
+    exit 1
+fi
 TOTAL=$(echo "$DRYRUN" | python3 -c "import json, sys; print(json.load(sys.stdin)['total'])")
 FAILED=$(echo "$DRYRUN" | python3 -c "import json, sys; print(json.load(sys.stdin)['failed'])")
 PRE_PASS=$(echo "$DRYRUN" | python3 -c "import json, sys; print(json.load(sys.stdin)['pre_mode_pass'])")
