@@ -3821,8 +3821,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     deploy_version = "15.1"
 
     # v14.9: Date and timestamp in ET
-    # Use the ACTUAL date that ET filtering is using (from et_day_bounds)
-    date_et = _date_window_et_debug.get("date_et", get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d"))
+    date_et = get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d")
     run_timestamp_et = datetime.now().isoformat()
 
     result = {
