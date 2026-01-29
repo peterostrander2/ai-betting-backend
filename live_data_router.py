@@ -2124,16 +2124,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     esoteric_weights = learning.get_weights()["weights"] if learning else {}
     _record("init_engines", _s)
 
-    # v16.0: Build ET window debug info
+    # v16.0: Build ET window debug info (v15.1: uses ISO date from et_day_bounds)
     _date_window_et_debug = {}
     if TIME_FILTERS_AVAILABLE:
         try:
-            _et_start, _et_end = et_day_bounds(date_str)
+            _et_start, _et_end, _iso_date = et_day_bounds(date_str)
             _date_window_et_debug = {
                 "date_str": date_str or "today",
                 "start_et": _et_start.strftime("%H:%M:%S"),
                 "end_et": _et_end.strftime("%H:%M:%S"),
-                "date_et": _et_start.strftime("%Y-%m-%d"),
+                "date_et": _iso_date,  # Use ISO date from bounds (YYYY-MM-DD)
             }
         except Exception:
             pass

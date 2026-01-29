@@ -49,30 +49,32 @@ class TestETDayBounds:
     """Test ET day boundary calculation"""
 
     def test_et_day_bounds_returns_tuple(self):
-        """et_day_bounds() should return (start, end) tuple"""
+        """et_day_bounds() should return (start, end, iso_date) tuple"""
         bounds = et_day_bounds("2026-01-28")
         assert isinstance(bounds, tuple)
-        assert len(bounds) == 2
+        assert len(bounds) == 3
 
     def test_et_day_bounds_correct_format(self):
-        """Bounds should be datetime objects or ISO strings"""
+        """Bounds should be datetime objects and ISO date string"""
         bounds = et_day_bounds("2026-01-28")
-        start, end = bounds
+        start, end, iso_date = bounds
 
-        # Should be datetime or string
-        assert isinstance(start, (datetime, str))
-        assert isinstance(end, (datetime, str))
+        # Should be datetime objects
+        assert isinstance(start, datetime)
+        assert isinstance(end, datetime)
+        # ISO date should be string
+        assert isinstance(iso_date, str)
+        assert iso_date == "2026-01-28"
 
     def test_et_day_bounds_start_before_end(self):
         """Start boundary should be before end boundary"""
         bounds = et_day_bounds("2026-01-28")
-        start, end = bounds
+        start, end, iso_date = bounds
 
-        # Convert to comparable format if needed
-        if isinstance(start, str) and isinstance(end, str):
-            assert start < end
-        elif isinstance(start, datetime) and isinstance(end, datetime):
-            assert start < end
+        # Start should be before end
+        assert isinstance(start, datetime)
+        assert isinstance(end, datetime)
+        assert start < end
 
 
 @pytest.mark.skipif(not TIME_FILTERS_AVAILABLE, reason="time_filters not available")

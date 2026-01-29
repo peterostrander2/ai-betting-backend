@@ -18,20 +18,24 @@ Usage:
     )
 """
 
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta, time as dt_time, timezone
 from typing import Dict, List, Any, Optional, Tuple, Set
 import logging
 
-# Try to import pytz for timezone handling
+# Use zoneinfo (Python 3.9+) - modern timezone handling
 try:
-    import pytz
-    PYTZ_AVAILABLE = True
-    ET = pytz.timezone("America/New_York")
-    UTC = pytz.UTC
+    from zoneinfo import ZoneInfo
+    ET = ZoneInfo("America/New_York")
+    ZONEINFO_AVAILABLE = True
 except ImportError:
-    PYTZ_AVAILABLE = False
-    ET = None
-    UTC = None
+    # Fallback to pytz for older Python versions
+    try:
+        import pytz
+        ET = pytz.timezone("America/New_York")
+        ZONEINFO_AVAILABLE = False
+    except ImportError:
+        ET = None
+        ZONEINFO_AVAILABLE = False
 
 logger = logging.getLogger("time_filters")
 
@@ -44,13 +48,16 @@ def get_now_et() -> datetime:
     """
     Get current datetime in America/New_York timezone.
 
+    Always starts from UTC then converts -> avoids host-local ambiguity.
+
     Returns:
-        datetime in ET timezone (or naive datetime if pytz unavailable)
+        datetime in ET timezone (or naive datetime if neither library available)
     """
-    if PYTZ_AVAILABLE and ET:
-        return datetime.now(ET)
+    if ET:
+        # Modern approach: UTC first, then convert
+        return datetime.now(timezone.utc).astimezone(ET)
     else:
-        # Fallback: assume server is in ET or use UTC-5
+        # Fallback: naive datetime
         return datetime.now()
 
 
@@ -72,10 +79,12 @@ def get_today_range_et(date_str: Optional[str] = None) -> Tuple[datetime, dateti
         now_et = get_now_et()
         today = now_et.date()
 
-    if PYTZ_AVAILABLE and ET:
-        start = ET.localize(datetime.combine(today, dt_time(0, 0, 0)))  # 00:00:00
-        end = ET.localize(datetime.combine(today, dt_time(23, 59, 59)))  # 11:59 PM
+    if ET:
+        # Modern approach: combine date with time, set timezone
+        start = datetime.combine(today, dt_time(0, 0, 0), tzinfo=ET)
+        end = datetime.combine(today, dt_time(23, 59, 59), tzinfo=ET)
     else:
+        # Fallback: naive datetimes
         start = datetime.combine(today, dt_time(0, 0, 0))
         end = datetime.combine(today, dt_time(23, 59, 59))
 
@@ -105,12 +114,12 @@ def parse_game_time(time_str: str) -> Optional[datetime]:
         # Parse the datetime string
         dt = datetime.fromisoformat(time_str)
 
-        # If naive datetime, assume UTC and localize
-        if dt.tzinfo is None and PYTZ_AVAILABLE and UTC:
-            dt = UTC.localize(dt)
+        # If naive datetime, assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
 
-        # Convert to ET
-        if PYTZ_AVAILABLE and ET and dt.tzinfo:
+        # Convert to ET if timezone support available
+        if ET:
             dt = dt.astimezone(ET)
 
         return dt
@@ -141,9 +150,9 @@ def is_game_today(commence_time: str) -> bool:
     start_et, end_et = get_today_range_et()
 
     # Make comparison timezone-aware if needed
-    if PYTZ_AVAILABLE and ET:
+    if ET:
         if game_dt.tzinfo is None:
-            game_dt = ET.localize(game_dt)
+            game_dt = game_dt.replace(tzinfo=ET)
         game_dt = game_dt.astimezone(ET)
 
     is_today = start_et <= game_dt <= end_et
@@ -172,9 +181,9 @@ def is_game_started(commence_time: str) -> Tuple[bool, Optional[str]]:
     now_et = get_now_et()
 
     # Make comparison timezone-aware if needed
-    if PYTZ_AVAILABLE and ET:
+    if ET:
         if game_dt.tzinfo is None:
-            game_dt = ET.localize(game_dt)
+            game_dt = game_dt.replace(tzinfo=ET)
         game_dt = game_dt.astimezone(ET)
 
     is_started = now_et >= game_dt
@@ -200,9 +209,9 @@ def is_game_tomorrow(commence_time: str) -> bool:
     tomorrow = now_et.date() + timedelta(days=1)
 
     # Get game date in ET
-    if PYTZ_AVAILABLE and ET:
+    if ET:
         if game_dt.tzinfo is None:
-            game_dt = ET.localize(game_dt)
+            game_dt = game_dt.replace(tzinfo=ET)
         game_dt = game_dt.astimezone(ET)
 
     return game_dt.date() == tomorrow
@@ -368,9 +377,9 @@ def get_game_start_time_et(commence_time: str) -> str:
     if not game_dt:
         return "TBD"
 
-    if PYTZ_AVAILABLE and ET:
+    if ET:
         if game_dt.tzinfo is None:
-            game_dt = ET.localize(game_dt)
+            game_dt = game_dt.replace(tzinfo=ET)
         game_dt = game_dt.astimezone(ET)
 
     return game_dt.strftime("%-I:%M %p ET")
@@ -451,9 +460,9 @@ def is_game_started(commence_time: str) -> bool:
     now_et = get_now_et()
 
     # Make comparison timezone-aware if needed
-    if PYTZ_AVAILABLE and ET:
+    if ET:
         if game_dt.tzinfo is None:
-            game_dt = ET.localize(game_dt)
+            game_dt = game_dt.replace(tzinfo=ET)
         game_dt = game_dt.astimezone(ET)
 
     return now_et > game_dt
@@ -482,7 +491,7 @@ def get_game_status(commence_time: str) -> str:
 # ET DAY BOUNDS — date_str-aware filtering (v15.1)
 # =============================================================================
 
-def et_day_bounds(date_str: Optional[str] = None) -> Tuple[datetime, datetime]:
+def et_day_bounds(date_str: Optional[str] = None) -> Tuple[datetime, datetime, str]:
     """
     Get ET day bounds. If date_str None, use today.
 
@@ -490,21 +499,27 @@ def et_day_bounds(date_str: Optional[str] = None) -> Tuple[datetime, datetime]:
         date_str: Optional date string (YYYY-MM-DD)
 
     Returns:
-        Tuple of (start, end) datetimes in ET
+        Tuple of (start, end, iso_date_str)
+        - start: datetime at 00:00:00 ET
+        - end: datetime at 00:00:00 ET next day (exclusive upper bound)
+        - iso_date_str: YYYY-MM-DD format
     """
+    # Get the target date
     if date_str:
         day = datetime.strptime(date_str, "%Y-%m-%d").date()
     else:
         day = get_now_et().date()
 
-    if PYTZ_AVAILABLE and ET:
-        start = ET.localize(datetime.combine(day, dt_time(0, 0, 0)))
-        end = ET.localize(datetime.combine(day, dt_time(23, 59, 59)))
+    if ET:
+        # Clean approach: combine date with midnight, set timezone
+        start = datetime.combine(day, dt_time(0, 0, 0), tzinfo=ET)
+        end = start + timedelta(days=1)  # Next day at 00:00:00 (exclusive)
     else:
+        # Fallback: naive datetimes
         start = datetime.combine(day, dt_time(0, 0, 0))
-        end = datetime.combine(day, dt_time(23, 59, 59))
+        end = start + timedelta(days=1)
 
-    return start, end
+    return start, end, day.isoformat()
 
 
 def is_in_et_day(commence_time: str, date_str: Optional[str] = None) -> bool:
@@ -521,19 +536,20 @@ def is_in_et_day(commence_time: str, date_str: Optional[str] = None) -> bool:
     game_dt = parse_game_time(commence_time)
     if not game_dt:
         return False
-    start, end = et_day_bounds(date_str)
-    if PYTZ_AVAILABLE and ET:
+    start, end, _ = et_day_bounds(date_str)  # Ignore iso_date_str
+
+    if ET:
+        # Ensure game_dt is timezone-aware and in ET
         if game_dt.tzinfo is None:
-            game_dt = ET.localize(game_dt)
+            # Naive datetime - assume UTC
+            game_dt = game_dt.replace(tzinfo=timezone.utc)
         game_dt = game_dt.astimezone(ET)
     else:
-        # Without pytz, bounds are naive — strip tzinfo for comparison
+        # Fallback: strip timezone for naive comparison
         if game_dt.tzinfo is not None:
-            # Approximate ET as UTC-5 offset
-            from datetime import timezone, timedelta as _td
-            et_offset = timezone(_td(hours=-5))
-            game_dt = game_dt.astimezone(et_offset).replace(tzinfo=None)
-    return start <= game_dt <= end
+            game_dt = game_dt.replace(tzinfo=None)
+
+    return start <= game_dt < end  # Use < end (exclusive upper bound)
 
 
 def filter_events_today_et(

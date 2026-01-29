@@ -121,7 +121,7 @@ def is_in_today_et(
 
 def get_today_et_bounds(
     date_str: Optional[str] = None
-) -> Tuple[datetime, datetime]:
+) -> Tuple[datetime, datetime, str]:
     """
     Get ET day bounds for a given date.
 
@@ -129,12 +129,16 @@ def get_today_et_bounds(
         date_str: Optional date string (YYYY-MM-DD). If None, uses today.
 
     Returns:
-        Tuple of (start_dt, end_dt) as datetime objects in ET
+        Tuple of (start_dt, end_dt, iso_date_str)
+        - start_dt: datetime at 00:00:00 ET
+        - end_dt: datetime at 00:00:00 ET next day (exclusive upper bound)
+        - iso_date_str: YYYY-MM-DD format
 
     Example:
-        start, end = get_today_et_bounds()
+        start, end, iso_date = get_today_et_bounds()
         # start = 2026-01-28 00:00:00 ET
-        # end = 2026-01-28 23:59:59 ET
+        # end = 2026-01-29 00:00:00 ET
+        # iso_date = "2026-01-28"
     """
     if TIME_FILTERS_AVAILABLE:
         return et_day_bounds(date_str)
@@ -214,15 +218,15 @@ def _fallback_filter_today_et(
     return kept, dropped
 
 
-def _fallback_et_bounds(date_str: Optional[str] = None) -> Tuple[datetime, datetime]:
+def _fallback_et_bounds(date_str: Optional[str] = None) -> Tuple[datetime, datetime, str]:
     """Fallback ET bounds calculation."""
     if not PYTZ_AVAILABLE:
         # Return naive UTC bounds
         now = datetime.utcnow()
         target_date = datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else now.date()
         start = datetime.combine(target_date, datetime.min.time())
-        end = datetime.combine(target_date, datetime.max.time())
-        return start, end
+        end = start + timedelta(days=1)  # Next day at 00:00:00 (exclusive)
+        return start, end, target_date.isoformat()
 
     et_tz = pytz.timezone(ET_TIMEZONE)
     now_et = datetime.now(et_tz)
@@ -235,10 +239,10 @@ def _fallback_et_bounds(date_str: Optional[str] = None) -> Tuple[datetime, datet
     # Start: 00:00:00 ET
     start = et_tz.localize(datetime.combine(target_date, datetime.min.time()))
 
-    # End: 23:59:59 ET
-    end = et_tz.localize(datetime.combine(target_date, datetime.max.time()))
+    # End: Next day at 00:00:00 ET (exclusive upper bound)
+    end = start + timedelta(days=1)
 
-    return start, end
+    return start, end, target_date.isoformat()
 
 
 # =============================================================================
