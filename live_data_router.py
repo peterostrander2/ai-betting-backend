@@ -5981,9 +5981,22 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
 
     Returns structured validation report with PASS/FAIL/PENDING status.
     Per-pick reasons: PENDING_GAME_NOT_FINAL, UNRESOLVED_EVENT, UNRESOLVED_PLAYER, etc.
+
+    ALWAYS returns valid JSON (never raises HTTPException to client).
     """
     if not GRADER_STORE_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Grader store not available")
+        return {
+            "ok": False,
+            "error": "Grader store not available",
+            "date": request_data.get("date", "unknown"),
+            "mode": request_data.get("mode", "pre"),
+            "total": 0,
+            "graded": 0,
+            "pending": 0,
+            "failed": 0,
+            "unresolved": 0,
+            "overall_status": "ERROR"
+        }
 
     try:
         # Parse request - get date from request or default to today ET
@@ -6167,26 +6180,32 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
             results["unresolved"]
         )
 
-        # Return HTTP 422 if fail_on_unresolved and there are failures/unresolved
+        # Add fail flag if fail_on_unresolved and there are failures/unresolved
         if fail_on_unresolved and (results["failed"] > 0 or results["unresolved"] > 0):
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "message": f"{results['failed']} failed, {results['unresolved']} unresolved",
-                    "overall_status": "FAIL",
-                    "failed_picks": failed_picks,
-                    "unresolved_picks": unresolved_picks,
-                    "summary": results["summary"]
-                }
-            )
+            results["ok"] = False
+            results["message"] = f"{results['failed']} failed, {results['unresolved']} unresolved"
+        else:
+            results["ok"] = True
 
         return results
 
-    except HTTPException:
-        raise
     except Exception as e:
         logger.exception("Dry-run failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        # ALWAYS return valid JSON, never raise HTTPException
+        import traceback
+        return {
+            "ok": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "date": request_data.get("date", "unknown"),
+            "mode": request_data.get("mode", "pre"),
+            "total": 0,
+            "graded": 0,
+            "pending": 0,
+            "failed": 0,
+            "unresolved": 0,
+            "overall_status": "ERROR"
+        }
 
 
 # ============================================================================
