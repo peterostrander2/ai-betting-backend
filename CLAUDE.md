@@ -43,57 +43,130 @@
 3. **Railway auto-deploys** - Takes 2-3 minutes, happens automatically
 4. **DO NOT ask user to check** - Railway handles it, user knows the workflow
 
-### Storage Configuration (Railway Volume) - VERIFIED JANUARY 29, 2026
+### Storage Configuration (Railway Volume) - UNIFIED JANUARY 29, 2026
 
-**CRITICAL: DO NOT MODIFY THESE PATHS OR ADD PATH BLOCKERS**
+**🚨 CRITICAL: READ THIS BEFORE TOUCHING STORAGE/AUTOGRADER CODE 🚨**
 
-The system uses **TWO storage locations** - both are correct and intentional:
+**ALL STORAGE IS NOW ON THE RAILWAY PERSISTENT VOLUME AT `/app/grader_data`**
 
-#### 1. Picks Storage (grader_store.py via storage_paths.py)
-- **Path**: `/app/grader_data/grader/predictions.jsonl`
-- **Used by**: Best-bets endpoint, Autograder (read/write)
+#### Storage Architecture (UNIFIED)
+
+```
+/app/grader_data/  (Railway 5GB persistent volume)
+├── grader/
+│   └── predictions.jsonl           ← Picks (grader_store.py)
+├── grader_data/
+│   ├── weights.json                ← Learned weights (data_dir.py)
+│   └── predictions.json            ← Weight learning data
+├── audit_logs/
+│   └── audit_{date}.json           ← Daily audits (data_dir.py)
+└── pick_logs/                      ← Legacy (unused)
+```
+
+#### Three Storage Subdirectories (ALL ON SAME VOLUME)
+
+**1. Picks Storage** (`/app/grader_data/grader/`)
+- **File**: `predictions.jsonl`
+- **Module**: `storage_paths.py` → `grader_store.py`
+- **Used by**: Best-bets endpoint (write), Autograder (read/write)
 - **Format**: JSONL (one pick per line)
-- **Volume**: Railway persistent volume at `/app/grader_data`
-- **Status**: ✅ VERIFIED WORKING (22 picks, last modified 2026-01-29T12:25:24)
+- **Purpose**: High-frequency pick logging
 
-#### 2. Weights/Audit Storage (data_dir.py)
-- **Base path**: `/data/grader_data/`
-- **Used by**: Auto-grader weights, Daily scheduler audits
-- **Subdirs**:
-  - `/data/grader_data/grader_data/` - Weight learning (weights.json, predictions.json)
-  - `/data/grader_data/audit_logs/` - Daily audit reports
-- **Status**: ✅ VERIFIED WORKING (weights loaded: true)
+**2. Weight Learning Storage** (`/app/grader_data/grader_data/`)
+- **Files**: `weights.json`, `predictions.json`
+- **Module**: `data_dir.py` → `auto_grader.py`
+- **Used by**: Auto-grader weight learning
+- **Format**: JSON
+- **Purpose**: Low-frequency weight updates after daily audit
 
-#### Environment Variables
+**3. Audit Storage** (`/app/grader_data/audit_logs/`)
+- **Files**: `audit_{YYYY-MM-DD}.json`
+- **Module**: `data_dir.py` → `daily_scheduler.py`
+- **Used by**: Daily 6 AM audits
+- **Format**: JSON
+- **Purpose**: Audit history
+
+#### Environment Variables (UNIFIED)
 - `RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data` (Railway sets this automatically)
+- **BOTH** `storage_paths.py` AND `data_dir.py` now use this env var
+- **ALL** storage paths derived from this single root
 - This path **IS PERSISTENT** - it's a mounted 5GB Railway volume
-- **NEVER** add code to block `/app/*` paths - `/app/grader_data` is the correct persistent storage
 
 #### Critical Facts (NEVER FORGET)
-1. `/app/grader_data` **IS PERSISTENT** (Railway volume mount, verified with `os.path.ismount()`)
-2. Both storage systems are **INTENTIONAL** and serve different purposes
-3. **DO NOT unify** or change these paths - they work correctly as-is
-4. **DO NOT add path validation** that blocks `/app/*` - this will crash production
-5. Picks persist across container restarts (verified: 14 picks survived crash on Jan 28-29)
+
+1. **`/app/grader_data` IS THE RAILWAY PERSISTENT VOLUME**
+   - Verified with `os.path.ismount() = True`
+   - NOT ephemeral, NOT wiped on redeploy
+   - Survives container restarts
+
+2. **ALL STORAGE MUST USE RAILWAY_VOLUME_MOUNT_PATH**
+   - `storage_paths.py`: ✅ Uses RAILWAY_VOLUME_MOUNT_PATH
+   - `data_dir.py`: ✅ Uses RAILWAY_VOLUME_MOUNT_PATH (unified Jan 29)
+   - Both resolve to `/app/grader_data`
+
+3. **NEVER add code to block `/app/*` paths**
+   - `/app/grader_data` is the CORRECT persistent storage
+   - Blocking `/app/*` will crash production (Jan 28-29 incident)
+
+4. **Dual storage structure is INTENTIONAL**
+   - Picks: Separate from weights (different access patterns)
+   - Weights: Separate from picks (avoid lock contention)
+   - Both on SAME volume, different subdirs
+
+5. **Learned weights now persist across deployments**
+   - Before: `/data/grader_data/` (ephemeral, wiped on restart)
+   - After: `/app/grader_data/grader_data/` (persistent, survives restarts)
 
 #### Verification Commands
 ```bash
-# Check picks storage
+# Check picks storage health
 curl https://web-production-7b2a.up.railway.app/internal/storage/health
 
-# Check grader status
+# Check grader status (shows all three storage paths)
 curl https://web-production-7b2a.up.railway.app/live/grader/status \
   -H "X-API-Key: YOUR_KEY"
 
 # Verify autograder can see picks
 curl -X POST https://web-production-7b2a.up.railway.app/live/grader/dry-run \
   -H "X-API-Key: YOUR_KEY" -d '{"date":"2026-01-29","mode":"pre"}'
+
+# Check if both modules use same volume
+grep -n "RAILWAY_VOLUME_MOUNT_PATH" storage_paths.py data_dir.py
 ```
 
-#### Past Mistakes to NEVER Repeat
-- **Jan 28-29, 2026**: Added code to block `/app/*` paths → Production crashed (502 errors)
-- **Lesson**: Always verify storage health BEFORE assuming paths are wrong
-- **Rule**: Read CLAUDE.md storage section BEFORE touching storage/autograder code
+#### The Rule (MANDATORY)
+
+**BEFORE touching storage/autograder/scheduler code:**
+
+1. ✅ Read this Storage Configuration section
+2. ✅ Verify production health with endpoints above
+3. ✅ Check that RAILWAY_VOLUME_MOUNT_PATH is used
+4. ✅ NEVER assume paths are wrong without verification
+
+**NEVER:**
+- ❌ Add path validation that blocks `/app/*` - crashes production
+- ❌ Modify storage paths without reading this section
+- ❌ Assume `/app/grader_data` is ephemeral - it's the persistent volume
+- ❌ Change RAILWAY_VOLUME_MOUNT_PATH usage in storage_paths.py or data_dir.py
+- ❌ Create new storage paths outside `/app/grader_data`
+
+#### Past Mistakes (NEVER REPEAT)
+
+**January 28-29, 2026 - Storage Path Blocker Incident:**
+- ❌ Added code to block all `/app/*` paths in data_dir.py
+- ❌ Assumed `/app/grader_data` was ephemeral
+- ❌ Did NOT read this documentation before making changes
+- ❌ Did NOT verify storage health before assuming paths wrong
+- 💥 **Result**: Production crashed (502 errors), 2 minutes downtime
+- ✅ **Fix**: Removed path blocker, unified to RAILWAY_VOLUME_MOUNT_PATH
+- 📚 **Lesson**: `/app/grader_data` IS the Railway volume (NOT ephemeral)
+
+**January 29, 2026 - Storage Unification (FINAL):**
+- ✅ Unified data_dir.py to use RAILWAY_VOLUME_MOUNT_PATH
+- ✅ Removed `/app/*` path blocker
+- ✅ Changed fallback from `/data` to `./grader_data` for local dev
+- ✅ Now ALL storage on same Railway persistent volume
+- ✅ Learned weights now persist across deployments
 
 ### SSH Configuration
 - GitHub SSH uses port 443 (not 22) - configured in `~/.ssh/config`
