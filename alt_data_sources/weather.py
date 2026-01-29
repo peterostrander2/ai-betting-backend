@@ -1,7 +1,7 @@
 """
 WEATHER MODULE - Weather data for outdoor sports
 
-STATUS: Real integration with OpenWeather API
+STATUS: Real integration with WeatherAPI.com
 FEATURE FLAG: WEATHER_ENABLED (default: false)
 
 REQUIREMENTS:
@@ -11,11 +11,11 @@ REQUIREMENTS:
 - Caching by stadium_id with 10-15 min TTL
 
 DATA SOURCE:
-- OpenWeather API (https://api.openweathermap.org)
-- Requires OPENWEATHER_API_KEY environment variable
+- WeatherAPI.com (https://api.weatherapi.com)
+- Requires WEATHER_API_KEY environment variable
 
 INTEGRATION:
-- Set WEATHER_ENABLED=true and OPENWEATHER_API_KEY to enable
+- Set WEATHER_ENABLED=true and WEATHER_API_KEY to enable
 - Returns {available: false, reason: "FEATURE_DISABLED"} when disabled
 - Returns bounded weather_modifier capped at ±1.0
 """
@@ -30,7 +30,7 @@ logger = logging.getLogger("weather")
 
 # Feature flag
 WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "false").lower() == "true"
-OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
 
 # Weather constants
 DEFAULT_TEMPERATURE = 72.0  # Neutral temperature (°F)
@@ -41,8 +41,8 @@ DEFAULT_PRECIPITATION = 0.0  # No precipitation
 CACHE_TTL_SECONDS = 600  # 10 minutes
 _weather_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 
-# OpenWeather API configuration
-OPENWEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5/weather"
+# WeatherAPI.com configuration
+WEATHER_API_BASE_URL = "https://api.weatherapi.com/v1/current.json"
 FETCH_TIMEOUT_SECONDS = 5.0  # Never block more than 5 seconds
 
 
@@ -105,11 +105,11 @@ async def fetch_weather_from_api(
         }
 
     # API key check
-    if not OPENWEATHER_API_KEY:
+    if not WEATHER_API_KEY:
         return {
             "available": False,
             "reason": "API_KEY_MISSING",
-            "message": "OpenWeather API key not configured",
+            "message": "Weather API key not configured",
             "temperature": DEFAULT_TEMPERATURE,
             "wind_speed": DEFAULT_WIND_SPEED,
             "precipitation": DEFAULT_PRECIPITATION,
@@ -135,24 +135,23 @@ async def fetch_weather_from_api(
             "weather_reasons": []
         }
 
-    # Fetch from OpenWeather API
+    # Fetch from WeatherAPI.com
     try:
         params = {
-            "lat": lat,
-            "lon": lon,
-            "appid": OPENWEATHER_API_KEY,
-            "units": "imperial"  # Get temperature in Fahrenheit
+            "key": WEATHER_API_KEY,
+            "q": f"{lat},{lon}",
+            "aqi": "no"
         }
 
         async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SECONDS) as client:
-            response = await client.get(OPENWEATHER_BASE_URL, params=params)
+            response = await client.get(WEATHER_API_BASE_URL, params=params)
 
             if response.status_code != 200:
-                logger.warning("OpenWeather API error: %d - %s", response.status_code, response.text[:200])
+                logger.warning("WeatherAPI error: %d - %s", response.status_code, response.text[:200])
                 return {
                     "available": False,
                     "reason": "API_ERROR",
-                    "message": f"OpenWeather API returned {response.status_code}",
+                    "message": f"WeatherAPI returned {response.status_code}",
                     "temperature": DEFAULT_TEMPERATURE,
                     "wind_speed": DEFAULT_WIND_SPEED,
                     "precipitation": DEFAULT_PRECIPITATION,
@@ -163,19 +162,18 @@ async def fetch_weather_from_api(
 
             data = response.json()
 
-            # Parse OpenWeather response
-            temp_f = data.get("main", {}).get("temp", DEFAULT_TEMPERATURE)
-            wind_mph = data.get("wind", {}).get("speed", DEFAULT_WIND_SPEED)
+            # Parse WeatherAPI.com response
+            current = data.get("current", {})
+            temp_f = current.get("temp_f", DEFAULT_TEMPERATURE)
+            wind_mph = current.get("wind_mph", DEFAULT_WIND_SPEED)
 
-            # Precipitation (rain/snow in last hour if available)
-            rain_1h = data.get("rain", {}).get("1h", 0.0)
-            snow_1h = data.get("snow", {}).get("1h", 0.0)
-            precip_in = (rain_1h + snow_1h) / 25.4  # Convert mm to inches
+            # Precipitation in inches
+            precip_in = current.get("precip_in", 0.0)
 
             # Weather conditions
-            weather_list = data.get("weather", [])
-            conditions = weather_list[0].get("main", "Clear") if weather_list else "Clear"
-            description = weather_list[0].get("description", "") if weather_list else ""
+            condition = current.get("condition", {})
+            conditions = condition.get("text", "Clear")
+            description = conditions
 
             result = {
                 "available": True,
@@ -186,8 +184,8 @@ async def fetch_weather_from_api(
                 "precipitation": round(precip_in, 2),
                 "conditions": conditions,
                 "description": description,
-                "humidity": data.get("main", {}).get("humidity", 50),
-                "source": "openweather",
+                "humidity": current.get("humidity", 50),
+                "source": "weatherapi",
                 "fetched_at": time.time()
             }
 
@@ -363,11 +361,11 @@ def get_weather_for_game(
             "weather_reasons": []
         }
 
-    if not OPENWEATHER_API_KEY:
+    if not WEATHER_API_KEY:
         return {
             "available": False,
             "reason": "API_KEY_MISSING",
-            "message": "OpenWeather API key not configured",
+            "message": "Weather API key not configured",
             "temperature": DEFAULT_TEMPERATURE,
             "wind_speed": DEFAULT_WIND_SPEED,
             "precipitation": DEFAULT_PRECIPITATION,
@@ -694,5 +692,5 @@ def get_cache_stats() -> Dict[str, Any]:
         "expired_entries": expired_count,
         "cache_ttl_seconds": CACHE_TTL_SECONDS,
         "enabled": WEATHER_ENABLED,
-        "api_key_configured": bool(OPENWEATHER_API_KEY)
+        "api_key_configured": bool(WEATHER_API_KEY)
     }

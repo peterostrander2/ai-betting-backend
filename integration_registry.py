@@ -477,7 +477,7 @@ async def validate_weather_api() -> Dict[str, Any]:
     - UNREACHABLE: API key present but ping failed
     """
     try:
-        from alt_data_sources.weather import WEATHER_ENABLED, OPENWEATHER_API_KEY, OPENWEATHER_BASE_URL
+        from alt_data_sources.weather import WEATHER_ENABLED, WEATHER_API_KEY, WEATHER_API_BASE_URL
     except ImportError:
         return {"configured": False, "reachable": False, "status": "NOT_CONFIGURED", "error": "Module not available"}
 
@@ -492,19 +492,19 @@ async def validate_weather_api() -> Dict[str, Any]:
         }
 
     # Check API key
-    if not OPENWEATHER_API_KEY:
+    if not WEATHER_API_KEY:
         return {
             "configured": False,
             "reachable": False,
             "status": "NOT_CONFIGURED",
-            "error": "OPENWEATHER_API_KEY not set"
+            "error": "WEATHER_API_KEY not set"
         }
 
     # Ping OpenWeather API to verify key and connectivity
     try:
         import httpx
         # Test with minimal API call (get weather for arbitrary coordinates)
-        test_url = f"{OPENWEATHER_BASE_URL}?lat=40.7128&lon=-74.0060&appid={OPENWEATHER_API_KEY}&units=imperial"
+        test_url = f"{WEATHER_API_BASE_URL}?key={WEATHER_API_KEY}&q=40.7128,-74.0060&aqi=no"
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(test_url)
             if response.status_code == 200:
