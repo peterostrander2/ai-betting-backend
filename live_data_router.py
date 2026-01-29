@@ -3730,7 +3730,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     # v14.9 Version metadata for frontend
     build_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:8] or "local"
-    deploy_version = "14.9"
+    deploy_version = "15.0"
 
     # v14.9: Date and timestamp in ET
     date_et = get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d")

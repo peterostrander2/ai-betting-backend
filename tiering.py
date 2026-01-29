@@ -8,7 +8,7 @@ All other files should import from here via:
     from tiering import tier_from_score, get_tier_config, check_titanium_rule
 
 TIER HIERARCHY (highest to lowest):
-1. TITANIUM_SMASH - Rare conviction tier (3/4 engines >= 6.5 AND final_score >= 8.0)
+1. TITANIUM_SMASH - Rare conviction tier (3/4 engines >= 8.0 AND final_score >= 8.0)
 2. GOLD_STAR - Maximum confidence (final_score >= 7.5)
 3. EDGE_LEAN - Strong edge (final_score >= 6.5)
 4. ML_DOG_LOTTO - NHL Dog Protocol special
@@ -28,7 +28,7 @@ ENGINE_VERSION = "12.0"
 # =============================================================================
 # TITANIUM THRESHOLD CONFIGURATION
 # =============================================================================
-TITANIUM_THRESHOLD = 6.5  # Meaningful contribution threshold for each engine
+TITANIUM_THRESHOLD = 8.0  # STRICT: Each engine must score >= 8.0 to qualify
 TITANIUM_FINAL_SCORE_MIN = 8.0  # Final score must also be >= 8.0
 TITANIUM_MIN_ENGINES = 3  # Minimum engines meeting threshold (out of 4)
 TITANIUM_REQUIRES_JARVIS = True  # Prefer Jarvis as one of the qualifying engines
@@ -48,8 +48,8 @@ TIER_CONFIG = {
         "action": "SMASH",
         "badge": "TITANIUM SMASH",
         "priority": 1,          # Highest priority
-        "threshold": None,      # Special rule: 3/4 engines >= 6.5 AND final_score >= 8.0
-        "description": "Rare conviction - 3 of 4 engines meaningful + final >= 8.0"
+        "threshold": None,      # Special rule: 3/4 engines >= 8.0 AND final_score >= 8.0
+        "description": "Rare conviction - 3 of 4 engines >= 8.0 + final >= 8.0"
     },
     "GOLD_STAR": {
         "units": 2.0,
@@ -125,9 +125,9 @@ def check_titanium_rule(
     """
     Check if Titanium tier is triggered.
 
-    TITANIUM RULE (v12.0 - Production Hardened):
+    TITANIUM RULE (v15.0 - STRICT MANDATORY):
     - final_score must be >= 8.0 (mandatory prerequisite)
-    - 3 of 4 engines must score >= 6.5 (meaningful contribution)
+    - 3 of 4 engines must score >= 8.0 (STRICT - not 6.5)
     - Engines: AI (0-10 scaled), Research (0-10), Esoteric (0-10), Jarvis (0-10 scaled)
     - PREFERRED: Jarvis should be one of the 3 qualifying engines
 
@@ -205,7 +205,7 @@ def tier_from_score(
         final_score: The calculated final score (0-10 scale)
         confluence: Optional confluence data with level and boost
         nhl_dog_protocol: Whether NHL dog protocol is triggered
-        titanium_triggered: Whether Titanium rule is triggered (3/4 engines >= 8.0)
+        titanium_triggered: Whether Titanium rule is triggered (3/4 engines >= 8.0 STRICT)
 
     Returns:
         Dict with tier, units, action, badge, explanation
