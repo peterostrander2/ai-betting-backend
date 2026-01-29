@@ -2914,10 +2914,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "jason_blocked": jason_blocked,
             "jason_win_pct_home": jason_output.get("jason_win_pct_home", 50.0),
             "jason_win_pct_away": jason_output.get("jason_win_pct_away", 50.0),
-            "projected_total": jason_output.get("projected_total", total),
+            "jason_projected_total": jason_output.get("projected_total", total),
+            "jason_variance_flag": jason_output.get("variance_flag", "MED"),
+            "jason_injury_state": jason_output.get("injury_state", "UNKNOWN"),
+            "jason_sim_count": jason_output.get("sim_count", 0),
+            "projected_total": jason_output.get("projected_total", total),  # Keep for backwards compat
             "projected_pace": jason_output.get("projected_pace", "NEUTRAL"),
-            "variance_flag": jason_output.get("variance_flag", "MED"),
-            "injury_state": jason_output.get("injury_state", "UNKNOWN"),
+            "variance_flag": jason_output.get("variance_flag", "MED"),  # Keep for backwards compat
+            "injury_state": jason_output.get("injury_state", "UNKNOWN"),  # Keep for backwards compat
             "confluence_reasons": jason_output.get("confluence_reasons", []),
             "base_score": round(base_score, 2),  # Score before Jason boost
             # v11.08 Stack/Penalty fields

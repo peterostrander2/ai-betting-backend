@@ -5,6 +5,10 @@ Integrates non-traditional data sources for betting edge signals:
 - BallDontLie: NBA live game data, player stats, grading (GOAT TIER)
 - Twitter: Breaking injury news from beat reporters (optional)
 - ESPN: Starting lineups and referee tendencies (FREE)
+- Weather: Weather conditions for outdoor games (stub - OpenWeather when implemented)
+- Refs: Referee tendencies and historical impact (stub)
+- Stadium: Venue altitude, surface, roof status (stub with known venues)
+- Travel: Team travel distance and fatigue analysis (stub with estimated distances)
 """
 
 # BallDontLie - GOAT tier (always try to import)
@@ -77,6 +81,73 @@ except ImportError:
 
     def get_espn_status():
         return {"configured": False}
+
+# Weather, Refs, Stadium, Travel - Stub modules (always available)
+try:
+    from .weather import (
+        get_weather_for_game,
+        is_weather_relevant,
+        calculate_weather_impact,
+        WEATHER_ENABLED
+    )
+    from .refs import (
+        get_referee_for_game,
+        calculate_referee_impact,
+        REFS_ENABLED
+    )
+    from .stadium import (
+        get_stadium_info,
+        calculate_altitude_impact,
+        lookup_altitude,
+        STADIUM_ENABLED
+    )
+    from .travel import (
+        get_travel_impact,
+        calculate_fatigue_impact,
+        calculate_distance,
+        TRAVEL_ENABLED
+    )
+    STUB_MODULES_AVAILABLE = True
+except ImportError as e:
+    STUB_MODULES_AVAILABLE = False
+
+    def get_weather_for_game(*args, **kwargs):
+        return {"available": False, "reason": "MODULE_IMPORT_FAILED"}
+
+    def is_weather_relevant(*args, **kwargs):
+        return False
+
+    def calculate_weather_impact(*args, **kwargs):
+        return {"overall_impact": "NONE", "reasons": ["Module not available"]}
+
+    def get_referee_for_game(*args, **kwargs):
+        return {"available": False, "reason": "MODULE_IMPORT_FAILED"}
+
+    def calculate_referee_impact(*args, **kwargs):
+        return {"overall_impact": "NONE", "reasons": ["Module not available"]}
+
+    def get_stadium_info(*args, **kwargs):
+        return {"available": False, "reason": "MODULE_IMPORT_FAILED"}
+
+    def calculate_altitude_impact(*args, **kwargs):
+        return {"overall_impact": "NONE", "reasons": ["Module not available"]}
+
+    def lookup_altitude(*args, **kwargs):
+        return 0
+
+    def get_travel_impact(*args, **kwargs):
+        return {"available": False, "reason": "MODULE_IMPORT_FAILED"}
+
+    def calculate_fatigue_impact(*args, **kwargs):
+        return {"overall_impact": "NONE", "reasons": ["Module not available"]}
+
+    def calculate_distance(*args, **kwargs):
+        return 0
+
+    WEATHER_ENABLED = False
+    REFS_ENABLED = False
+    STADIUM_ENABLED = False
+    TRAVEL_ENABLED = False
 
 # Integration helpers
 def get_alt_data_status():
