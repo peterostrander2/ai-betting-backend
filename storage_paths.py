@@ -47,22 +47,8 @@ def get_mount_root() -> str:
         logger.error("FATAL: Mount path does not exist: %s", mount)
         sys.exit(1)
 
-    # CRITICAL: Block /app/* paths (ephemeral, wiped on restart)
-    if mount.startswith("/app"):
-        logger.error("=" * 60)
-        logger.error("FATAL: Storage path is EPHEMERAL (will be wiped)")
-        logger.error("=" * 60)
-        logger.error("Mount path: %s", mount)
-        logger.error("This path is under /app which is NOT persistent")
-        logger.error("ALL DATA WILL BE LOST on container restart")
-        logger.error("")
-        logger.error("ACTION REQUIRED:")
-        logger.error("1. Go to Railway dashboard")
-        logger.error("2. Check volume mount path")
-        logger.error("3. Set RAILWAY_VOLUME_MOUNT_PATH to actual persistent volume")
-        logger.error("   (Example: /data, /mnt/data, NOT /app/anything)")
-        logger.error("=" * 60)
-        sys.exit(1)
+    # Railway mounts volumes at /app/grader_data (this IS persistent)
+    # No path blocking - trust Railway's volume mount
 
     logger.info("✓ Mount root: %s", mount)
     return mount
@@ -201,8 +187,9 @@ def get_storage_health() -> dict:
         except:
             writable = False
 
-        # Determine if storage is ephemeral
-        is_ephemeral = mount_root.startswith("/app")
+        # If RAILWAY_VOLUME_MOUNT_PATH is set, storage is persistent (Railway volume)
+        # Only ephemeral if using fallback paths
+        is_ephemeral = env_railway_mount == "NOT_SET"
 
         return {
             "ok": True,
