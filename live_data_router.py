@@ -2148,14 +2148,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         try:
             _et_start, _et_end, _iso_date = et_day_bounds(date_str)
             _filter_date = _iso_date  # Single source of truth for filter date
-            _date_window_et_debug = {
+            _date_window_et_debug.update({
                 "date_str": date_str or "today",
                 "start_et": _et_start.strftime("%H:%M:%S"),
                 "end_et": _et_end.strftime("%H:%M:%S"),
                 "filter_date": _filter_date,  # This MUST match /debug/time.et_date
-            }
-        except Exception:
-            pass
+            })
+        except Exception as e:
+            logger.warning("ET bounds failed in best-bets: %s", e)
+            _date_window_et_debug.update({
+                "filter_date": "ERROR",
+                "error": str(e)
+            })
 
     # ==========================================================================
     # v15.0 STANDALONE JARVIS ENGINE (0-10 scale)
