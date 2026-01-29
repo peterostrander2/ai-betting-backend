@@ -125,64 +125,43 @@ def check_titanium_rule(
     """
     Check if Titanium tier is triggered.
 
-    TITANIUM RULE (v15.0 - STRICT MANDATORY):
-    - final_score must be >= 8.0 (mandatory prerequisite)
-    - 3 of 4 engines must score >= 8.0 (STRICT - not 6.5)
-    - Engines: AI (0-10 scaled), Research (0-10), Esoteric (0-10), Jarvis (0-10 scaled)
-    - PREFERRED: Jarvis should be one of the 3 qualifying engines
+    TITANIUM RULE (MANDATORY - SINGLE SOURCE OF TRUTH):
+    Uses core.titanium.compute_titanium_flag() - the ONLY function that determines Titanium status.
+
+    RULE: titanium_triggered=true ONLY when >= 3 of 4 engines >= 8.0 (STRICT)
 
     Args:
         ai_score: AI model score (0-10 scale)
         research_score: Research score (0-10 scale)
         esoteric_score: Esoteric score (0-10 scale)
         jarvis_score: Jarvis raw score (0-10 scale)
-        final_score: Final blended score (0-10 scale) - REQUIRED for Titanium
+        final_score: Final blended score (0-10 scale) - used for prerequisite check
 
     Returns:
         Tuple of (triggered: bool, explanation: str, qualifying_engines: List[str])
     """
-    threshold = TITANIUM_THRESHOLD  # 6.5 for meaningful contribution
+    # Import the SINGLE SOURCE OF TRUTH for Titanium computation
+    from core.titanium import compute_titanium_flag
 
     # NEW: Final score prerequisite (mandatory)
     if final_score is not None and final_score < TITANIUM_FINAL_SCORE_MIN:
         return False, f"Titanium: Final score {final_score:.1f} < {TITANIUM_FINAL_SCORE_MIN} (prerequisite not met)", []
 
-    # Check each engine against meaningful contribution threshold
-    engines = {
-        "AI": ai_score >= threshold,
-        "Research": research_score >= threshold,
-        "Esoteric": esoteric_score >= threshold,
-        "Jarvis": jarvis_score >= threshold
-    }
+    # Use the SINGLE SOURCE OF TRUTH - core.titanium.compute_titanium_flag
+    titanium_triggered, diagnostics = compute_titanium_flag(
+        ai_score=ai_score,
+        research_score=research_score,
+        esoteric_score=esoteric_score,
+        jarvis_score=jarvis_score,
+        threshold=8.0  # STRICT: Must be 8.0 (not 6.5)
+    )
 
-    qualifying = [name for name, passed in engines.items() if passed]
-    qualifying_count = len(qualifying)
+    # Extract info from diagnostics
+    qualifying_engines = diagnostics.get("titanium_engines_hit", [])
+    explanation = diagnostics.get("titanium_reason", "Unknown")
 
-    # Basic trigger: 3+ engines >= 6.5 (meaningful contribution)
-    engines_qualified = qualifying_count >= TITANIUM_MIN_ENGINES
-
-    # Check if Jarvis is among qualifying (preferred but not required)
-    jarvis_qualifies = engines["Jarvis"]
-
-    # Both conditions must be met
-    if engines_qualified:
-        if final_score is None:
-            # Backward compatibility: if final_score not provided, just check engines
-            if jarvis_qualifies:
-                explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} (Jarvis active)"
-            else:
-                explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} (Jarvis inactive)"
-            return True, explanation, qualifying
-        else:
-            # Full v12.0 rule: engines + final_score
-            if jarvis_qualifies:
-                explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} + final {final_score:.1f} >= {TITANIUM_FINAL_SCORE_MIN} (Jarvis active)"
-            else:
-                explanation = f"TITANIUM: {qualifying_count}/4 engines >= {threshold} + final {final_score:.1f} >= {TITANIUM_FINAL_SCORE_MIN} (Jarvis inactive)"
-            return True, explanation, qualifying
-    else:
-        explanation = f"Titanium: {qualifying_count}/4 engines >= {threshold} (need {TITANIUM_MIN_ENGINES})"
-        return False, explanation, qualifying
+    # Return the result from the single source of truth
+    return titanium_triggered, explanation, qualifying_engines
 
 
 def tier_from_score(

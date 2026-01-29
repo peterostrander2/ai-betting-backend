@@ -144,12 +144,18 @@ def get_storage_health() -> dict:
     """
     Get storage health status for /internal/storage/health endpoint.
 
-    Returns diagnostic info about storage state.
+    Returns diagnostic info about storage state including:
+    - resolved_base_dir: Actual RAILWAY_VOLUME_MOUNT_PATH value
+    - is_mountpoint: os.path.ismount() result
+    - absolute_paths: Full paths for predictions.jsonl and weights.json
+    - predictions_line_count: Number of picks in predictions file
+    - weights_last_modified: Timestamp of weights.json file
     """
     try:
         mount_root = get_mount_root()
         store_dir = get_store_dir()
         predictions_file = get_predictions_file()
+        weights_file = get_weights_file()
         sentinel_file = os.path.join(store_dir, ".volume_sentinel")
 
         # Check if mountpoint
@@ -169,6 +175,12 @@ def get_storage_health() -> dict:
             pred_modified = datetime.fromtimestamp(os.path.getmtime(predictions_file)).isoformat()
             with open(predictions_file, 'r') as f:
                 pred_line_count = sum(1 for line in f if line.strip())
+
+        # Check weights file
+        weights_exists = os.path.exists(weights_file)
+        weights_modified = None
+        if weights_exists:
+            weights_modified = datetime.fromtimestamp(os.path.getmtime(weights_file)).isoformat()
 
         # Check sentinel
         sentinel_exists = os.path.exists(sentinel_file)
@@ -193,6 +205,7 @@ def get_storage_health() -> dict:
 
         return {
             "ok": True,
+            "resolved_base_dir": mount_root,  # Actual RAILWAY_VOLUME_MOUNT_PATH value
             "mount_root": mount_root,
             "is_mountpoint": is_mountpoint,
             "is_ephemeral": is_ephemeral,
@@ -200,11 +213,19 @@ def get_storage_health() -> dict:
             "env_grader_mount_root": env_grader_mount,
             "store_dir": store_dir,
             "writable": writable,
+            "absolute_paths": {
+                "predictions": predictions_file,
+                "weights": weights_file,
+                "store_dir": store_dir,
+            },
             "predictions_file": predictions_file,
             "predictions_exists": pred_exists,
             "predictions_size_bytes": pred_size,
             "predictions_last_modified": pred_modified,
             "predictions_line_count": pred_line_count,
+            "weights_file": weights_file,
+            "weights_exists": weights_exists,
+            "weights_last_modified": weights_modified,
             "sentinel_exists": sentinel_exists,
             "sentinel_timestamp": sentinel_timestamp,
         }
@@ -213,6 +234,7 @@ def get_storage_health() -> dict:
         return {
             "ok": False,
             "error": str(e),
+            "resolved_base_dir": None,
             "mount_root": None,
             "is_mountpoint": False,
             "is_ephemeral": None,
