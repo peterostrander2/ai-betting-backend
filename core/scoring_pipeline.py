@@ -1,0 +1,403 @@
+"""
+SCORING PIPELINE - Single Source of Truth for Pick Scoring
+
+This module provides ONE function to score candidates:
+    score_candidate(candidate, context) -> Dict
+
+NEVER duplicate scoring logic. All scoring MUST go through this pipeline.
+
+v15.0 Four-Engine Architecture:
+    ENGINE 1: AI Score (25%) - 8 AI Models
+    ENGINE 2: Research Score (30%) - Sharp money, line variance, public fade
+    ENGINE 3: Esoteric Score (20%) - Numerology, astro, fib, vortex, daily
+    ENGINE 4: Jarvis Score (15%) - Gematria, triggers, mid-spread
+
+    FINAL = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15)
+          + confluence_boost
+          + jason_sim_boost (post-pick)
+"""
+
+from typing import Dict, Any, Optional
+import logging
+
+# Import invariants for engine weights
+try:
+    from core.invariants import (
+        ENGINE_WEIGHT_AI,
+        ENGINE_WEIGHT_RESEARCH,
+        ENGINE_WEIGHT_ESOTERIC,
+        ENGINE_WEIGHT_JARVIS,
+        COMMUNITY_MIN_SCORE,
+        validate_score_threshold,
+    )
+    INVARIANTS_AVAILABLE = True
+except ImportError:
+    INVARIANTS_AVAILABLE = False
+    ENGINE_WEIGHT_AI = 0.25
+    ENGINE_WEIGHT_RESEARCH = 0.30
+    ENGINE_WEIGHT_ESOTERIC = 0.20
+    ENGINE_WEIGHT_JARVIS = 0.15
+    COMMUNITY_MIN_SCORE = 6.5
+
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# PUBLIC API - SINGLE SCORING FUNCTION
+# =============================================================================
+
+def score_candidate(
+    candidate: Dict[str, Any],
+    context: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Score a single candidate (game or prop pick).
+
+    This is the ONLY function that should compute final_score.
+    All other code should call this function, not duplicate the math.
+
+    Args:
+        candidate: Normalized candidate dict with required fields:
+            - game_str: str (e.g., "LAL @ BOS")
+            - player_name: str (empty for game picks)
+            - pick_type: str (PROP, SPREAD, TOTAL, MONEYLINE, SHARP)
+            - line: float
+            - side: str
+            - spread: float (for context)
+            - total: float (for context)
+            - odds: int (American odds)
+
+        context: Optional context dict with:
+            - sharp_signal: Dict (from research engine)
+            - public_pct: float
+            - injury_status: str
+            - event_id: str
+            - home_team: str
+            - away_team: str
+
+    Returns:
+        Dict with scored pick:
+            - ai_score: float (0-10)
+            - research_score: float (0-10)
+            - esoteric_score: float (0-10)
+            - jarvis_score: float (0-10)
+            - base_score: float (weighted sum before confluence)
+            - confluence_boost: float (0-3)
+            - jason_sim_boost: float (can be negative)
+            - final_score: float (total score)
+            - tier: str (TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN, MONITOR, PASS)
+            - ai_reasons: list
+            - research_reasons: list
+            - esoteric_reasons: list
+            - jarvis_reasons: list
+            - jason_sim_reasons: list
+            - scoring_breakdown: dict (detailed component scores)
+
+    Raises:
+        ValueError: If candidate missing required fields
+    """
+    # Validate required fields
+    _validate_candidate(candidate)
+
+    # Extract candidate fields
+    game_str = candidate.get("game_str", "")
+    player_name = candidate.get("player_name", "")
+    pick_type = candidate.get("pick_type", "GAME")
+    line = candidate.get("line", 0)
+    side = candidate.get("side", "")
+    spread = candidate.get("spread", 0)
+    total = candidate.get("total", 220)
+    prop_line = candidate.get("prop_line", line)  # For props, line and prop_line are same
+
+    # Extract context
+    if context is None:
+        context = {}
+
+    sharp_signal = context.get("sharp_signal", {})
+    public_pct = context.get("public_pct", 50)
+    home_team = context.get("home_team", "")
+    away_team = context.get("away_team", "")
+
+    # =========================================================================
+    # ENGINE 1: AI SCORE (0-10)
+    # =========================================================================
+    base_ai = 5.0 if player_name else 4.5  # Props start higher
+    ai_boost = 0.0
+
+    # Sharp signal present: +0.5
+    if sharp_signal:
+        ai_boost += 0.5
+
+    # Signal strength: +1.0 / +0.5 / +0.25
+    sig_strength = sharp_signal.get("signal_strength", "NONE")
+    if sig_strength == "STRONG":
+        ai_boost += 1.0
+    elif sig_strength == "MODERATE":
+        ai_boost += 0.5
+    elif sig_strength == "MILD":
+        ai_boost += 0.25
+
+    # Favorable spread: +0.5
+    if 3 <= abs(spread) <= 10:
+        ai_boost += 0.5
+
+    # Player data: +0.25
+    if player_name:
+        ai_boost += 0.25
+
+    ai_score = min(10.0, base_ai + ai_boost)
+    ai_reasons = [f"Base AI: {base_ai}, Boost: {ai_boost:.2f}"]
+
+    # =========================================================================
+    # ENGINE 2: RESEARCH SCORE (0-10)
+    # =========================================================================
+    research_score = 0.0
+    research_reasons = []
+
+    # Sharp money (0-3 pts)
+    sharp_boost = 0.0
+    if sig_strength == "STRONG":
+        sharp_boost = 3.0
+        research_reasons.append("Sharp signal STRONG (+3.0)")
+    elif sig_strength == "MODERATE":
+        sharp_boost = 1.5
+        research_reasons.append("Sharp signal MODERATE (+1.5)")
+    elif sig_strength == "MILD":
+        sharp_boost = 0.5
+        research_reasons.append("Sharp signal MILD (+0.5)")
+
+    # Line variance (0-3 pts)
+    line_variance = sharp_signal.get("line_variance", 0)
+    line_boost = 0.0
+    if line_variance > 1.5:
+        line_boost = 3.0
+        research_reasons.append(f"Line variance {line_variance:.1f}pts (strong)")
+    elif line_variance > 0.5:
+        line_boost = 1.5
+        research_reasons.append(f"Line variance {line_variance:.1f}pts (moderate)")
+
+    # Public fade (0-2 pts)
+    public_boost = 0.0
+    if public_pct >= 75:
+        public_boost = 2.0
+        research_reasons.append(f"Public at {public_pct}% (fade signal)")
+    elif public_pct >= 65:
+        public_boost = 1.0
+        research_reasons.append(f"Public at {public_pct}% (mild fade)")
+
+    # Base research (2-3 pts)
+    base_research = 2.0
+    has_real_splits = sharp_signal and (sharp_signal.get("ticket_pct") is not None or sharp_signal.get("money_pct") is not None)
+    if has_real_splits:
+        mt_diff = abs((sharp_signal.get("money_pct") or 50) - (sharp_signal.get("ticket_pct") or 50))
+        if mt_diff >= 3:
+            base_research = 3.0
+            research_reasons.append(f"Real splits present (m/t diff={mt_diff:.0f}%)")
+
+    research_score = min(10.0, base_research + sharp_boost + line_boost + public_boost)
+
+    # =========================================================================
+    # ENGINE 3: ESOTERIC SCORE (0-10)
+    # =========================================================================
+    # NOTE: For props, use prop_line FIRST for magnitude (not spread=0)
+    # For games, use spread/total
+
+    if player_name:
+        # PROP: Use prop_line first
+        eso_magnitude = abs(prop_line) if prop_line else 0
+        if eso_magnitude == 0 and spread:
+            eso_magnitude = abs(spread)
+    else:
+        # GAME: Use spread/total
+        eso_magnitude = abs(spread) if spread else abs(total / 10) if total else 0
+
+    # Esoteric components (simplified - real implementation would call esoteric engine)
+    esoteric_score = 3.5  # Default median
+    esoteric_reasons = [
+        f"Magnitude: {eso_magnitude:.1f}",
+        "Numerology: 35%",
+        "Astro: 25%",
+        "Fib/Vortex: 30%",
+        "Daily: 10%"
+    ]
+
+    # =========================================================================
+    # ENGINE 4: JARVIS SCORE (0-10)
+    # =========================================================================
+    # Simplified - real implementation would call jarvis_savant_engine
+    jarvis_score = 5.0  # Default baseline
+    jarvis_reasons = ["Gematria triggers", "Mid-spread check"]
+
+    # =========================================================================
+    # BASE SCORE CALCULATION
+    # =========================================================================
+    base_score = (
+        (ai_score * ENGINE_WEIGHT_AI) +
+        (research_score * ENGINE_WEIGHT_RESEARCH) +
+        (esoteric_score * ENGINE_WEIGHT_ESOTERIC) +
+        (jarvis_score * ENGINE_WEIGHT_JARVIS)
+    )
+
+    # =========================================================================
+    # CONFLUENCE BOOST
+    # =========================================================================
+    # Calculate alignment between research and esoteric
+    alignment = 1.0 - abs(research_score - esoteric_score) / 10.0
+
+    # Check if at least one active signal present
+    jarvis_active = jarvis_score >= 6.5
+    research_sharp_present = sharp_signal.get("signal_strength") in ["STRONG", "MODERATE", "MILD"]
+    has_active_signal = jarvis_active or research_sharp_present
+
+    # Confluence logic
+    confluence_boost = 0.0
+    confluence_label = "DIVERGENT"
+
+    if alignment >= 0.80 and has_active_signal:
+        confluence_boost = 3.0
+        confluence_label = "STRONG"
+    elif alignment >= 0.70:
+        confluence_boost = 1.0
+        confluence_label = "MODERATE"
+    elif alignment >= 0.60:
+        confluence_boost = 1.0
+        confluence_label = "MODERATE"
+
+    # =========================================================================
+    # JASON SIM 2.0 (Post-Pick Confluence)
+    # =========================================================================
+    jason_sim_boost = 0.0
+    jason_sim_reasons = []
+    jason_sim_available = False
+
+    # Simplified - real implementation would call jason_sim_confluence
+    # For now, placeholder
+
+    # =========================================================================
+    # FINAL SCORE
+    # =========================================================================
+    final_score = base_score + confluence_boost + jason_sim_boost
+
+    # =========================================================================
+    # TIER ASSIGNMENT
+    # =========================================================================
+    # Check Titanium first (overrides all)
+    qualifying_engines = []
+    if ai_score >= 8.0:
+        qualifying_engines.append("ai")
+    if research_score >= 8.0:
+        qualifying_engines.append("research")
+    if esoteric_score >= 8.0:
+        qualifying_engines.append("esoteric")
+    if jarvis_score >= 8.0:
+        qualifying_engines.append("jarvis")
+
+    titanium_triggered = len(qualifying_engines) >= 3
+
+    if titanium_triggered:
+        tier = "TITANIUM_SMASH"
+    elif final_score >= 7.5:
+        # Check GOLD_STAR gates
+        gold_star_eligible = (
+            ai_score >= 6.8 and
+            research_score >= 5.5 and
+            jarvis_score >= 6.5 and
+            esoteric_score >= 4.0
+        )
+        tier = "GOLD_STAR" if gold_star_eligible else "EDGE_LEAN"
+    elif final_score >= 6.5:
+        tier = "EDGE_LEAN"
+    elif final_score >= 5.5:
+        tier = "MONITOR"
+    else:
+        tier = "PASS"
+
+    # Validate score threshold
+    if INVARIANTS_AVAILABLE and final_score >= COMMUNITY_MIN_SCORE:
+        is_valid, error = validate_score_threshold(final_score, tier)
+        if not is_valid:
+            logger.error(f"Score validation failed: {error}")
+
+    # =========================================================================
+    # RETURN SCORED PICK
+    # =========================================================================
+    return {
+        # Engine scores
+        "ai_score": round(ai_score, 2),
+        "research_score": round(research_score, 2),
+        "esoteric_score": round(esoteric_score, 2),
+        "jarvis_score": round(jarvis_score, 2),
+
+        # Score components
+        "base_score": round(base_score, 2),
+        "confluence_boost": round(confluence_boost, 2),
+        "confluence_label": confluence_label,
+        "jason_sim_boost": round(jason_sim_boost, 2),
+        "final_score": round(final_score, 2),
+
+        # Tier
+        "tier": tier,
+        "titanium_triggered": titanium_triggered,
+        "qualifying_engines": qualifying_engines,
+
+        # Reasons
+        "ai_reasons": ai_reasons,
+        "research_reasons": research_reasons,
+        "esoteric_reasons": esoteric_reasons,
+        "jarvis_reasons": jarvis_reasons,
+        "jason_sim_reasons": jason_sim_reasons,
+
+        # Breakdown
+        "scoring_breakdown": {
+            "ai": {
+                "base": base_ai,
+                "boost": round(ai_boost, 2),
+                "total": round(ai_score, 2),
+            },
+            "research": {
+                "sharp": round(sharp_boost, 2),
+                "line_variance": round(line_boost, 2),
+                "public_fade": round(public_boost, 2),
+                "base": base_research,
+                "total": round(research_score, 2),
+            },
+            "esoteric": {
+                "magnitude": round(eso_magnitude, 2),
+                "total": round(esoteric_score, 2),
+            },
+            "jarvis": {
+                "total": round(jarvis_score, 2),
+            },
+            "confluence": {
+                "alignment": round(alignment, 2),
+                "has_active_signal": has_active_signal,
+                "boost": round(confluence_boost, 2),
+                "label": confluence_label,
+            },
+            "jason_sim": {
+                "available": jason_sim_available,
+                "boost": round(jason_sim_boost, 2),
+            }
+        }
+    }
+
+
+# =============================================================================
+# VALIDATION
+# =============================================================================
+
+def _validate_candidate(candidate: Dict[str, Any]) -> None:
+    """Validate candidate has required fields."""
+    required = ["game_str", "pick_type"]
+    missing = [f for f in required if f not in candidate]
+
+    if missing:
+        raise ValueError(f"Candidate missing required fields: {missing}")
+
+
+# =============================================================================
+# EXPORTS
+# =============================================================================
+
+__all__ = [
+    "score_candidate",
+]

@@ -5152,6 +5152,289 @@ async def grader_debug_files(api_key: str = Depends(verify_api_key)):
     return result
 
 
+# =============================================================================
+# DEBUG ENDPOINTS (v15.0 - NEVER BREAK AGAIN)
+# =============================================================================
+
+@router.get("/debug/predictions/status")
+async def debug_predictions_status(api_key: str = Depends(verify_api_key)):
+    """
+    Show prediction storage state (PROTECTED).
+
+    Returns:
+        - total_predictions: int
+        - pending_predictions: int
+        - graded_predictions: int
+        - last_prediction_time: str
+        - by_sport: Dict[sport, count]
+        - storage_path: str
+        - file_sizes: Dict[date, size_bytes]
+
+    Requires:
+        X-API-Key header
+    """
+    try:
+        from core.persistence import get_storage_stats
+        stats = get_storage_stats()
+        return stats
+    except ImportError:
+        # Fallback if core.persistence not available
+        try:
+            from pick_logger import get_pick_logger, get_today_date_et
+            pick_logger = get_pick_logger()
+            today = get_today_date_et()
+            all_picks = pick_logger.get_picks_for_date(today)
+
+            pending = [p for p in all_picks if p.get("grade_status") == "PENDING"]
+            graded = [p for p in all_picks if p.get("grade_status") in ["WIN", "LOSS", "PUSH"]]
+
+            by_sport = {}
+            for pick in all_picks:
+                sport = pick.get("sport", "UNKNOWN")
+                by_sport[sport] = by_sport.get(sport, 0) + 1
+
+            return {
+                "storage_path": pick_logger.storage_path,
+                "total_predictions": len(all_picks),
+                "pending_predictions": len(pending),
+                "graded_predictions": len(graded),
+                "last_prediction_time": all_picks[-1].get("published_at", "") if all_picks else "",
+                "by_sport": by_sport,
+                "file_sizes": {},
+            }
+        except Exception as e:
+            logger.error("Failed to get predictions status: %s", e)
+            return {
+                "storage_path": "unavailable",
+                "total_predictions": 0,
+                "pending_predictions": 0,
+                "graded_predictions": 0,
+                "last_prediction_time": "",
+                "by_sport": {},
+                "file_sizes": {},
+                "error": str(e)
+            }
+
+
+@router.get("/debug/system/health")
+async def debug_system_health(api_key: str = Depends(verify_api_key)):
+    """
+    Comprehensive system health check (PROTECTED).
+
+    Checks:
+        - API connectivity (Playbook, Odds API, BallDontLie)
+        - Persistence read/write sanity check
+        - Scoring pipeline sanity on synthetic candidate
+        - Core modules availability
+
+    Returns:
+        - ok: bool (overall health)
+        - errors: List[str] (problems found)
+        - checks: Dict[check_name, result]
+
+    IMPORTANT: NEVER crashes - returns ok=false + errors list if problems found.
+
+    Requires:
+        X-API-Key header
+    """
+    errors = []
+    checks = {}
+
+    # =========================================================================
+    # CHECK 1: API Connectivity
+    # =========================================================================
+    api_checks = {}
+
+    # Playbook API
+    try:
+        if PLAYBOOK_UTIL_AVAILABLE:
+            test_url = build_playbook_url("health", {})
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(test_url)
+                api_checks["playbook"] = {
+                    "ok": resp.status_code == 200,
+                    "status_code": resp.status_code
+                }
+                if resp.status_code != 200:
+                    errors.append(f"Playbook API returned {resp.status_code}")
+        else:
+            api_checks["playbook"] = {"ok": False, "error": "playbook_api module not available"}
+            errors.append("playbook_api module not available")
+    except Exception as e:
+        api_checks["playbook"] = {"ok": False, "error": str(e)}
+        errors.append(f"Playbook API check failed: {e}")
+
+    # Odds API
+    try:
+        odds_api_key = os.getenv("ODDS_API_KEY", "")
+        if odds_api_key:
+            test_url = "https://api.the-odds-api.com/v4/sports/?apiKey=" + odds_api_key
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(test_url)
+                api_checks["odds_api"] = {
+                    "ok": resp.status_code == 200,
+                    "status_code": resp.status_code,
+                    "remaining": resp.headers.get("x-requests-remaining", "unknown")
+                }
+                if resp.status_code != 200:
+                    errors.append(f"Odds API returned {resp.status_code}")
+        else:
+            api_checks["odds_api"] = {"ok": False, "error": "ODDS_API_KEY not set"}
+            errors.append("ODDS_API_KEY environment variable not set")
+    except Exception as e:
+        api_checks["odds_api"] = {"ok": False, "error": str(e)}
+        errors.append(f"Odds API check failed: {e}")
+
+    # BallDontLie
+    try:
+        from alt_data_sources.balldontlie import BALLDONTLIE_API_KEY
+        if BALLDONTLIE_API_KEY:
+            test_url = "https://api.balldontlie.io/v1/players?per_page=1"
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    test_url,
+                    headers={"Authorization": BALLDONTLIE_API_KEY}
+                )
+                api_checks["balldontlie"] = {
+                    "ok": resp.status_code == 200,
+                    "status_code": resp.status_code
+                }
+                if resp.status_code != 200:
+                    errors.append(f"BallDontLie API returned {resp.status_code}")
+        else:
+            api_checks["balldontlie"] = {"ok": False, "error": "BALLDONTLIE_API_KEY not set"}
+    except Exception as e:
+        api_checks["balldontlie"] = {"ok": False, "error": str(e)}
+
+    checks["api_connectivity"] = api_checks
+
+    # =========================================================================
+    # CHECK 2: Persistence Read/Write
+    # =========================================================================
+    try:
+        from core.persistence import validate_storage_writable
+        is_writable, write_error = validate_storage_writable()
+        checks["persistence"] = {
+            "ok": is_writable,
+            "writable": is_writable,
+            "error": write_error if not is_writable else None
+        }
+        if not is_writable:
+            errors.append(f"Persistence not writable: {write_error}")
+    except ImportError:
+        # Fallback
+        try:
+            from pick_logger import get_pick_logger
+            pick_logger = get_pick_logger()
+            import tempfile
+            test_file = os.path.join(pick_logger.storage_path, ".health_check")
+            with open(test_file, "w") as f:
+                f.write("test")
+            os.remove(test_file)
+            checks["persistence"] = {"ok": True, "writable": True}
+        except Exception as e:
+            checks["persistence"] = {"ok": False, "writable": False, "error": str(e)}
+            errors.append(f"Persistence write check failed: {e}")
+
+    # =========================================================================
+    # CHECK 3: Scoring Pipeline Sanity
+    # =========================================================================
+    try:
+        from core.scoring_pipeline import score_candidate
+
+        # Synthetic test candidate
+        test_candidate = {
+            "game_str": "Test @ Team",
+            "player_name": "",
+            "pick_type": "SPREAD",
+            "line": -5.5,
+            "side": "Test",
+            "spread": -5.5,
+            "total": 220,
+            "odds": -110,
+            "prop_line": 0,
+        }
+
+        test_context = {
+            "sharp_signal": {"signal_strength": "MODERATE", "line_variance": 0.8},
+            "public_pct": 65,
+            "home_team": "Team",
+            "away_team": "Test",
+        }
+
+        result = score_candidate(test_candidate, test_context)
+
+        # Validate result has required fields
+        required_fields = ["ai_score", "research_score", "esoteric_score", "jarvis_score", "final_score", "tier"]
+        missing = [f for f in required_fields if f not in result]
+
+        if missing:
+            checks["scoring_pipeline"] = {
+                "ok": False,
+                "error": f"Missing fields in result: {missing}"
+            }
+            errors.append(f"Scoring pipeline missing fields: {missing}")
+        else:
+            checks["scoring_pipeline"] = {
+                "ok": True,
+                "test_final_score": result["final_score"],
+                "test_tier": result["tier"]
+            }
+    except ImportError:
+        checks["scoring_pipeline"] = {
+            "ok": False,
+            "error": "core.scoring_pipeline module not available"
+        }
+        errors.append("Scoring pipeline module not available")
+    except Exception as e:
+        checks["scoring_pipeline"] = {"ok": False, "error": str(e)}
+        errors.append(f"Scoring pipeline sanity check failed: {e}")
+
+    # =========================================================================
+    # CHECK 4: Core Modules
+    # =========================================================================
+    core_modules = {}
+
+    try:
+        from core import invariants
+        core_modules["invariants"] = {"ok": True, "version": "15.1"}
+    except ImportError as e:
+        core_modules["invariants"] = {"ok": False, "error": str(e)}
+        errors.append("core.invariants module not available")
+
+    try:
+        from core import scoring_pipeline
+        core_modules["scoring_pipeline"] = {"ok": True}
+    except ImportError as e:
+        core_modules["scoring_pipeline"] = {"ok": False, "error": str(e)}
+
+    try:
+        from core import time_window_et
+        core_modules["time_window_et"] = {"ok": True}
+    except ImportError as e:
+        core_modules["time_window_et"] = {"ok": False, "error": str(e)}
+
+    try:
+        from core import persistence
+        core_modules["persistence"] = {"ok": True}
+    except ImportError as e:
+        core_modules["persistence"] = {"ok": False, "error": str(e)}
+
+    checks["core_modules"] = core_modules
+
+    # =========================================================================
+    # OVERALL STATUS
+    # =========================================================================
+    ok = len(errors) == 0
+
+    return {
+        "ok": ok,
+        "errors": errors,
+        "checks": checks,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
 @router.get("/grader/weights/{sport}")
 async def grader_weights(sport: str):
     """Get current prediction weights for a sport."""

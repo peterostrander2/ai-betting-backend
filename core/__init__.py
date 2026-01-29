@@ -40,7 +40,17 @@ from .invariants import (
     validate_score_threshold,
 )
 
+# Import runtime modules (optional - graceful fallback if not available)
+try:
+    from . import scoring_pipeline
+    from . import time_window_et
+    from . import persistence
+    RUNTIME_MODULES_AVAILABLE = True
+except ImportError:
+    RUNTIME_MODULES_AVAILABLE = False
+
 __all__ = [
+    # Invariants
     'TITANIUM_ENGINE_COUNT',
     'TITANIUM_ENGINE_THRESHOLD',
     'TITANIUM_MIN_ENGINES',
@@ -56,4 +66,9 @@ __all__ = [
     'validate_jarvis_output',
     'validate_pick_storage',
     'validate_score_threshold',
+
+    # Runtime modules
+    'scoring_pipeline',
+    'time_window_et',
+    'persistence',
 ]
