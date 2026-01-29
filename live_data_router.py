@@ -3199,7 +3199,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             point = outcome.get("point")
                             outcome_key = f"{market_key}:{pick_name}:{point}"
                             best_odds, best_book, best_book_key, best_link = best_odds_by_market.get(
-                                outcome_key, (outcome.get("price", -110), "Unknown", "", "")
+                                outcome_key, (outcome.get("price", -110), "Unknown", "consensus", "")
                             )
 
                             if market_key == "spreads":
