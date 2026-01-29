@@ -3179,7 +3179,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 best_odds_by_market = {}
                 for bm in game.get("bookmakers", []):
                     book_name = bm.get("title", "Unknown")
-                    book_key = bm.get("key", "")
+                    book_key = bm.get("key", "") or "consensus"  # FIX: Never store empty book_key
                     bm_link = AFFILIATE_LINKS.get(book_key, "")
                     for market in bm.get("markets", []):
                         market_key = market.get("key", "")
