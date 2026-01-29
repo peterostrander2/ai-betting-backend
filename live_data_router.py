@@ -2752,6 +2752,48 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         if trap_mod < 0:
             penalties.append({"name": "Large Spread Trap", "magnitude": round(trap_mod, 2)})
 
+        # --- v15.3 TIER_REASON (Transparency for frontend) ---
+        # Explain why this tier was assigned, especially for downgrades
+        tier_reason = []
+        actual_tier = bet_tier.get("tier", "PASS")
+
+        if actual_tier == "TITANIUM_SMASH":
+            tier_reason.append(f"TITANIUM: {sum([ai_scaled >= 8.0, research_score >= 8.0, esoteric_score >= 8.0, jarvis_rs >= 8.0])}/4 engines >= 8.0")
+        elif actual_tier == "GOLD_STAR":
+            if _gold_gates_passed:
+                tier_reason.append(f"GOLD_STAR: Score {final_score:.2f} >= 7.5, passed all hard gates")
+            else:
+                # This shouldn't happen (downgrade should have occurred), but log it
+                tier_reason.append(f"GOLD_STAR: Score {final_score:.2f}, but gates may be marginal")
+        elif actual_tier == "EDGE_LEAN":
+            if final_score >= 7.5:
+                # High score but downgraded to EDGE_LEAN - explain why
+                if not _gold_gates_passed:
+                    failed_gate_names = [g.replace("_gte_", " >= ").replace("_", " ").title() for g in _gold_gates_failed]
+                    tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} >= 7.5 but failed GOLD gates: {', '.join(failed_gate_names)}")
+                else:
+                    tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} >= 7.5 but other criteria not met")
+            elif final_score >= 6.5:
+                tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} in 6.5-7.5 range")
+            else:
+                tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} (should not be returned)")
+        elif actual_tier == "MONITOR":
+            tier_reason.append(f"MONITOR: Score {final_score:.2f} in 5.5-6.5 range (below output threshold)")
+        elif actual_tier == "PASS":
+            tier_reason.append(f"PASS: Score {final_score:.2f} < 5.5 (should not be returned)")
+
+        # Add specific gate failures for transparency
+        if _gold_gates_failed and final_score >= 7.5:
+            for gate in _gold_gates_failed:
+                if gate == "ai_gte_6.8":
+                    tier_reason.append(f"  - AI {ai_scaled:.1f} < 6.8")
+                elif gate == "research_gte_5.5":
+                    tier_reason.append(f"  - Research {research_score:.1f} < 5.5")
+                elif gate == "jarvis_gte_6.5":
+                    tier_reason.append(f"  - Jarvis {jarvis_rs:.1f} < 6.5")
+                elif gate == "esoteric_gte_4.0":
+                    tier_reason.append(f"  - Esoteric {esoteric_score:.1f} < 4.0")
+
         return {
             "total_score": round(final_score, 2),
             "final_score": round(final_score, 2),  # Alias for frontend
@@ -2760,6 +2802,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "confluence_level": confluence_level,
             "bet_tier": bet_tier,
             "tier": bet_tier.get("tier", "PASS"),
+            "tier_reason": tier_reason,  # v15.3 Transparency: why this tier was assigned
             "action": bet_tier.get("action", "SKIP"),
             "units": bet_tier.get("units", bet_tier.get("unit_size", 0.0)),
             # v11.08 Engine scores (all 0-10 scale)
@@ -3844,7 +3887,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             bucket = round(int(s * 2) / 2, 1)  # Round to nearest 0.5
             buckets[bucket] = buckets.get(bucket, 0) + 1
 
+        # v15.3: Ensure stable debug schema with defaults for all keys
         result["debug"] = {
+            # Timing breakdown
             "debug_timings": _timings,
             "total_elapsed_s": round(_elapsed(), 2),
             "timed_out_components": _timed_out_components,
@@ -3852,11 +3897,23 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "max_events": max_events,
             "max_props": max_props,
             "max_games": max_games,
-            "player_resolve_cache_size": len(_player_resolve_cache),
-            "player_resolve_attempted": _resolve_attempted,
-            "player_resolve_succeeded": _resolve_succeeded,
-            "player_resolve_timed_out": _resolve_timed_out,
-            "date_window_et": _date_window_et_debug,
+
+            # Player resolution (always present, even if empty)
+            "player_resolution": {
+                "attempted": _resolve_attempted,
+                "succeeded": _resolve_succeeded,
+                "timed_out": _resolve_timed_out,
+                "cache_size": len(_player_resolve_cache),
+            },
+
+            # Date window (always present, even if empty)
+            "date_window_et": _date_window_et_debug or {
+                "date_str": "unknown",
+                "start_et": "00:00:00",
+                "end_et": "23:59:59",
+                "events_dropped_before": 0,
+                "events_dropped_after": 0,
+            },
             "min_score_used": min_score,
             "community_threshold": 6.5,
             "total_prop_candidates": len(_all_prop_candidates),
@@ -3870,6 +3927,26 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "dropped_out_of_window_games": _dropped_out_of_window_games,
             "dropped_missing_time_props": _dropped_missing_time_props,
             "dropped_missing_time_games": _dropped_missing_time_games,
+
+            # v15.3 Injury guard (always present)
+            "injury_guard": {
+                "blocked_count": sum(1 for p in _all_prop_candidates if p.get("injury_status", "HEALTHY") in ["OUT", "DOUBTFUL"]),
+                "questionable_count": sum(1 for p in _all_prop_candidates if p.get("injury_status", "HEALTHY") == "QUESTIONABLE"),
+                "checked_count": sum(1 for p in _all_prop_candidates if p.get("injury_checked", False)),
+            },
+
+            # v15.3 Gate summary (always present)
+            "gates": {
+                "below_6_5": filtered_below_6_5_props + filtered_below_6_5_games,
+                "contradictions": contradiction_debug.get("total_dropped", 0),
+                "duplicates": _dupe_dropped_props + _dupe_dropped_games,
+                "out_of_window": _dropped_out_of_window_props + _dropped_out_of_window_games,
+                "total_filtered": (filtered_below_6_5_props + filtered_below_6_5_games +
+                                  contradiction_debug.get("total_dropped", 0) +
+                                  _dupe_dropped_props + _dupe_dropped_games +
+                                  _dropped_out_of_window_props + _dropped_out_of_window_games),
+            },
+
             # v15.3 dedupe telemetry
             "dupe_dropped_props": _dupe_dropped_props,
             "dupe_dropped_games": _dupe_dropped_games,

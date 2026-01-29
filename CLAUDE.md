@@ -2524,7 +2524,7 @@ Result:
 **Test 5: Survival Across Restart**
 - Mechanism: Railway deployments trigger container restarts
 - Verification: All 68 picks from Jan 27 still accessible after multiple deployments (commits c4b3bcf, 34721fa)
-- Storage: JSONL files on `/data` volume persist across container restarts
+- Storage: JSONL files on `/app/grader_data` volume persist across container restarts
 - **✅ PASS**: Picks survive restarts
 
 #### 3. Bug Found and Fixed
