@@ -46,41 +46,8 @@ except ImportError:
 
 logger = logging.getLogger("pick_logger")
 
-
-# =============================================================================
-# BOOK FIELD ENFORCEMENT (CRITICAL FIX)
-# =============================================================================
-
-def _ensure_book_fields(pick_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Enforce book_key, book, sportsbook_name, sportsbook_event_url defaults.
-
-    CRITICAL FIX: Never allow empty book_key (breaks grading).
-    Fallback: "consensus" for all book fields if missing.
-
-    Applied at:
-    1. Serialization before API response
-    2. Before writing to pick_logs
-    3. When loading from pick_logs (auto-heal legacy rows)
-    """
-    book = pick_data.get("book", "")
-    book_key = pick_data.get("book_key", "")
-
-    # If book_key is empty, use fallback
-    if not book_key:
-        book_key = "consensus"
-
-    # If book is empty, use fallback
-    if not book:
-        book = "Consensus"
-
-    # Update pick_data with corrected values
-    pick_data["book_key"] = book_key
-    pick_data["book"] = book
-    pick_data["sportsbook_name"] = pick_data.get("sportsbook_name") or book
-    pick_data["sportsbook_event_url"] = pick_data.get("sportsbook_event_url") or ""
-
-    return pick_data
+# Import book field sanitizer
+from utils.book_sanitizer import ensure_book_fields as _ensure_book_fields
 
 
 # =============================================================================
@@ -1025,12 +992,21 @@ class PickLogger:
                                 logger.info(f"Auto-healed book_key: {data.get('pick_id', 'unknown')} -> {data.get('book_key')}")
                             healed_picks.append(PublishedPick(**data))
 
-                # Rewrite file if any picks were healed (idempotent)
+                # Rewrite file if any picks were healed (atomic write)
                 if needs_rewrite:
                     logger.info(f"Rewriting {pick_file} with healed picks")
-                    with open(pick_file, 'w') as f:
-                        for pick in healed_picks:
-                            f.write(json.dumps(asdict(pick)) + "\n")
+                    tmp_file = pick_file + ".tmp"
+                    try:
+                        with open(tmp_file, 'w') as f:
+                            for pick in healed_picks:
+                                f.write(json.dumps(asdict(pick)) + "\n")
+                        # Atomic replace (POSIX guarantees atomicity)
+                        os.replace(tmp_file, pick_file)
+                        logger.info(f"Auto-heal complete: {pick_file}")
+                    except Exception as e:
+                        logger.error(f"Auto-heal failed: {e}")
+                        if os.path.exists(tmp_file):
+                            os.remove(tmp_file)
 
                 picks = healed_picks
                 self.picks[date] = picks

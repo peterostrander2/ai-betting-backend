@@ -3647,13 +3647,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     top_game_picks = filtered_games_no_contradict[:max_games]
 
     # CRITICAL FIX: Enforce book_key defaults before API response (BOTH props and games)
-    if PICK_LOGGER_AVAILABLE:
-        try:
-            from pick_logger import _ensure_book_fields
-            top_props = [_ensure_book_fields(p) for p in top_props]
-            top_game_picks = [_ensure_book_fields(g) for g in top_game_picks]
-        except Exception as e:
-            logger.warning("Failed to apply book_key enforcement: %s", e)
+    # Applied UNCONDITIONALLY - never allow empty book_key in response
+    try:
+        from utils.book_sanitizer import ensure_book_fields
+        top_props = [ensure_book_fields(p) for p in top_props]
+        top_game_picks = [ensure_book_fields(g) for g in top_game_picks]
+    except Exception as e:
+        logger.error("CRITICAL: book_key sanitizer failed: %s", e)
+        # This should never fail, but log and continue if it does
 
     if _dupe_dropped_props + _dupe_dropped_games > 0:
         logger.info("DEDUPE: dropped %d prop dupes, %d game dupes", _dupe_dropped_props, _dupe_dropped_games)
