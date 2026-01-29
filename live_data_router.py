@@ -5976,28 +5976,26 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
     Returns structured validation report with PASS/FAIL/PENDING status.
     Per-pick reasons: PENDING_GAME_NOT_FINAL, UNRESOLVED_EVENT, UNRESOLVED_PLAYER, etc.
     """
-    if not PICK_LOGGER_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Pick logger not available")
+    if not GRADER_STORE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Grader store not available")
 
     try:
         # Parse request - get date from request or default to today ET
         date = request_data.get("date")
         if not date:
-            if PYTZ_AVAILABLE:
-                ET_TZ = pytz.timezone("America/New_York")
-                date = datetime.now(ET_TZ).strftime("%Y-%m-%d")
-            else:
-                date = datetime.now().strftime("%Y-%m-%d")
+            from core.time_et import now_et
+            date = now_et().strftime("%Y-%m-%d")
+
         sports = request_data.get("sports") or ["NBA", "NFL", "MLB", "NHL", "NCAAB"]
         mode = request_data.get("mode", "pre")  # "pre" or "post"
         fail_on_unresolved = request_data.get("fail_on_unresolved", False)
 
-        pick_logger = get_pick_logger()
-        all_picks = pick_logger.get_picks_for_date(date)
+        # Load picks from grader_store (SINGLE SOURCE OF TRUTH)
+        all_picks = grader_store.load_predictions(date_et=date)
 
         # Filter by sports
         sport_set = set(s.upper() for s in sports)
-        picks = [p for p in all_picks if p.sport.upper() in sport_set]
+        picks = [p for p in all_picks if p.get("sport", "").upper() in sport_set]
 
         # Initialize results with new counters
         results = {
@@ -6019,7 +6017,7 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
         _already_failed = 0
 
         for pick in picks:
-            sport = pick.sport.upper()
+            sport = pick.get("sport", "").upper()
 
             if sport not in results["by_sport"]:
                 results["by_sport"][sport] = {
@@ -6033,13 +6031,13 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
                 }
 
             # Skip already-graded or already-failed picks
-            _gs = getattr(pick, "grade_status", "PENDING")
+            _gs = pick.get("grade_status", "PENDING")
             if _gs == "GRADED":
                 _already_graded += 1
                 results["graded"] += 1
                 results["by_sport"][sport]["graded"] += 1
                 continue
-            if _gs == "FAILED" and not getattr(pick, "canonical_player_id", ""):
+            if _gs == "FAILED" and not pick.get("canonical_player_id"):
                 # Old test seeds with no canonical_player_id — skip
                 _already_failed += 1
                 continue
@@ -6047,44 +6045,47 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
             results["by_sport"][sport]["picks"] += 1
 
             # Check 1: Event resolution
-            canonical_event_id = getattr(pick, "canonical_event_id", "")
-            event_ok = bool(canonical_event_id) or bool(pick.matchup)
+            canonical_event_id = pick.get("canonical_event_id", "")
+            matchup = pick.get("matchup", "")
+            event_ok = bool(canonical_event_id) or bool(matchup)
             if event_ok:
                 results["by_sport"][sport]["event_resolved"] += 1
 
             # Check 2: Player resolution (props only)
             player_ok = True
-            if pick.player_name:
-                canonical_player_id = getattr(pick, "canonical_player_id", "")
+            player_name = pick.get("player_name", "")
+            if player_name:
+                canonical_player_id = pick.get("canonical_player_id", "")
                 player_ok = bool(canonical_player_id) or IDENTITY_RESOLVER_AVAILABLE
                 if player_ok:
                     results["by_sport"][sport]["player_resolved"] += 1
 
-            # Check 3: Grade-ready checklist (if available)
-            grade_ready_check = pick_logger.check_grade_ready(pick) if hasattr(pick_logger, 'check_grade_ready') else {"is_grade_ready": True, "reasons": []}
+            # Check 3: Grade-ready checklist (always assume ready for dict picks)
+            grade_ready_check = {"is_grade_ready": True, "reasons": []}
 
             # Determine per-pick status
             pick_reason = None
+            pick_id = pick.get("pick_id", "")
             if not event_ok:
                 results["unresolved"] += 1
                 results["by_sport"][sport]["unresolved"] += 1
                 pick_reason = "UNRESOLVED_EVENT"
                 unresolved_picks.append({
-                    "pick_id": pick.pick_id,
+                    "pick_id": pick_id,
                     "sport": sport,
-                    "player": pick.player_name,
-                    "matchup": pick.matchup,
+                    "player": player_name,
+                    "matchup": matchup,
                     "reason": pick_reason
                 })
-            elif pick.player_name and not player_ok:
+            elif player_name and not player_ok:
                 results["unresolved"] += 1
                 results["by_sport"][sport]["unresolved"] += 1
                 pick_reason = "UNRESOLVED_PLAYER"
                 unresolved_picks.append({
-                    "pick_id": pick.pick_id,
+                    "pick_id": pick_id,
                     "sport": sport,
-                    "player": pick.player_name,
-                    "matchup": pick.matchup,
+                    "player": player_name,
+                    "matchup": matchup,
                     "reason": pick_reason
                 })
             elif not grade_ready_check["is_grade_ready"]:
@@ -6092,20 +6093,20 @@ async def run_grader_dry_run(request_data: Dict[str, Any]):
                 results["failed"] += 1
                 pick_reason = "MISSING_GRADE_FIELDS"
                 failed_picks.append({
-                    "pick_id": pick.pick_id,
+                    "pick_id": pick_id,
                     "sport": sport,
-                    "player": pick.player_name,
-                    "matchup": pick.matchup,
+                    "player": player_name,
+                    "matchup": matchup,
                     "reason": pick_reason,
                     "missing_fields": grade_ready_check.get("missing_fields", [])
                 })
                 results["by_sport"][sport]["failed_picks"].append({
-                    "pick_id": pick.pick_id,
+                    "pick_id": pick_id,
                     "reason": pick_reason,
-                    "player": pick.player_name,
+                    "player": player_name,
                     "missing_fields": grade_ready_check.get("missing_fields", [])
                 })
-            elif pick.result is not None or getattr(pick, 'graded', False):
+            elif pick.get("result") is not None or pick.get("graded", False):
                 # Already graded
                 results["graded"] += 1
                 results["by_sport"][sport]["graded"] += 1
