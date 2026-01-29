@@ -38,6 +38,13 @@ def ensure_book_fields(pick_data: Dict[str, Any]) -> Dict[str, Any]:
     pick_data["book_key"] = book_key
     pick_data["book"] = book
     pick_data["sportsbook_name"] = pick_data.get("sportsbook_name") or book
-    pick_data["sportsbook_event_url"] = pick_data.get("sportsbook_event_url") or ""
+
+    # Polish: For consensus picks, explicitly remove links (cleaner frontend rendering)
+    if book_key == "consensus":
+        pick_data["sportsbook_event_url"] = ""
+        pick_data["book_link"] = ""
+        pick_data["best_book_link"] = ""
+    else:
+        pick_data["sportsbook_event_url"] = pick_data.get("sportsbook_event_url") or ""
 
     return pick_data

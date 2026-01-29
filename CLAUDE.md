@@ -1,5 +1,25 @@
 # CLAUDE.md - Project Instructions for AI Assistants
 
+## ⚠️ BACKEND FROZEN - DO NOT MODIFY
+
+**As of January 29, 2026, the backend is production-ready and FROZEN.**
+
+**DO NOT:**
+- Add new features to backend
+- Modify existing endpoints
+- Change storage paths
+- Refactor working code
+- "Improve" or "optimize" anything
+
+**ONLY MODIFY IF:**
+- Critical production bug (storage fails, grading breaks, API crashes)
+- Security vulnerability discovered
+- User explicitly requests a specific fix
+
+**ALL OTHER CHANGES:** Suggest to user first, get explicit approval.
+
+---
+
 ## User Environment
 - **OS:** Mac
 - **Terminal:** Use Mac Terminal commands (no Windows-specific instructions)

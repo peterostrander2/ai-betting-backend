@@ -3,6 +3,9 @@
 # System Verification Script
 # Run this anytime to verify all systems are operational
 #
+# CRITICAL: Use ONLY curl + jq/python3 -c for JSON parsing
+# DO NOT use Python requests module (may not be installed)
+#
 
 set -e
 
