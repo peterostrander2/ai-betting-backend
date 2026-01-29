@@ -808,6 +808,321 @@ Throughout day → Best-bets served on-demand (cached 5-10 min)
 
 ---
 
+## 📊 COMPLETE BEST-BETS DATA FLOW (END-TO-END)
+
+**CRITICAL:** This section documents the COMPLETE flow from API fetch → filtering → scoring → persistence. **CHECK THIS FIRST** before asking any questions about best-bets.
+
+### Overview: How Best-Bets Are Generated
+
+```
+User Request: GET /live/best-bets/NBA
+         ↓
+Check Cache (5-10 min TTL)
+         ↓ CACHE MISS
+1. FETCH: Get raw data from Odds API
+   - raw_prop_games = get_props(sport)    // ALL upcoming events (60+ games)
+   - raw_games = get_games(sport)         // ALL upcoming events
+         ↓
+2. FILTER: ET timezone gate (TODAY ONLY)
+   - Props: filter_events_et(raw_prop_games, date_str)   [line 3027]
+   - Games: filter_events_et(raw_games, date_str)        [line 3051]
+   - Drops: Events for tomorrow/yesterday
+         ↓
+3. SCORE: 4 engines + Jason Sim 2.0
+   - AI (25%) + Research (30%) + Esoteric (20%) + Jarvis (15%)
+   - Confluence boost + Jason Sim boost
+   - Tier assignment (TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN)
+         ↓
+4. FILTER: Score threshold (>= 6.5)
+   - Drops: All picks with final_score < 6.5
+         ↓
+5. FILTER: Contradiction gate
+   - Drops: Opposite sides of same bet (Over AND Under)
+         ↓
+6. PERSIST: Write to storage
+   - File: /app/grader_data/grader/predictions.jsonl
+   - Function: grader_store.persist_pick(pick_data)  [line 3794]
+         ↓
+7. CACHE: Store response (5-10 min)
+         ↓
+8. RETURN: Top picks to frontend
+```
+
+### Data Sources (External APIs)
+
+**Odds API** (`ODDS_API_KEY`)
+- **Endpoint:** Custom props/games endpoints
+- **Returns:** ALL upcoming events across multiple days (60+ events possible)
+- **Cache:** 8 hours (props don't change frequently)
+- **Used for:** Props, games, odds, lines
+
+**Playbook API** (`PLAYBOOK_API_KEY`)
+- **Endpoint:** `/splits`, `/injuries`, `/lines`
+- **Cache:** 5 minutes
+- **Used for:** Sharp money, public splits, injury data
+
+**BallDontLie GOAT** (`BALLDONTLIE_API_KEY`)
+- **Endpoint:** Player stats, box scores
+- **Used for:** NBA grading, player resolution
+
+### Implementation Details (live_data_router.py)
+
+**Line 97-102: Import ET filtering**
+```python
+from core.time_et import (
+    now_et,
+    et_day_bounds,
+    is_in_et_day,
+    filter_events_et,  # Single source of truth
+)
+TIME_ET_AVAILABLE = True
+```
+
+**Line ~3000: Fetch props from Odds API**
+```python
+raw_prop_games = get_props(sport)
+# Returns: ALL upcoming prop events (could be 60+ games across multiple days)
+```
+
+**Line 3027: Filter props to TODAY ONLY (ET timezone)**
+```python
+if TIME_ET_AVAILABLE and raw_prop_games:
+    prop_games, _dropped_props_window, _dropped_props_missing = filter_events_et(
+        raw_prop_games,
+        date_str  # "2026-01-29" in ET
+    )
+    logger.info("PROPS TODAY GATE: kept=%d, dropped_window=%d, dropped_missing=%d",
+                len(prop_games), len(_dropped_props_window), len(_dropped_props_missing))
+```
+
+**Line ~3040: Fetch games from Odds API**
+```python
+raw_games = get_games(sport)
+# Returns: ALL upcoming game events (could be 25+ games across multiple days)
+```
+
+**Line 3051: Filter games to TODAY ONLY (ET timezone)**
+```python
+if TIME_ET_AVAILABLE:
+    raw_games, _dropped_games_window, _dropped_games_missing = filter_events_et(
+        raw_games,
+        date_str
+    )
+    logger.info("GAMES TODAY GATE: kept=%d, dropped_window=%d, dropped_missing=%d",
+                len(raw_games), len(_dropped_games_window), len(_dropped_games_missing))
+```
+
+**Lines 3075-3410: Score each filtered event**
+```python
+for prop in prop_games:  # ONLY today's events (filtered)
+    # Run through 4 engines + Jason Sim
+    score_result = calculate_pick_score(
+        candidate=prop,
+        ai_score=...,
+        research_score=...,
+        esoteric_score=...,
+        jarvis_score=...,
+    )
+    # Filter: final_score >= 6.5
+    if score_result["final_score"] < 6.5:
+        continue
+```
+
+**Line 3794: Persist picks to storage**
+```python
+from grader_store import persist_pick
+
+pick_result = persist_pick(pick_data)
+# Writes to: /app/grader_data/grader/predictions.jsonl
+```
+
+### ET Timezone Filtering (MANDATORY)
+
+**Module:** `core/time_et.py` (SINGLE SOURCE OF TRUTH)
+
+**Functions:**
+- `now_et()` - Get current time in ET
+- `et_day_bounds(date_str)` - Get ET day bounds (00:00:00 to 23:59:59)
+- `is_in_et_day(event_time, date_str)` - Boolean check
+- `filter_events_et(events, date_str)` - Filter to ET day, returns (kept, dropped_window, dropped_missing)
+
+**Window:** 00:00:00 ET to 23:59:59 ET (end exclusive)
+
+**Timezone:** America/New_York (explicit via zoneinfo)
+
+**Why This Is Critical:**
+- Without ET gating: `get_props()` returns 60+ games across multiple days
+- Causes: Inflated counts, ghost picks, score distribution skew
+- **EVERY data path touching Odds API MUST filter to ET day**
+
+**Verification:**
+```bash
+# Check ET date
+curl /live/debug/time | jq '.et_date'
+# Returns: "2026-01-29"
+
+# Check best-bets filter_date matches
+curl /live/best-bets/NBA?debug=1 | jq '.debug.date_window_et.filter_date'
+# Returns: "2026-01-29" (MUST MATCH)
+
+# Check filtering telemetry
+curl /live/best-bets/NBA?debug=1 | jq '.debug.date_window_et'
+# Shows: events_before_props, events_after_props, dropped counts
+```
+
+### Cache Strategy
+
+| Data Type | Cache TTL | Where Cached | Invalidation |
+|-----------|-----------|--------------|--------------|
+| **Props from Odds API** | 8 hours | In-memory | Time-based |
+| **Best-bets response** | 5-10 minutes | In-memory | Time-based |
+| **Live scores** | 2 minutes | In-memory | Time-based |
+| **Splits/Lines** | 5 minutes | In-memory | Time-based |
+
+### On-Demand vs Scheduled
+
+**Scheduled (Background - Warms Cache):**
+| Time | What | Purpose |
+|------|------|---------|
+| 10:00 AM | Props fetch (all sports) | Morning games |
+| 12:00 PM | Props fetch (NBA/NCAAB, weekends only) | Noon games |
+| 2:00 PM | Props fetch (NBA/NCAAB, weekends only) | Afternoon games |
+| 6:00 PM | Props fetch (all sports) | Evening games |
+
+**On-Demand (User Request):**
+1. Frontend calls `/live/best-bets/NBA`
+2. Backend checks cache (5-10 min TTL)
+3. **If cache hit:** Return cached response (~100ms) ✅
+4. **If cache miss:**
+   - Fetch from Odds API (~2-3 seconds)
+   - Filter to TODAY only (ET timezone)
+   - Score through 4 engines (~2-3 seconds)
+   - Filter to >= 6.5, apply contradiction gate
+   - Persist to storage
+   - Cache response
+   - Return to frontend (~5-6 seconds total)
+
+### Scoring Pipeline (4 Engines + Jason Sim)
+
+**Formula:**
+```
+BASE = (AI × 0.25) + (Research × 0.30) + (Esoteric × 0.20) + (Jarvis × 0.15)
+FINAL = BASE + confluence_boost + jason_sim_boost
+```
+
+**Engines:**
+1. **AI (25%)** - 8 AI models with dynamic calibration
+2. **Research (30%)** - Sharp money, line variance, public fade
+3. **Esoteric (20%)** - Numerology, astro, fib, vortex, daily edge
+4. **Jarvis (15%)** - Gematria triggers, mid-spread goldilocks
+
+**Post-Pick:**
+5. **Jason Sim 2.0** - Confluence boost (can be negative)
+
+**Output Filters:**
+1. Score >= 6.5 (MANDATORY)
+2. Contradiction gate (no opposite sides)
+3. Titanium 3/4 rule (>= 3 engines >= 8.0)
+
+### Persistence (AutoGrader Integration)
+
+**Write Path:**
+- Endpoint: `/live/best-bets/{sport}` (line 3794)
+- Function: `grader_store.persist_pick(pick_data)`
+- File: `/app/grader_data/grader/predictions.jsonl`
+- Format: JSONL (one pick per line, append-only)
+
+**Read Path:**
+- AutoGrader: `grader_store.load_predictions(date_et)`
+- Daily audit: Grades picks from this file
+- Weight learning: Updates weights based on results
+
+**Storage Survives:**
+- Container restarts ✅
+- Railway deployments ✅
+- App crashes ✅
+
+### Debug Telemetry (Available with ?debug=1)
+
+```json
+{
+  "debug": {
+    "date_window_et": {
+      "filter_date": "2026-01-29",           // ET date used
+      "start_et": "00:00:00",                // Window start
+      "end_et": "23:59:59",                  // Window end
+      "events_before_props": 60,             // Before ET filter
+      "events_after_props": 12,              // After ET filter
+      "dropped_out_of_window_props": 48,     // Tomorrow/yesterday
+      "events_before_games": 25,
+      "events_after_games": 8,
+      "dropped_out_of_window_games": 17
+    },
+    "filtered_below_6_5_total": 1012,        // Picks < 6.5 dropped
+    "filtered_below_6_5_props": 850,
+    "filtered_below_6_5_games": 162,
+    "contradiction_blocked_total": 323,      // Opposite sides blocked
+    "contradiction_blocked_props": 310,
+    "contradiction_blocked_games": 13,
+    "picks_logged": 12,                      // New picks persisted
+    "picks_skipped_dupes": 8,                // Already logged today
+    "pick_log_errors": [],                   // Any errors
+    "total_elapsed_s": 5.57                  // Response time
+  }
+}
+```
+
+### Key Files & Line Numbers
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `live_data_router.py` | 97-102 | Import ET filtering functions |
+| `live_data_router.py` | ~3000 | Fetch props from Odds API |
+| `live_data_router.py` | 3027 | **Props ET filtering (BEFORE scoring)** |
+| `live_data_router.py` | ~3040 | Fetch games from Odds API |
+| `live_data_router.py` | 3051 | **Games ET filtering (BEFORE scoring)** |
+| `live_data_router.py` | 3075-3410 | Scoring loop (filtered events only) |
+| `live_data_router.py` | 3794 | **Persist picks to grader_store** |
+| `core/time_et.py` | All | Single source of truth for ET timezone |
+| `core/titanium.py` | All | Single source of truth for Titanium rule |
+| `grader_store.py` | All | Pick persistence (JSONL storage) |
+| `tiering.py` | All | Tier assignment (uses core/titanium.py) |
+
+### NEVER Forget These Rules
+
+1. ✅ **ALWAYS filter to ET day BEFORE scoring** (lines 3027, 3051)
+2. ✅ **ALWAYS use `core/time_et.py`** - NO other date helpers
+3. ✅ **ALWAYS persist picks** after scoring (line 3794)
+4. ✅ **ALWAYS filter to >= 6.5** before returning
+5. ✅ **ALWAYS apply contradiction gate** (no opposite sides)
+6. ✅ **ALWAYS verify filter_date matches et_date** in debug output
+7. ✅ **NEVER skip ET filtering** on any Odds API data path
+8. ✅ **NEVER use pytz** - only zoneinfo allowed
+9. ✅ **NEVER create duplicate date helper functions**
+10. ✅ **NEVER modify this flow without reading this section first**
+
+### Common Questions (Answer From This Section)
+
+**Q: When do we fetch best-bets throughout the day?**
+A: On-demand when `/live/best-bets/{sport}` is called. Scheduled props fetches at 10 AM, 12 PM (weekends), 2 PM (weekends), 6 PM warm the cache.
+
+**Q: How long are best-bets cached?**
+A: 5-10 minutes. Props from Odds API are cached 8 hours.
+
+**Q: Where are picks persisted?**
+A: `/app/grader_data/grader/predictions.jsonl` via `grader_store.persist_pick()` at line 3794.
+
+**Q: How do we filter to today's games only?**
+A: `filter_events_et(events, date_str)` from `core/time_et.py` at lines 3027 (props) and 3051 (games).
+
+**Q: What happens if Odds API returns tomorrow's games?**
+A: They are DROPPED by ET filtering. Only events in 00:00:00-23:59:59 ET are kept.
+
+**Q: How do we prevent both Over and Under for same bet?**
+A: Contradiction gate after scoring, before returning to frontend.
+
+---
+
 ### Storage Configuration (Railway Volume) - UNIFIED JANUARY 29, 2026
 
 **🚨 CRITICAL: READ THIS BEFORE TOUCHING STORAGE/AUTOGRADER CODE 🚨**
