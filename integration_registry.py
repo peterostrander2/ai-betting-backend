@@ -215,14 +215,14 @@ register_integration(
 
 register_integration(
     name="weather_api",
-    description="OpenWeather API - Weather data for outdoor sports (NFL, MLB)",
-    env_vars=["WEATHER_API_KEY", "OPENWEATHER_API_KEY"],
-    required=False,  # OPTIONAL - Explicitly disabled by default (WEATHER_ENABLED=false)
+    description="WeatherAPI.com - Weather data for outdoor sports (NFL, MLB, NCAAF)",
+    env_vars=["WEATHER_API_KEY"],
+    required=True,  # REQUIRED for outdoor sports
     modules=["alt_data_sources/weather.py"],
-    endpoints=["/live/best-bets/NFL", "/live/best-bets/MLB"],
+    endpoints=["/live/best-bets/NFL", "/live/best-bets/MLB", "/live/best-bets/NCAAF"],
     jobs=[],
     validate_fn="validate_weather_api",
-    notes="EXPLICITLY DISABLED: WEATHER_ENABLED=false by default. Stub returns deterministic 'FEATURE_DISABLED' reason. Enable when OpenWeather API integrated."
+    notes="Required for outdoor sports. Returns NOT_RELEVANT for indoor (NBA, NHL). Fail-soft on endpoints, fail-loud on /debug/integrations."
 )
 
 register_integration(
@@ -471,25 +471,18 @@ async def validate_weather_api() -> Dict[str, Any]:
     Validate Weather API configuration.
 
     Returns status categories:
-    - DISABLED: Feature flag is false (WEATHER_ENABLED=false)
-    - NOT_CONFIGURED: Missing API key
-    - VALIDATED: API key present and OpenWeather reachable
-    - UNREACHABLE: API key present but ping failed
+    - NOT_CONFIGURED: Missing API key (FAIL LOUD on /debug/integrations)
+    - VALIDATED: API key present and WeatherAPI.com reachable
+    - UNREACHABLE: API key present but ping failed (FAIL LOUD on /debug/integrations)
+    - NOT_RELEVANT: Indoor sport context (NBA, NHL, NCAAB) - valid status
+
+    Note: Weather is REQUIRED but returns NOT_RELEVANT for indoor sports.
+    This is not a failure - it's expected behavior per fail-soft on endpoints.
     """
     try:
-        from alt_data_sources.weather import WEATHER_ENABLED, WEATHER_API_KEY, WEATHER_API_BASE_URL
+        from alt_data_sources.weather import WEATHER_API_KEY, WEATHER_API_BASE_URL
     except ImportError:
         return {"configured": False, "reachable": False, "status": "NOT_CONFIGURED", "error": "Module not available"}
-
-    # Check feature flag first
-    if not WEATHER_ENABLED:
-        return {
-            "configured": False,
-            "reachable": False,
-            "status": "DISABLED",
-            "reason": "WEATHER_ENABLED=false",
-            "message": "Weather feature is intentionally disabled"
-        }
 
     # Check API key
     if not WEATHER_API_KEY:
@@ -500,10 +493,10 @@ async def validate_weather_api() -> Dict[str, Any]:
             "error": "WEATHER_API_KEY not set"
         }
 
-    # Ping OpenWeather API to verify key and connectivity
+    # Ping WeatherAPI.com to verify key and connectivity
     try:
         import httpx
-        # Test with minimal API call (get weather for arbitrary coordinates)
+        # Test with minimal API call (get weather for arbitrary coordinates - NYC)
         test_url = f"{WEATHER_API_BASE_URL}?key={WEATHER_API_KEY}&q=40.7128,-74.0060&aqi=no"
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(test_url)
@@ -513,7 +506,7 @@ async def validate_weather_api() -> Dict[str, Any]:
                     "configured": True,
                     "reachable": True,
                     "status": "VALIDATED",
-                    "message": "OpenWeather API responding",
+                    "message": "WeatherAPI.com responding",
                     "response_time_ms": int(response.elapsed.total_seconds() * 1000)
                 }
             elif response.status_code == 401:
@@ -524,6 +517,15 @@ async def validate_weather_api() -> Dict[str, Any]:
                     "status": "UNREACHABLE",
                     "error": "Invalid API key (401)",
                     "http_status": 401
+                }
+            elif response.status_code == 403:
+                record_failure("weather_api", "API key forbidden")
+                return {
+                    "configured": True,
+                    "reachable": False,
+                    "status": "UNREACHABLE",
+                    "error": "API key forbidden (403)",
+                    "http_status": 403
                 }
             else:
                 record_failure("weather_api", f"HTTP {response.status_code}")

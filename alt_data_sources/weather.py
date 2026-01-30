@@ -1,26 +1,36 @@
 """
 WEATHER MODULE - Weather data for outdoor sports
 
-STATUS: Real integration with WeatherAPI.com
-FEATURE FLAG: WEATHER_ENABLED (default: false)
+STATUS: REQUIRED integration with WeatherAPI.com
+API: WeatherAPI.com (https://api.weatherapi.com)
 
-REQUIREMENTS:
-- Must provide temperature, wind, precipitation
-- Must return deterministic "data missing" reason when unavailable
-- NEVER breaks scoring pipeline
-- Caching by stadium_id with 10-15 min TTL
+BEHAVIOR:
+- Indoor sports (NBA, NHL, NCAAB): Returns status=NOT_RELEVANT
+- Outdoor sports (NFL, MLB, NCAAF): Fetches weather and computes features
+- NFL dome games: Returns status=NOT_RELEVANT with dome name
+- Fail-soft on /live/best-bets endpoints (returns UNAVAILABLE, never crashes)
+- Fail-loud on /debug/integrations (shows UNREACHABLE if API fails)
 
-DATA SOURCE:
-- WeatherAPI.com (https://api.weatherapi.com)
-- Requires WEATHER_API_KEY environment variable
+RETURN SCHEMA (weather_context):
+{
+    "status": "VALIDATED" | "NOT_RELEVANT" | "UNAVAILABLE" | "ERROR",
+    "reason": str,
+    "raw": { temp_f, wind_mph, precip_in, humidity, pressure_mb, condition },
+    "features": { is_cold, is_windy, is_rainy, is_humid, is_low_pressure },
+    "score_modifier": float  # Bounded to [-0.35, +0.35]
+}
 
-INTEGRATION:
-- Set WEATHER_ENABLED=true and WEATHER_API_KEY to enable
-- Returns {available: false, reason: "FEATURE_DISABLED"} when disabled
-- Returns bounded weather_modifier capped at ±1.0
+SCORE MODIFIER CALCULATION (bounded ±0.35):
+- Wind >= 20 mph: -0.15 (affects passing/kicking)
+- Wind >= 15 mph: -0.10
+- Temp < 32°F: -0.10 (cold weather)
+- Precip >= 0.3 in: -0.10 (heavy rain/snow)
+- Precip >= 0.1 in: -0.05 (light rain)
+- Humidity >= 80%: -0.05 (ball grip issues)
+- Combined max: -0.35, min: 0.0 (weather only penalizes, never helps)
 """
 
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 import logging
 import os
 import time
@@ -28,8 +38,7 @@ import asyncio
 
 logger = logging.getLogger("weather")
 
-# Feature flag
-WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "false").lower() == "true"
+# API Configuration
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
 
 # Weather constants
@@ -44,6 +53,29 @@ _weather_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 # WeatherAPI.com configuration
 WEATHER_API_BASE_URL = "https://api.weatherapi.com/v1/current.json"
 FETCH_TIMEOUT_SECONDS = 5.0  # Never block more than 5 seconds
+
+# Sport classification for weather relevance
+INDOOR_SPORTS = {"NBA", "NHL", "NCAAB"}  # Weather NOT_RELEVANT
+OUTDOOR_SPORTS = {"NFL", "MLB", "NCAAF"}  # Weather affects games
+
+# NFL Dome Stadiums (weather NOT_RELEVANT for games here)
+NFL_DOME_STADIUMS = {
+    "at&t stadium": "AT&T Stadium (Cowboys)",
+    "att stadium": "AT&T Stadium (Cowboys)",
+    "cowboys stadium": "AT&T Stadium (Cowboys)",
+    "caesars superdome": "Caesars Superdome (Saints)",
+    "mercedes-benz superdome": "Caesars Superdome (Saints)",
+    "superdome": "Caesars Superdome (Saints)",
+    "sofi stadium": "SoFi Stadium (Rams/Chargers)",
+    "lucas oil stadium": "Lucas Oil Stadium (Colts)",
+    "u.s. bank stadium": "U.S. Bank Stadium (Vikings)",
+    "us bank stadium": "U.S. Bank Stadium (Vikings)",
+    "allegiant stadium": "Allegiant Stadium (Raiders)",
+    "state farm stadium": "State Farm Stadium (Cardinals)",
+    "ford field": "Ford Field (Lions)",
+    "nrg stadium": "NRG Stadium (Texans)",  # Retractable roof
+    "mercedes-benz stadium": "Mercedes-Benz Stadium (Falcons)",
+}
 
 
 def _get_cache(stadium_id: str) -> Optional[Dict[str, Any]]:
@@ -64,6 +96,340 @@ def _set_cache(stadium_id: str, data: Dict[str, Any]) -> None:
     """Cache weather data."""
     _weather_cache[stadium_id] = (time.time(), data)
     logger.debug("Weather cache SET for %s (TTL=%ds)", stadium_id, CACHE_TTL_SECONDS)
+
+
+def _is_dome_stadium(venue: str) -> Optional[str]:
+    """
+    Check if venue is a dome stadium.
+
+    Returns:
+        Dome name if venue is a dome, None otherwise
+    """
+    if not venue:
+        return None
+    venue_lower = venue.lower().strip()
+    for dome_key, dome_name in NFL_DOME_STADIUMS.items():
+        if dome_key in venue_lower:
+            return dome_name
+    return None
+
+
+def _compute_weather_features(
+    temp_f: float,
+    wind_mph: float,
+    precip_in: float,
+    humidity: int,
+    pressure_mb: float
+) -> Dict[str, bool]:
+    """
+    Compute boolean weather features from raw data.
+
+    Returns:
+        Dict with is_cold, is_windy, is_rainy, is_humid, is_low_pressure
+    """
+    return {
+        "is_cold": temp_f < 32.0,
+        "is_windy": wind_mph >= 15.0,
+        "is_rainy": precip_in >= 0.1,
+        "is_humid": humidity >= 70,
+        "is_low_pressure": pressure_mb < 1010.0
+    }
+
+
+def _compute_score_modifier(
+    temp_f: float,
+    wind_mph: float,
+    precip_in: float,
+    humidity: int
+) -> float:
+    """
+    Compute score modifier from weather conditions.
+
+    Bounded to [-0.35, 0.0] - weather only penalizes, never helps.
+
+    Modifiers:
+    - Wind >= 20 mph: -0.15
+    - Wind >= 15 mph: -0.10
+    - Temp < 32°F: -0.10
+    - Precip >= 0.3 in: -0.10
+    - Precip >= 0.1 in: -0.05
+    - Humidity >= 80%: -0.05
+    """
+    modifier = 0.0
+
+    # Wind impact (mutually exclusive)
+    if wind_mph >= 20.0:
+        modifier -= 0.15
+    elif wind_mph >= 15.0:
+        modifier -= 0.10
+
+    # Temperature impact
+    if temp_f < 32.0:
+        modifier -= 0.10
+
+    # Precipitation impact (mutually exclusive)
+    if precip_in >= 0.3:
+        modifier -= 0.10
+    elif precip_in >= 0.1:
+        modifier -= 0.05
+
+    # Humidity impact
+    if humidity >= 80:
+        modifier -= 0.05
+
+    # Bound to [-0.35, 0.0]
+    return max(-0.35, min(0.0, modifier))
+
+
+async def get_weather_context(
+    sport: str,
+    home_team: str,
+    venue: str = "",
+    lat: Optional[float] = None,
+    lon: Optional[float] = None
+) -> Dict[str, Any]:
+    """
+    Get weather context for a game with deterministic return structure.
+
+    This is the PRIMARY function for scoring pipeline integration.
+    Always returns a complete weather_context dict, never raises exceptions.
+
+    Args:
+        sport: Sport code (NFL, MLB, NBA, NHL, NCAAF, NCAAB)
+        home_team: Home team name (for venue lookup if lat/lon not provided)
+        venue: Stadium/venue name (for dome detection)
+        lat: Latitude (optional, for direct API call)
+        lon: Longitude (optional, for direct API call)
+
+    Returns:
+        weather_context dict with:
+        - status: VALIDATED | NOT_RELEVANT | UNAVAILABLE | ERROR
+        - reason: Human-readable explanation
+        - raw: Raw weather data (when available)
+        - features: Computed boolean features
+        - score_modifier: Bounded [-0.35, +0.35]
+    """
+    sport_upper = sport.upper() if sport else ""
+
+    # === RELEVANCE GATING ===
+
+    # Check for indoor sports first
+    if sport_upper in INDOOR_SPORTS:
+        return {
+            "status": "NOT_RELEVANT",
+            "reason": "Indoor sport",
+            "raw": None,
+            "features": None,
+            "score_modifier": 0.0
+        }
+
+    # Check for dome stadiums (NFL only)
+    if sport_upper == "NFL":
+        dome_name = _is_dome_stadium(venue)
+        if dome_name:
+            return {
+                "status": "NOT_RELEVANT",
+                "reason": f"Dome stadium: {dome_name}",
+                "raw": None,
+                "features": None,
+                "score_modifier": 0.0
+            }
+
+    # === API KEY CHECK ===
+
+    if not WEATHER_API_KEY:
+        return {
+            "status": "UNAVAILABLE",
+            "reason": "WEATHER_API_KEY not configured",
+            "raw": None,
+            "features": None,
+            "score_modifier": 0.0
+        }
+
+    # === GET COORDINATES ===
+
+    # If lat/lon not provided, try to get from stadium registry
+    if lat is None or lon is None:
+        try:
+            from alt_data_sources.stadium import get_venue_for_weather
+            venue_info = get_venue_for_weather(home_team, sport_upper)
+            if venue_info:
+                lat = venue_info.get("lat", 0.0)
+                lon = venue_info.get("lon", 0.0)
+                # Check if indoor venue from stadium registry
+                if not venue_info.get("is_outdoor", True):
+                    return {
+                        "status": "NOT_RELEVANT",
+                        "reason": f"Indoor venue: {venue_info.get('name', 'Unknown')}",
+                        "raw": None,
+                        "features": None,
+                        "score_modifier": 0.0
+                    }
+        except ImportError:
+            pass  # Stadium module not available
+
+    if lat is None or lon is None or (lat == 0.0 and lon == 0.0):
+        return {
+            "status": "UNAVAILABLE",
+            "reason": "Venue coordinates not available",
+            "raw": None,
+            "features": None,
+            "score_modifier": 0.0
+        }
+
+    # === CHECK CACHE ===
+
+    stadium_id = f"{sport_upper}_{home_team}"
+    cached = _get_cache(stadium_id)
+    if cached and cached.get("status") == "VALIDATED":
+        return cached
+
+    # === FETCH FROM API ===
+
+    try:
+        import httpx
+    except ImportError:
+        return {
+            "status": "ERROR",
+            "reason": "httpx library not installed",
+            "raw": None,
+            "features": None,
+            "score_modifier": 0.0
+        }
+
+    try:
+        params = {
+            "key": WEATHER_API_KEY,
+            "q": f"{lat},{lon}",
+            "aqi": "no"
+        }
+
+        async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SECONDS) as client:
+            response = await client.get(WEATHER_API_BASE_URL, params=params)
+
+            if response.status_code != 200:
+                logger.warning("WeatherAPI error: %d", response.status_code)
+                return {
+                    "status": "UNAVAILABLE",
+                    "reason": f"API returned HTTP {response.status_code}",
+                    "raw": None,
+                    "features": None,
+                    "score_modifier": 0.0
+                }
+
+            data = response.json()
+            current = data.get("current", {})
+
+            # Extract raw weather data
+            temp_f = current.get("temp_f", DEFAULT_TEMPERATURE)
+            wind_mph = current.get("wind_mph", DEFAULT_WIND_SPEED)
+            precip_in = current.get("precip_in", DEFAULT_PRECIPITATION)
+            humidity = current.get("humidity", 50)
+            pressure_mb = current.get("pressure_mb", 1013.0)
+            condition = current.get("condition", {}).get("text", "Unknown")
+
+            raw = {
+                "temp_f": round(temp_f, 1),
+                "wind_mph": round(wind_mph, 1),
+                "precip_in": round(precip_in, 2),
+                "humidity": humidity,
+                "pressure_mb": round(pressure_mb, 1),
+                "condition": condition
+            }
+
+            features = _compute_weather_features(
+                temp_f, wind_mph, precip_in, humidity, pressure_mb
+            )
+
+            score_modifier = _compute_score_modifier(
+                temp_f, wind_mph, precip_in, humidity
+            )
+
+            result = {
+                "status": "VALIDATED",
+                "reason": f"Weather fetched for {home_team}",
+                "raw": raw,
+                "features": features,
+                "score_modifier": round(score_modifier, 2)
+            }
+
+            # Cache the result
+            _set_cache(stadium_id, result)
+
+            logger.info("Weather context for %s: %.1f°F, %.1f mph, %.2f in, modifier=%.2f",
+                       stadium_id, temp_f, wind_mph, precip_in, score_modifier)
+
+            return result
+
+    except asyncio.TimeoutError:
+        logger.warning("Weather API timeout for %s", stadium_id)
+        return {
+            "status": "UNAVAILABLE",
+            "reason": f"API timeout ({FETCH_TIMEOUT_SECONDS}s)",
+            "raw": None,
+            "features": None,
+            "score_modifier": 0.0
+        }
+    except Exception as e:
+        logger.exception("Weather fetch failed: %s", e)
+        return {
+            "status": "ERROR",
+            "reason": str(e)[:100],
+            "raw": None,
+            "features": None,
+            "score_modifier": 0.0
+        }
+
+
+def get_weather_context_sync(
+    sport: str,
+    home_team: str,
+    venue: str = ""
+) -> Dict[str, Any]:
+    """
+    Synchronous wrapper for get_weather_context.
+
+    For use in non-async contexts. Returns cached data or NOT_RELEVANT/UNAVAILABLE.
+    Does NOT make API calls - use async version for fresh data.
+    """
+    sport_upper = sport.upper() if sport else ""
+
+    # Check indoor sports
+    if sport_upper in INDOOR_SPORTS:
+        return {
+            "status": "NOT_RELEVANT",
+            "reason": "Indoor sport",
+            "raw": None,
+            "features": None,
+            "score_modifier": 0.0
+        }
+
+    # Check dome stadiums
+    if sport_upper == "NFL":
+        dome_name = _is_dome_stadium(venue)
+        if dome_name:
+            return {
+                "status": "NOT_RELEVANT",
+                "reason": f"Dome stadium: {dome_name}",
+                "raw": None,
+                "features": None,
+                "score_modifier": 0.0
+            }
+
+    # Check cache
+    stadium_id = f"{sport_upper}_{home_team}"
+    cached = _get_cache(stadium_id)
+    if cached:
+        return cached
+
+    # Return unavailable for sync calls (no API call)
+    return {
+        "status": "UNAVAILABLE",
+        "reason": "Use async get_weather_context for fresh data",
+        "raw": None,
+        "features": None,
+        "score_modifier": 0.0
+    }
 
 
 async def fetch_weather_from_api(
@@ -89,20 +455,6 @@ async def fetch_weather_from_api(
     cached = _get_cache(stadium_id)
     if cached:
         return cached
-
-    # Feature flag check
-    if not WEATHER_ENABLED:
-        return {
-            "available": False,
-            "reason": "FEATURE_DISABLED",
-            "message": "Weather analysis feature is disabled",
-            "temperature": DEFAULT_TEMPERATURE,
-            "wind_speed": DEFAULT_WIND_SPEED,
-            "precipitation": DEFAULT_PRECIPITATION,
-            "conditions": "UNKNOWN",
-            "weather_modifier": 0.0,
-            "weather_reasons": []
-        }
 
     # API key check
     if not WEATHER_API_KEY:
@@ -348,19 +700,6 @@ def get_weather_for_game(
     Returns:
         Weather data dict with status
     """
-    if not WEATHER_ENABLED:
-        return {
-            "available": False,
-            "reason": "FEATURE_DISABLED",
-            "message": "Weather analysis feature is disabled",
-            "temperature": DEFAULT_TEMPERATURE,
-            "wind_speed": DEFAULT_WIND_SPEED,
-            "precipitation": DEFAULT_PRECIPITATION,
-            "conditions": "UNKNOWN",
-            "weather_modifier": 0.0,
-            "weather_reasons": []
-        }
-
     if not WEATHER_API_KEY:
         return {
             "available": False,
@@ -691,6 +1030,6 @@ def get_cache_stats() -> Dict[str, Any]:
         "valid_entries": valid_count,
         "expired_entries": expired_count,
         "cache_ttl_seconds": CACHE_TTL_SECONDS,
-        "enabled": WEATHER_ENABLED,
+        "required": True,  # Weather is now a required integration
         "api_key_configured": bool(WEATHER_API_KEY)
     }

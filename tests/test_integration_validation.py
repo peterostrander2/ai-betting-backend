@@ -32,14 +32,14 @@ except ImportError:
 
 
 # ============================================================================
-# REQUIRED INTEGRATIONS (13 total - weather_api is optional)
+# REQUIRED INTEGRATIONS (14 total - all integrations are required)
 # ============================================================================
 
 REQUIRED_INTEGRATIONS = [
     "odds_api",
     "playbook_api",
     "balldontlie",
-    # weather_api is OPTIONAL (required=False)
+    "weather_api",  # REQUIRED for outdoor sports (NFL, MLB, NCAAF)
     "astronomy_api",
     "noaa_space_weather",
     "fred_api",
@@ -53,7 +53,7 @@ REQUIRED_INTEGRATIONS = [
 ]
 
 OPTIONAL_INTEGRATIONS = [
-    "weather_api",  # WEATHER_ENABLED=false by default
+    # All integrations are now required
 ]
 
 
@@ -243,16 +243,29 @@ async def validate_storage() -> Tuple[bool, str]:
 
 
 async def validate_weather() -> Tuple[bool, str]:
-    """Validate Weather API (OPTIONAL - feature flagged)."""
-    enabled = os.getenv("WEATHER_ENABLED", "false").lower() == "true"
-    if not enabled:
-        return True, "DISABLED: WEATHER_ENABLED=false (intentionally disabled)"
-
-    key = os.getenv("WEATHER_API_KEY") or os.getenv("OPENWEATHER_API_KEY")
+    """Validate Weather API (REQUIRED for outdoor sports)."""
+    key = os.getenv("WEATHER_API_KEY")
     if not key:
-        return False, "NOT_CONFIGURED: WEATHER_API_KEY not set but WEATHER_ENABLED=true"
+        return False, "NOT_CONFIGURED: WEATHER_API_KEY not set"
 
-    return True, "CONFIGURED: key set, feature enabled"
+    # Ping WeatherAPI.com to verify connectivity
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.weatherapi.com/v1/current.json",
+                params={"key": key, "q": "40.7128,-74.0060", "aqi": "no"}
+            )
+            if resp.status_code == 200:
+                return True, "VALIDATED: WeatherAPI.com reachable"
+            elif resp.status_code == 401:
+                return False, "UNREACHABLE: Invalid API key (401)"
+            elif resp.status_code == 403:
+                return False, "UNREACHABLE: API key forbidden (403)"
+            else:
+                return False, f"UNREACHABLE: HTTP {resp.status_code}"
+    except Exception as e:
+        return False, f"UNREACHABLE: {str(e)}"
 
 
 # ============================================================================
@@ -296,15 +309,14 @@ class TestIntegrationValidation:
             assert name in VALIDATORS, f"Missing validator for integration: {name}"
 
     def test_required_integrations_count(self):
-        """Should have exactly 13 required integrations."""
+        """Should have exactly 14 required integrations."""
         required = [i for i in INTEGRATIONS.values() if i.required]
-        assert len(required) == 13, f"Expected 13 required integrations, got {len(required)}"
+        assert len(required) == 14, f"Expected 14 required integrations, got {len(required)}"
 
     def test_optional_integrations_count(self):
-        """Should have exactly 1 optional integration (weather_api)."""
+        """Should have exactly 0 optional integrations (all are required)."""
         optional = [i for i in INTEGRATIONS.values() if not i.required]
-        assert len(optional) == 1, f"Expected 1 optional integration, got {len(optional)}"
-        assert optional[0].name == "weather_api", "Only weather_api should be optional"
+        assert len(optional) == 0, f"Expected 0 optional integrations, got {len(optional)}"
 
 
 @pytest.mark.skipif(not REGISTRY_AVAILABLE, reason="Integration registry not available")
@@ -345,19 +357,50 @@ class TestBallDontLieValidation:
 
 
 @pytest.mark.skipif(not REGISTRY_AVAILABLE, reason="Integration registry not available")
-class TestWeatherApiOptional:
-    """Test that weather_api is correctly marked as optional."""
+class TestWeatherApiRequired:
+    """Test that weather_api is correctly marked as required."""
 
-    def test_weather_api_is_optional(self):
-        """Weather API must be marked as optional (required=False)."""
+    def test_weather_api_is_required(self):
+        """Weather API must be marked as required (required=True)."""
         config = get_integration("weather_api")
         assert config is not None
-        assert config.required is False, "weather_api must be optional"
+        assert config.required is True, "weather_api must be required"
 
-    def test_weather_api_disabled_by_default(self):
-        """Weather should be disabled by default."""
-        enabled = os.getenv("WEATHER_ENABLED", "false").lower() == "true"
-        assert not enabled, "WEATHER_ENABLED should be false by default"
+    def test_weather_api_env_vars(self):
+        """Weather API must require WEATHER_API_KEY."""
+        config = get_integration("weather_api")
+        assert config is not None
+        assert "WEATHER_API_KEY" in config.env_vars, "WEATHER_API_KEY must be in env_vars"
+
+    def test_weather_api_outdoor_sports_only(self):
+        """Weather API should only affect outdoor sports endpoints."""
+        config = get_integration("weather_api")
+        assert config is not None
+        # Should include NFL, MLB, NCAAF (outdoor sports)
+        assert "/live/best-bets/NFL" in config.endpoints
+        assert "/live/best-bets/MLB" in config.endpoints
+        assert "/live/best-bets/NCAAF" in config.endpoints
+        # Should NOT include NBA, NHL (indoor sports)
+        assert "/live/best-bets/NBA" not in config.endpoints
+        assert "/live/best-bets/NHL" not in config.endpoints
+
+    @pytest.mark.asyncio
+    async def test_weather_api_ping(self):
+        """Ping test for WeatherAPI.com (skip if key not set)."""
+        key = os.getenv("WEATHER_API_KEY")
+        if not key:
+            pytest.skip("WEATHER_API_KEY not set in environment")
+
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.weatherapi.com/v1/current.json",
+                params={"key": key, "q": "40.7128,-74.0060", "aqi": "no"}
+            )
+            assert resp.status_code == 200, f"WeatherAPI.com returned {resp.status_code}"
+            data = resp.json()
+            assert "current" in data, "Response should contain 'current' field"
+            assert "temp_f" in data.get("current", {}), "Response should contain temperature"
 
 
 @pytest.mark.skipif(not REGISTRY_AVAILABLE, reason="Integration registry not available")
