@@ -40,6 +40,12 @@ BDL_BASE_URL = "https://api.balldontlie.io/v1"
 # Feature flag - only enabled if API key is set in environment
 BDL_ENABLED = bool(BDL_API_KEY and BDL_API_KEY not in ("", "your_key_here", "your_balldontlie_api_key_here"))
 
+# Startup debug log - shows what Railway is passing
+_bdl_key_preview = BDL_API_KEY[:8] + "..." if len(BDL_API_KEY) > 8 else BDL_API_KEY or "(empty)"
+print(f"[BDL STARTUP] BALLDONTLIE_API_KEY={os.getenv('BALLDONTLIE_API_KEY', '(not set)')[:8]}...")
+print(f"[BDL STARTUP] BDL_API_KEY={os.getenv('BDL_API_KEY', '(not set)')[:8]}...")
+print(f"[BDL STARTUP] Resolved key: {_bdl_key_preview}, BDL_ENABLED={BDL_ENABLED}")
+
 # Cache for API responses (in-memory, short TTL)
 _cache: Dict[str, Any] = {}
 _cache_timestamps: Dict[str, datetime] = {}
