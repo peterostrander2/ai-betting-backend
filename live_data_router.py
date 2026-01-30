@@ -196,6 +196,7 @@ except ImportError:
 try:
     from alt_data_sources.weather import (
         get_weather_modifier,
+        get_weather_context_sync,
         is_outdoor_sport,
     )
     WEATHER_MODULE_AVAILABLE = True
@@ -203,6 +204,16 @@ except ImportError:
     WEATHER_MODULE_AVAILABLE = False
     # Note: logger not yet defined here, use print for startup logging
     print("[WARNING] weather module not available - weather scoring disabled")
+
+# Import Travel Module for rest days and fatigue analysis (v16.0)
+try:
+    from alt_data_sources.travel import (
+        get_travel_impact,
+    )
+    TRAVEL_MODULE_AVAILABLE = True
+except ImportError:
+    TRAVEL_MODULE_AVAILABLE = False
+    print("[WARNING] travel module not available - rest days calculation disabled")
 
 # Redis import with fallback
 try:
@@ -2352,6 +2363,161 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             }
         }
 
+    # ============================================================================
+    # v16.0 CONTEXT MODIFIERS - weather_context, rest_days, home_away, vacuum_score
+    # ============================================================================
+    def compute_context_modifiers(
+        sport: str,
+        home_team: str,
+        away_team: str,
+        player_team: str = "",
+        pick_type: str = "GAME",
+        pick_side: str = "",
+        injuries_data: dict = None
+    ) -> dict:
+        """
+        Compute all 4 context modifier fields for a pick.
+
+        Returns dict with:
+        - weather_context: {status, reason, score_modifier}
+        - rest_days: {value, status, reason}
+        - home_away: {value, status, reason}
+        - vacuum_score: {value, status, reason}
+        """
+        result = {}
+
+        # 1. WEATHER_CONTEXT
+        if WEATHER_MODULE_AVAILABLE:
+            try:
+                weather_ctx = get_weather_context_sync(sport, home_team, "")
+                result["weather_context"] = {
+                    "status": weather_ctx.get("status", "UNAVAILABLE"),
+                    "reason": weather_ctx.get("reason", "Unknown"),
+                    "score_modifier": weather_ctx.get("score_modifier", 0.0),
+                    "raw": weather_ctx.get("raw"),
+                    "features": weather_ctx.get("features")
+                }
+            except Exception as e:
+                result["weather_context"] = {
+                    "status": "ERROR",
+                    "reason": str(e)[:100],
+                    "score_modifier": 0.0,
+                    "raw": None,
+                    "features": None
+                }
+        else:
+            result["weather_context"] = {
+                "status": "UNAVAILABLE",
+                "reason": "Weather module not available",
+                "score_modifier": 0.0,
+                "raw": None,
+                "features": None
+            }
+
+        # 2. REST_DAYS
+        if TRAVEL_MODULE_AVAILABLE:
+            try:
+                travel_data = get_travel_impact(sport, away_team, home_team)
+                result["rest_days"] = {
+                    "value": travel_data.get("rest_days", 1),
+                    "status": "COMPUTED" if travel_data.get("available") else "UNAVAILABLE",
+                    "reason": travel_data.get("reason", "Unknown")
+                }
+            except Exception as e:
+                result["rest_days"] = {
+                    "value": None,
+                    "status": "ERROR",
+                    "reason": str(e)[:100]
+                }
+        else:
+            result["rest_days"] = {
+                "value": 1,
+                "status": "UNAVAILABLE",
+                "reason": "Travel module not available - using default 1 day rest"
+            }
+
+        # 3. HOME_AWAY
+        try:
+            if pick_type == "PROP" and player_team:
+                # For props: determine if player's team is home or away
+                if player_team.lower() == home_team.lower() or player_team.lower() in home_team.lower():
+                    ha_value = "HOME"
+                elif player_team.lower() == away_team.lower() or player_team.lower() in away_team.lower():
+                    ha_value = "AWAY"
+                else:
+                    ha_value = "UNKNOWN"
+                result["home_away"] = {
+                    "value": ha_value,
+                    "status": "COMPUTED",
+                    "reason": f"Player team '{player_team}' is {ha_value}"
+                }
+            else:
+                # For games: use pick_side to determine
+                if pick_side:
+                    side_lower = pick_side.lower()
+                    if side_lower in home_team.lower() or "home" in side_lower:
+                        ha_value = "HOME"
+                    elif side_lower in away_team.lower() or "away" in side_lower:
+                        ha_value = "AWAY"
+                    else:
+                        # For totals (Over/Under), default to HOME perspective
+                        ha_value = "HOME"
+                    result["home_away"] = {
+                        "value": ha_value,
+                        "status": "COMPUTED",
+                        "reason": f"Pick side '{pick_side}' -> {ha_value}"
+                    }
+                else:
+                    result["home_away"] = {
+                        "value": "HOME",
+                        "status": "DEFAULT",
+                        "reason": "No pick_side provided - defaulting to HOME"
+                    }
+        except Exception as e:
+            result["home_away"] = {
+                "value": None,
+                "status": "ERROR",
+                "reason": str(e)[:100]
+            }
+
+        # 4. VACUUM_SCORE (placeholder - uses injuries to detect opportunity)
+        try:
+            if injuries_data and isinstance(injuries_data, dict):
+                # Count injured starters for opportunity detection
+                injured_count = 0
+                injured_players = []
+                for team, players in injuries_data.items():
+                    if isinstance(players, list):
+                        for p in players:
+                            status = p.get("status", "").upper() if isinstance(p, dict) else ""
+                            if status in ["OUT", "DOUBTFUL"]:
+                                injured_count += 1
+                                if isinstance(p, dict):
+                                    injured_players.append(p.get("name", "Unknown"))
+
+                # Vacuum score: higher when more key players are out (creates opportunity)
+                # Scale: 0 injuries = 0, 1 = 2.0, 2 = 4.0, 3+ = 5.0 (capped)
+                vacuum_value = min(5.0, injured_count * 2.0)
+                result["vacuum_score"] = {
+                    "value": round(vacuum_value, 1),
+                    "status": "COMPUTED",
+                    "reason": f"{injured_count} injured players: {', '.join(injured_players[:3])}" if injured_players else "No injury data affecting vacuum"
+                }
+            else:
+                result["vacuum_score"] = {
+                    "value": 0.0,
+                    "status": "UNAVAILABLE",
+                    "reason": "No injury data available for vacuum calculation"
+                }
+        except Exception as e:
+            result["vacuum_score"] = {
+                "value": 0.0,
+                "status": "ERROR",
+                "reason": str(e)[:100]
+            }
+
+        return result
+
     # Helper function to calculate scores with v15.0 4-engine architecture + Jason Sim
     def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0):
         # =====================================================================
@@ -3345,6 +3511,17 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 signals_fired.append(f"SHARP_{sharp_signal.get('signal_strength')}")
                             has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
 
+                            # v16.0: Compute context modifiers for this game pick
+                            _game_ctx_mods = compute_context_modifiers(
+                                sport=sport.upper(),
+                                home_team=home_team,
+                                away_team=away_team,
+                                player_team="",
+                                pick_type="GAME",
+                                pick_side=pick_side,
+                                injuries_data=None
+                            )
+
                             game_picks.append({
                                 "sport": sport.upper(),
                                 "league": sport.upper(),
@@ -3389,7 +3566,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 "graded": False,
                                 "grade_status": "PENDING",
                                 **score_data,
-                                "sharp_signal": sharp_signal.get("signal_strength", "NONE")
+                                "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
+                                # v16.0: Context Modifiers (REQUIRED - Session 4 Hard Gate)
+                                "weather_context": _game_ctx_mods.get("weather_context"),
+                                "rest_days": _game_ctx_mods.get("rest_days"),
+                                "home_away": _game_ctx_mods.get("home_away"),
+                                "vacuum_score": _game_ctx_mods.get("vacuum_score"),
                             })
     except Exception as e:
         logger.warning("Game picks scoring failed: %s", e)
@@ -3441,6 +3623,17 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 except Exception:
                     start_time_et = ""
 
+            # v16.0: Compute context modifiers for sharp fallback picks
+            _sharp_ctx_mods = compute_context_modifiers(
+                sport=sport.upper(),
+                home_team=home_team,
+                away_team=away_team,
+                player_team="",
+                pick_type="SHARP",
+                pick_side=signal.get("side", "HOME"),
+                injuries_data=None
+            )
+
             game_picks.append({
                 "sport": sport.upper(),
                 "league": sport.upper(),
@@ -3485,7 +3678,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "graded": False,
                 "grade_status": "PENDING",
                 **score_data,
-                "sharp_signal": signal.get("signal_strength", "MODERATE")
+                "sharp_signal": signal.get("signal_strength", "MODERATE"),
+                # v16.0: Context Modifiers (REQUIRED - Session 4 Hard Gate)
+                "weather_context": _sharp_ctx_mods.get("weather_context"),
+                "rest_days": _sharp_ctx_mods.get("rest_days"),
+                "home_away": _sharp_ctx_mods.get("home_away"),
+                "vacuum_score": _sharp_ctx_mods.get("vacuum_score"),
             })
 
     # ============================================
@@ -3656,6 +3854,17 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 # v14.9: Determine has_started
                 has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
 
+                # v16.0: Compute context modifiers for this prop
+                _ctx_mods = compute_context_modifiers(
+                    sport=sport.upper(),
+                    home_team=home_team,
+                    away_team=away_team,
+                    player_team=player_team or "",
+                    pick_type="PROP",
+                    pick_side=side,
+                    injuries_data=None  # Injury data per-team would be fetched separately
+                )
+
                 props_picks.append({
                     "sport": sport.upper(),
                     "league": sport.upper(),  # v14.9: Consistent league field
@@ -3714,7 +3923,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "graded": False,
                     "grade_status": "PENDING",
                     **score_data,
-                    "sharp_signal": sharp_signal.get("signal_strength", "NONE")
+                    "sharp_signal": sharp_signal.get("signal_strength", "NONE"),
+                    # v16.0: Context Modifiers (REQUIRED - Session 4 Hard Gate)
+                    "weather_context": _ctx_mods.get("weather_context"),
+                    "rest_days": _ctx_mods.get("rest_days"),
+                    "home_away": _ctx_mods.get("home_away"),
+                    "vacuum_score": _ctx_mods.get("vacuum_score"),
                 })
     except HTTPException:
         logger.warning("Props fetch failed for %s", sport)

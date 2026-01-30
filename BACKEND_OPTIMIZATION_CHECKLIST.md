@@ -3,6 +3,27 @@
 
 ---
 
+## 🚨 HARD GATE: Session 4 is REQUIRED
+
+**Session 4 (Context Modifiers) is a BLOCKING PREREQUISITE for Sessions 5/6.**
+
+Every returned pick object MUST include these keys:
+- `weather_context` - deterministic: `APPLIED` / `NOT_RELEVANT` / `UNAVAILABLE` / `ERROR`
+- `rest_days` - int or null with reason
+- `home_away` - `"HOME"` / `"AWAY"` or null with reason
+- `vacuum_score` - number 0-10 or null with reason
+
+**Validation Command:**
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_props=1" \
+  --header "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | \
+  jq '.props.picks[0] | {weather_context, rest_days, home_away, vacuum_score}'
+```
+
+**Gate Check:** If ANY of these keys are missing → Session 4 FAILED → DO NOT proceed to Sessions 5/6.
+
+---
+
 ## ✅ COMPLETED (Session 1)
 - [x] Documentation organized (PROJECT_MAP, SCORING_LOGIC, etc.)
 - [x] ET window fixed (00:01:00 start, capturing all games)
@@ -176,138 +197,143 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_
 
 ---
 
-## ⚠️ SESSION 4: CONTEXT MODIFIERS (NOT INTEGRATED)
+## 🚧 SESSION 4: CONTEXT MODIFIERS (HARD GATE - BLOCKING)
 
-**Investigation Complete (Jan 30, 2026):** These features exist in codebase but are NOT integrated into the scoring path.
+**Status:** 🔴 BLOCKED - Must implement before Sessions 5/6
 
-### 7. VACUUM SCORE
-**Status:** ❌ NOT IMPLEMENTED
+### Required Output Fields (ALL picks - props AND games)
 
-**Finding:** No `vacuum_score` code exists in the codebase. This feature was planned but never built.
+Every pick MUST include these 4 context modifier fields:
 
-**Decision Needed:** Build from scratch or remove from checklist.
-
----
-
-### 8. WEATHER CONTEXT
-**Status:** ✅ FULLY IMPLEMENTED but ❌ NOT INTEGRATED
-
-**Location:** `alt_data_sources/weather.py`
-**Function:** `get_weather_context(sport, home_team, venue, lat, lon)`
-
-**Features:**
-- Indoor sport detection (NBA, NHL, NCAAB → `NOT_RELEVANT`)
-- NFL dome detection → `NOT_RELEVANT`
-- Score modifier bounded [-0.35, 0.0]
-- WeatherAPI.com integration with 10-min cache
-
-**Issue:** `get_weather_context()` is NEVER called from `live_data_router.py`
-
-**Plan Available:** See `/Users/apple/.claude/plans/sorted-petting-hare.md` for integration plan
-
-**Behavior for NBA:** Returns `{"status": "NOT_RELEVANT", "reason": "Indoor sport", "score_modifier": 0.0}`
-
----
-
-### 9. REST DAYS & HOME/AWAY
-**Status:** EXISTS but ❌ NOT INTEGRATED
-
-**Locations:**
-- `rest_days`: `alt_data_sources/travel.py` - NOT called from scoring path
-- `home_away`: `lstm_brain.py`, `context_layer.py` - Used internally for LSTM, NOT exposed in API
-
-**Decision Needed:** Integrate into scoring path or remove from checklist.
+```json
+{
+  "weather_context": {
+    "status": "APPLIED|NOT_RELEVANT|UNAVAILABLE|ERROR",
+    "reason": "string explaining status",
+    "score_modifier": 0.0
+  },
+  "rest_days": {
+    "value": 1,
+    "status": "COMPUTED|UNAVAILABLE",
+    "reason": "string"
+  },
+  "home_away": {
+    "value": "HOME|AWAY",
+    "status": "COMPUTED|UNAVAILABLE",
+    "reason": "string"
+  },
+  "vacuum_score": {
+    "value": 0.0,
+    "status": "COMPUTED|UNAVAILABLE",
+    "reason": "string"
+  }
+}
+```
 
 ---
 
-### SESSION 4 SUMMARY
+### 7. WEATHER CONTEXT
+**Module:** `alt_data_sources/weather.py`
+**Function:** `get_weather_context_sync(sport, home_team, venue)`
 
-| Feature | Code Exists | Integrated | Action |
-|---------|-------------|------------|--------|
-| `vacuum_score` | ❌ No | N/A | Build or Remove |
-| `weather_context` | ✅ Yes | ❌ No | Integrate per plan |
-| `rest_days` | ✅ Yes | ❌ No | Integrate or Remove |
-| `home_away` | ✅ Yes | ❌ No | Expose or Remove |
-
-**Next Step:** Decide which features to integrate vs. skip for MVP.
+**Verify:**
+- [ ] Field present in EVERY pick response
+- [ ] Indoor sports (NBA, NHL, NCAAB) → `NOT_RELEVANT`
+- [ ] Outdoor sports (NFL, MLB, NCAAF) → `APPLIED` or `UNAVAILABLE`
+- [ ] NFL domes → `NOT_RELEVANT`
 
 ---
 
-## 🎯 SESSION 5: API INTEGRATION
+### 8. REST DAYS
+**Module:** `alt_data_sources/travel.py`
+**Function:** `get_travel_impact(sport, away_team, home_team)`
+
+**Verify:**
+- [ ] Field present in EVERY pick response
+- [ ] Returns int (1-7) or null with reason
+- [ ] For props: uses player's team schedule
+- [ ] For games: uses away team schedule
+
+---
+
+### 9. HOME/AWAY
+**Logic:** Determine from player_team vs home_team/away_team
+
+**Verify:**
+- [ ] Field present in EVERY pick response
+- [ ] Props: player_team == home_team → "HOME", else "AWAY"
+- [ ] Games: pick_side determines home/away
+
+---
+
+### 10. VACUUM SCORE
+**Purpose:** Boost when key teammates are out (injuries create opportunity)
+
+**Verify:**
+- [ ] Field present in EVERY pick response
+- [ ] Uses injury data from Playbook API
+- [ ] Returns 0-10 score or null with reason
+
+---
+
+### Validation Command
+
+```bash
+# Must return all 4 fields - no nulls at top level
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_props=1" \
+  --header "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | \
+  jq '.props.picks[0] | {
+    weather_context: .weather_context.status,
+    rest_days: .rest_days.value,
+    home_away: .home_away.value,
+    vacuum_score: .vacuum_score.value
+  }'
+
+# Expected output (example):
+# {
+#   "weather_context": "NOT_RELEVANT",
+#   "rest_days": 1,
+#   "home_away": "AWAY",
+#   "vacuum_score": 0
+# }
+```
+
+**Gate Status:** ❌ FAILED - Fields not yet integrated into live_data_router.py
+
+---
+
+## ⏸️ SESSION 5: API INTEGRATION (BLOCKED BY SESSION 4)
+
+**⚠️ BLOCKED:** Session 4 context modifiers must pass validation first.
 
 ### 10. ODDS API
 **Verify:**
-- [ ] Live odds fetching
-- [ ] Props retrieved
-- [ ] ET filter applied BEFORE scoring
-- [ ] Integration status: configured + reachable
-
-**Commands:**
-```bash
-# Integration status
-curl "https://web-production-7b2a.up.railway.app/live/debug/integrations" \
-  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.integrations.odds_api'
-
-# Verify props present
-curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" \
-  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '{
-    props_after_et: .debug.date_window_et.events_after_props,
-    props_returned: .props.count
-  }'
-```
-
-**Success:** Configured, props flowing, ET filter working
+- [x] Live odds fetching
+- [x] Props retrieved (5 props, 9 games today)
+- [x] ET filter applied BEFORE scoring (events_before == events_after)
+- [x] Integration status: VALIDATED, 85,895 requests remaining
 
 ---
 
 ### 11. PLAYBOOK API
 **Verify:**
-- [ ] Sharp money in picks
-- [ ] Betting splits data
-- [ ] Injury data
-- [ ] Integration status
-
-**Commands:**
-```bash
-# Integration status
-curl "https://web-production-7b2a.up.railway.app/live/debug/integrations" \
-  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.integrations.playbook_api'
-
-# Sharp money in picks
-curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" \
-  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | \
-  jq '.props.picks[] | select(.research_reasons[] | contains("Sharp")) | {
-    player: .player_name,
-    sharp_signal: (.research_reasons[] | select(contains("Sharp")))
-  }' | head -20
-```
-
-**Success:** Configured, sharp signals visible in picks
+- [x] Sharp money in picks (visible in research_reasons)
+- [x] Betting splits data
+- [x] Integration status: VALIDATED
 
 ---
 
 ### 12. BALLDONTLIE API
 **Verify:**
-- [ ] Integration configured
-- [ ] Player stats fetching
-- [ ] Grading integration
-- [ ] No "(not set" errors in logs
-
-**Commands:**
-```bash
-# Integration status
-curl "https://web-production-7b2a.up.railway.app/live/debug/integrations" \
-  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.integrations.balldontlie'
-
-# Check Railway logs for BDL errors
-# Look for: [BDL STARTUP] messages
-```
-
-**Success:** Configured, no startup errors
+- [x] Integration configured: VALIDATED
+- [x] Player stats fetching
+- [x] Grading integration
 
 ---
 
-## 🎯 SESSION 6: TIER ASSIGNMENT
+## ⏸️ SESSION 6: TIER ASSIGNMENT (BLOCKED BY SESSION 4)
+
+**⚠️ BLOCKED:** Session 4 context modifiers must pass validation first.
 
 ### 13. TITANIUM_SMASH
 **Rule:** ≥3 of 4 engines ≥8.0 (STRICT)
