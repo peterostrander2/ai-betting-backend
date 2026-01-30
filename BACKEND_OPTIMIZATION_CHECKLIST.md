@@ -45,11 +45,11 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_
 **Expected Range:** 3.0-8.0
 
 **Verify:**
-- [ ] Sharp money signals (STRONG=3.0, MODERATE=2.0, MILD=1.0) from Playbook
-- [ ] Line variance (>0.5=3pts, >0.2=2pts, else 1pt)
-- [ ] Public fade triggers (public≥65% AND divergence≥5% = 2pts)
-- [ ] Base score (real splits=3pts, estimated=2pts)
-- [ ] **NO double-counting** (sharp money ONLY here, not in Jarvis)
+- [x] Sharp money signals (STRONG=3.0, MODERATE=2.0, MILD=1.0) from Playbook
+- [x] Line variance (>0.5=3pts, >0.2=2pts, else 1pt)
+- [x] Public fade triggers (public≥65% AND divergence≥5% = 2pts)
+- [x] Base score (real splits=3pts, estimated=2pts)
+- [x] **NO double-counting** (sharp money ONLY here, not in Jarvis)
 
 **Command:**
 ```bash
@@ -121,18 +121,18 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_
 
 ---
 
-## 🎯 SESSION 3: POST-PICK LAYERS
+## ✅ SESSION 3: POST-PICK LAYERS (COMPLETED)
 
 ### 5. JASON SIM BOOST
 **File:** `jason_sim_confluence.py`
 **Range:** Can be negative
 
 **Verify:**
-- [ ] Spreads/ML: win%≥61% gets +0.3 to +0.5
-- [ ] Spreads/ML: win%≤52% + base<7.2 gets -0.2 to -0.5 penalty
-- [ ] Totals: high variance reduces confidence
-- [ ] Props: boost ONLY if base≥6.8 + environment supports
-- [ ] All fields present (jason_sim_available, jason_sim_boost, jason_sim_reasons, etc.)
+- [x] Spreads/ML: win%≥61% gets +0.3 to +0.5
+- [x] Spreads/ML: win%≤52% + base<7.2 gets -0.2 to -0.5 penalty
+- [x] Totals: high variance reduces confidence
+- [x] Props: boost ONLY if base≥6.8 + environment supports
+- [x] All fields present (jason_sim_available, jason_sim_boost, jason_sim_reasons, etc.)
 
 **Command:**
 ```bash
@@ -154,10 +154,10 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_
 **Logic:** alignment = 1 - |research - esoteric| / 10
 
 **Verify:**
-- [ ] STRONG (+3.0): alignment≥80% AND (jarvis_active OR sharp OR jason≠0)
-- [ ] MODERATE (+1.0): alignment≥60%
-- [ ] DIVERGENT (0): alignment<60%
-- [ ] Active signal gate prevents free +3 for mediocre engines
+- [x] STRONG (+3.0): alignment≥80% AND (jarvis_active OR sharp OR jason≠0)
+- [x] MODERATE (+1.0): alignment≥60%
+- [x] DIVERGENT (0): alignment<60%
+- [x] Active signal gate prevents free +3 for mediocre engines
 
 **Command:**
 ```bash
