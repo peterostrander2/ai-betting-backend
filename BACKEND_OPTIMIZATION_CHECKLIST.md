@@ -328,7 +328,7 @@ curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&m
 
 ---
 
-## 🎯 SESSION 6: TIER ASSIGNMENT
+## ✅ SESSION 6: TIER ASSIGNMENT (VERIFIED)
 
 ### 13. TITANIUM_SMASH
 **Rule:** ≥3 of 4 engines ≥8.0 (STRICT)
