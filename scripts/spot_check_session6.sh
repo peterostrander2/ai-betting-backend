@@ -1,14 +1,15 @@
 #!/bin/bash
-# SESSION 6 SPOT CHECK: Tier Assignment Verification
-# Validates TITANIUM 3/4 rule and GOLD_STAR hard gates
+# SESSION 6 SPOT CHECK: Gold Star + Jarvis Validation
+# Validates Jarvis always returns required fields, Gold Star gates, and Jason Sim presence
 # Exit 0 = all pass, Exit 1 = failures detected
 
-set -e
+# Don't exit on first error - we track failures manually
+set +e
 
 # Configuration
 BASE_URL="${BASE_URL:-https://web-production-7b2a.up.railway.app}"
 API_KEY="${API_KEY:-bookie-prod-2026-xK9mP2nQ7vR4}"
-TMP_FILE="/tmp/nba_picks.json"
+TMP_FILE="/tmp/session6_picks.json"
 
 # Colors
 RED='\033[0;31m'
@@ -17,140 +18,228 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 FAILED=0
+PASSED=0
 
 echo "=============================================="
-echo "SESSION 6 SPOT CHECK: Tier Assignment"
+echo "SESSION 6 SPOT CHECK: Gold Star + Jarvis"
 echo "=============================================="
 echo "Base URL: $BASE_URL"
 echo "Date: $(date)"
 echo ""
 
-# Step 1: Fetch data once and save to file
+# Helper function
+check() {
+    local name="$1"
+    local condition="$2"
+    local actual="$3"
+    local expected="$4"
+
+    if [ "$condition" = "true" ]; then
+        echo -e "${GREEN}PASS${NC}: $name"
+        PASSED=$((PASSED + 1))
+    else
+        echo -e "${RED}FAIL${NC}: $name"
+        echo "  Expected: $expected"
+        echo "  Actual: $actual"
+        FAILED=$((FAILED + 1))
+    fi
+}
+
+# Fetch data once
 echo -e "${YELLOW}Fetching NBA picks...${NC}"
-curl -s "$BASE_URL/live/best-bets/nba?debug=1&max_props=100" \
+curl -s "$BASE_URL/live/best-bets/nba?debug=1&max_props=100&max_games=50" \
     -H "X-API-Key: $API_KEY" > "$TMP_FILE"
 
-PROPS_COUNT=$(jq '.props.count' "$TMP_FILE")
-GAMES_COUNT=$(jq '.game_picks.count' "$TMP_FILE")
-echo "Fetched: $PROPS_COUNT props, $GAMES_COUNT games"
+PROPS_COUNT=$(jq '.props.count // 0' "$TMP_FILE")
+GAMES_COUNT=$(jq '.game_picks.count // 0' "$TMP_FILE")
+TOTAL_PICKS=$((PROPS_COUNT + GAMES_COUNT))
+echo "Fetched: $PROPS_COUNT props, $GAMES_COUNT games (total: $TOTAL_PICKS)"
 echo ""
 
-# Check 1: False Titanium detector
-echo -e "${YELLOW}[CHECK 1] False Titanium (titanium=true but engines < 3)${NC}"
-VIOLATIONS=$(jq '[.props.picks[], .game_picks.picks[]] | map({
-    player: (.player_name // .player // "UNKNOWN"),
-    titanium: (.titanium_triggered // false),
-    engines_gte_8: ([.ai_score, .research_score, .esoteric_score, .jarvis_rs] | map(select(. >= 8.0)) | length)
-}) | map(select(.titanium == true and .engines_gte_8 < 3)) | length' "$TMP_FILE")
+# ============================================
+# JARVIS REQUIRED FIELDS (INVARIANT 5)
+# ============================================
+echo -e "${YELLOW}[JARVIS REQUIRED FIELDS]${NC}"
 
-if [ "$VIOLATIONS" -eq 0 ]; then
-    echo -e "${GREEN}PASS${NC}: No false Titanium (0 violations)"
-else
-    echo -e "${RED}FAIL${NC}: $VIOLATIONS picks have titanium=true with < 3 engines >= 8.0"
-    jq -r '[.props.picks[], .game_picks.picks[]] | map({
-        player: (.player_name // .player // "UNKNOWN"),
-        titanium: (.titanium_triggered // false),
-        engines_gte_8: ([.ai_score, .research_score, .esoteric_score, .jarvis_rs] | map(select(. >= 8.0)) | length),
-        ai: .ai_score,
-        research: .research_score,
-        esoteric: .esoteric_score,
-        jarvis: .jarvis_rs
-    }) | map(select(.titanium == true and .engines_gte_8 < 3)) | .[] | "  \(.engines_gte_8) engines: \(.player) (ai=\(.ai), res=\(.research), eso=\(.esoteric), jar=\(.jarvis))"' "$TMP_FILE"
-    FAILED=1
-fi
+# CHECK 1: jarvis_active field present on all picks
+MISSING_JARVIS_ACTIVE=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.jarvis_active == null)) | length' "$TMP_FILE")
+check "jarvis_active field present on all picks" \
+    "$([ "$MISSING_JARVIS_ACTIVE" -eq 0 ] && echo true || echo false)" \
+    "$MISSING_JARVIS_ACTIVE missing" \
+    "0 missing"
+
+# CHECK 2: jarvis_rs field present (can be null if inactive, but field must exist)
+MISSING_JARVIS_RS=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(has("jarvis_rs") | not)) | length' "$TMP_FILE")
+check "jarvis_rs field present on all picks" \
+    "$([ "$MISSING_JARVIS_RS" -eq 0 ] && echo true || echo false)" \
+    "$MISSING_JARVIS_RS missing" \
+    "0 missing"
+
+# CHECK 3: jarvis_reasons field present (even if empty array)
+MISSING_JARVIS_REASONS=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.jarvis_reasons == null)) | length' "$TMP_FILE")
+check "jarvis_reasons field present on all picks" \
+    "$([ "$MISSING_JARVIS_REASONS" -eq 0 ] && echo true || echo false)" \
+    "$MISSING_JARVIS_REASONS missing" \
+    "0 missing"
+
+# CHECK 4: When jarvis_active=true, jarvis_rs must be non-null
+ACTIVE_BUT_NULL=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.jarvis_active == true and .jarvis_rs == null)) | length' "$TMP_FILE")
+check "jarvis_active=true implies jarvis_rs is non-null" \
+    "$([ "$ACTIVE_BUT_NULL" -eq 0 ] && echo true || echo false)" \
+    "$ACTIVE_BUT_NULL violations" \
+    "0 violations"
+
+# CHECK 5: jarvis_triggers_hit field present
+MISSING_TRIGGERS_HIT=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(has("jarvis_triggers_hit") | not)) | length' "$TMP_FILE")
+check "jarvis_triggers_hit field present" \
+    "$([ "$MISSING_TRIGGERS_HIT" -eq 0 ] && echo true || echo false)" \
+    "$MISSING_TRIGGERS_HIT missing" \
+    "0 missing"
+
+# ============================================
+# GOLD_STAR HARD GATES
+# ============================================
 echo ""
+echo -e "${YELLOW}[GOLD_STAR HARD GATES]${NC}"
 
-# Check 2: TITANIUM_SMASH tier consistency
-echo -e "${YELLOW}[CHECK 2] TITANIUM_SMASH tier consistency${NC}"
-TIER_VIOLATIONS=$(jq '[.props.picks[], .game_picks.picks[]] | map({
-    player: (.player_name // .player // "UNKNOWN"),
-    tier: .tier,
-    titanium: (.titanium_triggered // false)
-}) | map(select(.tier == "TITANIUM_SMASH" and .titanium != true)) | length' "$TMP_FILE")
+# CHECK 6: No GOLD_STAR with failed gates
+# GOLD_STAR requires: ai>=6.8, research>=5.5, esoteric>=4.0, jarvis>=6.5
+GOLD_STAR_WITH_FAILED_GATE=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(
+    .tier == "GOLD_STAR" and (
+        .ai_score < 6.8 or
+        .research_score < 5.5 or
+        .esoteric_score < 4.0 or
+        (.jarvis_rs == null or .jarvis_rs < 6.5)
+    )
+)) | length' "$TMP_FILE")
 
-if [ "$TIER_VIOLATIONS" -eq 0 ]; then
-    echo -e "${GREEN}PASS${NC}: No TITANIUM_SMASH without titanium_triggered=true"
-else
-    echo -e "${RED}FAIL${NC}: $TIER_VIOLATIONS picks have tier=TITANIUM_SMASH but titanium_triggered != true"
-    jq -r '[.props.picks[], .game_picks.picks[]] | map({
-        player: (.player_name // .player // "UNKNOWN"),
-        tier: .tier,
-        titanium: (.titanium_triggered // false),
-        final: .final_score
-    }) | map(select(.tier == "TITANIUM_SMASH" and .titanium != true)) | .[] | "  \(.player): tier=\(.tier), titanium=\(.titanium), final=\(.final)"' "$TMP_FILE"
-    FAILED=1
-fi
+check "No GOLD_STAR with failed engine gates" \
+    "$([ "$GOLD_STAR_WITH_FAILED_GATE" -eq 0 ] && echo true || echo false)" \
+    "$GOLD_STAR_WITH_FAILED_GATE violations" \
+    "0 violations"
+
+# CHECK 7: GOLD_STAR picks have final_score >= 7.5
+GOLD_STAR_LOW_SCORE=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.tier == "GOLD_STAR" and .final_score < 7.5)) | length' "$TMP_FILE")
+check "GOLD_STAR picks have final_score >= 7.5" \
+    "$([ "$GOLD_STAR_LOW_SCORE" -eq 0 ] && echo true || echo false)" \
+    "$GOLD_STAR_LOW_SCORE violations" \
+    "0 violations"
+
+# CHECK 8: Picks with final >= 7.5 + all gates pass = GOLD_STAR (not downgraded incorrectly)
+# This checks that picks meeting all criteria ARE Gold Star
+SHOULD_BE_GOLD=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(
+    .final_score >= 7.5 and
+    .tier != "GOLD_STAR" and
+    .tier != "TITANIUM_SMASH" and
+    .ai_score >= 6.8 and
+    .research_score >= 5.5 and
+    .esoteric_score >= 4.0 and
+    .jarvis_rs != null and
+    .jarvis_rs >= 6.5
+)) | length' "$TMP_FILE")
+
+check "Picks meeting all Gold Star criteria are GOLD_STAR tier" \
+    "$([ "$SHOULD_BE_GOLD" -eq 0 ] && echo true || echo false)" \
+    "$SHOULD_BE_GOLD incorrectly downgraded" \
+    "0 incorrectly downgraded"
+
+# ============================================
+# JASON SIM 2.0 FIELDS
+# ============================================
 echo ""
+echo -e "${YELLOW}[JASON SIM 2.0 FIELDS]${NC}"
 
-# Check 3: Gold-star gate audit
-echo -e "${YELLOW}[CHECK 3] Gold-star gate audit (final >= 7.5 but not GOLD_STAR)${NC}"
-GATE_FAILURES=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.final_score >= 7.5 and .tier != "GOLD_STAR" and .tier != "TITANIUM_SMASH")) | length' "$TMP_FILE")
+# CHECK 9: jason_sim_boost field present (can be 0)
+MISSING_JASON_BOOST=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(has("jason_sim_boost") | not)) | length' "$TMP_FILE")
+check "jason_sim_boost field present on all picks" \
+    "$([ "$MISSING_JASON_BOOST" -eq 0 ] && echo true || echo false)" \
+    "$MISSING_JASON_BOOST missing" \
+    "0 missing"
 
-echo "Picks with final >= 7.5 that are EDGE_LEAN (not GOLD_STAR): $GATE_FAILURES"
-if [ "$GATE_FAILURES" -gt 0 ]; then
-    echo "Gate failure breakdown (showing up to 10):"
-    jq -r '[.props.picks[], .game_picks.picks[]] | map(select(.final_score >= 7.5 and .tier != "GOLD_STAR" and .tier != "TITANIUM_SMASH")) | .[0:10] | .[] | "  \(.player_name // .player // "UNKNOWN"): final=\(.final_score) tier=\(.tier) | ai=\(.ai_score) (>=6.8: \(.ai_score >= 6.8)) res=\(.research_score) (>=5.5: \(.research_score >= 5.5)) eso=\(.esoteric_score) (>=4.0: \(.esoteric_score >= 4.0)) jar=\(.jarvis_rs) (>=6.5: \(.jarvis_rs >= 6.5))"' "$TMP_FILE"
+# CHECK 10: jason_ran field present (shows Jason Sim executed)
+MISSING_JASON_RAN=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(has("jason_ran") | not)) | length' "$TMP_FILE")
+check "jason_ran field present" \
+    "$([ "$MISSING_JASON_RAN" -eq 0 ] && echo true || echo false)" \
+    "$MISSING_JASON_RAN missing" \
+    "0 missing"
 
-    # Check if all gate failures have a valid reason (at least one gate false)
-    UNEXPLAINED=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.final_score >= 7.5 and .tier != "GOLD_STAR" and .tier != "TITANIUM_SMASH")) | map(select(.ai_score >= 6.8 and .research_score >= 5.5 and .esoteric_score >= 4.0 and .jarvis_rs >= 6.5)) | length' "$TMP_FILE")
-
-    if [ "$UNEXPLAINED" -eq 0 ]; then
-        echo -e "${GREEN}PASS${NC}: All gate failures have valid reason (at least one gate < threshold)"
-    else
-        echo -e "${RED}FAIL${NC}: $UNEXPLAINED picks pass all gates but are not GOLD_STAR"
-        FAILED=1
-    fi
-else
-    echo -e "${GREEN}PASS${NC}: No picks with score >= 7.5 that fail gates"
-fi
+# ============================================
+# CONFLUENCE FIELDS
+# ============================================
 echo ""
+echo -e "${YELLOW}[CONFLUENCE FIELDS]${NC}"
 
-# Check 4: GOLD_STAR tier count
-echo -e "${YELLOW}[CHECK 4] GOLD_STAR tier count${NC}"
-GOLD_STAR_COUNT=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.tier == "GOLD_STAR")) | length' "$TMP_FILE")
+# CHECK 11: confluence_level field present
+MISSING_CONFLUENCE_LEVEL=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.confluence_level == null)) | length' "$TMP_FILE")
+check "confluence_level field present" \
+    "$([ "$MISSING_CONFLUENCE_LEVEL" -eq 0 ] && echo true || echo false)" \
+    "$MISSING_CONFLUENCE_LEVEL missing" \
+    "0 missing"
+
+# CHECK 12: confluence_reasons field present (even if empty)
+MISSING_CONF_REASONS=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.confluence_reasons == null)) | length' "$TMP_FILE")
+check "confluence_reasons field present" \
+    "$([ "$MISSING_CONF_REASONS" -eq 0 ] && echo true || echo false)" \
+    "$MISSING_CONF_REASONS missing" \
+    "0 missing"
+
+# ============================================
+# JARVIS v16.0 ADDITIVE SCORING
+# ============================================
+echo ""
+echo -e "${YELLOW}[JARVIS v16.0 ADDITIVE SCORING]${NC}"
+
+# CHECK 13: jarvis_baseline field present when jarvis_active=true
+MISSING_BASELINE=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.jarvis_active == true and .jarvis_baseline == null)) | length' "$TMP_FILE")
+check "jarvis_baseline present when active" \
+    "$([ "$MISSING_BASELINE" -eq 0 ] && echo true || echo false)" \
+    "$MISSING_BASELINE missing" \
+    "0 missing"
+
+# CHECK 14: jarvis_rs >= 4.5 when jarvis_active=true (baseline minimum)
+LOW_JARVIS=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.jarvis_active == true and .jarvis_rs != null and .jarvis_rs < 4.5)) | length' "$TMP_FILE")
+check "jarvis_rs >= 4.5 baseline when active" \
+    "$([ "$LOW_JARVIS" -eq 0 ] && echo true || echo false)" \
+    "$LOW_JARVIS below baseline" \
+    "0 below baseline"
+
+# ============================================
+# INFO: TIER DISTRIBUTION
+# ============================================
+echo ""
+echo -e "${YELLOW}[INFO] Tier Distribution${NC}"
+GOLD_COUNT=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.tier == "GOLD_STAR")) | length' "$TMP_FILE")
 TITANIUM_COUNT=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.tier == "TITANIUM_SMASH")) | length' "$TMP_FILE")
-TOTAL_PICKS=$(jq '[.props.picks[], .game_picks.picks[]] | length' "$TMP_FILE")
+EDGE_COUNT=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.tier == "EDGE_LEAN")) | length' "$TMP_FILE")
 
-echo "GOLD_STAR: $GOLD_STAR_COUNT / $TOTAL_PICKS picks"
-echo "TITANIUM_SMASH: $TITANIUM_COUNT / $TOTAL_PICKS picks"
+echo "  TITANIUM_SMASH: $TITANIUM_COUNT / $TOTAL_PICKS"
+echo "  GOLD_STAR: $GOLD_COUNT / $TOTAL_PICKS"
+echo "  EDGE_LEAN: $EDGE_COUNT / $TOTAL_PICKS"
 
-if [ "$GOLD_STAR_COUNT" -gt 0 ]; then
-    echo "GOLD_STAR picks (jarvis triggers working):"
-    jq -r '[.props.picks[], .game_picks.picks[]] | map(select(.tier == "GOLD_STAR")) | .[0:5] | .[] | "  \(.player_name // .player // "UNKNOWN"): final=\(.final_score) jar=\(.jarvis_rs) triggers=\(.jarvis_reasons // [] | join(","))"' "$TMP_FILE"
-else
-    echo "No GOLD_STAR picks in current slate (Jarvis triggers may not be firing)"
+# Show sample GOLD_STAR picks if any
+if [ "$GOLD_COUNT" -gt 0 ]; then
+    echo ""
+    echo "Sample GOLD_STAR picks (up to 5):"
+    jq -r '[.props.picks[], .game_picks.picks[]] | map(select(.tier == "GOLD_STAR")) | .[0:5] | .[] | "  \(.player_name // .player // "GAME"): final=\(.final_score) | ai=\(.ai_score) res=\(.research_score) eso=\(.esoteric_score) jar=\(.jarvis_rs)"' "$TMP_FILE"
 fi
-echo ""
 
-# Check 5: Jarvis trigger audit (v16.0 additive scoring)
-echo -e "${YELLOW}[CHECK 5] Jarvis trigger audit (v16.0 additive scoring)${NC}"
-echo "Top 5 picks by jarvis_rs (showing trigger contributions):"
-jq -r '[.props.picks[], .game_picks.picks[]] | sort_by(-.jarvis_rs) | .[0:5] | .[] | "  jar=\(.jarvis_rs // 0) | baseline=\(.jarvis_baseline // 4.5) | triggers=\(.jarvis_trigger_contribs // {} | keys | join(",")) | \(.player_name // .player // "UNKNOWN") | reason=\(.jarvis_no_trigger_reason // "TRIGGERS_ACTIVE")"' "$TMP_FILE"
+# Show top Jarvis picks
 echo ""
-
-# Check 6: Top picks by engine count (informational)
-echo -e "${YELLOW}[INFO] Top 10 picks by engines >= 8.0${NC}"
-jq -r '[.props.picks[], .game_picks.picks[]] | map({
-    player: (.player_name // .player // "UNKNOWN"),
-    tier: .tier,
-    titanium: (.titanium_triggered // false),
-    engines_gte_8: ([.ai_score, .research_score, .esoteric_score, .jarvis_rs] | map(select(. >= 8.0)) | length),
-    final: .final_score,
-    ai: .ai_score,
-    research: .research_score,
-    esoteric: .esoteric_score,
-    jarvis: .jarvis_rs
-}) | sort_by(-.engines_gte_8, -.final) | .[0:10] | .[] | "\(.engines_gte_8) engines | TIT=\(.titanium) | \(.tier) | final=\(.final) | ai=\(.ai) res=\(.research) eso=\(.esoteric) jar=\(.jarvis) | \(.player)"' "$TMP_FILE"
-echo ""
+echo "Top 5 picks by jarvis_rs:"
+jq -r '[.props.picks[], .game_picks.picks[]] | sort_by(-.jarvis_rs) | .[0:5] | .[] | "  jar=\(.jarvis_rs // 0) | \(.player_name // .player // "GAME") | triggers=\(.jarvis_triggers_hit // [] | length)"' "$TMP_FILE"
 
 # Summary
+echo ""
 echo "=============================================="
-if [ $FAILED -eq 0 ]; then
-    echo -e "${GREEN}SESSION 6 SPOT CHECK: ALL PASS${NC}"
-    echo "=============================================="
-    exit 0
-else
+TOTAL=$((PASSED + FAILED))
+echo "SESSION 6 RESULTS: $PASSED/$TOTAL checks passed"
+
+if [ $FAILED -gt 0 ]; then
     echo -e "${RED}SESSION 6 SPOT CHECK: FAILED${NC}"
     echo "=============================================="
     exit 1
+else
+    echo -e "${GREEN}SESSION 6 SPOT CHECK: ALL PASS${NC}"
+    echo "=============================================="
+    exit 0
 fi

@@ -70,8 +70,17 @@ git push origin main
 - [ ] Railway deployment succeeded
 - [ ] Run health check: `curl https://web-production-7b2a.up.railway.app/health`
 - [ ] Re-run invariant smoke tests (from step 3)
-- [ ] Run CI sanity check: `./scripts/ci_sanity_check.sh`
-- [ ] Run Session 6 spot check: `./scripts/spot_check_session6.sh`
+- [ ] **Run CI sanity check (all 6 sessions):** `./scripts/ci_sanity_check.sh`
+
+**Session Scripts (run individually if needed):**
+```bash
+./scripts/spot_check_session1.sh  # ET Window Correctness
+./scripts/spot_check_session2.sh  # Persistence / Storage
+./scripts/spot_check_session3.sh  # Research Engine
+./scripts/spot_check_session4.sh  # Integrations
+./scripts/spot_check_session5.sh  # Tiering + Filters
+./scripts/spot_check_session6.sh  # Gold Star + Jarvis
+```
 
 ### 7. ✅ Rollback Rule (If Invariants Fail After Deploy)
 **If Railway deploy passes BUT invariants fail:**
