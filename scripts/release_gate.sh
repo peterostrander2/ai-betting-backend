@@ -52,10 +52,10 @@ echo
 # =============================================================================
 # CHECK 3: Verify best-bets endpoint with invariant checks
 # =============================================================================
-echo "${YELLOW}[3/5] Checking /live/best-bets/NBA endpoint...${NC}"
+echo "${YELLOW}[3/5] Checking /live/best-bets/nba endpoint...${NC}"
 
 # Fetch NBA picks
-NBA_RESPONSE=$(curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/NBA?max_props=5&max_games=5" \
+NBA_RESPONSE=$(curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/nba?max_props=5&max_games=5" \
     -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" 2>/dev/null || echo '{}')
 
 if [ "$NBA_RESPONSE" = "{}" ]; then

@@ -78,11 +78,11 @@ check "Storage: predictions.jsonl exists" \
 echo ""
 
 # =====================================================
-# CHECK 2: Best-Bets Endpoint (/live/best-bets/NBA)
+# CHECK 2: Best-Bets Endpoint (/live/best-bets/nba)
 # =====================================================
 echo "[2/6] Validating best-bets endpoint..."
 
-BEST_BETS_RESPONSE=$(curl -s "$BASE_URL/live/best-bets/NBA?debug=1&max_props=10&max_games=10" \
+BEST_BETS_RESPONSE=$(curl -s "$BASE_URL/live/best-bets/nba?debug=1&max_props=10&max_games=10" \
     -H "X-API-Key: $API_KEY")
 
 # Extract debug fields

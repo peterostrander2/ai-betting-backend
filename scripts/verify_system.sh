@@ -32,7 +32,7 @@ echo
 
 # Check 3: Best-bets NBA
 echo "3. BEST-BETS NBA"
-NBA_DATA=$(curl -s "${BASE_URL}/live/best-bets/NBA?max_props=3&max_games=3" -H "X-API-Key: $API_KEY")
+NBA_DATA=$(curl -s "${BASE_URL}/live/best-bets/nba?max_props=3&max_games=3" -H "X-API-Key: $API_KEY")
 # Verify required keys exist
 NBA_PROPS=$(echo "$NBA_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); assert 'props' in d, 'Missing props key'; assert 'count' in d['props'], 'Missing props.count'; print(d['props']['count'])" 2>&1)
 if [ $? -ne 0 ]; then
@@ -50,7 +50,7 @@ echo
 
 # Check 4: Best-bets NHL
 echo "4. BEST-BETS NHL"
-NHL_DATA=$(curl -s "${BASE_URL}/live/best-bets/NHL?max_props=3&max_games=3" -H "X-API-Key: $API_KEY")
+NHL_DATA=$(curl -s "${BASE_URL}/live/best-bets/nhl?max_props=3&max_games=3" -H "X-API-Key: $API_KEY")
 # Verify required keys exist
 NHL_PROPS=$(echo "$NHL_DATA" | python3 -c "import json, sys; d=json.load(sys.stdin); assert 'props' in d, 'Missing props key'; assert 'count' in d['props'], 'Missing props.count'; print(d['props']['count'])" 2>&1)
 if [ $? -ne 0 ]; then
@@ -68,7 +68,7 @@ echo
 
 # Check 5: ET filtering match
 echo "5. ET FILTERING VERIFICATION"
-NBA_DEBUG=$(curl -s "${BASE_URL}/live/best-bets/NBA?debug=1" -H "X-API-Key: $API_KEY")
+NBA_DEBUG=$(curl -s "${BASE_URL}/live/best-bets/nba?debug=1" -H "X-API-Key: $API_KEY")
 FILTER_DATE=$(echo "$NBA_DEBUG" | python3 -c "import json, sys; d=json.load(sys.stdin); print(d['debug']['date_window_et']['filter_date'])")
 if [ "$ET_DATE" == "$FILTER_DATE" ]; then
     echo "   ✓ PASS: filter_date ($FILTER_DATE) == et_date ($ET_DATE)"
