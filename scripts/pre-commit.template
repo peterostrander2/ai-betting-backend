@@ -1,0 +1,30 @@
+#!/bin/bash
+set -e
+
+CHANGED_FILES=$(git diff --cached --name-only)
+
+# Check 1: Invariant numbering
+if echo "$CHANGED_FILES" | grep -qE "(CLAUDE\.md|COMMIT_CHECKLIST\.md|SCORING_LOGIC\.md|PROJECT_MAP\.md)"; then
+  echo "🔍 Validating invariant numbering..."
+  ./scripts/validate_invariant_numbering.sh
+fi
+
+# Check 2: Runtime invariants
+if echo "$CHANGED_FILES" | grep -qE "(core/time_et\.py|core/titanium\.py|grader_store\.py|storage_paths\.py|integration_registry\.py|live_data_router\.py)"; then
+  echo "🔍 Validating runtime invariants..."
+  ./scripts/validate_runtime_invariants.sh
+fi
+
+# Check 3: Scoring contract consistency
+if echo "$CHANGED_FILES" | grep -qE "(live_data_router\.py|SCORING_LOGIC\.md|core/scoring_contract\.py|core/scoring_pipeline\.py)"; then
+  echo "🔍 Validating scoring consistency..."
+  ./scripts/validate_scoring_consistency.sh
+fi
+
+# Check 4: No scoring literals
+if echo "$CHANGED_FILES" | grep -qE "(live_data_router\.py|core/titanium\.py|core/scoring_pipeline\.py|tiering\.py)"; then
+  echo "🔍 Checking for forbidden scoring literals..."
+  ./scripts/validate_no_scoring_literals.sh
+fi
+
+echo "✅ All checks passed"
