@@ -1,0 +1,25 @@
+#!/bin/bash
+# Auto-run invariant checks before every commit
+
+CHANGED_FILES=$(git diff --cached --name-only)
+
+# Check 1: Documentation/numbering consistency
+if echo "$CHANGED_FILES" | grep -qE "(CLAUDE\.md|COMMIT_CHECKLIST\.md|SCORING_LOGIC\.md|PROJECT_MAP\.md)"; then
+    echo "🔍 Running invariant numbering check..."
+    if ! ./scripts/check_invariants_numbering.sh; then
+        echo "❌ COMMIT BLOCKED: Fix invariant numbering"
+        exit 1
+    fi
+fi
+
+# Check 2: Runtime behavior verification
+if echo "$CHANGED_FILES" | grep -qE "(core/time_et\.py|core/titanium\.py|grader_store\.py|storage_paths\.py|integration_registry\.py|live_data_router\.py)"; then
+    echo "🔍 Running runtime invariant checks..."
+    if ! ./scripts/check_runtime_invariants.sh; then
+        echo "❌ COMMIT BLOCKED: Fix runtime invariant violations"
+        exit 1
+    fi
+fi
+
+echo "✅ All checks passed"
+exit 0
