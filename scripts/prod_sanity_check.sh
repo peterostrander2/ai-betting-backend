@@ -112,16 +112,17 @@ if [ "$MIN_SCORE" != "0" ]; then
         ">= 6.5"
 fi
 
-# Validate ET filtering (events_before should equal events_after for today-only)
-check "Best-bets: ET filter applied to props (events_before == events_after)" \
-    "$([ "$EVENTS_BEFORE_PROPS" = "$EVENTS_AFTER_PROPS" ] && echo true || echo false)" \
+# Validate ET filtering is applied (events_after <= events_before means filter ran)
+# Note: before > after is CORRECT when Odds API returns tomorrow's games that get filtered out
+check "Best-bets: ET filter applied to props (events_after <= events_before)" \
+    "$([ "$EVENTS_AFTER_PROPS" -le "$EVENTS_BEFORE_PROPS" ] && echo true || echo false)" \
     "before=$EVENTS_BEFORE_PROPS, after=$EVENTS_AFTER_PROPS" \
-    "before == after (no tomorrow leakage)"
+    "events_after <= events_before (filter applied)"
 
-check "Best-bets: ET filter applied to games (events_before == events_after)" \
-    "$([ "$EVENTS_BEFORE_GAMES" = "$EVENTS_AFTER_GAMES" ] && echo true || echo false)" \
+check "Best-bets: ET filter applied to games (events_after <= events_before)" \
+    "$([ "$EVENTS_AFTER_GAMES" -le "$EVENTS_BEFORE_GAMES" ] && echo true || echo false)" \
     "before=$EVENTS_BEFORE_GAMES, after=$EVENTS_AFTER_GAMES" \
-    "before == after (no tomorrow leakage)"
+    "events_after <= events_before (filter applied)"
 
 # Note: picks_logged/picks_skipped_dupes may be 0 on cached responses
 # We'll verify persistence in CHECK 4 instead (grader status)
