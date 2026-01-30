@@ -96,7 +96,7 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_
 
 ### 4. JARVIS ENGINE (15% weight)
 **File:** `jarvis_savant_engine.py`
-**Expected Range:** 4.5-10.0 (4.5 baseline when no triggers)
+**Expected Range:** 1.0-10.0 (4.5 baseline when no triggers; can be lower with weak triggers + low gematria)
 
 **Verify:**
 - [ ] 7-field contract present (jarvis_rs, jarvis_active, jarvis_hits_count, etc.)
