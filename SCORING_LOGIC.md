@@ -1,5 +1,43 @@
 # 8 Pillars Scoring System
 
+<!-- SCORING_CONTRACT_JSON
+{
+  "confluence_levels": {
+    "DIVERGENT": 0.0,
+    "IMMORTAL": 10.0,
+    "JARVIS_PERFECT": 7.0,
+    "MODERATE": 1.0,
+    "PERFECT": 5.0,
+    "STRONG": 3.0
+  },
+  "engine_weights": {
+    "ai": 0.25,
+    "esoteric": 0.2,
+    "jarvis": 0.15,
+    "research": 0.3
+  },
+  "gold_star_gates": {
+    "ai_score": 6.8,
+    "esoteric_score": 4.0,
+    "jarvis_score": 6.5,
+    "research_score": 5.5
+  },
+  "gold_star_threshold": 7.5,
+  "min_final_score": 6.5,
+  "titanium_rule": {
+    "min_engines_ge_threshold": 3,
+    "threshold": 8.0
+  },
+  "weather_status_enum": [
+    "APPLIED",
+    "NOT_RELEVANT",
+    "UNAVAILABLE",
+    "ERROR"
+  ]
+}
+SCORING_CONTRACT_JSON -->
+
+
 ## Formula
 BASE = (AI × 0.25) + (Research × 0.30) + (Esoteric × 0.20) + (Jarvis × 0.15)
 FINAL = BASE + confluence_boost + jason_sim_boost
