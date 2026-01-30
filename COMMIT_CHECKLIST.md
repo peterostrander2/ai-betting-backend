@@ -12,55 +12,70 @@
 - [ ] Does this add a **new file/module**? → Update PROJECT_MAP.md
 - [ ] Does this change **API endpoints**? → Update CLAUDE.md API section
 
-### 3. ✅ Run Hard Invariants Smoke (BEFORE PUSH)
-
+### 3. ✅ Run Invariant Smoke Tests (BEFORE COMMIT)
 ```bash
-# Run prod sanity check
+# Run production sanity check
 ./scripts/prod_sanity_check.sh
 
-# Then verify canonical invariants:
-# ET Window (must show 00:01:00 start, bounds_valid: true)
-curl -s "$BASE_URL/live/debug/time" -H "X-API-Key: $API_KEY" | jq '{start: .et_day_start_iso, valid: .bounds_valid}'
+# Verify critical invariants with curls
+curl https://web-production-7b2a.up.railway.app/live/debug/time \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.et_window'
 
-# Integrations (all required keys validated)
-curl -s "$BASE_URL/live/debug/integrations?quick=true" -H "X-API-Key: $API_KEY" | jq '.configured_count'
+curl https://web-production-7b2a.up.railway.app/live/debug/integrations \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.configured | length'
 
-# Grader Status (persistent store + counts)
-curl -s "$BASE_URL/live/grader/status" -H "X-API-Key: $API_KEY" | jq '{path: .storage_path, count: .predictions_logged}'
+curl https://web-production-7b2a.up.railway.app/live/grader/status \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.storage'
 ```
 
-**If ANY check fails → DO NOT PUSH. Fix first.**
+**Expected Results:**
+- ET window: `[00:01:00 ET, 00:00:00 next day)` (half-open interval)
+- Integrations: All required APIs configured
+- Storage: `/app/grader_data` with pick counts > 0
 
-### 4. ✅ Persistence + Restart Proof (For Storage/Grading/Scheduler Changes)
-
-If you touched `grader_store.py`, `storage_paths.py`, `data_dir.py`, or scheduler:
-
-- [ ] Generate picks → Confirm stored on `RAILWAY_VOLUME_MOUNT_PATH`
-- [ ] Restart container (Railway redeploy)
-- [ ] Confirm same pick count after restart
-- [ ] Verify `is_mountpoint: true` in `/internal/storage/health`
-
-### 5. ✅ Commit BOTH Together
+### 4. ✅ Persistence + Restart Proof (If Storage/Grading/Scheduler Changed)
 ```bash
-git add <code_files>
-git add <doc_files>
+# 1. Generate picks
+curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.props.count'
+
+# 2. Check storage count
+BEFORE_COUNT=$(curl "https://web-production-7b2a.up.railway.app/live/grader/status" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.total_predictions')
+
+# 3. Restart container in Railway dashboard
+
+# 4. Verify same count after restart
+AFTER_COUNT=$(curl "https://web-production-7b2a.up.railway.app/live/grader/status" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.total_predictions')
+
+# Assert: BEFORE_COUNT == AFTER_COUNT
+```
+
+### 5. ✅ Commit BOTH Code + Docs Together
+```bash
+git add <code_files> <doc_files>
 git commit -m "fix: description + docs: update invariants"
 git push origin main
 ```
 
-### 6. ✅ Verify on Railway
-- [ ] Check Railway logs (no errors)
+**UNSKIPPABLE RULE:** If you changed any of these files, you MUST update paired docs:
+- `core/time_et.py` → CLAUDE.md INVARIANT 4
+- `grader_store.py` / `storage_paths.py` → CLAUDE.md INVARIANT 1
+- `core/titanium.py` → CLAUDE.md INVARIANT 2
+- `integration_registry.py` → CLAUDE.md Integration section
+- Any scoring module → SCORING_LOGIC.md
+
+### 6. ✅ Verify on Railway (AFTER PUSH)
+- [ ] Railway deployment succeeded
 - [ ] Run health check: `curl https://web-production-7b2a.up.railway.app/health`
-- [ ] Re-run invariants smoke (Step 3) against production
+- [ ] Re-run invariant smoke tests (from step 3)
 
----
-
-## Rollback Rule
-
-**If Railway deploy passes but invariants fail:**
-1. **ROLLBACK IMMEDIATELY** - `git revert HEAD && git push`
-2. Do NOT "hotfix forward" without updating docs + tests
-3. Fix properly, then redeploy
+### 7. ✅ Rollback Rule (If Invariants Fail After Deploy)
+**If Railway deploy passes BUT invariants fail:**
+- [ ] **ROLLBACK IMMEDIATELY** (revert commit)
+- [ ] Do NOT "hotfix forward" without updating docs + tests
+- [ ] Fix locally with docs, test, then redeploy
 
 ---
 
@@ -69,10 +84,10 @@ git push origin main
 ❌ **Fix code, forget docs** → Next session, bug comes back
 ❌ **Update docs, forget code** → Docs lie, system broken
 ❌ **Commit separately** → Code and docs out of sync
-❌ **Skip invariants smoke** → Broken code reaches prod
+❌ **Skip smoke tests** → Deploy broken changes
+❌ **Hotfix without docs** → Perpetuate the cycle
 
-✅ **ALWAYS commit code + docs together**
-✅ **ALWAYS run smoke before push**
+✅ **ALWAYS: Code + Docs + Tests → Commit together**
 
 ---
 
@@ -80,97 +95,73 @@ git push origin main
 
 | Change Type | Update These Files |
 |-------------|-------------------|
-| ET window, storage paths, titanium rule | CLAUDE.md (Master Invariants) |
+| ET window [00:01:00 ET, 00:00:00 next day) | CLAUDE.md INVARIANT 4 |
+| Storage paths `/app/grader_data` | CLAUDE.md INVARIANT 1 |
+| Titanium rule (3/4 engines ≥8.0) | CLAUDE.md INVARIANT 2 |
 | Scoring algorithm, engine weights | SCORING_LOGIC.md |
 | New file/module added | PROJECT_MAP.md |
-| API endpoint added/changed | CLAUDE.md (API section) |
+| API endpoint added/changed | CLAUDE.md API section |
 | Bug fix (no invariant change) | Code only (no doc update needed) |
 
 ---
 
-## CI/Commit Hook Enforcement (Recommended)
+## Canonical Invariants (NEVER BREAK THESE)
 
-Add a GitHub Action or pre-push hook that enforces:
+### INVARIANT 1: Storage Persistence
+- **Path:** `/app/grader_data` (Railway volume)
+- **Structure:** `/app/grader_data/grader/predictions.jsonl`
+- **Test:** Pick count survives container restart
 
-**If these files change:**
-- `core/time_et.py`
-- `grader_store.py`
-- `storage_paths.py`
-- `integration_registry.py`
-- `tiering.py`
-- `core/titanium.py`
+### INVARIANT 2: Titanium 3-of-4 Rule
+- **Rule:** ≥3 of 4 engines ≥8.0 (STRICT)
+- **File:** `core/titanium.py` (single source of truth)
+- **Test:** Verify boundary (3/4 at 8.0 = TRUE, 2/4 = FALSE)
 
-**Then these docs MUST also change:**
-- `CLAUDE.md`
-- `docs/AUDIT_MAP.md` (if grading-related)
+### INVARIANT 3: Engine Separation
+- **Rule:** NO double-counting across engines
+- **Example:** Sharp money ONLY in Research (not Jarvis)
 
-```yaml
-# .github/workflows/doc-sync-check.yml
-name: Doc Sync Check
-on: [pull_request]
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Check invariant files have paired doc updates
-        run: |
-          INVARIANT_FILES="core/time_et.py grader_store.py storage_paths.py integration_registry.py"
-          for f in $INVARIANT_FILES; do
-            if git diff --name-only origin/main | grep -q "$f"; then
-              if ! git diff --name-only origin/main | grep -q "CLAUDE.md"; then
-                echo "ERROR: $f changed but CLAUDE.md not updated"
-                exit 1
-              fi
-            fi
-          done
-```
+### INVARIANT 4: ET Today-Only Window
+- **Window:** `[00:01:00 ET, 00:00:00 next day)` (half-open)
+- **File:** `core/time_et.py` (single source of truth)
+- **Test:** Games at 00:00:30 EXCLUDED, 00:01:00 INCLUDED
+
+### INVARIANT 5: Minimum Output Threshold
+- **Threshold:** final_score ≥ 6.5
+- **Location:** `live_data_router.py` line ~3540
 
 ---
 
-## Example: ET Window Fix
-
-**CANONICAL ET SLATE WINDOW (Single Source of Truth):**
-```
-Start: 00:01:00 ET (inclusive)
-End:   00:00:00 ET next day (exclusive)
-Interval: [00:01:00, 00:00:00 next day)
-```
-
-**Bad Way:**
+## Example: ET Window Fix (CORRECT WAY)
 ```bash
-# Fix core/time_et.py
-git commit -m "fix: ET window"
-git push
-# Docs still say 00:00:00 → bug comes back next session
-```
+# 1. Fix core/time_et.py
+#    Change: time(0, 0, 0) → time(0, 1, 0)
 
-**Good Way:**
-```bash
-# 1. Fix core/time_et.py to use 00:01:00
-# 2. Update CLAUDE.md INVARIANT 3 to show [00:01:00, 00:00:00 next day)
+# 2. Update CLAUDE.md INVARIANT 4
+#    Verify: Says [00:01:00 ET, 00:00:00 next day)
+
 # 3. Run smoke test
-curl -s "$BASE_URL/live/debug/time" -H "X-API-Key: $API_KEY" | jq '.bounds_valid'
-# Must return: true
+curl "https://web-production-7b2a.up.railway.app/live/debug/time" \
+  -H "X-API-Key: KEY" | jq '.et_window.start'
+# Should show: "2026-01-30T00:01:00-05:00" (not 00:00:00)
 
 # 4. Commit together
 git add core/time_et.py CLAUDE.md
-git commit -m "fix: ET window [00:01:00, 00:00:00) + docs: update INVARIANT 3"
+git commit -m "fix: ET window start 00:01:00 + docs: update INVARIANT 4"
 git push origin main
 
-# 5. Verify prod after deploy
-curl -s "https://web-production-7b2a.up.railway.app/live/debug/time" \
-  -H "X-API-Key: $API_KEY" | jq '{start: .et_day_start_iso, valid: .bounds_valid}'
-# Must show: {"start": "2026-01-29T00:01:00-05:00", "valid": true}
+# 5. Verify on Railway
+# Wait for deploy, re-run smoke test, confirm 00:01:00
 ```
 
 ---
 
-## TL;DR
+## TL;DR (Too Long; Didn't Read)
 
-1. **Code + docs MUST match** - Update both, commit together
-2. **Run smoke before push** - Invariants check prevents broken deploys
-3. **Restart-proof storage changes** - Verify persistence survives redeploy
-4. **Rollback if invariants fail** - Never hotfix forward without docs + tests
+1. **Code + Docs MUST match** - Update both, commit together
+2. **Run smoke tests BEFORE commit** - Catch breaks early
+3. **Test persistence if storage changed** - Verify restart proof
+4. **Rollback if invariants fail** - Don't hotfix forward without docs
+5. **Follow this checklist EVERY TIME** - No exceptions
 
-**If Railway deploy passes but invariants fail, ROLLBACK IMMEDIATELY.**
+**Print this file. Put it next to your computer. Follow it every single time.**
