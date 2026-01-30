@@ -1,4 +1,3 @@
-cat > PROJECT_MAP.md << 'EOF'
 # Bookie-o-em Project Map
 
 ## Core Architecture
@@ -49,9 +48,9 @@ cat > PROJECT_MAP.md << 'EOF'
 - NEVER add code to block `/app/*` paths
 
 ## Active Development Areas
-- **Zero Picks Bug** - System analyzing 5000+ props but returning 0 picks
+- ~~**Zero Picks Bug**~~ ✅ RESOLVED - System now returns picks correctly
 - **Vacuum Score Integration** - Context modifiers not calculating correctly
-- **Esoteric for Props** - Props stuck at ~1.1 (should be 2.0-5.5)
+- ~~**Esoteric for Props**~~ ✅ RESOLVED - Esoteric now 5.67-6.36 range (verified Jan 29)
 
 ## Quick Debug Commands
 
@@ -69,4 +68,3 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" \
 ## Git Workflow
 - Main branch: `main`
 - Railway auto-deploys from main branch
-EOF
