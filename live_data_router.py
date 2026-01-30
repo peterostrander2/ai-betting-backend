@@ -2163,8 +2163,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             _filter_date = _iso_date  # Single source of truth for filter date
             _date_window_et_debug.update({
                 "date_str": date_str or "today",
-                "start_et": _et_start.strftime("%H:%M:%S"),
-                "end_et": _et_end.strftime("%H:%M:%S"),
+                "start_et": _et_start.isoformat(),  # Full ISO: 2026-01-29T00:00:00-05:00
+                "end_et": _et_end.isoformat(),      # Full ISO: 2026-01-30T00:00:00-05:00 (exclusive)
+                "window_display": f"{_iso_date} 00:00:00 to 23:59:59 ET",  # Human readable
                 "filter_date": _filter_date,  # This MUST match /debug/time.et_date
             })
         except Exception as e:
