@@ -60,7 +60,7 @@ git push origin main
 ```
 
 **UNSKIPPABLE RULE:** If you changed any of these files, you MUST update paired docs:
-- `core/time_et.py` → CLAUDE.md INVARIANT 4
+- `core/time_et.py` → CLAUDE.md INVARIANT 3
 - `grader_store.py` / `storage_paths.py` → CLAUDE.md INVARIANT 1
 - `core/titanium.py` → CLAUDE.md INVARIANT 2
 - `integration_registry.py` → CLAUDE.md Integration section
@@ -95,7 +95,7 @@ git push origin main
 
 | Change Type | Update These Files |
 |-------------|-------------------|
-| ET window [00:01:00 ET, 00:00:00 next day) | CLAUDE.md INVARIANT 4 |
+| ET window [00:01:00 ET, 00:00:00 next day) | CLAUDE.md INVARIANT 3 |
 | Storage paths `/app/grader_data` | CLAUDE.md INVARIANT 1 |
 | Titanium rule (3/4 engines ≥8.0) | CLAUDE.md INVARIANT 2 |
 | Scoring algorithm, engine weights | SCORING_LOGIC.md |
@@ -117,16 +117,16 @@ git push origin main
 - **File:** `core/titanium.py` (single source of truth)
 - **Test:** Verify boundary (3/4 at 8.0 = TRUE, 2/4 = FALSE)
 
-### INVARIANT 3: Engine Separation
-- **Rule:** NO double-counting across engines
-- **Example:** Sharp money ONLY in Research (not Jarvis)
-
-### INVARIANT 4: ET Today-Only Window
+### INVARIANT 3: ET Today-Only Window
 - **Window:** `[00:01:00 ET, 00:00:00 next day)` (half-open)
 - **File:** `core/time_et.py` (single source of truth)
 - **Test:** Games at 00:00:30 EXCLUDED, 00:01:00 INCLUDED
 
-### INVARIANT 5: Minimum Output Threshold
+### INVARIANT 4: 4-Engine Scoring (No Double Counting)
+- **Rule:** NO double-counting across engines
+- **Example:** Sharp money ONLY in Research (not Jarvis)
+
+### INVARIANT 6: Minimum Output Threshold
 - **Threshold:** final_score ≥ 6.5
 - **Location:** `live_data_router.py` line ~3540
 
@@ -137,7 +137,7 @@ git push origin main
 # 1. Fix core/time_et.py
 #    Change: time(0, 0, 0) → time(0, 1, 0)
 
-# 2. Update CLAUDE.md INVARIANT 4
+# 2. Update CLAUDE.md INVARIANT 3
 #    Verify: Says [00:01:00 ET, 00:00:00 next day)
 
 # 3. Run smoke test
@@ -147,7 +147,7 @@ curl "https://web-production-7b2a.up.railway.app/live/debug/time" \
 
 # 4. Commit together
 git add core/time_et.py CLAUDE.md
-git commit -m "fix: ET window start 00:01:00 + docs: update INVARIANT 4"
+git commit -m "fix: ET window start 00:01:00 + docs: update INVARIANT 3"
 git push origin main
 
 # 5. Verify on Railway
