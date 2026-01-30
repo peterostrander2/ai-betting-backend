@@ -4390,9 +4390,34 @@ async def debug_pick_breakdown(sport: str):
             "daily_edge": 0.05
         }
 
-        # --- AI SCORE (Pure Model - 0-8 scale, NO external signals) ---
-        ai_score = min(8.0, base_ai)
-        ai_reasons = [f"Pure model prediction: {round(ai_score, 2)}/8"]
+        # --- AI SCORE (Pure Model - 0-8 scale, with data quality boosts) ---
+        ai_reasons = []
+        ai_reasons.append(f"Base AI: {base_ai}/8")
+        _ai_boost = 0.0
+        # Sharp data present
+        if sharp_signal:
+            _ai_boost += 0.5
+            ai_reasons.append("Sharp data present (+0.5)")
+        # Signal strength
+        _ss = sharp_signal.get("signal_strength", "NONE") if sharp_signal else "NONE"
+        if _ss == "STRONG":
+            _ai_boost += 1.0
+            ai_reasons.append("STRONG signal alignment (+1.0)")
+        elif _ss == "MODERATE":
+            _ai_boost += 0.5
+            ai_reasons.append("MODERATE signal alignment (+0.5)")
+        elif _ss == "MILD":
+            _ai_boost += 0.25
+            ai_reasons.append("MILD signal alignment (+0.25)")
+        # Favorable spread
+        if 3 <= abs(spread) <= 10:
+            _ai_boost += 0.5
+            ai_reasons.append(f"Favorable spread {spread} (+0.5)")
+        # Player data
+        if player_name:
+            _ai_boost += 0.25
+            ai_reasons.append("Player data available (+0.25)")
+        ai_score = min(8.0, base_ai + _ai_boost)
 
         # --- RESEARCH SCORE (Market Intelligence - 0-10 scale) ---
         research_reasons = []
