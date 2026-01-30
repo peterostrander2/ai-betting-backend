@@ -105,7 +105,30 @@ else
 fi
 echo ""
 
-# Check 4: Top picks by engine count (informational)
+# Check 4: GOLD_STAR tier count
+echo -e "${YELLOW}[CHECK 4] GOLD_STAR tier count${NC}"
+GOLD_STAR_COUNT=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.tier == "GOLD_STAR")) | length' "$TMP_FILE")
+TITANIUM_COUNT=$(jq '[.props.picks[], .game_picks.picks[]] | map(select(.tier == "TITANIUM_SMASH")) | length' "$TMP_FILE")
+TOTAL_PICKS=$(jq '[.props.picks[], .game_picks.picks[]] | length' "$TMP_FILE")
+
+echo "GOLD_STAR: $GOLD_STAR_COUNT / $TOTAL_PICKS picks"
+echo "TITANIUM_SMASH: $TITANIUM_COUNT / $TOTAL_PICKS picks"
+
+if [ "$GOLD_STAR_COUNT" -gt 0 ]; then
+    echo "GOLD_STAR picks (jarvis triggers working):"
+    jq -r '[.props.picks[], .game_picks.picks[]] | map(select(.tier == "GOLD_STAR")) | .[0:5] | .[] | "  \(.player_name // .player // "UNKNOWN"): final=\(.final_score) jar=\(.jarvis_rs) triggers=\(.jarvis_reasons // [] | join(","))"' "$TMP_FILE"
+else
+    echo "No GOLD_STAR picks in current slate (Jarvis triggers may not be firing)"
+fi
+echo ""
+
+# Check 5: Jarvis trigger audit (v16.0 additive scoring)
+echo -e "${YELLOW}[CHECK 5] Jarvis trigger audit (v16.0 additive scoring)${NC}"
+echo "Top 5 picks by jarvis_rs (showing trigger contributions):"
+jq -r '[.props.picks[], .game_picks.picks[]] | sort_by(-.jarvis_rs) | .[0:5] | .[] | "  jar=\(.jarvis_rs // 0) | baseline=\(.jarvis_baseline // 4.5) | triggers=\(.jarvis_trigger_contribs // {} | keys | join(",")) | \(.player_name // .player // "UNKNOWN") | reason=\(.jarvis_no_trigger_reason // "TRIGGERS_ACTIVE")"' "$TMP_FILE"
+echo ""
+
+# Check 6: Top picks by engine count (informational)
 echo -e "${YELLOW}[INFO] Top 10 picks by engines >= 8.0${NC}"
 jq -r '[.props.picks[], .game_picks.picks[]] | map({
     player: (.player_name // .player // "UNKNOWN"),

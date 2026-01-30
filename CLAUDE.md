@@ -175,26 +175,44 @@ FINAL = BASE + confluence_boost + jason_sim_boost
 
 ---
 
-### INVARIANT 5: Jarvis 7-Field Contract (MANDATORY)
+### INVARIANT 5: Jarvis Additive Scoring Contract (v16.0)
 
-**RULE:** Jarvis MUST ALWAYS return these 7 fields, even when no triggers fire
+**RULE:** Jarvis ALWAYS runs when inputs are present. Uses ADDITIVE trigger scoring.
+
+**Scoring Model:**
+- **Baseline:** 4.5 when inputs present but no triggers fire
+- **Triggers ADD to baseline** (not replace it)
+- **GOLD_STAR requires jarvis_rs >= 6.5** (at least 1 strong trigger or 2+ triggers)
+
+**Trigger Contributions (ADD to baseline 4.5):**
+| Trigger | Contribution | Total |
+|---------|-------------|-------|
+| IMMORTAL (2178) | +3.5 | 8.0 |
+| ORDER (201) | +2.5 | 7.0 |
+| MASTER/WILL/SOCIETY (33/93/322) | +2.0 | 6.5 |
+| BEAST/JESUS/TESLA (666/888/369) | +1.5 | 6.0 |
+| Gematria strong/moderate | +1.5/+0.8 | varies |
+| Goldilocks zone | +0.5 | varies |
+
+**Stacking:** Each additional trigger adds 70% of previous (decay factor)
 
 **Required Fields:**
 ```python
 {
-    "jarvis_rs": float | None,        # 0-10 when active, None when inputs missing
-    "jarvis_active": bool,            # True if triggers fired
-    "jarvis_hits_count": int,         # Count of triggers hit
-    "jarvis_triggers_hit": List[str], # Names of triggers that fired
-    "jarvis_reasons": List[str],      # Why it triggered (or didn't)
-    "jarvis_fail_reasons": List[str], # Explain low score / no triggers
-    "jarvis_inputs_used": Dict,       # Tracks all inputs (spread, total, etc.)
+    "jarvis_rs": float | None,           # 0-10 when active, None when inputs missing
+    "jarvis_baseline": 4.5,              # Always 4.5 when inputs present
+    "jarvis_trigger_contribs": Dict,     # {"THE MASTER": 2.0, "gematria_strong": 1.5}
+    "jarvis_active": bool,               # True if inputs present (Jarvis ran)
+    "jarvis_hits_count": int,            # Count of triggers hit
+    "jarvis_triggers_hit": List[Dict],   # Trigger details with contributions
+    "jarvis_reasons": List[str],         # Why it triggered (or didn't)
+    "jarvis_fail_reasons": List[str],    # Explain no triggers
+    "jarvis_no_trigger_reason": str|None,# "NO_TRIGGER_BASELINE" if no triggers
+    "jarvis_inputs_used": Dict,          # Tracks all inputs (spread, total, etc.)
 }
 ```
 
-**Baseline Floor:** If inputs present but no triggers fire, `jarvis_rs` ≥ 4.5 (NEVER 0)
-
-**Validation:** `tests/test_jarvis_transparency.py` (13 tests enforce this)
+**Validation:** `tests/test_jarvis_transparency.py`
 
 ---
 

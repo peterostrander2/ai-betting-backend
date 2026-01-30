@@ -2209,31 +2209,59 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         date_et: str = ""
     ) -> Dict[str, Any]:
         """
-        JARVIS ENGINE (0-10 standalone) - v15.1 with full transparency
+        JARVIS ENGINE (0-10 standalone) - v16.0 with ADDITIVE trigger scoring
 
         Returns standalone jarvis_score plus all required output fields.
 
-        v15.1 Changes:
-        - Always outputs jarvis_rs, jarvis_active, jarvis_hits_count, jarvis_triggers_hit,
-          jarvis_reasons, jarvis_fail_reasons, jarvis_inputs_used
-        - If inputs missing: jarvis_active=False, jarvis_rs=None
-        - If inputs present: baseline floor 4.5 + boosts for triggers
-        - If jarvis_rs < 2.0: jarvis_fail_reasons explains why
-        """
-        JARVIS_WEIGHTS = {
-            "gematria": 0.40,     # 40% - Gematria signal (0-4 pts)
-            "triggers": 0.40,     # 40% - Sacred triggers (0-4 pts)
-            "mid_spread": 0.20    # 20% - Goldilocks zone amplifier (0-2 pts)
-        }
+        v16.0 GOLD_STAR FIX:
+        - Baseline: 4.5 when inputs present but no triggers
+        - Triggers ADD to baseline (not replace it)
+        - 1 minor trigger => ~5.0-6.2
+        - 1 strong trigger OR 2+ triggers => >=6.5 (GOLD_STAR eligible)
+        - Stacked triggers => 8.5-10 (rare)
+        - Full audit fields: jarvis_baseline, jarvis_trigger_contribs, jarvis_no_trigger_reason
 
-        JARVIS_BASELINE_FLOOR = 4.5  # Baseline when inputs present but no triggers
+        Trigger Contributions (ADDITIVE to baseline 4.5):
+        - IMMORTAL (2178): +3.5 → total 8.0
+        - ORDER (201): +2.5 → total 7.0
+        - MASTER (33): +2.0 → total 6.5
+        - WILL (93): +2.0 → total 6.5
+        - SOCIETY (322): +2.0 → total 6.5
+        - BEAST (666): +1.5 → total 6.0
+        - JESUS (888): +1.5 → total 6.0
+        - TESLA KEY (369): +1.5 → total 6.0
+        - POWER_NUMBER: +0.8 → total 5.3
+        - TESLA_REDUCTION: +0.5 → total 5.0
+        - REDUCTION match: +0.5 → total 5.0
+        - Gematria strong: +1.5, moderate: +0.8
+        - Mid-spread goldilocks: +0.5
+        """
+        JARVIS_BASELINE = 4.5  # Baseline when inputs present
+
+        # v16.0 Trigger contribution values (ADDITIVE to baseline)
+        TRIGGER_CONTRIBUTIONS = {
+            2178: 3.5,   # IMMORTAL - highest
+            201: 2.5,    # ORDER - high
+            33: 2.0,     # MASTER - Gold-Star eligible
+            93: 2.0,     # WILL - Gold-Star eligible
+            322: 2.0,    # SOCIETY - Gold-Star eligible
+            666: 1.5,    # BEAST - medium
+            888: 1.5,    # JESUS - medium
+            369: 1.5,    # TESLA KEY - medium
+        }
+        POWER_NUMBER_CONTRIB = 0.8
+        TESLA_REDUCTION_CONTRIB = 0.5
+        REDUCTION_MATCH_CONTRIB = 0.5
+        GEMATRIA_STRONG_CONTRIB = 1.5
+        GEMATRIA_MODERATE_CONTRIB = 0.8
+        GOLDILOCKS_CONTRIB = 0.5
+        STACKING_DECAY = 0.7  # Each additional trigger contributes 70% of previous
 
         jarvis_triggers_hit = []
+        jarvis_trigger_contribs = {}  # New: {trigger_name: contribution}
         jarvis_fail_reasons = []
+        jarvis_no_trigger_reason = None
         immortal_detected = False
-        gematria_score = 0.0
-        trigger_score = 0.0
-        mid_spread_score = 0.0
 
         # Track inputs used for transparency
         jarvis_inputs_used = {
@@ -2255,113 +2283,141 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             jarvis_fail_reasons.append("Missing critical inputs (matchup_str or teams)")
             return {
                 "jarvis_rs": None,
+                "jarvis_baseline": None,
+                "jarvis_trigger_contribs": {},
                 "jarvis_active": False,
                 "jarvis_hits_count": 0,
                 "jarvis_triggers_hit": [],
                 "jarvis_reasons": ["Inputs missing - cannot run"],
                 "jarvis_fail_reasons": jarvis_fail_reasons,
+                "jarvis_no_trigger_reason": "INPUTS_MISSING",
                 "jarvis_inputs_used": jarvis_inputs_used,
                 "immortal_detected": False,
-                "jarvis_breakdown": {
-                    "gematria": 0.0,
-                    "triggers": 0.0,
-                    "mid_spread": 0.0
-                }
             }
 
+        # Start with baseline
+        jarvis_rs = JARVIS_BASELINE
+        total_trigger_contrib = 0.0
+        gematria_contrib = 0.0
+        goldilocks_contrib = 0.0
+        trigger_count = 0
+
         if jarvis_engine:
-            # 1. Sacred Triggers (40% weight, max 4 pts)
+            # 1. Sacred Triggers - ADDITIVE contributions
             trigger_result = jarvis_engine.check_jarvis_trigger(game_str)
-            raw_trigger = 0.0
-            for trig in trigger_result.get("triggers_hit", []):
-                raw_trigger += trig["boost"] / 10  # Normalize boost
+            sorted_triggers = sorted(
+                trigger_result.get("triggers_hit", []),
+                key=lambda t: TRIGGER_CONTRIBUTIONS.get(t["number"], 0.5),
+                reverse=True
+            )
+
+            for i, trig in enumerate(sorted_triggers):
+                trigger_num = trig["number"]
+                match_type = trig.get("match_type", "DIRECT")
+
+                # Get base contribution
+                if trigger_num in TRIGGER_CONTRIBUTIONS:
+                    base_contrib = TRIGGER_CONTRIBUTIONS[trigger_num]
+                elif match_type == "POWER_NUMBER":
+                    base_contrib = POWER_NUMBER_CONTRIB
+                elif match_type == "TESLA_REDUCTION":
+                    base_contrib = TESLA_REDUCTION_CONTRIB
+                elif match_type == "REDUCTION":
+                    base_contrib = REDUCTION_MATCH_CONTRIB
+                else:
+                    base_contrib = 0.5  # Default for unknown triggers
+
+                # Apply stacking decay (70% for each subsequent trigger)
+                decay_factor = STACKING_DECAY ** i
+                actual_contrib = base_contrib * decay_factor
+
                 jarvis_triggers_hit.append({
-                    "number": trig["number"],
+                    "number": trigger_num,
                     "name": trig["name"],
-                    "match_type": trig.get("match_type", "DIRECT"),
-                    "boost": round(trig["boost"] / 10, 2)
+                    "match_type": match_type,
+                    "base_contrib": round(base_contrib, 2),
+                    "actual_contrib": round(actual_contrib, 2),
+                    "decay_factor": round(decay_factor, 2)
                 })
-                if trig["number"] == 2178:
+                jarvis_trigger_contribs[trig["name"]] = round(actual_contrib, 2)
+                total_trigger_contrib += actual_contrib
+                trigger_count += 1
+
+                if trigger_num == 2178:
                     immortal_detected = True
 
-            # Scale trigger score: normalize to 0-1, multiply by weight*10
-            trigger_score = min(1.0, raw_trigger) * 10 * JARVIS_WEIGHTS["triggers"]
-
-            # 2. Gematria Signal (40% weight, max 4 pts)
+            # 2. Gematria Signal - ADDITIVE contribution
             if player_name and home_team:
                 gematria = jarvis_engine.calculate_gematria_signal(player_name, home_team, away_team)
-                gematria_strength = gematria.get("signal_strength", 0)
-                if gematria.get("triggered"):
-                    gematria_strength = min(1.0, gematria_strength * 1.5)
-                gematria_score = gematria_strength * 10 * JARVIS_WEIGHTS["gematria"]
+                signal_strength = gematria.get("signal_strength", 0)
+                if signal_strength > 0.7:
+                    gematria_contrib = GEMATRIA_STRONG_CONTRIB
+                    jarvis_trigger_contribs["gematria_strong"] = gematria_contrib
+                elif signal_strength > 0.4:
+                    gematria_contrib = GEMATRIA_MODERATE_CONTRIB
+                    jarvis_trigger_contribs["gematria_moderate"] = gematria_contrib
 
-            # 3. Mid-Spread Goldilocks Amplifier (20% weight, max 2 pts)
+            # 3. Mid-Spread Goldilocks - ADDITIVE contribution
             mid_spread = jarvis_engine.calculate_mid_spread_signal(spread)
-            mid_spread_mod = mid_spread.get("modifier", 0)
-            if mid_spread_mod > 0:  # Only positive boost (Goldilocks zone 4-9)
-                mid_spread_score = mid_spread_mod * 10 * JARVIS_WEIGHTS["mid_spread"]
+            if mid_spread.get("signal") == "GOLDILOCKS":
+                goldilocks_contrib = GOLDILOCKS_CONTRIB
+                jarvis_trigger_contribs["goldilocks_zone"] = goldilocks_contrib
+
         else:
             # Fallback: check triggers in game_str directly
             for trigger_num, trigger_data in JARVIS_TRIGGERS.items():
                 if str(trigger_num) in game_str:
-                    trigger_score += trigger_data["boost"] / 25  # Scaled down
+                    base_contrib = TRIGGER_CONTRIBUTIONS.get(trigger_num, 0.5)
+                    decay_factor = STACKING_DECAY ** trigger_count
+                    actual_contrib = base_contrib * decay_factor
+
                     jarvis_triggers_hit.append({
                         "number": trigger_num,
                         "name": trigger_data["name"],
-                        "boost": round(trigger_data["boost"] / 25, 2)
+                        "match_type": "STRING_MATCH",
+                        "base_contrib": round(base_contrib, 2),
+                        "actual_contrib": round(actual_contrib, 2),
+                        "decay_factor": round(decay_factor, 2)
                     })
+                    jarvis_trigger_contribs[trigger_data["name"]] = round(actual_contrib, 2)
+                    total_trigger_contrib += actual_contrib
+                    trigger_count += 1
+
                     if trigger_num == 2178:
                         immortal_detected = True
-            trigger_score = min(4.0, trigger_score)  # Cap at 40% max
 
-        # Total Jarvis Engine Score (0-10)
-        jarvis_hits_count = len(jarvis_triggers_hit)
-
-        # v15.1 FLOOR BEHAVIOR:
-        # If inputs present, set baseline floor (4.5) + boosts for triggers
-        # This ensures jarvis_rs is never absurdly low when inputs are provided
-        if jarvis_hits_count > 0 or gematria_score >= 1.0:
-            # Triggers or gematria active - calculate score normally
-            jarvis_rs = gematria_score + trigger_score + mid_spread_score
-            jarvis_active = True
-        else:
-            # No triggers, no gematria - use baseline floor
-            jarvis_rs = JARVIS_BASELINE_FLOOR
-            jarvis_active = True  # Inputs present, so Jarvis ran
-            jarvis_fail_reasons.append(f"No triggers fired - using baseline floor {JARVIS_BASELINE_FLOOR}")
+        # Calculate final jarvis_rs = baseline + all contributions
+        jarvis_rs = JARVIS_BASELINE + total_trigger_contrib + gematria_contrib + goldilocks_contrib
 
         # Cap at 0-10 range
         jarvis_rs = max(0, min(10, jarvis_rs))
 
-        # Build jarvis_reasons
-        if jarvis_hits_count > 0:
-            jarvis_reasons = [t.get("name", "Unknown") for t in jarvis_triggers_hit]
-        elif gematria_score >= 1.0:
-            jarvis_reasons = ["Gematria alignment"]
-        else:
-            jarvis_reasons = [f"Baseline floor {JARVIS_BASELINE_FLOOR} (no triggers)"]
+        # Determine jarvis_active and build reasons
+        jarvis_hits_count = len(jarvis_triggers_hit)
+        has_any_contrib = total_trigger_contrib > 0 or gematria_contrib > 0 or goldilocks_contrib > 0
 
-        # If jarvis_rs < 2.0, explain why in jarvis_fail_reasons
-        if jarvis_rs < 2.0:
-            if jarvis_hits_count == 0:
-                jarvis_fail_reasons.append(f"Score {jarvis_rs:.1f} < 2.0: Zero triggers fired")
-            if gematria_score < 0.5:
-                jarvis_fail_reasons.append(f"Score {jarvis_rs:.1f} < 2.0: Gematria score {gematria_score:.2f} < 0.5")
+        if has_any_contrib:
+            jarvis_active = True
+            jarvis_reasons = list(jarvis_trigger_contribs.keys())
+            jarvis_no_trigger_reason = None
+        else:
+            jarvis_active = True  # Inputs present, Jarvis ran
+            jarvis_reasons = [f"Baseline {JARVIS_BASELINE} (no triggers)"]
+            jarvis_no_trigger_reason = "NO_TRIGGER_BASELINE"
+            jarvis_fail_reasons.append(f"No triggers fired - baseline {JARVIS_BASELINE}")
 
         return {
             "jarvis_rs": round(jarvis_rs, 2),
+            "jarvis_baseline": JARVIS_BASELINE,
+            "jarvis_trigger_contribs": jarvis_trigger_contribs,
             "jarvis_active": jarvis_active,
             "jarvis_hits_count": jarvis_hits_count,
             "jarvis_triggers_hit": jarvis_triggers_hit,
             "jarvis_reasons": jarvis_reasons,
             "jarvis_fail_reasons": jarvis_fail_reasons,
+            "jarvis_no_trigger_reason": jarvis_no_trigger_reason,
             "jarvis_inputs_used": jarvis_inputs_used,
             "immortal_detected": immortal_detected,
-            "jarvis_breakdown": {
-                "gematria": round(gematria_score, 2),
-                "triggers": round(trigger_score, 2),
-                "mid_spread": round(mid_spread_score, 2)
-            }
         }
 
     # ============================================================================
@@ -3083,17 +3139,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "daily_edge": round(daily_edge_score, 2),
                 "trap_mod": round(trap_mod, 2)
             },
-            # v15.0 Jarvis breakdown (standalone engine)
-            "jarvis_breakdown": jarvis_data.get("jarvis_breakdown", {}),
+            # v16.0 Jarvis audit fields (ADDITIVE trigger scoring for GOLD_STAR eligibility)
+            "jarvis_baseline": jarvis_data.get("jarvis_baseline", 4.5),
+            "jarvis_trigger_contribs": jarvis_data.get("jarvis_trigger_contribs", {}),
             "jarvis_triggers": jarvis_triggers_hit,
             "immortal_detected": immortal_detected,
-            # v15.1 JARVIS fields (MUST always exist - full transparency)
+            # v16.0 JARVIS fields (MUST always exist - full transparency)
             "jarvis_rs": round(jarvis_rs, 2) if jarvis_rs is not None else None,
             "jarvis_active": jarvis_active,
             "jarvis_hits_count": jarvis_hits_count,
             "jarvis_triggers_hit": jarvis_triggers_hit,
             "jarvis_reasons": jarvis_reasons,
             "jarvis_fail_reasons": jarvis_fail_reasons,
+            "jarvis_no_trigger_reason": jarvis_data.get("jarvis_no_trigger_reason"),
             "jarvis_inputs_used": jarvis_inputs_used,
             # v11.08 TITANIUM fields
             "titanium_triggered": titanium_triggered,
