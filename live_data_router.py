@@ -192,17 +192,17 @@ except ImportError:
     logger.warning("signals module not available - using inline calculations")
 
 # Import Weather Module for outdoor sports scoring (v16.0)
+# Weather is now a REQUIRED integration - no WEATHER_ENABLED flag needed
 try:
     from alt_data_sources.weather import (
         get_weather_modifier,
         is_outdoor_sport,
-        WEATHER_ENABLED,
     )
     WEATHER_MODULE_AVAILABLE = True
 except ImportError:
     WEATHER_MODULE_AVAILABLE = False
-    WEATHER_ENABLED = False
-    logger.warning("weather module not available - weather scoring disabled")
+    # Note: logger not yet defined here, use print for startup logging
+    print("[WARNING] weather module not available - weather scoring disabled")
 
 # Redis import with fallback
 try:
@@ -4147,7 +4147,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "top_game_candidates": debug_games,
             # v16.0 Weather telemetry
             "weather": {
-                "enabled": WEATHER_ENABLED,
+                "enabled": WEATHER_MODULE_AVAILABLE,  # Weather is now required (no WEATHER_ENABLED flag)
                 "module_available": WEATHER_MODULE_AVAILABLE,
                 "games_fetched": _weather_fetched,
                 "cache_hits": _weather_cache_hits,
