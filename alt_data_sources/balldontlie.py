@@ -34,18 +34,12 @@ logger = logging.getLogger("balldontlie")
 
 # BallDontLie API Key - REQUIRED (no hardcoding)
 # Set BALLDONTLIE_API_KEY or BDL_API_KEY in environment
-BDL_API_KEY = os.getenv("BALLDONTLIE_API_KEY", os.getenv("BDL_API_KEY", os.getenv("BDL_KEY_V2", "")))
+BDL_API_KEY = os.getenv("BALLDONTLIE_API_KEY", os.getenv("BDL_API_KEY", ""))
 BDL_BASE_URL = "https://api.balldontlie.io/v1"
 
 # Feature flag - only enabled if API key is set in environment
 BDL_ENABLED = bool(BDL_API_KEY and BDL_API_KEY not in ("", "your_key_here", "your_balldontlie_api_key_here"))
 
-# Startup debug log - shows what Railway is passing
-_bdl_key_preview = BDL_API_KEY[:8] + "..." if len(BDL_API_KEY) > 8 else BDL_API_KEY or "(empty)"
-print(f"[BDL STARTUP] BALLDONTLIE_API_KEY={os.getenv('BALLDONTLIE_API_KEY', '(not set)')[:8]}...")
-print(f"[BDL STARTUP] BDL_API_KEY={os.getenv('BDL_API_KEY', '(not set)')[:8]}...")
-print(f"[BDL STARTUP] BDL_KEY_V2={os.getenv('BDL_KEY_V2', '(not set)')[:8]}...")
-print(f"[BDL STARTUP] Resolved key: {_bdl_key_preview}, BDL_ENABLED={BDL_ENABLED}")
 
 # Cache for API responses (in-memory, short TTL)
 _cache: Dict[str, Any] = {}

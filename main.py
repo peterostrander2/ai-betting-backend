@@ -146,22 +146,6 @@ async def health():
     return {"status": "healthy", "version": "14.2", "database": database.DB_ENABLED}
 
 
-@app.get("/debug/env-check")
-async def debug_env_check():
-    """Debug endpoint to check what env vars are available in container."""
-    import os
-    # Find all env vars containing BDL, BALL, or API_KEY
-    bdl_vars = {k: v[:8] + "..." if len(v) > 8 else v for k, v in os.environ.items()
-                if "BDL" in k.upper() or "BALL" in k.upper()}
-    # Also check a known working var for comparison
-    odds_key = os.getenv("ODDS_API_KEY", "(not set)")
-    odds_preview = odds_key[:8] + "..." if len(odds_key) > 8 else odds_key
-    return {
-        "bdl_related_vars": bdl_vars,
-        "odds_api_key_preview": odds_preview,
-        "total_env_vars": len(os.environ),
-        "all_var_names_with_key": [k for k in os.environ.keys() if "KEY" in k.upper()]
-    }
 
 
 @app.get("/internal/storage/health")
