@@ -197,6 +197,7 @@ try:
     from alt_data_sources.weather import (
         get_weather_modifier,
         get_weather_context_sync,
+        get_weather_context,  # Async version for live data
         is_outdoor_sport,
     )
     WEATHER_MODULE_AVAILABLE = True
@@ -2366,7 +2367,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # ============================================================================
     # v16.0 CONTEXT MODIFIERS - weather_context, rest_days, home_away, vacuum_score
     # ============================================================================
-    def compute_context_modifiers(
+    async def compute_context_modifiers(
         sport: str,
         home_team: str,
         away_team: str,
@@ -2386,10 +2387,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         """
         result = {}
 
-        # 1. WEATHER_CONTEXT
+        # 1. WEATHER_CONTEXT (async for outdoor sports to fetch live data)
         if WEATHER_MODULE_AVAILABLE:
             try:
-                weather_ctx = get_weather_context_sync(sport, home_team, "")
+                # Use async version for live weather data (outdoor sports)
+                weather_ctx = await get_weather_context(sport, home_team, "")
                 result["weather_context"] = {
                     "status": weather_ctx.get("status", "UNAVAILABLE"),
                     "reason": weather_ctx.get("reason", "Unknown"),
@@ -3512,7 +3514,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
 
                             # v16.0: Compute context modifiers for this game pick
-                            _game_ctx_mods = compute_context_modifiers(
+                            _game_ctx_mods = await compute_context_modifiers(
                                 sport=sport.upper(),
                                 home_team=home_team,
                                 away_team=away_team,
@@ -3624,7 +3626,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     start_time_et = ""
 
             # v16.0: Compute context modifiers for sharp fallback picks
-            _sharp_ctx_mods = compute_context_modifiers(
+            _sharp_ctx_mods = await compute_context_modifiers(
                 sport=sport.upper(),
                 home_team=home_team,
                 away_team=away_team,
@@ -3855,7 +3857,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
 
                 # v16.0: Compute context modifiers for this prop
-                _ctx_mods = compute_context_modifiers(
+                _ctx_mods = await compute_context_modifiers(
                     sport=sport.upper(),
                     home_team=home_team,
                     away_team=away_team,
