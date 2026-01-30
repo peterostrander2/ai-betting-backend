@@ -13,18 +13,19 @@
 
 ---
 
-## 🎯 SESSION 2: ENGINE VERIFICATION
+## ✅ SESSION 2: ENGINE VERIFICATION (COMPLETED)
 
 ### 1. AI ENGINE (25% weight)
 **File:** `advanced_ml_backend.py`
 **Expected Range:** 4.0-8.5
 
 **Verify:**
-- [ ] All 8 models running
-- [ ] Sharp money bonus (+0.5) applies when present
-- [ ] Signal strength bonus (0.25-1.0) calculates
-- [ ] Player data bonus (+0.25) when available
-- [ ] Scores in expected range (not stuck at defaults)
+- [x] All 8 models running
+- [x] Sharp money bonus (+0.5) applies when present
+- [x] Signal strength bonus (0.25-1.0) calculates
+- [x] Player data bonus (+0.25) when available
+- [x] Scores in expected range (not stuck at defaults)
+- [x] **ai_reasons array populated** (fixed in commit 1c9cf7d)
 
 **Command:**
 ```bash
@@ -71,13 +72,13 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_
 **Expected Range:** 3.5-6.5 (games ~4.0, props ~5.5-6.0)
 
 **Verify:**
-- [ ] Numerology (35% = 3.5pts max)
-- [ ] Astro (25% = 2.5pts max)
-- [ ] Fibonacci (15% = 1.5pts max) - uses magnitude
-- [ ] Vortex (15% = 1.5pts max) - uses magnitude × 10
-- [ ] Daily Edge (10% = 1.0pt max)
-- [ ] **Props use prop_line for magnitude** (NOT spread=0)
-- [ ] NOT stuck at ~1.1
+- [x] Numerology (35% = 3.5pts max)
+- [x] Astro (25% = 2.5pts max)
+- [x] Fibonacci (15% = 1.5pts max) - uses magnitude
+- [x] Vortex (15% = 1.5pts max) - uses magnitude × 10
+- [x] Daily Edge (10% = 1.0pt max)
+- [x] **Props use prop_line for magnitude** (NOT spread=0)
+- [x] NOT stuck at ~1.1
 
 **Command:**
 ```bash
@@ -99,11 +100,11 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_
 **Expected Range:** 1.0-10.0 (4.5 baseline when no triggers; can be lower with weak triggers + low gematria)
 
 **Verify:**
-- [ ] 7-field contract present (jarvis_rs, jarvis_active, jarvis_hits_count, etc.)
-- [ ] Gematria triggers fire (2178, 201, 33, 93, 322)
-- [ ] Baseline 4.5 when inputs present but no triggers
-- [ ] jarvis_rs is None ONLY when jarvis_active is False
-- [ ] jarvis_fail_reasons explains low scores
+- [x] 7-field contract present (jarvis_rs, jarvis_active, jarvis_hits_count, etc.)
+- [x] Gematria triggers fire (2178, 201, 33, 93, 322)
+- [x] Baseline 4.5 when inputs present but no triggers
+- [x] jarvis_rs is None ONLY when jarvis_active is False
+- [x] jarvis_fail_reasons explains low scores
 
 **Command:**
 ```bash
@@ -175,65 +176,60 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_
 
 ---
 
-## 🎯 SESSION 4: CONTEXT MODIFIERS
+## ⚠️ SESSION 4: CONTEXT MODIFIERS (NOT INTEGRATED)
+
+**Investigation Complete (Jan 30, 2026):** These features exist in codebase but are NOT integrated into the scoring path.
 
 ### 7. VACUUM SCORE
-**Purpose:** Boost when key teammates out
+**Status:** ❌ NOT IMPLEMENTED
 
-**Verify:**
-- [ ] Calculating (not null/0)
-- [ ] Uses Playbook injury data
-- [ ] Boosts picks when starters out
+**Finding:** No `vacuum_score` code exists in the codebase. This feature was planned but never built.
 
-**Command:**
-```bash
-curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_props=1" \
-  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.props.picks[0] | {
-    player: .player_name,
-    vacuum_score
-  }'
-```
-
-**Success:** Value present (not null), varies by context
+**Decision Needed:** Build from scratch or remove from checklist.
 
 ---
 
-### 8. WEATHER IMPACT
-**Purpose:** Outdoor game conditions
+### 8. WEATHER CONTEXT
+**Status:** ✅ FULLY IMPLEMENTED but ❌ NOT INTEGRATED
 
-**Verify:**
-- [ ] Enabled flag status
-- [ ] Outdoor game detection
-- [ ] Weather API integration
+**Location:** `alt_data_sources/weather.py`
+**Function:** `get_weather_context(sport, home_team, venue, lat, lon)`
 
-**Command:**
-```bash
-curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_props=1" \
-  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.props.picks[0] | {
-    player: .player_name,
-    weather_impact
-  }'
-```
+**Features:**
+- Indoor sport detection (NBA, NHL, NCAAB → `NOT_RELEVANT`)
+- NFL dome detection → `NOT_RELEVANT`
+- Score modifier bounded [-0.35, 0.0]
+- WeatherAPI.com integration with 10-min cache
 
-**Success:** Field present (even if null for NBA indoor games)
+**Issue:** `get_weather_context()` is NEVER called from `live_data_router.py`
+
+**Plan Available:** See `/Users/apple/.claude/plans/sorted-petting-hare.md` for integration plan
+
+**Behavior for NBA:** Returns `{"status": "NOT_RELEVANT", "reason": "Indoor sport", "score_modifier": 0.0}`
 
 ---
 
 ### 9. REST DAYS & HOME/AWAY
-**Verify:**
-- [ ] Rest days field present
-- [ ] Home/away field present
-- [ ] Values make sense
+**Status:** EXISTS but ❌ NOT INTEGRATED
 
-**Command:**
-```bash
-curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_props=1" \
-  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.props.picks[0] | {
-    player: .player_name,
-    rest_days,
-    home_away
-  }'
-```
+**Locations:**
+- `rest_days`: `alt_data_sources/travel.py` - NOT called from scoring path
+- `home_away`: `lstm_brain.py`, `context_layer.py` - Used internally for LSTM, NOT exposed in API
+
+**Decision Needed:** Integrate into scoring path or remove from checklist.
+
+---
+
+### SESSION 4 SUMMARY
+
+| Feature | Code Exists | Integrated | Action |
+|---------|-------------|------------|--------|
+| `vacuum_score` | ❌ No | N/A | Build or Remove |
+| `weather_context` | ✅ Yes | ❌ No | Integrate per plan |
+| `rest_days` | ✅ Yes | ❌ No | Integrate or Remove |
+| `home_away` | ✅ Yes | ❌ No | Expose or Remove |
+
+**Next Step:** Decide which features to integrate vs. skip for MVP.
 
 ---
 
@@ -590,7 +586,7 @@ Backend is 100% verified when:
 
 ✅ **Engines:** All 4 engines returning scores in expected ranges
 ✅ **APIs:** All 3 APIs visible in picks (sharp money, player stats, odds)
-✅ **Context:** Vacuum/weather/rest calculating (not null/0)
+⚠️ **Context:** Vacuum/weather/rest - NOT INTEGRATED (see Session 4 notes)
 ✅ **Tiers:** TITANIUM uses core/titanium.py, all gates enforced
 ✅ **Separation:** NO double-counting (sharp money ONLY in Research)
 ✅ **Esoteric:** NOT stuck at ~1.1 for props (magnitude uses prop_line)
@@ -598,6 +594,8 @@ Backend is 100% verified when:
 ✅ **Distribution:** Score ranges healthy, not all bunched at 6.5
 ✅ **Volume:** Pick limits appropriate, not losing quality picks
 ✅ **Sanity:** All 17 prod checks passing
+
+**Note on Context Modifiers:** Weather, rest_days, and home_away code EXISTS but is NOT integrated into the scoring path. These are optional enhancements for future. Vacuum_score does not exist.
 
 ---
 
