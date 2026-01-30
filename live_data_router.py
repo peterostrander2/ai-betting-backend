@@ -2386,28 +2386,36 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         research_reasons = []
         pillars_passed = []
         pillars_failed = []
+        ai_reasons = []
 
         # --- AI SCORE (Dynamic Model - 0-8 scale) ---
         # v15.1: AI score is calibrated based on data quality signals
         # Base AI (5.0 props, 4.5 games) + boosts for data availability
         _ai_boost = 0.0
+        ai_reasons.append(f"Base AI: {base_ai}/8")
         # Odds data present: +0.5
         if sharp_signal:
             _ai_boost += 0.5
+            ai_reasons.append("Sharp data present (+0.5)")
         # Strong/moderate sharp signal aligns with model: +1.0 / +0.5
         _ss = sharp_signal.get("signal_strength", "NONE")
         if _ss == "STRONG":
             _ai_boost += 1.0
+            ai_reasons.append("STRONG signal alignment (+1.0)")
         elif _ss == "MODERATE":
             _ai_boost += 0.5
+            ai_reasons.append("MODERATE signal alignment (+0.5)")
         elif _ss == "MILD":
             _ai_boost += 0.25
+            ai_reasons.append("MILD signal alignment (+0.25)")
         # Favorable line value (spread in predictable range 3-10): +0.5
         if 3 <= abs(spread) <= 10:
             _ai_boost += 0.5
+            ai_reasons.append(f"Favorable spread {spread} (+0.5)")
         # Player name present for props (more data = better model): +0.25
         if player_name:
             _ai_boost += 0.25
+            ai_reasons.append("Player data available (+0.25)")
         ai_score = min(8.0, base_ai + _ai_boost)
         # Scale AI to 0-10 for use in base_score formula
         ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
@@ -2945,6 +2953,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "partial_stack_reasons": ["Jason blocked pick"] if jason_blocked else [],
             # v11.08 Research/Pillar tracking
             "research_reasons": research_reasons,
+            "ai_reasons": ai_reasons,
             "pillars_passed": pillars_passed,
             "pillars_failed": pillars_failed
         }

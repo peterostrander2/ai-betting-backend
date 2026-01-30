@@ -68,7 +68,7 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1&max_
 
 ### 3. ESOTERIC ENGINE (20% weight)
 **File:** `live_data_router.py` lines 2352-2435
-**Expected Range:** 2.0-5.5 (median ~3.5)
+**Expected Range:** 3.5-6.5 (games ~4.0, props ~5.5-6.0)
 
 **Verify:**
 - [ ] Numerology (35% = 3.5pts max)
@@ -505,8 +505,8 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" \
 ### 20. ENGINE RANGES
 **Expected Ranges:**
 - AI: 4.0-8.5
-- Research: 3.0-8.0
-- Esoteric: 2.0-5.5
+- Research: 2.5-8.0
+- Esoteric: 3.5-6.5 (games ~4.0, props ~5.5-6.0)
 - Jarvis: 4.5-10.0
 
 **Command:**
