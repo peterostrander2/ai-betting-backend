@@ -4,10 +4,21 @@ TIME WINDOW ET - Eastern Time Filtering (NEVER SKIP THIS)
 This module provides ET day-bound filtering to ensure only TODAY's games
 are processed and returned to users.
 
+CANONICAL ET SLATE WINDOW (HARD RULE):
+    Start: 00:01:00 America/New_York (12:01 AM ET) - inclusive
+    End:   00:00:00 America/New_York next day (midnight) - exclusive
+    Interval: [start, end)
+
 CRITICAL RULES:
-1. Day bounds: 00:00:00 ET to 23:59:59 ET (NOT 00:01)
-2. Timezone: America/New_York (explicit, not implicit)
+1. Day bounds: [00:01:00 ET, 00:00:00 ET next day) - half-open interval
+2. Timezone: America/New_York (explicit via ZoneInfo, not implicit)
 3. MANDATORY: Every data path that touches Odds API events MUST filter to today-only
+4. Events at exactly 00:00:00 (midnight) belong to PREVIOUS day
+
+WHY 00:01:00?
+- Avoids ambiguity at midnight boundary
+- Events exactly at midnight are NOT double-counted across days
+- Consistent behavior for late-night games that extend past midnight
 
 WHY THIS EXISTS:
 - Without ET gating, Odds API returns ALL upcoming events (60+ games across multiple days)
@@ -36,8 +47,8 @@ try:
 except ImportError:
     INVARIANTS_AVAILABLE = False
     ET_TIMEZONE = "America/New_York"
-    ET_DAY_START = "00:00:00"
-    ET_DAY_END = "23:59:59"
+    ET_DAY_START = "00:01:00"  # CANONICAL: 12:01 AM ET (not midnight)
+    ET_DAY_END = "00:00:00"    # CANONICAL: midnight next day (exclusive)
 
 # Try to import existing time_filters module
 try:
@@ -69,7 +80,10 @@ def filter_today_et(
     date_str: Optional[str] = None
 ) -> Tuple[List[Dict], List[Dict]]:
     """
-    Filter events to ET day (00:00-23:59 America/New_York).
+    Filter events to ET day [00:01:00 ET, 00:00:00 ET next day).
+
+    Uses canonical slate window: start at 00:01:00 ET, end at midnight
+    next day (exclusive upper bound).
 
     Args:
         events: List of event dicts with 'commence_time' field
@@ -80,7 +94,7 @@ def filter_today_et(
 
     Example:
         events = odds_api.get_events("nba")
-        today_events, tomorrow_events = filter_today_et(events)
+        today_events, dropped_events = filter_today_et(events)
         # Only process today_events
     """
     if TIME_FILTERS_AVAILABLE:

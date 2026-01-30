@@ -1,8 +1,13 @@
 """
 Test: TODAY-ONLY ET window filtering.
 
-REQUIREMENT: Events must be filtered to America/New_York day window [00:00:00, 23:59:59]
-before generating picks. No tomorrow/yesterday leakage.
+CANONICAL ET SLATE WINDOW (HARD RULE):
+    Start: 00:01:00 America/New_York (12:01 AM ET) - inclusive
+    End:   00:00:00 America/New_York next day (midnight) - exclusive
+    Interval: [start, end)
+
+Events must be filtered to this window before generating picks.
+No tomorrow/yesterday leakage.
 """
 
 import pytest
@@ -11,19 +16,21 @@ from zoneinfo import ZoneInfo
 from core.time_et import now_et, et_day_bounds, is_in_et_day, filter_events_et
 
 
-def test_et_day_bounds_returns_midnight_to_midnight():
-    """ET day bounds are [00:00:00, 00:00:00 next day) exclusive."""
+def test_et_day_bounds_returns_0001_to_next_midnight():
+    """CANONICAL: ET day bounds are [00:01:00, 00:00:00 next day) exclusive."""
     start, end, date_str = et_day_bounds()
 
     assert start.tzinfo == ZoneInfo("America/New_York")
     assert end.tzinfo == ZoneInfo("America/New_York")
     assert start.hour == 0
-    assert start.minute == 0
+    assert start.minute == 1  # CANONICAL: 00:01:00 start
     assert start.second == 0
     assert end.hour == 0
     assert end.minute == 0
     assert end.second == 0
-    assert (end - start).days == 1
+    # Duration: 23 hours 59 minutes
+    duration = end - start
+    assert duration.total_seconds() == 23 * 3600 + 59 * 60
 
 
 def test_filter_events_today_only():
@@ -62,11 +69,11 @@ def test_filter_events_today_only():
     assert len(dropped_window) == 2
 
 
-def test_is_in_et_day_midnight_boundaries():
-    """Test exact midnight boundaries (inclusive start, exclusive end)."""
+def test_is_in_et_day_canonical_boundaries():
+    """Test canonical boundaries: 00:01:00 start (inclusive), 00:00:00 next day (exclusive)."""
     start, end, today = et_day_bounds()
 
-    # Start of day (inclusive)
+    # Start of day at 00:01:00 (inclusive)
     assert is_in_et_day(start.isoformat()) is True
 
     # 1 second before end (still in day)
@@ -80,6 +87,10 @@ def test_is_in_et_day_midnight_boundaries():
     after_end = end + timedelta(seconds=1)
     assert is_in_et_day(after_end.isoformat()) is False
 
+    # Before start (00:00:30 - should be excluded)
+    before_start = start - timedelta(seconds=30)  # 00:00:30
+    assert is_in_et_day(before_start.isoformat()) is False
+
 
 def test_filter_events_handles_missing_commence_time():
     """Events with missing commence_time are dropped."""
@@ -92,3 +103,45 @@ def test_filter_events_handles_missing_commence_time():
 
     assert len(kept) == 0
     assert len(dropped_missing) == 2
+
+
+def test_midnight_excluded_from_window():
+    """CANONICAL: 00:00:00 ET should be EXCLUDED (belongs to previous day)."""
+    start, end, today = et_day_bounds()
+
+    # Create midnight timestamp
+    midnight = start.replace(hour=0, minute=0, second=0)
+
+    assert is_in_et_day(midnight.isoformat()) is False
+
+
+def test_canonical_boundary_events():
+    """Test events at canonical boundary times."""
+    start, end, today = et_day_bounds()
+
+    events = [
+        # EXCLUDE: 00:00:30 (before 00:01:00 start)
+        {"id": "too_early", "commence_time": start.replace(hour=0, minute=0, second=30).isoformat()},
+        # INCLUDE: 00:01:00 (exactly at start)
+        {"id": "at_start", "commence_time": start.isoformat()},
+        # INCLUDE: noon
+        {"id": "noon", "commence_time": start.replace(hour=12, minute=0).isoformat()},
+        # INCLUDE: 23:59:59 (last valid second)
+        {"id": "last_second", "commence_time": (end - timedelta(seconds=1)).isoformat()},
+        # EXCLUDE: 00:00:00 next day (exclusive end)
+        {"id": "at_end", "commence_time": end.isoformat()},
+    ]
+
+    kept, dropped_window, dropped_missing = filter_events_et(events, today)
+
+    assert len(kept) == 3
+    assert len(dropped_window) == 2
+
+    kept_ids = [e["id"] for e in kept]
+    assert "at_start" in kept_ids
+    assert "noon" in kept_ids
+    assert "last_second" in kept_ids
+
+    dropped_ids = [e["id"] for e in dropped_window]
+    assert "too_early" in dropped_ids
+    assert "at_end" in dropped_ids

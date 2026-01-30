@@ -2,16 +2,23 @@
 Test: ET Day Window Filter (TODAY-ONLY Gate)
 
 REQUIREMENT: ALL picks MUST be for games in today's ET window ONLY.
-Window: 12:01 AM ET (00:01:00) to 11:59 PM ET (23:59:00) - INCLUSIVE bounds
+
+CANONICAL ET SLATE WINDOW (HARD RULE):
+    Start: 00:01:00 America/New_York (12:01 AM ET) - inclusive
+    End:   00:00:00 America/New_York next day (midnight) - exclusive
+    Interval: [start, end)
 
 Single Source of Truth: core/time_et.py
 
 Tests verify:
-1. Day bounds are 00:00:00 to 23:59:59 ET
-2. Events outside today's window are dropped
-3. Events inside today's window are kept
-4. Missing commence_time events are dropped
-5. filter_events_et returns (kept, dropped_window, dropped_missing)
+1. Day bounds start at 00:01:00 ET (NOT midnight)
+2. Day bounds end at 00:00:00 next day (exclusive)
+3. Events outside today's window are dropped
+4. Events inside today's window are kept
+5. Events at exactly 00:00:00 (midnight) are EXCLUDED (belong to previous day)
+6. Events at 00:00:30 are EXCLUDED (before 00:01:00 start)
+7. Events at 00:01:00 are INCLUDED
+8. filter_events_et returns (kept, dropped_window, dropped_missing)
 """
 
 import pytest
@@ -23,6 +30,9 @@ from core.time_et import (
     et_day_bounds,
     is_in_et_day,
     filter_events_et,
+    within_et_bounds,
+    assert_et_bounds,
+    ET_SLATE_START_TIME,
 )
 
 
@@ -39,12 +49,12 @@ class TestETDayBounds:
         assert start.tzinfo == ET, "Start should be in ET timezone"
         assert end.tzinfo == ET, "End should be in ET timezone"
 
-    def test_et_day_bounds_starts_at_midnight(self):
-        """Day should start at 00:00:00 ET"""
+    def test_et_day_bounds_starts_at_0001(self):
+        """CANONICAL: Day should start at 00:01:00 ET (NOT midnight)"""
         start, end, date_str = et_day_bounds()
 
         assert start.hour == 0
-        assert start.minute == 0
+        assert start.minute == 1
         assert start.second == 0
 
     def test_et_day_bounds_ends_at_next_midnight(self):
@@ -54,7 +64,9 @@ class TestETDayBounds:
         assert end.hour == 0
         assert end.minute == 0
         assert end.second == 0
-        assert (end - start).days == 1, "Should span exactly 24 hours"
+        # Duration: 23 hours 59 minutes (from 00:01:00 to next day 00:00:00)
+        duration = end - start
+        assert duration.total_seconds() == 23 * 3600 + 59 * 60, "Should span 23h 59m"
 
     def test_et_day_bounds_returns_date_string(self):
         """Should return date string in YYYY-MM-DD format"""
@@ -72,6 +84,8 @@ class TestETDayBounds:
         assert start.year == 2026
         assert start.month == 1
         assert start.day == 29
+        assert start.hour == 0
+        assert start.minute == 1  # 00:01:00 start
 
 
 class TestIsInETDay:
@@ -84,8 +98,8 @@ class TestIsInETDay:
 
         assert is_in_et_day(noon.isoformat()) is True
 
-    def test_midnight_start_is_in_today(self):
-        """00:00:00 ET (start of day) should be in window"""
+    def test_0001_start_is_in_today(self):
+        """00:01:00 ET (canonical start of day) should be in window"""
         start, end, today = et_day_bounds()
 
         assert is_in_et_day(start.isoformat()) is True
@@ -110,12 +124,61 @@ class TestIsInETDay:
 
         assert is_in_et_day(after.isoformat()) is False
 
-    def test_before_midnight_start_is_not_in_today(self):
-        """23:59:59 previous day should NOT be in window"""
+    def test_before_0001_is_not_in_today(self):
+        """00:00:59 same day (before 00:01:00 start) should NOT be in window"""
         start, end, today = et_day_bounds()
-        before = start - timedelta(seconds=1)
+        before = start - timedelta(seconds=1)  # 00:00:59
 
         assert is_in_et_day(before.isoformat()) is False
+
+    def test_midnight_exactly_is_not_in_today(self):
+        """CRITICAL: 00:00:00 ET should NOT be in window (belongs to previous day)"""
+        start, end, today = et_day_bounds()
+        midnight = start.replace(hour=0, minute=0, second=0)
+
+        assert is_in_et_day(midnight.isoformat()) is False
+
+    def test_00_00_30_is_not_in_today(self):
+        """CRITICAL: 00:00:30 ET should NOT be in window (before 00:01:00 start)"""
+        start, end, today = et_day_bounds()
+        time_00_00_30 = start.replace(hour=0, minute=0, second=30)
+
+        assert is_in_et_day(time_00_00_30.isoformat()) is False
+
+    def test_00_01_00_is_in_today(self):
+        """CRITICAL: 00:01:00 ET should be in window (canonical start)"""
+        start, end, today = et_day_bounds()
+        time_00_01_00 = start.replace(hour=0, minute=1, second=0)
+
+        assert is_in_et_day(time_00_01_00.isoformat()) is True
+
+
+class TestAssertETBounds:
+    """Test assert_et_bounds validation function"""
+
+    def test_valid_bounds_pass_all_checks(self):
+        """Correctly formed bounds should pass all validation checks"""
+        start, end, _ = et_day_bounds()
+        result = assert_et_bounds(start, end)
+
+        assert result["valid"] is True
+        assert len(result["errors"]) == 0
+        assert result["checks"]["start_is_0001"] is True
+        assert result["checks"]["end_is_midnight"] is True
+        assert result["checks"]["spans_to_next_day"] is True
+
+    def test_invalid_start_time_fails(self):
+        """Start time not at 00:01:00 should fail validation"""
+        from datetime import time
+        day = now_et().date()
+        # Wrong start time: 00:00:00 instead of 00:01:00
+        bad_start = datetime.combine(day, time(0, 0, 0), tzinfo=ET)
+        end = datetime.combine(day + timedelta(days=1), time(0, 0, 0), tzinfo=ET)
+
+        result = assert_et_bounds(bad_start, end)
+
+        assert result["valid"] is False
+        assert result["checks"]["start_is_0001"] is False
 
 
 class TestFilterEventsET:
@@ -266,6 +329,115 @@ class TestETFilterIntegration:
         kept, dropped_window, dropped_missing = filter_events_et(events, today)
 
         assert len(kept) == 1, "UTC time should be converted to ET correctly"
+
+
+class TestCanonicalBoundaryEdgeCases:
+    """
+    Test canonical boundary edge cases: 00:00:30 (EXCLUDE), 00:01:00 (INCLUDE)
+
+    These tests verify the HARD RULE:
+        Start: 00:01:00 ET (inclusive)
+        End:   00:00:00 ET next day (exclusive)
+    """
+
+    def test_00_00_30_et_excluded(self):
+        """CRITICAL: Event at 00:00:30 ET MUST be EXCLUDED (before 00:01:00 start)"""
+        start, end, today = et_day_bounds()
+
+        # Create event at 00:00:30 ET on the same day
+        event_time = start.replace(hour=0, minute=0, second=30)
+
+        events = [{"id": "early_bird", "commence_time": event_time.isoformat()}]
+        kept, dropped_window, dropped_missing = filter_events_et(events, today)
+
+        assert len(kept) == 0, "00:00:30 ET should be EXCLUDED"
+        assert len(dropped_window) == 1, "00:00:30 ET should be in dropped_window"
+
+    def test_00_01_00_et_included(self):
+        """CRITICAL: Event at exactly 00:01:00 ET MUST be INCLUDED"""
+        start, end, today = et_day_bounds()
+
+        # The start IS 00:01:00
+        events = [{"id": "first_minute", "commence_time": start.isoformat()}]
+        kept, dropped_window, dropped_missing = filter_events_et(events, today)
+
+        assert len(kept) == 1, "00:01:00 ET should be INCLUDED"
+        assert kept[0]["id"] == "first_minute"
+
+    def test_23_59_59_et_included(self):
+        """Event at 23:59:59 ET MUST be INCLUDED"""
+        start, end, today = et_day_bounds()
+
+        # 1 second before end
+        last_second = end - timedelta(seconds=1)
+
+        events = [{"id": "last_second", "commence_time": last_second.isoformat()}]
+        kept, dropped_window, dropped_missing = filter_events_et(events, today)
+
+        assert len(kept) == 1, "23:59:59 ET should be INCLUDED"
+
+    def test_00_00_00_next_day_excluded(self):
+        """CRITICAL: Event at 00:00:00 next day MUST be EXCLUDED (end is exclusive)"""
+        start, end, today = et_day_bounds()
+
+        # The end is midnight next day
+        events = [{"id": "midnight_next", "commence_time": end.isoformat()}]
+        kept, dropped_window, dropped_missing = filter_events_et(events, today)
+
+        assert len(kept) == 0, "00:00:00 next day should be EXCLUDED"
+        assert len(dropped_window) == 1
+
+    def test_within_et_bounds_function_directly(self):
+        """Test within_et_bounds helper function"""
+        start, end, today = et_day_bounds()
+
+        # Test various times
+        noon = start.replace(hour=12, minute=0, second=0)
+        before_start = start - timedelta(seconds=1)
+        at_end = end
+
+        assert within_et_bounds(noon.isoformat(), start, end) is True
+        assert within_et_bounds(before_start.isoformat(), start, end) is False
+        assert within_et_bounds(at_end.isoformat(), start, end) is False
+
+    def test_fetch_filters_events_by_et_bounds(self):
+        """
+        Integration test: Mocked provider events around boundaries.
+
+        Events:
+        - 00:00:30 ET (must EXCLUDE)
+        - 00:01:00 ET (INCLUDE)
+        - 23:59:59 ET (INCLUDE)
+        - 00:00:00 next day (EXCLUDE)
+        """
+        start, end, today = et_day_bounds()
+
+        events = [
+            # EXCLUDE: Before canonical start
+            {"id": "too_early", "commence_time": start.replace(hour=0, minute=0, second=30).isoformat()},
+            # INCLUDE: Exactly at canonical start
+            {"id": "first_valid", "commence_time": start.isoformat()},
+            # INCLUDE: Last valid second
+            {"id": "last_valid", "commence_time": (end - timedelta(seconds=1)).isoformat()},
+            # EXCLUDE: At exclusive end
+            {"id": "next_day", "commence_time": end.isoformat()},
+        ]
+
+        kept, dropped_window, dropped_missing = filter_events_et(events, today)
+
+        # Check counts
+        assert len(kept) == 2, f"Expected 2 kept, got {len(kept)}"
+        assert len(dropped_window) == 2, f"Expected 2 dropped, got {len(dropped_window)}"
+
+        # Check which events were kept
+        kept_ids = [e["id"] for e in kept]
+        assert "first_valid" in kept_ids
+        assert "last_valid" in kept_ids
+
+        # Check which events were dropped
+        dropped_ids = [e["id"] for e in dropped_window]
+        assert "too_early" in dropped_ids
+        assert "next_day" in dropped_ids
 
 
 if __name__ == "__main__":

@@ -81,7 +81,10 @@ curl https://web-production-7b2a.up.railway.app/internal/storage/health
 
 **RULE:** ALL picks MUST be for games in today's ET window ONLY
 
-**Window:** 12:01 AM ET (00:01:00) to 11:59 PM ET (23:59:00) - INCLUSIVE bounds
+**CANONICAL ET SLATE WINDOW:**
+- Start: 00:01:00 ET (12:01 AM) - inclusive
+- End: 00:00:00 ET next day (midnight) - exclusive
+- Interval: [start, end)
 
 **Single Source of Truth:** `core/time_et.py` (ONLY 2 functions allowed)
 ```python
@@ -990,11 +993,11 @@ pick_result = persist_pick(pick_data)
 
 **Functions:**
 - `now_et()` - Get current time in ET
-- `et_day_bounds(date_str)` - Get ET day bounds (00:00:00 to 23:59:59)
+- `et_day_bounds(date_str)` - Get ET day bounds [00:01:00 ET, 00:00:00 next day ET)
 - `is_in_et_day(event_time, date_str)` - Boolean check
 - `filter_events_et(events, date_str)` - Filter to ET day, returns (kept, dropped_window, dropped_missing)
 
-**Window:** 00:00:00 ET to 23:59:59 ET (end exclusive)
+**CANONICAL WINDOW:** [00:01:00 ET, 00:00:00 ET next day) - half-open interval
 
 **Timezone:** America/New_York (explicit via zoneinfo)
 
@@ -1409,9 +1412,14 @@ GRADER_DATA_DIR=/app/grader_data
 
 ---
 
-### FIX 4: ET Today-Only Window (12:01 AM - 11:59 PM)
+### FIX 4: ET Today-Only Window (CANONICAL)
 
-**RULE**: Daily slate window is 12:01 AM ET to 11:59 PM ET (inclusive)
+**RULE**: Daily slate window is [00:01:00 ET, 00:00:00 ET next day) - half-open interval
+
+**CANONICAL ET SLATE WINDOW:**
+- Start: 00:01:00 ET (12:01 AM) - inclusive
+- End: 00:00:00 ET next day (midnight) - exclusive
+- Events at exactly 00:00:00 (midnight) belong to PREVIOUS day
 
 **Implementation**: `core/time_et.py` → `et_day_bounds()`
 

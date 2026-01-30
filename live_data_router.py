@@ -2163,10 +2163,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             _filter_date = _iso_date  # Single source of truth for filter date
             _date_window_et_debug.update({
                 "date_str": date_str or "today",
-                "start_et": _et_start.isoformat(),  # Full ISO: 2026-01-29T00:00:00-05:00
+                "start_et": _et_start.isoformat(),  # Full ISO: 2026-01-29T00:01:00-05:00
                 "end_et": _et_end.isoformat(),      # Full ISO: 2026-01-30T00:00:00-05:00 (exclusive)
-                "window_display": f"{_iso_date} 00:00:00 to 23:59:59 ET",  # Human readable
+                "window_display": f"{_iso_date} 00:01:00 to 23:59:59 ET",  # Human readable (canonical window)
                 "filter_date": _filter_date,  # This MUST match /debug/time.et_date
+                "interval_notation": "[start, end)",  # Half-open interval: start inclusive, end exclusive
             })
         except Exception as e:
             logger.warning("ET bounds failed in best-bets: %s", e)
@@ -5588,14 +5589,22 @@ async def debug_time(api_key: str = Depends(verify_api_key)):
     """
     ET timezone debug endpoint (PROTECTED).
 
-    Returns current time info from single source of truth (core.time_et).
+    Returns current time info from single source of truth (core.time_et)
+    plus fail-loud validation of ET bounds invariants.
+
+    CANONICAL ET SLATE WINDOW:
+        Start: 00:01:00 ET (12:01 AM) - inclusive
+        End:   00:00:00 ET next day (midnight) - exclusive
+        Interval: [start, end)
 
     Returns:
         - now_utc_iso: Current UTC time
         - now_et_iso: Current ET time
         - et_date: Today's date in ET (YYYY-MM-DD)
-        - et_day_start_iso: Start of ET day (00:00:00)
+        - et_day_start_iso: Start of ET day (00:01:00)
         - et_day_end_iso: End of ET day (00:00:00 next day, exclusive)
+        - canonical_window: Description of the canonical window
+        - bounds_validation: Invariant validation results (FAIL LOUD if invalid)
         - build_sha: Git commit SHA
         - deploy_version: Deployment version
 
@@ -5603,7 +5612,7 @@ async def debug_time(api_key: str = Depends(verify_api_key)):
         X-API-Key header
     """
     try:
-        from core.time_et import now_et, et_day_bounds
+        from core.time_et import now_et, et_day_bounds, assert_et_bounds
         from datetime import datetime, timezone
 
         # Current times
@@ -5612,6 +5621,9 @@ async def debug_time(api_key: str = Depends(verify_api_key)):
 
         # ET day bounds
         start_et, end_et, et_date = et_day_bounds()
+
+        # FAIL LOUD: Validate bounds invariants
+        validation = assert_et_bounds(start_et, end_et)
 
         # Build info
         build_sha = BUILD_SHA if 'BUILD_SHA' in globals() else "unknown"
@@ -5623,12 +5635,22 @@ async def debug_time(api_key: str = Depends(verify_api_key)):
             "et_date": et_date,
             "et_day_start_iso": start_et.isoformat(),
             "et_day_end_iso": end_et.isoformat(),
+            "window_display": f"{et_date} 00:01:00 to 23:59:59 ET",
+            "canonical_window": {
+                "start_time": "00:01:00 ET",
+                "end_time": "00:00:00 ET (next day, exclusive)",
+                "interval_notation": "[start, end)",
+                "description": "Events at exactly midnight belong to PREVIOUS day",
+            },
+            "bounds_validation": validation,
+            "bounds_valid": validation["valid"],
             "build_sha": build_sha,
             "deploy_version": deploy_version,
         }
     except Exception as e:
         return {
             "error": str(e),
+            "bounds_valid": False,
             "timestamp": datetime.now().isoformat()
         }
 

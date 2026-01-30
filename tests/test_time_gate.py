@@ -1,22 +1,28 @@
 """
-Tests for ET day boundary filtering (v15.1).
+Tests for ET day boundary filtering (v15.4).
+
+CANONICAL ET SLATE WINDOW:
+    Start: 00:01:00 ET (12:01 AM) - inclusive
+    End:   00:00:00 ET next day (midnight) - exclusive
+    Interval: [start, end)
 """
 import pytest
 from time_filters import et_day_bounds, is_in_et_day, filter_events_today_et
 
 
 def test_et_day_bounds_specific_date():
-    """Bounds for a specific date should span 00:00:00 to 23:59:59 ET."""
-    start, end = et_day_bounds("2026-01-27")
-    assert start.hour == 0 and start.minute == 0 and start.second == 0
-    assert end.hour == 23 and end.minute == 59 and end.second == 59
+    """Bounds for a specific date should span 00:01:00 ET to 00:00:00 next day ET."""
+    start, end, date_str = et_day_bounds("2026-01-27")
+    assert start.hour == 0 and start.minute == 1 and start.second == 0  # 00:01:00
+    assert end.hour == 0 and end.minute == 0 and end.second == 0  # 00:00:00 next day
     assert start.date().isoformat() == "2026-01-27"
-    assert end.date().isoformat() == "2026-01-27"
+    assert end.date().isoformat() == "2026-01-28"  # End is next day (exclusive)
+    assert date_str == "2026-01-27"
 
 
 def test_et_day_bounds_today():
     """Calling with no date_str should not raise."""
-    start, end = et_day_bounds()
+    start, end, date_str = et_day_bounds()
     assert start < end
 
 
@@ -68,5 +74,16 @@ def test_is_in_et_day_empty_string():
 
 
 def test_is_in_et_day_midnight_boundary():
-    """Exactly midnight (00:00:00) ET should be in-window."""
-    assert is_in_et_day("2026-01-27T00:00:00-05:00", "2026-01-27") is True
+    """CANONICAL: Exactly midnight (00:00:00) ET should be OUT of window (belongs to previous day)."""
+    # 00:00:00 ET is BEFORE the 00:01:00 ET start time
+    assert is_in_et_day("2026-01-27T00:00:00-05:00", "2026-01-27") is False
+
+
+def test_is_in_et_day_canonical_start():
+    """CANONICAL: Exactly 00:01:00 ET should be IN window (start of canonical window)."""
+    assert is_in_et_day("2026-01-27T00:01:00-05:00", "2026-01-27") is True
+
+
+def test_is_in_et_day_just_before_start():
+    """00:00:30 ET should be OUT of window (before 00:01:00 start)."""
+    assert is_in_et_day("2026-01-27T00:00:30-05:00", "2026-01-27") is False
