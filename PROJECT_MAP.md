@@ -1,30 +1,72 @@
+cat > PROJECT_MAP.md << 'EOF'
 # Bookie-o-em Project Map
 
 ## Core Architecture
 - **Type:** Python FastAPI backend
-- **Deployment:** Railway
+- **Deployment:** Railway (https://web-production-7b2a.up.railway.app)
+- **Database:** PostgreSQL on Railway  
 - **Storage:** `/app/grader_data` (Railway 5GB persistent volume)
+- **Version:** v15.1 (Build: 5c0f104)
 
 ## Entry Points
-- `main.py` - FastAPI app
-- `live_data_router.py` - All `/live/*` endpoints
+- `main.py` - FastAPI app, health checks, routes
+- `live_data_router.py` - All `/live/*` endpoints (67 routes)
 
 ## Critical Modules (SINGLE SOURCE OF TRUTH)
-- `core/time_et.py` - ET timezone filtering (ONLY use this)
-- `core/titanium.py` - Titanium 3/4 rule (ONLY use this)
-- `grader_store.py` - Pick persistence
+- `core/time_et.py` - **ET timezone filtering (ONLY use this)**
+- `core/titanium.py` - **Titanium 3/4 rule (ONLY use this)**
+- `core/invariants.py` - All system constants
+- `grader_store.py` - Pick persistence (JSONL storage)
+- `storage_paths.py` - Storage configuration
 
-## Scoring System
-- AI Score (25%) - `advanced_ml_backend.py`
-- Research Score (30%) - Sharp money, splits, variance
-- Esoteric Score (20%) - Numerology, astro, fib, vortex
-- Jarvis Score (15%) - `jarvis_savant_engine.py`
-- Jason Sim (post-pick boost) - `jason_sim_confluence.py`
+## Scoring System (4 Engines)
+- `advanced_ml_backend.py` - **AI Score (25%)** - 8 AI models
+- Research Score (30%) - Sharp money, splits, variance (in live_data_router.py)
+- Esoteric Score (20%) - Numerology, astro, fib, vortex (in live_data_router.py)
+- `jarvis_savant_engine.py` - **Jarvis Score (15%)** - Gematria triggers
+- `jason_sim_confluence.py` - **Post-pick boost** - Confluence layer
 
-## Active Issues
-- **Zero Picks Bug** - Analyzing 5000+ props, returning 0
-- **Esoteric for Props** - Stuck at ~1.1 (should be 2.0-5.5)
+## Data Sources (External APIs)
+| API | Env Var | Purpose |
+|-----|---------|---------|
+| **Odds API** | `ODDS_API_KEY` | Live odds, props, games |
+| **Playbook API** | `PLAYBOOK_API_KEY` | Splits, injuries, sharp money |
+| **BallDontLie GOAT** | `BALLDONTLIE_API_KEY` | NBA grading, player stats |
 
-## Storage Paths
-/app/grader_data/grader/predictions.jsonl - Picks
-/app/grader_data/grader_data/weights.json - Weight learning
+## Storage Architecture (NEVER CHANGE THESE PATHS)
+```
+/app/grader_data/              ← Railway volume (persistent across restarts)
+├── grader/
+│   └── predictions.jsonl      ← Picks (JSONL, high-frequency writes)
+└── grader_data/
+    ├── weights.json           ← Weight learning (low-frequency updates)
+    └── predictions.json       ← Auto-grader data
+```
+
+**CRITICAL FACTS:**
+- `/app/grader_data` IS the Railway persistent volume (not ephemeral)
+- Picks survive container restarts
+- NEVER add code to block `/app/*` paths
+
+## Active Development Areas
+- **Zero Picks Bug** - System analyzing 5000+ props but returning 0 picks
+- **Vacuum Score Integration** - Context modifiers not calculating correctly
+- **Esoteric for Props** - Props stuck at ~1.1 (should be 2.0-5.5)
+
+## Quick Debug Commands
+
+### Check Best-Bets Output
+```bash
+curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+```
+
+### Run Production Sanity Check
+```bash
+./scripts/prod_sanity_check.sh
+```
+
+## Git Workflow
+- Main branch: `main`
+- Railway auto-deploys from main branch
+EOF
