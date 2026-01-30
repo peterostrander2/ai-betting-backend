@@ -92,6 +92,9 @@ except ImportError:
     DEFAULT_JARVIS_RS = 5.0
     logger.warning("tiering module not available - using legacy tier logic")
 
+# Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
+from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES
+
 # Import Time ET - SINGLE SOURCE OF TRUTH for ET timezone
 try:
     from core.time_et import (
@@ -2076,7 +2079,7 @@ async def get_best_bets(
     debug_mode = debug == 1
 
     # Clamp min_score: production floor is 6.5, debug allows down to 5.0
-    effective_min_score = 6.5
+    effective_min_score = MIN_FINAL_SCORE
     if min_score is not None:
         effective_min_score = max(5.0, min(10.0, min_score))
 
@@ -2891,8 +2894,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # BASE = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15) + confluence_boost
         # AI models now directly contribute 25% of the score
         # If jarvis_rs is None (inputs missing), use 0 for jarvis contribution
-        jarvis_contribution = (jarvis_rs * 0.15) if jarvis_rs is not None else 0
-        base_score = (ai_scaled * 0.25) + (research_score * 0.30) + (esoteric_score * 0.20) + jarvis_contribution + confluence_boost
+        jarvis_contribution = (jarvis_rs * ENGINE_WEIGHTS["jarvis"]) if jarvis_rs is not None else 0
+        base_score = (ai_scaled * ENGINE_WEIGHTS["ai"]) + (research_score * ENGINE_WEIGHTS["research"]) + (esoteric_score * ENGINE_WEIGHTS["esoteric"]) + jarvis_contribution + confluence_boost
 
         # --- v11.08 JASON SIM CONFLUENCE (runs after base score, before tier assignment) ---
         # Jason simulates game outcomes and applies boost/downgrade based on win probability
@@ -2982,9 +2985,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # Fallback tier determination (v12.0 thresholds)
             if titanium_triggered:
                 bet_tier = {"tier": "TITANIUM_SMASH", "units": 2.5, "action": "SMASH", "badge": "TITANIUM SMASH"}
-            elif final_score >= 7.5:  # v12.0: was 9.0
+            elif final_score >= GOLD_STAR_THRESHOLD:  # v12.0: was 9.0
                 bet_tier = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
-            elif final_score >= 6.5:  # v12.0: was 7.5
+            elif final_score >= MIN_FINAL_SCORE:  # v12.0: was 7.5
                 bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
             elif final_score >= 5.5:  # v12.0: was 6.0
                 bet_tier = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}
@@ -2994,10 +2997,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # --- v15.3 GOLD_STAR HARD GATES ---
         # GOLD_STAR requires ALL engine minimums. If any gate fails, downgrade to EDGE_LEAN.
         _gold_gates = {
-            "ai_gte_6.8": ai_scaled >= 6.8,
-            "research_gte_5.5": research_score >= 5.5,
-            "jarvis_gte_6.5": (jarvis_rs >= 6.5) if jarvis_rs is not None else False,
-            "esoteric_gte_4.0": esoteric_score >= 4.0,
+            "ai_gte_6.8": ai_scaled >= GOLD_STAR_GATES["ai_score"],
+            "research_gte_5.5": research_score >= GOLD_STAR_GATES["research_score"],
+            "jarvis_gte_6.5": (jarvis_rs >= GOLD_STAR_GATES["jarvis_score"]) if jarvis_rs is not None else False,
+            "esoteric_gte_4.0": esoteric_score >= GOLD_STAR_GATES["esoteric_score"],
         }
         _gold_gates_passed = all(_gold_gates.values())
         _gold_gates_failed = [k for k, v in _gold_gates.items() if not v]
@@ -3060,14 +3063,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 # This shouldn't happen (downgrade should have occurred), but log it
                 tier_reason.append(f"GOLD_STAR: Score {final_score:.2f}, but gates may be marginal")
         elif actual_tier == "EDGE_LEAN":
-            if final_score >= 7.5:
+            if final_score >= GOLD_STAR_THRESHOLD:
                 # High score but downgraded to EDGE_LEAN - explain why
                 if not _gold_gates_passed:
                     failed_gate_names = [g.replace("_gte_", " >= ").replace("_", " ").title() for g in _gold_gates_failed]
                     tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} >= 7.5 but failed GOLD gates: {', '.join(failed_gate_names)}")
                 else:
                     tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} >= 7.5 but other criteria not met")
-            elif final_score >= 6.5:
+            elif final_score >= MIN_FINAL_SCORE:
                 tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} in 6.5-7.5 range")
             else:
                 tier_reason.append(f"EDGE_LEAN: Score {final_score:.2f} (should not be returned)")
@@ -3077,7 +3080,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             tier_reason.append(f"PASS: Score {final_score:.2f} < 5.5 (should not be returned)")
 
         # Add specific gate failures for transparency
-        if _gold_gates_failed and final_score >= 7.5:
+        if _gold_gates_failed and final_score >= GOLD_STAR_THRESHOLD:
             for gate in _gold_gates_failed:
                 if gate == "ai_gte_6.8":
                     tier_reason.append(f"  - AI {ai_scaled:.1f} < 6.8")
@@ -4458,7 +4461,7 @@ async def get_live_bets(sport: str):
     """
     Live betting picks - games currently in progress.
 
-    Only returns picks with final_score >= 6.5 (COMMUNITY_MIN_SCORE).
+    Only returns picks with final_score >= MIN_FINAL_SCORE (COMMUNITY_MIN_SCORE).
     All picks have status = "LIVE" or "STARTED".
 
     Returns:
@@ -4482,7 +4485,7 @@ async def get_live_bets(sport: str):
             if is_started:
                 # Only include if score >= 6.5 (community threshold)
                 final_score = pick.get("final_score", 0)
-                if final_score >= 6.5:
+                if final_score >= MIN_FINAL_SCORE:
                     pick["status"] = "LIVE"
                     pick["started_at"] = started_at
                     pick["live_bet_eligible"] = True
@@ -4495,7 +4498,7 @@ async def get_live_bets(sport: str):
             is_started, started_at = is_game_started(commence_time)
             if is_started:
                 final_score = pick.get("final_score", 0)
-                if final_score >= 6.5:
+                if final_score >= MIN_FINAL_SCORE:
                     pick["status"] = "LIVE"
                     pick["started_at"] = started_at
                     pick["live_bet_eligible"] = True
@@ -4898,9 +4901,9 @@ async def debug_pick_breakdown(sport: str):
             # Fallback tier determination (v12.0 thresholds)
             if titanium_triggered:
                 bet_tier = {"tier": "TITANIUM_SMASH", "units": 2.5, "action": "SMASH"}
-            elif final_score >= 7.5:  # v12.0: was 9.0
+            elif final_score >= GOLD_STAR_THRESHOLD:  # v12.0: was 9.0
                 bet_tier = {"tier": "GOLD_STAR", "units": 2.0, "action": "SMASH"}
-            elif final_score >= 6.5:  # v12.0: was 7.5
+            elif final_score >= MIN_FINAL_SCORE:  # v12.0: was 7.5
                 bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY"}
             elif final_score >= 5.5:  # v12.0: was 6.0
                 bet_tier = {"tier": "MONITOR", "units": 0.0, "action": "WATCH"}

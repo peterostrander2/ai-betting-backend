@@ -6,6 +6,8 @@ RULE: titanium=true ONLY when >= 3 of 4 engines are >= 8.0
 Single source of truth - NO duplicate logic allowed.
 """
 
+from core.scoring_contract import TITANIUM_RULE
+
 from typing import Dict, Tuple, List, Any
 
 
@@ -14,7 +16,7 @@ def compute_titanium_flag(
     research_score: float,
     esoteric_score: float,
     jarvis_score: float,
-    threshold: float = 8.0
+    threshold: float = TITANIUM_RULE["threshold"]
 ) -> Tuple[bool, Dict[str, Any]]:
     """
     Compute Titanium flag using 3-of-4 rule.
@@ -58,7 +60,7 @@ def compute_titanium_flag(
     hits_count = len(qualifying)
 
     # 3-of-4 rule
-    titanium = hits_count >= 3
+    titanium = hits_count >= TITANIUM_RULE["min_engines_ge_threshold"]
 
     # Build diagnostics
     if titanium:
