@@ -12,6 +12,17 @@ Automated daily tasks for Bookie-o-em:
 All 5 Sports: NBA, NFL, MLB, NHL, NCAAB
 """
 
+# Explicit exports - prevents "cannot import name" errors
+__all__ = [
+    'DailyScheduler',
+    'SchedulerConfig',
+    'SCHEDULER_AVAILABLE',
+    'scheduler_router',
+    'init_scheduler',
+    'get_scheduler',
+    'get_daily_scheduler',  # Alias for backward compatibility
+]
+
 import os
 import json
 import asyncio
