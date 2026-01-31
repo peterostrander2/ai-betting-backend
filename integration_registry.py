@@ -44,6 +44,14 @@ from datetime import datetime, timezone
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 
+# Import from canonical contract - ensures registry stays in sync
+from core.integration_contract import (
+    INTEGRATIONS as CONTRACT_INTEGRATIONS,
+    REQUIRED_INTEGRATIONS as CONTRACT_REQUIRED,
+    WEATHER_ALLOWED_STATUSES,
+    WEATHER_BANNED_STATUSES,
+)
+
 logger = logging.getLogger("integration_registry")
 
 # =============================================================================
@@ -872,6 +880,32 @@ def log_integration_status():
                    "configured" if configured else "NOT CONFIGURED")
 
     logger.info("=" * 60)
+
+
+# =============================================================================
+# CONTRACT SYNC CHECK (ensures registry matches canonical contract)
+# =============================================================================
+
+def _validate_contract_sync():
+    """Validate registry integrations match the canonical contract."""
+    registry_names = set(INTEGRATIONS.keys())
+    contract_names = set(CONTRACT_INTEGRATIONS.keys())
+
+    missing_from_registry = contract_names - registry_names
+    missing_from_contract = registry_names - contract_names
+
+    if missing_from_registry:
+        logger.warning("DRIFT: Contract has integrations not in registry: %s", missing_from_registry)
+    if missing_from_contract:
+        logger.warning("DRIFT: Registry has integrations not in contract: %s", missing_from_contract)
+
+    if not missing_from_registry and not missing_from_contract:
+        logger.debug("✓ Registry and contract are in sync (%d integrations)", len(registry_names))
+
+    return len(missing_from_registry) == 0 and len(missing_from_contract) == 0
+
+# Run sync check at module load
+_validate_contract_sync()
 
 
 # =============================================================================
