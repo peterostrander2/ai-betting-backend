@@ -137,7 +137,50 @@ echo "PART E: Import Error Regression Test"
 echo "-------------------------------------"
 
 echo ""
-echo "Check 9: Scheduler status endpoint callable twice without import error..."
+echo "Check 9: Verify get_daily_scheduler export in source (AST check)..."
+# Use AST parsing to verify export exists (works without dependencies)
+EXPORT_TEST=$(python3 -c "
+import ast
+
+with open('daily_scheduler.py', 'r') as f:
+    source = f.read()
+
+tree = ast.parse(source)
+
+# Check for get_daily_scheduler assignment
+found_alias = False
+for node in ast.walk(tree):
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == 'get_daily_scheduler':
+                found_alias = True
+
+# Check __all__ includes get_daily_scheduler
+in_all = False
+for node in ast.walk(tree):
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == '__all__':
+                if isinstance(node.value, ast.List):
+                    for elt in node.value.elts:
+                        if hasattr(elt, 'value') and elt.value == 'get_daily_scheduler':
+                            in_all = True
+                        elif hasattr(elt, 's') and elt.s == 'get_daily_scheduler':
+                            in_all = True
+
+if found_alias and in_all:
+    print('OK')
+else:
+    print(f'FAIL: alias={found_alias}, in_all={in_all}')
+" 2>/dev/null)
+
+if [[ "$EXPORT_TEST" != "OK" ]]; then
+    fail "get_daily_scheduler export check failed: $EXPORT_TEST"
+fi
+echo "✅ Source verified: get_daily_scheduler is exported"
+
+echo ""
+echo "Check 10: Scheduler status endpoint callable twice without import error..."
 # Call twice to ensure no transient import issues
 SCHEDULER2=$(retry_curl_auth "${BASE_URL}/live/scheduler/status" 2 10) || fail "Second scheduler call failed"
 SCHEDULER2_AVAIL=$(echo "$SCHEDULER2" | jq -r '.available // .status // "unknown"')
@@ -152,7 +195,7 @@ fi
 echo "✅ Scheduler endpoint stable (no import errors)"
 
 echo ""
-echo "Check 10: Grader status endpoint (tests get_daily_scheduler import)..."
+echo "Check 11: Grader status endpoint (tests get_daily_scheduler import)..."
 GRADER=$(retry_curl_auth "${BASE_URL}/live/grader/status" 3 15) || fail "Grader status unreachable"
 
 GRADER_AVAIL=$(echo "$GRADER" | jq -r '.available // false')
