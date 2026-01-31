@@ -7,6 +7,10 @@ from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import Optional, List, Dict, Any
 import httpx
 import time
+import logging
+
+# CRITICAL: Define logger BEFORE any import handlers use it
+logger = logging.getLogger("live_data")
 
 # Import Pydantic models for request/response validation
 try:
@@ -21,7 +25,6 @@ try:
 except ImportError:
     PYDANTIC_MODELS_AVAILABLE = False
 import os
-import logging
 import hashlib
 import asyncio
 import random
@@ -227,10 +230,9 @@ except ImportError:
     REDIS_AVAILABLE = False
 
 # ============================================================================
-# LOGGING SETUP
+# LOGGING SETUP (logger already defined at top for early import handlers)
 # ============================================================================
 
-logger = logging.getLogger("live_data")
 logger.setLevel(logging.INFO)
 
 # Add handler if none exists

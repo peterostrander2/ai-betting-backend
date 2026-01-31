@@ -228,12 +228,6 @@ async def grader_selfcheck():
         }
 
 
-# Smoke test endpoint (for uptime monitors)
-@app.get("/live/smoke-test/alert-status")
-@app.head("/live/smoke-test/alert-status")
-async def smoke_test_alert_status():
-    """Smoke test endpoint for uptime monitoring (HEAD and GET)."""
-    return {"ok": True, "status": "operational"}
 
 
 # Database status endpoint

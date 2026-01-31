@@ -1440,12 +1440,12 @@ titanium, diag = compute_titanium_flag(8.5, 8.2, 8.1, 7.0)
 
 ### FIX 3: Grader Storage on Railway Volume (MANDATORY)
 
-**RULE**: All grader data MUST live on Railway mounted volume (not /app root)
+**RULE**: All grader data MUST live on Railway persistent volume
 
 **Implementation**: `data_dir.py`
-- Use `GRADER_DATA_DIR` env var
-- Default: `/data/grader_data` (Railway volume mount)
-- On Railway: Set `RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data`
+- Uses `RAILWAY_VOLUME_MOUNT_PATH` env var (set by Railway automatically)
+- Production: `/app/grader_data` (Railway 5GB persistent volume)
+- Local dev fallback: `./grader_data`
 
 **Startup Requirements**:
 1. Create directories if missing
@@ -1701,7 +1701,7 @@ The BallDontLie integration **requires** the API key to be set in environment va
 
 ### Rules
 1. **Props AND game picks** must both pass through `filter_events_et()` before iteration
-2. The day boundary is **[00:00:00 ET, 00:00:00 ET next day)** — exclusive upper bound
+2. The day boundary is **[00:01:00 ET, 00:00:00 ET next day)** — start at 12:01 AM, end exclusive
 3. `filter_events_et(events, date_str)` returns `(kept, dropped_window, dropped_missing)` — always log the drop counts
 4. `date_str` (YYYY-MM-DD) must be threaded through the full call chain: endpoint → `get_best_bets(date=)` → `_best_bets_inner(date_str=)` → `filter_events_et(events, date_str)`
 5. Debug output must include `dropped_out_of_window_props`, `dropped_out_of_window_games`, `dropped_missing_time_props`, `dropped_missing_time_games`

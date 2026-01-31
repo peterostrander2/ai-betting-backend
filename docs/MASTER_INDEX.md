@@ -73,7 +73,7 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 - `core/time_et.py`
 
 **Hard invariant (must remain true everywhere):**
-- **ET day bounds = [00:00:00 ET, 00:00:00 ET next day)** (end is exclusive)
+- **ET day bounds = [00:01:00 ET, 00:00:00 ET next day)** (start at 12:01 AM, end exclusive)
 - ET window must be applied **before** fetch + scoring (games AND props)
 
 **Docs that describe the invariant:**
