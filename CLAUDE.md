@@ -1806,3 +1806,37 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 4. Check that STRONG only fires with alignment ≥80% + active signal
 
 ---
+
+---
+
+### INVARIANT 11: Integration Contract (Part B)
+
+**RULE:** All API integrations must be defined in `core/integration_contract.py`
+
+**Canonical Source:**
+- `core/integration_contract.py` - All integration definitions
+- `integration_registry.py` - Runtime registry (imports from contract)
+- `docs/AUDIT_MAP.md` - **GENERATED** (do not edit manually)
+
+**Generation:**
+```bash
+./scripts/generate_audit_map.sh
+```
+
+**Validation:**
+```bash
+./scripts/validate_integration_contract.sh
+```
+
+**Weather Integration Rules:**
+- Required but **relevance-gated** (not feature-disabled)
+- Allowed statuses: `VALIDATED`, `CONFIGURED`, `NOT_RELEVANT`, `UNAVAILABLE`, `ERROR`, `MISSING`
+- **BANNED statuses:** `FEATURE_DISABLED`, `DISABLED` (hard ban)
+- Returns `NOT_RELEVANT` for indoor sports (NBA, NHL)
+
+**Never do:**
+- Add integration without adding to `core/integration_contract.py`
+- Edit `docs/AUDIT_MAP.md` manually
+- Allow weather to return `FEATURE_DISABLED` status
+- Add hidden feature flags to disable required integrations
+

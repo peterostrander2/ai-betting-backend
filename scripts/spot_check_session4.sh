@@ -169,3 +169,42 @@ else
     echo "=============================================="
     exit 0
 fi
+
+# -------- CHECK 10: Integration Contract Validation --------
+echo ""
+echo "Check 10: Integration contract validation..."
+
+# Run the contract validator
+if ! ./scripts/validate_integration_contract.sh > /dev/null 2>&1; then
+  fail "Integration contract validation failed"
+fi
+echo "✅ Integration contract valid"
+
+# -------- CHECK 11: Required Integrations Status --------
+echo ""
+echo "Check 11: Required integrations status..."
+
+REQUIRED_STATUS="$(curl -s "${BASE_URL}/live/debug/integrations" \
+  -H "X-API-Key: ${API_KEY}" | jq -r '
+  .integrations 
+  | to_entries 
+  | map(select(.value.required == true))
+  | map({
+      key: .key,
+      status: .value.status_category
+    })
+')"
+
+# Check that no required integration has ERROR or MISSING status
+BAD_STATUS="$(echo "$REQUIRED_STATUS" | jq -r '
+  map(select(.status == "ERROR" or .status == "MISSING"))
+  | length
+')"
+
+if [ "$BAD_STATUS" -gt 0 ]; then
+  echo "❌ FAIL: Required integrations with ERROR/MISSING status:"
+  echo "$REQUIRED_STATUS" | jq -r 'map(select(.status == "ERROR" or .status == "MISSING"))'
+  exit 1
+fi
+
+echo "✅ All required integrations valid"

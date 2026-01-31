@@ -45,18 +45,24 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 **Examples:** Odds API, Playbook, BallDontLie, Weather, NOAA, FRED, Finnhub, SerpAPI, Twitter, Whop, Astronomy keys, etc.
 
 **Canonical source (edit here only):**
-- `integration_registry.py` (current canonical registry)
-- `docs/AUDIT_MAP.md` (canonical mapping table for env var → module/endpoints)
+- `core/integration_contract.py` - All integration definitions, env vars, validation rules
+- `integration_registry.py` - Runtime registry (imports from contract)
+
+**Generated documentation (do not edit manually):**
+- `docs/AUDIT_MAP.md` - Generated from contract via `./scripts/generate_audit_map.sh`
 
 **Runtime verification:**
-- `/live/debug/integrations` must report required integrations and validation state.
+- `/live/debug/integrations` must report required integrations and validation state
+
+**Validation:**
+- `./scripts/validate_integration_contract.sh` - Ensures docs match contract
 
 **Never do:**
-- Add a new integration without adding it to the registry/mapping table
-- Leave keys "present but unused" without an explicit, deterministic reason surfaced in `/live/debug/integrations`
-- Add hidden feature flags to silently disable required integrations
-
-> Note: Part B will introduce an "integration contract" pattern similar to scoring (contract + validator). Until then, **integration_registry.py + docs/AUDIT_MAP.md** are the source of truth.
+- Add a new integration without adding it to `core/integration_contract.py`
+- Edit `docs/AUDIT_MAP.md` manually (regenerate with `./scripts/generate_audit_map.sh`)
+- Leave keys "present but unused" without explicit reason in `/live/debug/integrations`
+- Add hidden feature flags to disable required integrations
+- Allow weather to return `FEATURE_DISABLED` status (must be relevance-gated only)
 
 ---
 

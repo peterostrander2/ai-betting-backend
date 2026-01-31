@@ -68,3 +68,8 @@ curl "https://web-production-7b2a.up.railway.app/live/best-bets/nba?debug=1" \
 ## Git Workflow
 - Main branch: `main`
 - Railway auto-deploys from main branch
+
+### Core Contracts
+- `core/scoring_contract.py` - Scoring thresholds, weights, tier rules
+- `core/integration_contract.py` - API integration definitions, env vars, validation rules
+- `core/time_et.py` - ET window logic and timezone handling
