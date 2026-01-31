@@ -176,3 +176,10 @@ git push origin main
 5. **Follow this checklist EVERY TIME** - No exceptions
 
 **Print this file. Put it next to your computer. Follow it every single time.**
+
+## 5) ✅ Post-deploy verification (REQUIRED)
+Run after every Railway deploy:
+```bash
+./scripts/post_deploy_check.sh
+```
+This catches runtime/env drift that CI cannot detect.
