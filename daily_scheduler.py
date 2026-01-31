@@ -563,6 +563,10 @@ def get_scheduler() -> Optional[DailyScheduler]:
     return _scheduler
 
 
+# Alias for backward compatibility (used by live_data_router status endpoint)
+get_daily_scheduler = get_scheduler
+
+
 @scheduler_router.get("/status")
 async def scheduler_status():
     """Get scheduler status."""
