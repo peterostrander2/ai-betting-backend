@@ -256,3 +256,17 @@ git add -A
 git commit -m "fix: ... + docs: ..."
 git push origin main
 ```
+
+---
+
+## Post-deploy verification (always run)
+
+```bash
+./scripts/post_deploy_check.sh
+```
+
+This is the mirror gate to `ci_sanity_check.sh`:
+- **Before deploy:** `./scripts/ci_sanity_check.sh`
+- **After deploy:** `./scripts/post_deploy_check.sh`
+
+Never skip. Catches runtime/env drift that CI cannot detect.
