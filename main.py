@@ -16,10 +16,12 @@ Features:
 Total: 18 esoteric modules
 """
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os as _os
+import logging
 
 from fastapi.responses import Response
 from live_data_router import router as live_router, close_shared_client
@@ -31,10 +33,54 @@ from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILAB
 import grader_store
 from storage_paths import ensure_persistent_storage_ready, get_storage_health
 
+_logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for startup/shutdown events.
+    Replaces deprecated @app.on_event decorators.
+    """
+    # ========== STARTUP ==========
+    # CRITICAL: Validate storage is on Railway persistent volume FIRST.
+    # CRASHES if storage is ephemeral (prevents data loss).
+    _logger.info("=" * 60)
+    _logger.info("STORAGE VALIDATION (CRASH IF NOT PERSISTENT)")
+    _logger.info("=" * 60)
+
+    try:
+        ensure_persistent_storage_ready()
+        _logger.info("✓ Storage validation PASSED")
+    except Exception as e:
+        _logger.error("FATAL: Storage validation FAILED: %s", e)
+        _logger.error("App will NOT start - storage must be persistent")
+        raise
+
+    # Initialize database and directories
+    ensure_dirs()
+    database.init_database()
+
+    # Initialize and start daily scheduler with auto_grader connection
+    # CRITICAL: Pass grader so scheduler can adjust weights on audit
+    grader = get_grader()
+    scheduler = init_scheduler(auto_grader=grader)
+    scheduler.start()
+
+    yield  # App runs here
+
+    # ========== SHUTDOWN ==========
+    await close_shared_client()
+    scheduler = get_scheduler()
+    if scheduler:
+        scheduler.stop()
+
+
 app = FastAPI(
     title="Bookie-o-em API",
     description="AI Sports Prop Betting Service - v14.7 TITANIUM TIER SUPPORT",
-    version="14.7"
+    version="14.7",
+    lifespan=lifespan
 )
 
 # CORS - Allow all origins for development
@@ -47,9 +93,6 @@ app.add_middleware(
 )
 
 
-# =============================================================================
-# STARTUP: Validate Railway volume storage (CRASH if not persistent)
-# =============================================================================
 # =============================================================================
 # ADMIN GATING for debug/admin endpoints
 # =============================================================================
@@ -74,48 +117,6 @@ def alert_status():
 # Include routers
 app.include_router(live_router)
 app.include_router(scheduler_router)
-
-# Startup event - validate storage, initialize database and scheduler
-@app.on_event("startup")
-async def startup_event():
-    """
-    CRITICAL: Validate storage is on Railway persistent volume FIRST.
-    CRASHES if storage is ephemeral (prevents data loss).
-    """
-    import logging
-    logger = logging.getLogger(__name__)
-
-    # STEP 1: Validate storage (MUST succeed or app won't start)
-    logger.info("=" * 60)
-    logger.info("STORAGE VALIDATION (CRASH IF NOT PERSISTENT)")
-    logger.info("=" * 60)
-
-    try:
-        ensure_persistent_storage_ready()
-        logger.info("✓ Storage validation PASSED")
-    except Exception as e:
-        logger.error("FATAL: Storage validation FAILED: %s", e)
-        logger.error("App will NOT start - storage must be persistent")
-        raise
-
-    # STEP 2: Initialize database and directories
-    ensure_dirs()
-    database.init_database()
-
-    # STEP 3: Initialize and start daily scheduler with auto_grader connection
-    # CRITICAL: Pass grader so scheduler can adjust weights on audit
-    grader = get_grader()
-    scheduler = init_scheduler(auto_grader=grader)
-    scheduler.start()
-
-# Shutdown event - clean up shared httpx client and scheduler
-@app.on_event("shutdown")
-async def shutdown_event():
-    await close_shared_client()
-    scheduler = get_scheduler()
-    if scheduler:
-        scheduler.stop()
-
 
 # Root endpoint
 @app.get("/")
