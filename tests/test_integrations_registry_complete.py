@@ -168,12 +168,12 @@ class TestRequiredVsOptional:
             assert hasattr(config, "required"), \
                 f"{integration} should have required field"
 
-    def test_weather_api_is_optional(self):
-        """Weather API should be marked as optional (explicitly disabled by default)"""
+    def test_weather_api_is_required(self):
+        """Weather API is required for outdoor sports (NFL, MLB, NCAAF)"""
         config = get_integration("weather_api")
         assert config is not None, "weather_api integration not found"
         required = config.required if hasattr(config, 'required') else None
-        assert required is False, "weather_api should be marked as optional (required=False)"
+        assert required is True, "weather_api must be required for outdoor sports"
 
     def test_get_required_integrations_function(self):
         """get_required_integrations should return list"""

@@ -384,23 +384,22 @@ class TestWeatherApiRequired:
         assert "/live/best-bets/NBA" not in config.endpoints
         assert "/live/best-bets/NHL" not in config.endpoints
 
-    @pytest.mark.asyncio
-    async def test_weather_api_ping(self):
+    def test_weather_api_ping(self):
         """Ping test for WeatherAPI.com (skip if key not set)."""
         key = os.getenv("WEATHER_API_KEY")
         if not key:
             pytest.skip("WEATHER_API_KEY not set in environment")
 
-        import httpx
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                "https://api.weatherapi.com/v1/current.json",
-                params={"key": key, "q": "40.7128,-74.0060", "aqi": "no"}
-            )
-            assert resp.status_code == 200, f"WeatherAPI.com returned {resp.status_code}"
-            data = resp.json()
-            assert "current" in data, "Response should contain 'current' field"
-            assert "temp_f" in data.get("current", {}), "Response should contain temperature"
+        import requests
+        resp = requests.get(
+            "https://api.weatherapi.com/v1/current.json",
+            params={"key": key, "q": "40.7128,-74.0060", "aqi": "no"},
+            timeout=10.0
+        )
+        assert resp.status_code == 200, f"WeatherAPI.com returned {resp.status_code}"
+        data = resp.json()
+        assert "current" in data, "Response should contain 'current' field"
+        assert "temp_f" in data.get("current", {}), "Response should contain temperature"
 
 
 @pytest.mark.skipif(not REGISTRY_AVAILABLE, reason="Integration registry not available")
