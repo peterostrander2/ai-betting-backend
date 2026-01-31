@@ -14,9 +14,16 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 
+# Silence TensorFlow/CUDA noise BEFORE import (must be set before TF loads)
+import os
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TF INFO/WARN/ERROR
+os.environ["CUDA_VISIBLE_DEVICES"] = ""   # Force CPU-only (no GPU probing)
+os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir="  # Reduce XLA GPU probing
+
 # Optional: TensorFlow for LSTM (can be added in Phase 2)
 try:
     import tensorflow as tf
+    tf.get_logger().setLevel('ERROR')  # Additional Python-level suppression
     from tensorflow import keras
     from tensorflow.keras import layers
     TENSORFLOW_AVAILABLE = True

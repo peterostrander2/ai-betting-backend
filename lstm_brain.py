@@ -19,9 +19,15 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple, Union
 import os
 
+# Silence TensorFlow/CUDA noise BEFORE import (must be set before TF loads)
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")  # Suppress TF INFO/WARN/ERROR
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")   # Force CPU-only (no GPU probing)
+os.environ.setdefault("XLA_FLAGS", "--xla_gpu_cuda_data_dir=")  # Reduce XLA GPU probing
+
 # TensorFlow import with fallback
 try:
     import tensorflow as tf
+    tf.get_logger().setLevel('ERROR')  # Additional Python-level suppression
     from tensorflow.keras.models import Sequential, load_model
     from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, Bidirectional
     from tensorflow.keras.optimizers import Adam
