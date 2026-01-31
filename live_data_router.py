@@ -5483,6 +5483,16 @@ async def grader_status():
         pending = [p for p in all_predictions if p.get("grade_status") != "GRADED"]
         graded = [p for p in all_predictions if p.get("grade_status") == "GRADED"]
 
+        # Get last write time from file mtime
+        last_write_at = None
+        try:
+            import os
+            if os.path.exists(grader_store.PREDICTIONS_FILE):
+                mtime = os.path.getmtime(grader_store.PREDICTIONS_FILE)
+                last_write_at = datetime.fromtimestamp(mtime).isoformat()
+        except Exception:
+            pass
+
         result["grader_store"] = {
             "predictions_logged": len(all_predictions),
             "predictions_total_all_dates": len(all_predictions_raw),
@@ -5490,6 +5500,7 @@ async def grader_status():
             "graded_today": len(graded),
             "storage_path": grader_store.STORAGE_ROOT,
             "predictions_file": grader_store.PREDICTIONS_FILE,
+            "last_write_at": last_write_at,
             "date": today,
             "reconciliation": {
                 "file_lines": reconciliation["total_lines"],
@@ -5506,8 +5517,11 @@ async def grader_status():
             "error": str(e)
         }
 
-    # Root-level alias for DX (prevents "field not found" confusion)
+    # Root-level aliases for DX (prevents "field not found" confusion)
     result["total_predictions"] = result.get("grader_store", {}).get("predictions_total_all_dates", 0)
+    result["file_path"] = result.get("grader_store", {}).get("predictions_file")
+    result["store_path"] = result.get("grader_store", {}).get("storage_path")
+    result["last_write_at"] = result.get("grader_store", {}).get("last_write_at")
 
     # Scheduler Stats (last run time and errors)
     try:
