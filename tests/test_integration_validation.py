@@ -337,23 +337,22 @@ class TestBallDontLieValidation:
         assert config is not None
         assert config.required is True, "balldontlie must be required"
 
-    @pytest.mark.asyncio
-    async def test_balldontlie_ping(self):
+    def test_balldontlie_ping(self):
         """Ping test for BallDontLie API (skip if key not set)."""
         key = os.getenv("BALLDONTLIE_API_KEY") or os.getenv("BDL_API_KEY")
         if not key or key in ("", "your_key_here", "your_balldontlie_api_key_here"):
             pytest.skip("BALLDONTLIE_API_KEY not set in environment")
 
-        import httpx
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                "https://api.balldontlie.io/v1/players",
-                headers={"Authorization": key},
-                params={"per_page": 1}
-            )
-            assert resp.status_code == 200, f"BallDontLie API returned {resp.status_code}"
-            data = resp.json()
-            assert "data" in data, "Response should contain 'data' field"
+        import requests
+        resp = requests.get(
+            "https://api.balldontlie.io/v1/players",
+            headers={"Authorization": key},
+            params={"per_page": 1},
+            timeout=10.0
+        )
+        assert resp.status_code == 200, f"BallDontLie API returned {resp.status_code}"
+        data = resp.json()
+        assert "data" in data, "Response should contain 'data' field"
 
 
 @pytest.mark.skipif(not REGISTRY_AVAILABLE, reason="Integration registry not available")
