@@ -412,6 +412,10 @@ curl -X POST /live/grader/dry-run -H "X-API-Key: KEY" \
 # 6. Run tests
 pytest tests/test_titanium_fix.py tests/test_best_bets_contract.py
 # MUST pass: 12/12 tests
+
+# 7. Scheduler status (no import errors)
+curl /live/scheduler/status -H "X-API-Key: KEY"
+# MUST show: available: true (no import errors)
 ```
 
 ---
@@ -428,6 +432,7 @@ pytest tests/test_titanium_fix.py tests/test_best_bets_contract.py
 8. ✅ Include ALL required fields for autograder
 9. ✅ Use `core/time_et.py` ONLY for ET timezone logic
 10. ✅ Test with `pytest` BEFORE deploying
+11. ✅ Scheduler status endpoint MUST work (no import errors, reports ET timezone)
 
 **If you violate ANY of these invariants, production WILL crash.**
 

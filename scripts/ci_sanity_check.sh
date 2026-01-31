@@ -1,5 +1,5 @@
 #!/bin/bash
-# CI SANITY CHECK - Hard Gate Validation for Sessions 1-9
+# CI SANITY CHECK - Hard Gate Validation for Sessions 1-10
 # Runs all session spot checks in order, fails on first failure
 # Exit 0 = all sessions pass, Exit 1 = at least one session failed
 
@@ -36,7 +36,7 @@ echo ""
 
 # Track results
 declare -a SESSION_RESULTS
-TOTAL_SESSIONS=9
+TOTAL_SESSIONS=10
 SESSIONS_PASSED=0
 SESSIONS_FAILED=0
 
@@ -133,6 +133,7 @@ SESSION_NAMES=(
     "Output Filtering Pipeline"
     "Grading & Multi-Sport"
     "Restart Persistence + Retry"
+    "Scheduler Observability"
 )
 
 for i in $(seq 1 $TOTAL_SESSIONS); do
@@ -193,6 +194,7 @@ echo "  [6] Gold Star: Hard gates + Jarvis v16.0 additive scoring"
 echo "  [7] Output filtering: Dedup, score filter, contradiction gate, top-N"
 echo "  [8] Grading: Storage, BDL integration, multi-sport endpoints"
 echo "  [9] Restart resilience: Sentinel, retry wrapper, prediction stability"
+echo "  [10] Scheduler observability: No import errors, ET timezone, status endpoint"
 echo ""
 echo "Safe to deploy."
 exit 0
