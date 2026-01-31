@@ -223,6 +223,118 @@ def load_predictions(date_et: Optional[str] = None) -> List[Dict[str, Any]]:
     return predictions
 
 
+def load_predictions_with_reconciliation() -> Dict[str, Any]:
+    """
+    Load predictions with full reconciliation stats.
+
+    Returns dict with:
+        - predictions: List of valid predictions
+        - reconciliation: {
+            total_lines: int,
+            parsed_ok: int,
+            skipped_total: int,
+            skip_reasons: {reason: count},
+            reconciled: bool (total_lines == parsed_ok + skipped_total)
+        }
+    """
+    predictions = []
+    skip_reasons = {
+        "empty_line": 0,
+        "json_parse_error": 0,
+        "not_dict": 0,
+        "missing_pick_id": 0,
+        "legacy_array": 0,
+    }
+    total_lines = 0
+    parsed_ok = 0
+
+    if not os.path.exists(PREDICTIONS_FILE):
+        return {
+            "predictions": [],
+            "reconciliation": {
+                "total_lines": 0,
+                "parsed_ok": 0,
+                "skipped_total": 0,
+                "skip_reasons": skip_reasons,
+                "reconciled": True,
+            }
+        }
+
+    try:
+        with open(PREDICTIONS_FILE, 'r') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            try:
+                content = f.read()
+
+                if not content.strip():
+                    return {
+                        "predictions": [],
+                        "reconciliation": {
+                            "total_lines": 0,
+                            "parsed_ok": 0,
+                            "skipped_total": 0,
+                            "skip_reasons": skip_reasons,
+                            "reconciled": True,
+                        }
+                    }
+
+                # Check if legacy JSON array format
+                if content.lstrip().startswith('['):
+                    try:
+                        all_preds = json.loads(content)
+                        if isinstance(all_preds, list):
+                            predictions = [p for p in all_preds if isinstance(p, dict) and "pick_id" in p]
+                            parsed_ok = len(predictions)
+                            total_lines = len(all_preds)
+                            skip_reasons["legacy_array"] = total_lines - parsed_ok
+                    except json.JSONDecodeError:
+                        skip_reasons["json_parse_error"] = 1
+                        total_lines = 1
+                else:
+                    # Parse as JSONL
+                    for line in content.splitlines():
+                        total_lines += 1
+                        line = line.strip()
+
+                        if not line:
+                            skip_reasons["empty_line"] += 1
+                            continue
+
+                        try:
+                            pred = json.loads(line)
+                            if not isinstance(pred, dict):
+                                skip_reasons["not_dict"] += 1
+                            elif "pick_id" not in pred:
+                                skip_reasons["missing_pick_id"] += 1
+                            else:
+                                predictions.append(pred)
+                                parsed_ok += 1
+                        except json.JSONDecodeError:
+                            skip_reasons["json_parse_error"] += 1
+
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        logger.exception("Failed to load predictions with reconciliation: %s", e)
+
+    skipped_total = sum(skip_reasons.values())
+    reconciled = (total_lines == parsed_ok + skipped_total)
+
+    # Sort skip reasons by count descending, filter zeros
+    top_skip_reasons = {k: v for k, v in sorted(skip_reasons.items(), key=lambda x: -x[1]) if v > 0}
+
+    return {
+        "predictions": predictions,
+        "reconciliation": {
+            "total_lines": total_lines,
+            "parsed_ok": parsed_ok,
+            "skipped_total": skipped_total,
+            "skip_reasons": top_skip_reasons,
+            "reconciled": reconciled,
+        }
+    }
+
+
 def get_storage_stats() -> Dict[str, Any]:
     """
     Get storage statistics for health checks.

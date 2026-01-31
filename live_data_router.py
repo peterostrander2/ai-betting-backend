@@ -5471,18 +5471,31 @@ async def grader_status():
         # Use top-level import (already imported at line 99)
         _, _, today = et_day_bounds()
 
-        # Load predictions from grader_store
-        all_predictions = grader_store.load_predictions(date_et=today)
+        # Load predictions from grader_store with reconciliation stats
+        recon_data = grader_store.load_predictions_with_reconciliation()
+        all_predictions_raw = recon_data["predictions"]
+        reconciliation = recon_data["reconciliation"]
+
+        # Filter to today's predictions
+        all_predictions = [p for p in all_predictions_raw if p.get("date_et") == today]
         pending = [p for p in all_predictions if p.get("grade_status") != "GRADED"]
         graded = [p for p in all_predictions if p.get("grade_status") == "GRADED"]
 
         result["grader_store"] = {
             "predictions_logged": len(all_predictions),
+            "predictions_total_all_dates": len(all_predictions_raw),
             "pending_to_grade": len(pending),
             "graded_today": len(graded),
             "storage_path": grader_store.STORAGE_ROOT,
             "predictions_file": grader_store.PREDICTIONS_FILE,
-            "date": today
+            "date": today,
+            "reconciliation": {
+                "file_lines": reconciliation["total_lines"],
+                "parsed_ok": reconciliation["parsed_ok"],
+                "skipped_total": reconciliation["skipped_total"],
+                "reconciled": reconciliation["reconciled"],
+                "top_skip_reasons": reconciliation["skip_reasons"],
+            }
         }
     except Exception as e:
         logger.error("Grader store status failed: %s", e)

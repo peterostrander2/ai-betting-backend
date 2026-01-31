@@ -185,6 +185,39 @@ if [[ $ENDPOINTS_OK -lt 3 ]]; then
 fi
 echo "✅ Endpoints: $ENDPOINTS_OK/3 responding with valid JSON"
 
+# Check 11: Reconciliation invariant (file_lines = parsed_ok + skipped_total)
+echo ""
+echo "Check 11: Reconciliation invariant..."
+RECON=$(echo "$GRADER" | jq -r '.grader_store.reconciliation // empty')
+
+if [[ -z "$RECON" ]]; then
+    echo "⚠️  WARN: Reconciliation data not available (older deploy)"
+else
+    FILE_LINES=$(echo "$RECON" | jq -r '.file_lines // 0')
+    PARSED_OK=$(echo "$RECON" | jq -r '.parsed_ok // 0')
+    SKIPPED_TOTAL=$(echo "$RECON" | jq -r '.skipped_total // 0')
+    RECONCILED=$(echo "$RECON" | jq -r '.reconciled // false')
+
+    # Calculate expected sum
+    EXPECTED_SUM=$((PARSED_OK + SKIPPED_TOTAL))
+
+    if [[ "$RECONCILED" != "true" ]]; then
+        echo "❌ FAIL: Reconciliation failed"
+        echo "   file_lines=$FILE_LINES, parsed_ok=$PARSED_OK, skipped=$SKIPPED_TOTAL"
+        echo "   Expected: $FILE_LINES = $EXPECTED_SUM"
+        fail "Reconciliation invariant violated"
+    fi
+
+    echo "✅ Reconciliation: $FILE_LINES lines = $PARSED_OK parsed + $SKIPPED_TOTAL skipped"
+
+    # Show top skip reasons if any
+    SKIP_REASONS=$(echo "$RECON" | jq -r '.top_skip_reasons // {}')
+    if [[ "$SKIP_REASONS" != "{}" ]] && [[ "$SKIPPED_TOTAL" -gt 0 ]]; then
+        echo "   Top skip reasons:"
+        echo "$SKIP_REASONS" | jq -r 'to_entries | sort_by(-.value) | .[:5] | .[] | "     - \(.key): \(.value)"'
+    fi
+fi
+
 echo ""
 echo "=============================================================="
 echo "✅ SESSION 9 PASS: Restart persistence + retry resilience verified"
