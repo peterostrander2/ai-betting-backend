@@ -58,7 +58,7 @@ PREDICTIONS_EXISTS=$(echo "$STORAGE_RESPONSE" | jq -r '.predictions_exists')
 check "Storage: resolved_base_dir is set" \
     "$([ "$RESOLVED_BASE_DIR" != "NOT_SET" ] && echo true || echo false)" \
     "$RESOLVED_BASE_DIR" \
-    "/app/grader_data"
+    "/data"
 
 check "Storage: is_mountpoint = true" \
     "$([ "$IS_MOUNTPOINT" = "true" ] && echo true || echo false)" \
@@ -182,9 +182,9 @@ check "Grader: predictions_logged > 0" \
     "> 0"
 
 check "Grader: storage_path is inside Railway volume" \
-    "$(echo "$STORAGE_PATH" | grep -qE "^(/data|/app/grader_data)" && echo true || echo false)" \
+    "$(echo "$STORAGE_PATH" | grep -qE "^(/data|/data)" && echo true || echo false)" \
     "$STORAGE_PATH" \
-    "Starts with /data or /app/grader_data"
+    "Starts with /data or /data"
 
 echo ""
 

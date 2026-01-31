@@ -265,12 +265,12 @@ class TestStoragePathConfiguration:
     def test_full_storage_path_construction(self):
         """Full storage path should be {VOLUME}/pick_logs"""
         # Mock environment variable
-        os.environ["RAILWAY_VOLUME_MOUNT_PATH"] = "/app/grader_data"
+        os.environ["RAILWAY_VOLUME_MOUNT_PATH"] = "/data"
 
         # Import after setting env var
         from data_dir import PICK_LOGS
 
-        assert "/app/grader_data" in PICK_LOGS
+        assert "/data" in PICK_LOGS
         assert "pick_logs" in PICK_LOGS
 
 

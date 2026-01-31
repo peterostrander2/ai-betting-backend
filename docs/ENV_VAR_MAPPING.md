@@ -300,7 +300,7 @@ This document maps EVERY environment variable to its exact usage in code.
 | **Integration** | railway_storage |
 | **Required** | ✅ Yes |
 | **Fallback** | `GRADER_MOUNT_ROOT` |
-| **Production Value** | `/app/grader_data` |
+| **Production Value** | `/data` |
 
 | File | Line | Usage |
 |------|------|-------|
@@ -386,7 +386,7 @@ DATABASE_URL=postgres://...
 REDIS_URL=redis://...
 
 # Storage (AUTO-SET by Railway)
-RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data
+RAILWAY_VOLUME_MOUNT_PATH=/data
 
 # Auth
 API_AUTH_KEY=xxx

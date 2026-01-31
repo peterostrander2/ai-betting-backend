@@ -12,7 +12,7 @@ CRITICAL RULES:
 5. JSONL format for append-only performance
 
 STORAGE PATH:
-    Production: /app/grader_data/pick_logs/picks_{YYYY-MM-DD}.jsonl
+    Production: /data/pick_logs/picks_{YYYY-MM-DD}.jsonl
     Local: ./grader_data/pick_logs/picks_{YYYY-MM-DD}.jsonl
 
 REQUIRED FIELDS (from core.invariants.PICK_STORAGE_REQUIRED_FIELDS):

@@ -47,7 +47,7 @@ def get_mount_root() -> str:
         logger.error("FATAL: Mount path does not exist: %s", mount)
         sys.exit(1)
 
-    # Railway mounts volumes at /app/grader_data (this IS persistent)
+    # Railway mounts volumes at /data (this IS persistent)
     # No path blocking - trust Railway's volume mount
 
     logger.info("✓ Mount root: %s", mount)

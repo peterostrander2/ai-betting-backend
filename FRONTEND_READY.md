@@ -8,12 +8,12 @@
 ## TASK 1: Prove Persistence for Grading ✅ PASS
 
 ### Persistence Architecture
-**File Path**: `/app/grader_data/pick_logs/picks_{YYYY-MM-DD}.jsonl`
-**Graded Path**: `/app/grader_data/graded_picks/graded_{YYYY-MM-DD}.jsonl`
-**Volume Mount**: `RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data` (5GB Railway volume)
+**File Path**: `/data/pick_logs/picks_{YYYY-MM-DD}.jsonl`
+**Graded Path**: `/data/graded_picks/graded_{YYYY-MM-DD}.jsonl`
+**Volume Mount**: `RAILWAY_VOLUME_MOUNT_PATH=/data` (5GB Railway volume)
 
 ### Save Flow
-1. **Write**: `pick_logger._save_pick()` appends JSONL to `/app/grader_data/pick_logs/picks_{date}.jsonl`
+1. **Write**: `pick_logger._save_pick()` appends JSONL to `/data/pick_logs/picks_{date}.jsonl`
 2. **Load**: `pick_logger._load_today_picks()` reads from disk on init
 3. **Dedupe**: In-memory `pick_hashes` set tracks duplicates per date
 
@@ -61,7 +61,7 @@ When graded, picks include:
 - `actual_value`: Real stat
 - `beat_clv`: CLV tracking
 - `process_grade`: A/B/C/D/F
-- Written to: `/app/grader_data/graded_picks/graded_{date}.jsonl`
+- Written to: `/data/graded_picks/graded_{date}.jsonl`
 
 **✅ Autograder ready**: Scheduler active, picks queued, will grade when games complete.
 
@@ -201,7 +201,7 @@ When graded, picks include:
 ## FINAL VERDICT: ✅ PRODUCTION READY
 
 ### Summary
-✅ **Persistence**: Picks saved to `/app/grader_data/pick_logs/`, survive restarts  
+✅ **Persistence**: Picks saved to `/data/pick_logs/`, survive restarts  
 ✅ **Autograder**: 117 picks pending, grading scheduled  
 ✅ **ET Gating**: 0 tomorrow games, today-only enforced  
 ✅ **Frontend Contract**: All required fields present  

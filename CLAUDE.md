@@ -10,11 +10,11 @@ This section contains ALL critical invariants that must NEVER be violated. Break
 
 ### INVARIANT 1: Storage Persistence (MANDATORY)
 
-**RULE:** ALL persistent data MUST live on Railway volume at `/app/grader_data`
+**RULE:** ALL persistent data MUST live on Railway volume at `/data`
 
 **Canonical Storage Locations (DO NOT CHANGE):**
 ```
-/app/grader_data/  (Railway 5GB persistent volume - NEVER use /data in production)
+/data/  (Railway 5GB persistent volume - NEVER use /data in production)
 ├── grader/
 │   └── predictions.jsonl           ← Picks (grader_store.py) - WRITE PATH
 ├── grader_data/
@@ -25,8 +25,8 @@ This section contains ALL critical invariants that must NEVER be violated. Break
 ```
 
 **CRITICAL FACTS:**
-1. `RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data` (set by Railway automatically)
-2. `/app/grader_data` IS THE PERSISTENT VOLUME (verified `os.path.ismount() = True`)
+1. `RAILWAY_VOLUME_MOUNT_PATH=/data` (set by Railway automatically)
+2. `/data` IS THE PERSISTENT VOLUME (verified `os.path.ismount() = True`)
 3. **NEVER** add code to block `/app/*` paths - this crashes production
 4. Both `storage_paths.py` AND `data_dir.py` MUST use `RAILWAY_VOLUME_MOUNT_PATH`
 5. Picks MUST persist across container restarts (verified: 14+ picks survived Jan 28-29 crash)
@@ -34,8 +34,8 @@ This section contains ALL critical invariants that must NEVER be violated. Break
 **Startup Requirements:**
 ```python
 # data_dir.py and storage_paths.py MUST log on startup:
-GRADER_DATA_DIR=/app/grader_data
-✓ Storage writable: /app/grader_data
+GRADER_DATA_DIR=/data
+✓ Storage writable: /data
 ✓ Is mountpoint: True
 ```
 
@@ -342,7 +342,7 @@ top_picks = no_contradictions[:max_picks]
 ]
 ```
 
-**Storage Format:** JSONL (one pick per line) at `/app/grader_data/grader/predictions.jsonl`
+**Storage Format:** JSONL (one pick per line) at `/data/grader/predictions.jsonl`
 
 **Write Path:** `grader_store.persist_pick()` called from `/live/best-bets/{sport}`
 
@@ -459,7 +459,7 @@ BASE_URL=https://your-deployment.app ./scripts/prod_sanity_check.sh
 ### What It Checks (17 Total)
 
 **1. Storage Persistence (4 checks)**
-- ✅ `resolved_base_dir` is set to `/app/grader_data`
+- ✅ `resolved_base_dir` is set to `/data`
 - ✅ `is_mountpoint = true` (Railway volume)
 - ✅ `is_ephemeral = false` (survives restarts)
 - ✅ `predictions.jsonl` exists with picks
@@ -948,7 +948,7 @@ Check Cache (5-10 min TTL)
    - Drops: Opposite sides of same bet (Over AND Under)
          ↓
 6. PERSIST: Write to storage
-   - File: /app/grader_data/grader/predictions.jsonl
+   - File: /data/grader/predictions.jsonl
    - Function: grader_store.persist_pick(pick_data)  [line 3794]
          ↓
 7. CACHE: Store response (5-10 min)
@@ -1041,7 +1041,7 @@ for prop in prop_games:  # ONLY today's events (filtered)
 from grader_store import persist_pick
 
 pick_result = persist_pick(pick_data)
-# Writes to: /app/grader_data/grader/predictions.jsonl
+# Writes to: /data/grader/predictions.jsonl
 ```
 
 ### ET Timezone Filtering (MANDATORY)
@@ -1137,7 +1137,7 @@ FINAL = BASE + confluence_boost + jason_sim_boost
 **Write Path:**
 - Endpoint: `/live/best-bets/{sport}` (line 3794)
 - Function: `grader_store.persist_pick(pick_data)`
-- File: `/app/grader_data/grader/predictions.jsonl`
+- File: `/data/grader/predictions.jsonl`
 - Format: JSONL (one pick per line, append-only)
 
 **Read Path:**
@@ -1218,7 +1218,7 @@ A: On-demand when `/live/best-bets/{sport}` is called. Scheduled props fetches a
 A: 5-10 minutes. Props from Odds API are cached 8 hours.
 
 **Q: Where are picks persisted?**
-A: `/app/grader_data/grader/predictions.jsonl` via `grader_store.persist_pick()` at line 3794.
+A: `/data/grader/predictions.jsonl` via `grader_store.persist_pick()` at line 3794.
 
 **Q: How do we filter to today's games only?**
 A: `filter_events_et(events, date_str)` from `core/time_et.py` at lines 3027 (props) and 3051 (games).
@@ -1235,12 +1235,12 @@ A: Contradiction gate after scoring, before returning to frontend.
 
 **🚨 CRITICAL: READ THIS BEFORE TOUCHING STORAGE/AUTOGRADER CODE 🚨**
 
-**ALL STORAGE IS NOW ON THE RAILWAY PERSISTENT VOLUME AT `/app/grader_data`**
+**ALL STORAGE IS NOW ON THE RAILWAY PERSISTENT VOLUME AT `/data`**
 
 #### Storage Architecture (UNIFIED)
 
 ```
-/app/grader_data/  (Railway 5GB persistent volume)
+/data/  (Railway 5GB persistent volume)
 ├── grader/
 │   └── predictions.jsonl           ← Picks (grader_store.py)
 ├── grader_data/
@@ -1253,21 +1253,21 @@ A: Contradiction gate after scoring, before returning to frontend.
 
 #### Three Storage Subdirectories (ALL ON SAME VOLUME)
 
-**1. Picks Storage** (`/app/grader_data/grader/`)
+**1. Picks Storage** (`/data/grader/`)
 - **File**: `predictions.jsonl`
 - **Module**: `storage_paths.py` → `grader_store.py`
 - **Used by**: Best-bets endpoint (write), Autograder (read/write)
 - **Format**: JSONL (one pick per line)
 - **Purpose**: High-frequency pick logging
 
-**2. Weight Learning Storage** (`/app/grader_data/grader_data/`)
+**2. Weight Learning Storage** (`/data/grader_data/`)
 - **Files**: `weights.json`, `predictions.json`
 - **Module**: `data_dir.py` → `auto_grader.py`
 - **Used by**: Auto-grader weight learning
 - **Format**: JSON
 - **Purpose**: Low-frequency weight updates after daily audit
 
-**3. Audit Storage** (`/app/grader_data/audit_logs/`)
+**3. Audit Storage** (`/data/audit_logs/`)
 - **Files**: `audit_{YYYY-MM-DD}.json`
 - **Module**: `data_dir.py` → `daily_scheduler.py`
 - **Used by**: Daily 6 AM audits
@@ -1275,14 +1275,14 @@ A: Contradiction gate after scoring, before returning to frontend.
 - **Purpose**: Audit history
 
 #### Environment Variables (UNIFIED)
-- `RAILWAY_VOLUME_MOUNT_PATH=/app/grader_data` (Railway sets this automatically)
+- `RAILWAY_VOLUME_MOUNT_PATH=/data` (Railway sets this automatically)
 - **BOTH** `storage_paths.py` AND `data_dir.py` now use this env var
 - **ALL** storage paths derived from this single root
 - This path **IS PERSISTENT** - it's a mounted 5GB Railway volume
 
 #### Critical Facts (NEVER FORGET)
 
-1. **`/app/grader_data` IS THE RAILWAY PERSISTENT VOLUME**
+1. **`/data` IS THE RAILWAY PERSISTENT VOLUME**
    - Verified with `os.path.ismount() = True`
    - NOT ephemeral, NOT wiped on redeploy
    - Survives container restarts
@@ -1290,10 +1290,10 @@ A: Contradiction gate after scoring, before returning to frontend.
 2. **ALL STORAGE MUST USE RAILWAY_VOLUME_MOUNT_PATH**
    - `storage_paths.py`: ✅ Uses RAILWAY_VOLUME_MOUNT_PATH
    - `data_dir.py`: ✅ Uses RAILWAY_VOLUME_MOUNT_PATH (unified Jan 29)
-   - Both resolve to `/app/grader_data`
+   - Both resolve to `/data`
 
 3. **NEVER add code to block `/app/*` paths**
-   - `/app/grader_data` is the CORRECT persistent storage
+   - `/data` is the CORRECT persistent storage
    - Blocking `/app/*` will crash production (Jan 28-29 incident)
 
 4. **Dual storage structure is INTENTIONAL**
@@ -1303,7 +1303,7 @@ A: Contradiction gate after scoring, before returning to frontend.
 
 5. **Learned weights now persist across deployments**
    - Before: `/data/grader_data/` (ephemeral, wiped on restart)
-   - After: `/app/grader_data/grader_data/` (persistent, survives restarts)
+   - After: `/data/grader_data/` (persistent, survives restarts)
 
 #### Verification Commands
 ```bash
@@ -1334,20 +1334,20 @@ grep -n "RAILWAY_VOLUME_MOUNT_PATH" storage_paths.py data_dir.py
 **NEVER:**
 - ❌ Add path validation that blocks `/app/*` - crashes production
 - ❌ Modify storage paths without reading this section
-- ❌ Assume `/app/grader_data` is ephemeral - it's the persistent volume
+- ❌ Assume `/data` is ephemeral - it's the persistent volume
 - ❌ Change RAILWAY_VOLUME_MOUNT_PATH usage in storage_paths.py or data_dir.py
-- ❌ Create new storage paths outside `/app/grader_data`
+- ❌ Create new storage paths outside `/data`
 
 #### Past Mistakes (NEVER REPEAT)
 
 **January 28-29, 2026 - Storage Path Blocker Incident:**
 - ❌ Added code to block all `/app/*` paths in data_dir.py
-- ❌ Assumed `/app/grader_data` was ephemeral
+- ❌ Assumed `/data` was ephemeral
 - ❌ Did NOT read this documentation before making changes
 - ❌ Did NOT verify storage health before assuming paths wrong
 - 💥 **Result**: Production crashed (502 errors), 2 minutes downtime
 - ✅ **Fix**: Removed path blocker, unified to RAILWAY_VOLUME_MOUNT_PATH
-- 📚 **Lesson**: `/app/grader_data` IS the Railway volume (NOT ephemeral)
+- 📚 **Lesson**: `/data` IS the Railway volume (NOT ephemeral)
 
 **January 29, 2026 - Storage Unification (FINAL):**
 - ✅ Unified data_dir.py to use RAILWAY_VOLUME_MOUNT_PATH
@@ -1444,7 +1444,7 @@ titanium, diag = compute_titanium_flag(8.5, 8.2, 8.1, 7.0)
 
 **Implementation**: `data_dir.py`
 - Uses `RAILWAY_VOLUME_MOUNT_PATH` env var (set by Railway automatically)
-- Production: `/app/grader_data` (Railway 5GB persistent volume)
+- Production: `/data` (Railway 5GB persistent volume)
 - Local dev fallback: `./grader_data`
 
 **Startup Requirements**:
@@ -1455,15 +1455,15 @@ titanium, diag = compute_titanium_flag(8.5, 8.2, 8.1, 7.0)
 
 **Startup Log** (MUST see this):
 ```
-GRADER_DATA_DIR=/app/grader_data
-✓ Storage writable: /app/grader_data
+GRADER_DATA_DIR=/data
+✓ Storage writable: /data
 ```
 
 **Storage Paths**:
-- Pick logs: `/app/grader_data/pick_logs/picks_{YYYY-MM-DD}.jsonl`
-- Graded picks: `/app/grader_data/graded_picks/graded_{YYYY-MM-DD}.jsonl`
-- Grader data: `/app/grader_data/grader_data/predictions.json`
-- Audit logs: `/app/grader_data/audit_logs/audit_{YYYY-MM-DD}.json`
+- Pick logs: `/data/pick_logs/picks_{YYYY-MM-DD}.jsonl`
+- Graded picks: `/data/graded_picks/graded_{YYYY-MM-DD}.jsonl`
+- Grader data: `/data/grader_data/predictions.json`
+- Audit logs: `/data/audit_logs/audit_{YYYY-MM-DD}.json`
 
 **Verification**: `scripts/verify_system.sh` checks storage path
 

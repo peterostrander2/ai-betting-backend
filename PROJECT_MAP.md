@@ -4,7 +4,7 @@
 - **Type:** Python FastAPI backend
 - **Deployment:** Railway (https://web-production-7b2a.up.railway.app)
 - **Database:** PostgreSQL on Railway  
-- **Storage:** `/app/grader_data` (Railway 5GB persistent volume)
+- **Storage:** `/data` (Railway 5GB persistent volume)
 - **Version:** v15.1 (Build: 5c0f104)
 
 ## Entry Points
@@ -34,7 +34,7 @@
 
 ## Storage Architecture (NEVER CHANGE THESE PATHS)
 ```
-/app/grader_data/              ← Railway volume (persistent across restarts)
+/data/              ← Railway volume (persistent across restarts)
 ├── grader/
 │   └── predictions.jsonl      ← Picks (JSONL, high-frequency writes)
 └── grader_data/
@@ -43,7 +43,7 @@
 ```
 
 **CRITICAL FACTS:**
-- `/app/grader_data` IS the Railway persistent volume (not ephemeral)
+- `/data` IS the Railway persistent volume (not ephemeral)
 - Picks survive container restarts
 - NEVER add code to block `/app/*` paths
 

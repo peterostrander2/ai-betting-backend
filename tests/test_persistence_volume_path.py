@@ -1,7 +1,7 @@
 """
 Test: Persistence Volume Path (Railway Volume)
 
-REQUIREMENT: ALL persistent data MUST live on Railway volume at /app/grader_data
+REQUIREMENT: ALL persistent data MUST live on Railway volume at /data
 - Predictions JSONL file
 - Weights JSON file
 - Audit logs
@@ -45,7 +45,7 @@ class TestStoragePathConfiguration:
     @pytest.mark.skipif(not _is_storage_paths_functional(), reason="RAILWAY_VOLUME_MOUNT_PATH not set")
     def test_railway_volume_mount_path_is_used(self):
         """RAILWAY_VOLUME_MOUNT_PATH env var should be used for storage"""
-        # In production: /app/grader_data
+        # In production: /data
         # In local dev: ./grader_data
         # Note: get_store_dir() will exit if RAILWAY_VOLUME_MOUNT_PATH not set
         predictions_file = storage_paths.get_predictions_file()
@@ -164,7 +164,7 @@ class TestProductionPathRequirements:
         env_var = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
 
         if env_var:
-            # In production, both should be under /app/grader_data
+            # In production, both should be under /data
             predictions = storage_paths.get_predictions_file()
             grader_data = data_dir.GRADER_DATA
 
@@ -173,8 +173,8 @@ class TestProductionPathRequirements:
                 f"Predictions {predictions} should be under {env_var}"
 
             # Note: data_dir uses a subdirectory, which is intentional
-            # /app/grader_data/grader/predictions.jsonl (storage_paths)
-            # /app/grader_data/grader_data/ (data_dir.GRADER_DATA)
+            # /data/grader/predictions.jsonl (storage_paths)
+            # /data/grader_data/ (data_dir.GRADER_DATA)
 
 
 @pytest.mark.skipif(not STORAGE_PATHS_AVAILABLE or not DATA_DIR_AVAILABLE, reason="Storage modules not available")
@@ -205,7 +205,7 @@ class TestPathStructure:
         predictions_file = storage_paths.get_predictions_file()
         grader_data_dir = data_dir.GRADER_DATA_DIR
 
-        # /app alone is ephemeral, /app/grader_data is the volume
+        # /app alone is ephemeral, /data is the volume
         # Check that we're not using /app directly
         if grader_data_dir.startswith("/app"):
             assert grader_data_dir != "/app", "/app alone is ephemeral"

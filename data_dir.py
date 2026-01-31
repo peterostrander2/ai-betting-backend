@@ -3,7 +3,7 @@ DATA_DIR - Single source of truth for all persistent storage paths (FIX 3)
 
 GRADER STORAGE RULES:
 - Use RAILWAY_VOLUME_MOUNT_PATH env var (Railway persistent volume)
-- Production: /app/grader_data (Railway 5GB volume mount)
+- Production: /data (Railway 5GB volume mount)
 - Local dev: ./grader_data (fallback)
 - Fail fast on startup if not writable
 - Log resolved path
@@ -16,7 +16,7 @@ import logging
 logger = logging.getLogger("data_dir")
 
 # FIX 3: Use Railway persistent volume (RAILWAY_VOLUME_MOUNT_PATH)
-# IMPORTANT: Railway mounts persistent volume at /app/grader_data
+# IMPORTANT: Railway mounts persistent volume at /data
 # This IS persistent storage (5GB Railway volume), NOT ephemeral
 _railway_path = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
 if _railway_path:
