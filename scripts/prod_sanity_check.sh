@@ -182,9 +182,9 @@ check "Grader: predictions_logged > 0" \
     "> 0"
 
 check "Grader: storage_path is inside Railway volume" \
-    "$(echo "$STORAGE_PATH" | grep -q "/app/grader_data" && echo true || echo false)" \
+    "$(echo "$STORAGE_PATH" | grep -qE "^(/data|/app/grader_data)" && echo true || echo false)" \
     "$STORAGE_PATH" \
-    "Contains /app/grader_data"
+    "Starts with /data or /app/grader_data"
 
 echo ""
 
