@@ -1,5 +1,5 @@
 #!/bin/bash
-# CI SANITY CHECK - Hard Gate Validation for Sessions 1-8
+# CI SANITY CHECK - Hard Gate Validation for Sessions 1-9
 # Runs all session spot checks in order, fails on first failure
 # Exit 0 = all sessions pass, Exit 1 = at least one session failed
 
@@ -9,6 +9,11 @@ set -e
 BASE_URL="${BASE_URL:-https://web-production-7b2a.up.railway.app}"
 API_KEY="${API_KEY:-bookie-prod-2026-xK9mP2nQ7vR4}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source retry library for resilient API calls
+if [ -f "$SCRIPT_DIR/lib/retry.sh" ]; then
+    source "$SCRIPT_DIR/lib/retry.sh"
+fi
 
 # Export for child scripts
 export BASE_URL
@@ -31,7 +36,7 @@ echo ""
 
 # Track results
 declare -a SESSION_RESULTS
-TOTAL_SESSIONS=8
+TOTAL_SESSIONS=9
 SESSIONS_PASSED=0
 SESSIONS_FAILED=0
 
@@ -77,21 +82,43 @@ run_session() {
     fi
 }
 
-# Pre-flight: Check API is reachable
-echo -e "${YELLOW}Pre-flight: Checking API health...${NC}"
-HEALTH=$(curl -s --max-time 10 "$BASE_URL/health" 2>/dev/null || echo "UNREACHABLE")
+# Pre-flight: Check API is reachable (with retry for transient failures)
+echo -e "${YELLOW}Pre-flight: Checking API health (with retry)...${NC}"
 
-if [ "$HEALTH" = "UNREACHABLE" ]; then
-    echo -e "${RED}ERROR: API unreachable at $BASE_URL${NC}"
-    echo "Cannot proceed with CI sanity checks."
-    exit 1
-fi
+# Use retry library if available, otherwise fallback to simple curl
+if type wait_for_api >/dev/null 2>&1; then
+    if ! wait_for_api "$BASE_URL" 5; then
+        echo -e "${RED}ERROR: API unreachable at $BASE_URL after 5 attempts${NC}"
+        echo "Cannot proceed with CI sanity checks."
+        exit 1
+    fi
+    echo -e "${GREEN}API is reachable (retry library active)${NC}"
+else
+    # Fallback: simple curl with retry
+    HEALTH="UNREACHABLE"
+    for attempt in 1 2 3; do
+        HEALTH=$(curl -s --max-time 10 "$BASE_URL/health" 2>/dev/null || echo "UNREACHABLE")
+        if [ "$HEALTH" != "UNREACHABLE" ]; then
+            break
+        fi
+        if [ $attempt -lt 3 ]; then
+            echo "  Attempt $attempt failed, retrying in $((2 ** attempt))s..."
+            sleep $((2 ** attempt))
+        fi
+    done
 
-HEALTH_STATUS=$(echo "$HEALTH" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
-if [ "$HEALTH_STATUS" != "healthy" ] && [ "$HEALTH_STATUS" != "ok" ]; then
-    echo -e "${RED}WARNING: API health status: $HEALTH_STATUS${NC}"
+    if [ "$HEALTH" = "UNREACHABLE" ]; then
+        echo -e "${RED}ERROR: API unreachable at $BASE_URL${NC}"
+        echo "Cannot proceed with CI sanity checks."
+        exit 1
+    fi
+
+    HEALTH_STATUS=$(echo "$HEALTH" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+    if [ "$HEALTH_STATUS" != "healthy" ] && [ "$HEALTH_STATUS" != "ok" ]; then
+        echo -e "${YELLOW}WARNING: API health status: $HEALTH_STATUS${NC}"
+    fi
+    echo -e "${GREEN}API is reachable${NC}"
 fi
-echo -e "${GREEN}API is reachable${NC}"
 echo ""
 
 # Run sessions in order - fail on first failure
@@ -105,6 +132,7 @@ SESSION_NAMES=(
     "Gold Star + Jarvis"
     "Output Filtering Pipeline"
     "Grading & Multi-Sport"
+    "Restart Persistence + Retry"
 )
 
 for i in $(seq 1 $TOTAL_SESSIONS); do
@@ -164,6 +192,7 @@ echo "  [5] Tiering: Titanium 3/4 rule, 6.5 minimum, contradiction gate"
 echo "  [6] Gold Star: Hard gates + Jarvis v16.0 additive scoring"
 echo "  [7] Output filtering: Dedup, score filter, contradiction gate, top-N"
 echo "  [8] Grading: Storage, BDL integration, multi-sport endpoints"
+echo "  [9] Restart resilience: Sentinel, retry wrapper, prediction stability"
 echo ""
 echo "Safe to deploy."
 exit 0
