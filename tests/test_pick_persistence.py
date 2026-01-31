@@ -224,7 +224,8 @@ class TestPickLoggerPersistence:
             picks = logger2.get_picks_for_date(today)
 
             assert len(picks) >= 1, "Should read picks from previous session"
-            assert picks[0]["player_name"] == "LeBron James"
+            # PublishedPick is a dataclass - access via attribute, not dict key
+            assert picks[0].player_name == "LeBron James"
 
     def test_pick_logger_handles_below_threshold(self):
         """Picks below 6.5 should not be stored (or stored as internal only)"""
@@ -264,14 +265,22 @@ class TestStoragePathConfiguration:
 
     def test_full_storage_path_construction(self):
         """Full storage path should be {VOLUME}/pick_logs"""
+        import importlib
+        import sys
+
         # Mock environment variable
         os.environ["RAILWAY_VOLUME_MOUNT_PATH"] = "/data"
 
-        # Import after setting env var
-        from data_dir import PICK_LOGS
+        # Remove cached module to force reimport with new env var
+        if "data_dir" in sys.modules:
+            del sys.modules["data_dir"]
 
-        assert "/data" in PICK_LOGS
-        assert "pick_logs" in PICK_LOGS
+        # Import after setting env var
+        import data_dir
+        importlib.reload(data_dir)
+
+        assert "/data" in data_dir.PICK_LOGS
+        assert "pick_logs" in data_dir.PICK_LOGS
 
 
 class TestAutoGraderCanReadPicks:
@@ -297,13 +306,14 @@ class TestAutoGraderCanReadPicks:
             }
             logger.log_pick(pick_data, game_start_time="7:00 PM ET")
 
-            # Get picks for grading
+            # Get picks for grading (param is 'date', not 'date_str')
             today = get_today_date_et()
-            picks = logger.get_picks_for_grading(date_str=today)
+            picks = logger.get_picks_for_grading(date=today)
 
             assert len(picks) > 0, "AutoGrader should find pending picks"
-            assert picks[0]["player_name"] == "LeBron James"
-            assert picks[0]["grade_status"] == "PENDING"
+            # PublishedPick is a dataclass - access via attribute, not dict key
+            assert picks[0].player_name == "LeBron James"
+            assert picks[0].grade_status == "PENDING"
 
     @pytest.mark.skipif(not PICK_LOGGER_AVAILABLE, reason="pick_logger not available")
     def test_autograder_no_false_empty(self):
