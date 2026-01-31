@@ -775,6 +775,40 @@ if (data.debug) {
 }
 ```
 
+### Integration Status Display (Admin Dashboard)
+
+For `/live/debug/integrations` response, use this color mapping:
+
+| Status | Color | Meaning |
+|--------|-------|---------|
+| `VALIDATED` | 🟢 Green | Key configured AND connectivity verified |
+| `CONFIGURED` | 🟡 Yellow | Key present, no ping test (acceptable) |
+| `NOT_RELEVANT` | ⚪ Gray | Integration not applicable (e.g., weather for indoor sports) |
+| `UNREACHABLE` | 🔴 Red | Key configured but API unreachable (investigate) |
+| `ERROR` | 🔴 Red | Integration error (investigate) |
+| `NOT_CONFIGURED` | ⚫ Black/Disabled | Required key missing (critical) |
+
+**Current production status (14 integrations):**
+- **5 VALIDATED** (critical path): odds_api, playbook_api, balldontlie, weather_api, railway_storage
+- **9 CONFIGURED** (keys present): astronomy, noaa, fred, finnhub, serpapi, twitter, whop, database, redis
+
+**Frontend display:**
+```typescript
+const statusColor = {
+  VALIDATED: 'green',
+  CONFIGURED: 'yellow',
+  NOT_RELEVANT: 'gray',
+  UNREACHABLE: 'red',
+  ERROR: 'red',
+  NOT_CONFIGURED: 'black'
+};
+
+// Usage
+<StatusBadge color={statusColor[integration.status_category]} />
+```
+
+**Yellow is acceptable** for CONFIGURED integrations - it means the key is set but we don't ping on every request (to avoid rate limits on esoteric APIs).
+
 ---
 
 ## ⚠️ BACKEND FROZEN - DO NOT MODIFY
