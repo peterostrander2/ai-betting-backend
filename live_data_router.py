@@ -5504,6 +5504,9 @@ async def grader_status():
             "error": str(e)
         }
 
+    # Root-level alias for DX (prevents "field not found" confusion)
+    result["total_predictions"] = result.get("grader_store", {}).get("predictions_total_all_dates", 0)
+
     # Scheduler Stats (last run time and errors)
     try:
         from daily_scheduler import get_daily_scheduler
