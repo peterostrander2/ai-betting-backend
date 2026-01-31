@@ -1840,3 +1840,28 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 - Allow weather to return `FEATURE_DISABLED` status
 - Add hidden feature flags to disable required integrations
 
+---
+
+### INVARIANT 12: Logging Visibility (KEEP INFO TELEMETRY)
+
+**RULE:** Keep startup INFO telemetry in production. Do not lower log level globally or suppress INFO logs.
+
+**Required startup logs (must remain visible):**
+- Redis connection status (`Redis caching enabled`, `Redis cache connected`)
+- Scheduler job registration (`Auto-grading enabled`, `Cache pre-warm enabled`, `APScheduler started`)
+- Prediction load count (`Loaded N predictions from...`)
+- Health check requests (`GET /health`)
+
+**Why:** These logs are operational telemetry for debugging and monitoring. They confirm the system initialized correctly and help diagnose issues.
+
+**Allowed suppression:**
+- TensorFlow/CUDA noise (GPU probing errors) - already suppressed via env vars
+- Third-party library DEBUG/TRACE logs
+- Repetitive per-request logs (if needed for performance)
+
+**Never do:**
+- Set global log level to WARNING/ERROR in production
+- Suppress uvicorn INFO logs for startup/health
+- Remove scheduler/Redis connection confirmations
+- Hide prediction load counts
+

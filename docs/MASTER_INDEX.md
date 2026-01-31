@@ -206,6 +206,30 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 - Add/rename integrations without updating the canonical mapping
 - Let required endpoints return 500; fail-soft everywhere except debug/health which must fail-loud with explicit reasons
 - "Fix" something by changing docs only (or code only). They must match.
+- Lower log level globally or suppress INFO telemetry in production (see Observability below)
+
+---
+
+## Observability / Logs
+
+**RULE:** Keep startup INFO telemetry. Do not suppress production visibility.
+
+**Required startup logs (must remain visible):**
+- Redis connection status
+- Scheduler job registration (auto-grading, cache pre-warm, APScheduler)
+- Prediction load count
+- Health check requests
+
+**Allowed suppression:**
+- TensorFlow/CUDA noise (GPU probing) — already handled via env vars
+- Third-party DEBUG/TRACE logs
+
+**Never do:**
+- Set global log level to WARNING/ERROR in production
+- Suppress uvicorn startup/health INFO logs
+- Remove scheduler/Redis connection confirmations
+
+**Reference:** `CLAUDE.md` Invariant 12
 
 ---
 
