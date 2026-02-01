@@ -799,10 +799,15 @@ class LiveContractRoute(APIRoute):
             if status_code >= 500:
                 status_code = 200
 
+            # Don't copy Content-Length as the new payload may have different size
+            new_headers = {
+                k: v for k, v in response.headers.items()
+                if k.lower() not in ("content-length", "content-encoding")
+            }
             return JSONResponse(
                 content=payload,
                 status_code=status_code,
-                headers=dict(response.headers),
+                headers=new_headers,
             )
 
         return custom_handler
