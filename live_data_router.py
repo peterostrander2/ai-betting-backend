@@ -804,6 +804,10 @@ class LiveContractRoute(APIRoute):
                 k: v for k, v in response.headers.items()
                 if k.lower() not in ("content-length", "content-encoding")
             }
+            # Anti-cache headers - prevent any caching of live data
+            new_headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            new_headers["Pragma"] = "no-cache"
+            new_headers["Expires"] = "0"
             return JSONResponse(
                 content=payload,
                 status_code=status_code,
