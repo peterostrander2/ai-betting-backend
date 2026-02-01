@@ -5,50 +5,63 @@ Normalizes pick objects to ensure consistent frontend rendering.
 Every pick gets these guaranteed fields:
 - pick_type: "player_prop" | "moneyline" | "spread" | "total"
 - selection: team name or player name
-- market_label: human readable ("Points", "Spread", etc.)
+- market_label: "Spread" | "Moneyline" | "Total" | stat category for props
+- signal_label: "Sharp Signal" or None (separate from market_label)
 - side_label: "Over"/"Under" or team name
+- line_signed: "+1.5" or "-2.5" for spreads (signed string)
 - bet_string: canonical display string
-- odds_american: standardized odds field
+- odds_american: actual odds (never fabricated)
 - recommended_units: standardized units field
+- start_time: display string
+- start_time_iso: ISO 8601 format
+- start_time_utc: UTC timestamp
 - id: stable identifier
 """
 
+from datetime import datetime, timezone
 
-def normalize_market_label(market: str, stat_type: str = None) -> str:
-    """Convert internal market codes to human-readable labels."""
-    market_labels = {
-        # Props
-        "player_points": "Points",
-        "player_rebounds": "Rebounds",
-        "player_assists": "Assists",
-        "player_threes": "3PT Made",
-        "player_steals": "Steals",
-        "player_blocks": "Blocks",
-        "player_turnovers": "Turnovers",
-        "player_pts_rebs": "Pts + Rebs",
-        "player_pts_asts": "Pts + Asts",
-        "player_rebs_asts": "Rebs + Asts",
-        "player_pts_rebs_asts": "Pts + Rebs + Asts",
-        "player_double_double": "Double Double",
-        "player_triple_double": "Triple Double",
-        "player_first_td": "First TD Scorer",
-        "player_anytime_td": "Anytime TD",
-        "player_goals": "Goals",
-        "player_shots": "Shots on Goal",
-        "player_saves": "Saves",
-        # Game markets
-        "spreads": "Spread",
-        "spread": "Spread",
-        "h2h": "Moneyline",
-        "moneyline": "Moneyline",
-        "totals": "Total",
-        "total": "Total",
-        "sharp_money": "Sharp Signal",
-    }
-    label = market_labels.get(market or "", market or "Unknown")
-    if label == market and stat_type:
-        label = market_labels.get(stat_type, stat_type.replace("_", " ").title())
-    return label
+
+def normalize_market_label(pick_type: str, stat_type: str = None) -> str:
+    """Derive market_label from pick_type. For props, use stat category."""
+    if pick_type == "player_prop":
+        stat_labels = {
+            "player_points": "Points",
+            "player_rebounds": "Rebounds",
+            "player_assists": "Assists",
+            "player_threes": "3PT Made",
+            "player_steals": "Steals",
+            "player_blocks": "Blocks",
+            "player_turnovers": "Turnovers",
+            "player_pts_rebs": "Pts + Rebs",
+            "player_pts_asts": "Pts + Asts",
+            "player_rebs_asts": "Rebs + Asts",
+            "player_pts_rebs_asts": "Pts + Rebs + Asts",
+            "player_double_double": "Double Double",
+            "player_triple_double": "Triple Double",
+            "player_first_td": "First TD Scorer",
+            "player_anytime_td": "Anytime TD",
+            "player_goals": "Goals",
+            "player_shots": "Shots on Goal",
+            "player_saves": "Saves",
+        }
+        if stat_type:
+            return stat_labels.get(stat_type, stat_type.replace("_", " ").replace("player ", "").title())
+        return "Player Prop"
+    elif pick_type == "spread":
+        return "Spread"
+    elif pick_type == "moneyline":
+        return "Moneyline"
+    elif pick_type == "total":
+        return "Total"
+    return "Unknown"
+
+
+def get_signal_label(pick: dict) -> str:
+    """Get signal label (e.g., 'Sharp Signal') separate from market type."""
+    market = pick.get("market", "").lower()
+    if market == "sharp_money":
+        return "Sharp Signal"
+    return None
 
 
 def normalize_pick_type(pick: dict) -> str:
@@ -114,14 +127,17 @@ def normalize_side_label(pick: dict, pick_type: str) -> str:
     return pick.get("team") or pick.get("side") or "Unknown"
 
 
-def build_bet_string(pick: dict, pick_type: str, selection: str, market_label: str, side_label: str) -> str:
+def build_bet_string(pick: dict, pick_type: str, selection: str, market_label: str, side_label: str, line_signed: str = None) -> str:
     """Build canonical bet display string."""
     line = pick.get("line")
-    odds = pick.get("odds", pick.get("odds_american", -110))
+    odds = pick.get("odds") or pick.get("odds_american")
     units = pick.get("units", 1.0)
 
-    # Format odds
-    odds_str = f"+{odds}" if odds > 0 else str(odds)
+    # Format odds - don't fabricate if missing
+    if odds is not None:
+        odds_str = f"+{odds}" if odds > 0 else str(odds)
+    else:
+        odds_str = "N/A"
     units_str = f"{units}u"
 
     if pick_type == "player_prop":
@@ -136,9 +152,8 @@ def build_bet_string(pick: dict, pick_type: str, selection: str, market_label: s
 
     if pick_type == "spread":
         # "Boston Celtics -4.5 (-105) — 1u"
-        if line is not None:
-            line_str = f"+{line}" if line > 0 else str(line)
-            return f"{selection} {line_str} ({odds_str}) — {units_str}"
+        if line_signed:
+            return f"{selection} {line_signed} ({odds_str}) — {units_str}"
         return f"{selection} ({odds_str}) — {units_str}"
 
     # Moneyline: "Milwaukee Bucks Moneyline (-110) — 1u"
@@ -146,41 +161,77 @@ def build_bet_string(pick: dict, pick_type: str, selection: str, market_label: s
 
 
 def normalize_pick(pick: dict) -> dict:
-    """Add normalized fields to a pick for frontend rendering.
-
-    Adds these guaranteed fields:
-    - pick_type: "player_prop" | "moneyline" | "spread" | "total"
-    - selection: team name or player name
-    - market_label: human readable ("Points", "Spread", etc.)
-    - side_label: "Over"/"Under" or team name
-    - bet_string: canonical display string
-    - odds_american: standardized odds field
-    - recommended_units: standardized units field
-    """
+    """Add normalized fields to a pick for frontend rendering."""
     if not isinstance(pick, dict):
         return pick
 
     # Derive normalized values
     pick_type = normalize_pick_type(pick)
-    market = pick.get("market", pick.get("prop_type", pick.get("stat_type", "")))
     stat_type = pick.get("stat_type", pick.get("prop_type", ""))
-    market_label = normalize_market_label(market, stat_type)
+    market_label = normalize_market_label(pick_type, stat_type)
+    signal_label = get_signal_label(pick)
     selection = normalize_selection(pick, pick_type)
     side_label = normalize_side_label(pick, pick_type)
-    bet_string = build_bet_string(pick, pick_type, selection, market_label, side_label)
 
-    # Add normalized fields (keep originals for backward compat)
+    # Ensure line exists when available under alternate keys
+    line = pick.get("line")
+    if line is None:
+        for key in ("point", "spread", "total", "line_value", "player_line"):
+            if pick.get(key) is not None:
+                line = pick.get(key)
+                pick["line"] = line
+                break
+
+    # Build line_signed for spreads
+    line_signed = None
+    if pick_type == "spread" and line is not None:
+        line_signed = f"+{line}" if line > 0 else str(line)
+
+    # Build bet string
+    bet_string = build_bet_string(pick, pick_type, selection, market_label, side_label, line_signed)
+
+    # Get actual odds - NEVER fabricate
+    raw_odds = pick.get("odds") or pick.get("odds_american")
+    odds_american = raw_odds if raw_odds is not None else None
+
+    # Add normalized fields
     pick["pick_type"] = pick_type
     pick["selection"] = selection
     pick["market_label"] = market_label
+    pick["signal_label"] = signal_label
     pick["side_label"] = side_label
+    pick["line_signed"] = line_signed
     pick["bet_string"] = bet_string
-    pick["odds_american"] = pick.get("odds", pick.get("odds_american", -110))
+    pick["odds_american"] = odds_american
     pick["recommended_units"] = pick.get("units", 1.0)
 
     # Ensure id exists
     if "id" not in pick:
         pick["id"] = pick.get("pick_id", pick.get("event_id", "unknown"))
+    # Ensure canonical score field
+    if "score" not in pick:
+        pick["score"] = pick.get("final_score", pick.get("total_score", 0))
+
+    # Canonical start time fields
+    start_time_display = pick.get("start_time") or pick.get("start_time_et") or pick.get("game_time")
+    pick["start_time"] = start_time_display
+
+    commence_iso = pick.get("commence_time_iso") or pick.get("commence_time")
+    if commence_iso:
+        pick["start_time_iso"] = commence_iso
+    else:
+        pick["start_time_iso"] = None
+
+    if commence_iso and commence_iso.endswith("Z"):
+        pick["start_time_utc"] = commence_iso
+    elif commence_iso:
+        try:
+            dt = datetime.fromisoformat(commence_iso.replace("Z", "+00:00"))
+            pick["start_time_utc"] = dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        except Exception:
+            pick["start_time_utc"] = commence_iso
+    else:
+        pick["start_time_utc"] = None
 
     return pick
 
