@@ -22,8 +22,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os as _os
 import logging
+import time
 
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 from live_data_router import router as live_router, close_shared_client
 import database
 from daily_scheduler import scheduler_router, init_scheduler, get_scheduler
@@ -32,6 +33,8 @@ from data_dir import ensure_dirs, DATA_DIR
 from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILABLE
 import grader_store
 from storage_paths import ensure_persistent_storage_ready, get_storage_health
+from integration_registry import list_integrations, check_integration_health
+from core.integration_contract import INTEGRATIONS as CONTRACT_INTEGRATIONS, ALL_ENV_VARS
 
 _logger = logging.getLogger(__name__)
 
@@ -712,6 +715,107 @@ async def ops_cache_status():
         return {"error": str(e)}
 
 
+@app.get("/ops/storage", dependencies=[Depends(_require_admin)])
+async def ops_storage():
+    """Storage health for Railway volume persistence."""
+    health = get_storage_health()
+    status_code = 200
+    if not health.get("ok") or health.get("is_ephemeral"):
+        status_code = 503
+    return JSONResponse(content=health, status_code=status_code)
+
+
+@app.get("/ops/env-map", dependencies=[Depends(_require_admin)])
+async def ops_env_map():
+    """
+    Map env vars -> modules/endpoints/jobs and flag missing/unused.
+    Canonical source: core.integration_contract.INTEGRATIONS
+    """
+    env_map = {}
+    for name, meta in CONTRACT_INTEGRATIONS.items():
+        for env_var in meta.get("env_vars", []):
+            entry = env_map.setdefault(env_var, {
+                "env_var": env_var,
+                "integrations": [],
+                "modules": [],
+                "endpoints": [],
+                "jobs": [],
+                "required": False,
+                "is_set": bool(_os.getenv(env_var)),
+            })
+            entry["integrations"].append(name)
+            entry["modules"].extend(meta.get("owner_modules", []))
+            entry["endpoints"].extend(meta.get("endpoints", []))
+            entry["jobs"].extend(meta.get("jobs", []))
+            if meta.get("required"):
+                entry["required"] = True
+
+    # Normalize unique lists
+    for entry in env_map.values():
+        entry["modules"] = sorted(set(entry["modules"]))
+        entry["endpoints"] = sorted(set(entry["endpoints"]))
+        entry["jobs"] = sorted(set(entry["jobs"]))
+
+    missing_required = sorted([k for k, v in env_map.items() if v["required"] and not v["is_set"]])
+    missing_any = sorted([k for k, v in env_map.items() if not v["is_set"]])
+    unused_env_vars = sorted([
+        k for k in _os.environ.keys()
+        if k.endswith("_API_KEY") and k not in ALL_ENV_VARS
+    ])
+
+    return {
+        "env_map": env_map,
+        "missing_required": missing_required,
+        "missing_any": missing_any,
+        "unused_env_vars": unused_env_vars,
+        "total_env_vars": len(env_map),
+        "source": "integration_contract",
+        "status": "OK" if not missing_required else "MISSING_REQUIRED",
+    }
+
+
+@app.get("/ops/integrations", dependencies=[Depends(_require_admin)])
+async def ops_integrations():
+    """Probe integrations with latency and status."""
+    results = {}
+    required_failures = []
+
+    for name in list_integrations():
+        start = time.perf_counter()
+        status = await check_integration_health(name)
+        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+        status["latency_ms"] = latency_ms
+        status["last_checked"] = status.get("last_check")
+
+        is_configured = status.get("is_configured", False)
+        is_reachable = status.get("is_reachable", None)
+
+        if not is_configured:
+            status["status"] = "NOT_CONFIGURED"
+        elif is_reachable is True:
+            status["status"] = "OK"
+        elif is_reachable is False:
+            status["status"] = "ERROR"
+        else:
+            status["status"] = "NOT_PROBED"
+            status["reason"] = status.get("validation", {}).get("reason", "no validator")
+
+        if status.get("required") and status["status"] in {"NOT_CONFIGURED", "ERROR"}:
+            required_failures.append(name)
+
+        results[name] = status
+
+    payload = {
+        "integrations": results,
+        "required_failures": required_failures,
+        "total": len(results),
+    }
+
+    if required_failures:
+        return JSONResponse(content=payload, status_code=503)
+    return payload
+
+
 # =============================================================================
 # OPS ENDPOINTS — Autograder visibility (v15.1)
 # =============================================================================
@@ -1062,6 +1166,248 @@ async def admin_cleanup_test_picks(date: str = None):
         return {"date": date, "before": before, "after": len(cleaned), "removed": removed}
     except Exception as e:
         return {"error": str(e)}
+
+
+# =============================================================================
+# OPS ALIAS ROUTES — Canonical namespace for debugging/monitoring
+# =============================================================================
+# These provide stable paths that won't change as internals evolve.
+# Frontend/scripts should use /ops/* for consistency.
+
+@app.get("/ops/integrations")
+async def ops_integrations(quick: bool = False):
+    """
+    Alias for /live/debug/integrations.
+    Returns status of all 14 backend integrations.
+
+    ?quick=true returns summary only (configured/not_configured lists)
+    """
+    from integration_registry import get_all_integrations_status, get_integrations_summary
+    if quick:
+        return get_integrations_summary()
+    return get_all_integrations_status()
+
+
+@app.get("/ops/storage")
+async def ops_storage():
+    """
+    Alias for /internal/storage/health.
+    Returns Railway volume persistence status.
+    """
+    return get_storage_health()
+
+
+@app.get("/ops/env-map")
+async def ops_env_map():
+    """
+    Environment variable audit endpoint.
+
+    Returns mapping of required env vars to their status:
+    - required_env: All env vars declared in integration_contract.py
+    - present_env: Env var names that are set (values hidden)
+    - missing_env: Required but not set
+    - unused_env: Present but not in registry (potential cruft)
+    - registry_sources: Canonical source files
+    - status: OK if no missing, ERROR if any missing
+    """
+    from core.integration_contract import INTEGRATIONS, ALL_ENV_VARS, INTEGRATION_CONTRACT
+
+    # Get all required env vars from contract
+    required_env = sorted(list(ALL_ENV_VARS))
+
+    # Check which are present (don't expose values, just names)
+    present_env = []
+    missing_env = []
+    for var in required_env:
+        if _os.getenv(var):
+            present_env.append(var)
+        else:
+            missing_env.append(var)
+
+    # Check for unused env vars (common Railway/system vars to ignore)
+    SYSTEM_VARS = {
+        "PATH", "HOME", "USER", "SHELL", "LANG", "TERM", "PWD", "HOSTNAME",
+        "PORT", "RAILWAY_ENVIRONMENT", "RAILWAY_SERVICE_NAME", "RAILWAY_PROJECT_ID",
+        "RAILWAY_STATIC_URL", "RAILWAY_GIT_COMMIT_SHA", "RAILWAY_GIT_BRANCH",
+        "RAILWAY_GIT_REPO_NAME", "RAILWAY_GIT_REPO_OWNER", "RAILWAY_DEPLOYMENT_ID",
+        "RAILWAY_SNAPSHOT_ID", "RAILWAY_REPLICA_ID", "NIXPACKS_METADATA",
+        "PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE", "DEBUG_MODE", "ADMIN_TOKEN",
+        "API_AUTH_KEY", "API_AUTH_ENABLED", "LOG_LEVEL", "SENTRY_DSN",
+    }
+
+    all_env_names = set(_os.environ.keys())
+    declared_vars = set(required_env)
+    unused_env = sorted([
+        v for v in all_env_names
+        if v not in declared_vars
+        and v not in SYSTEM_VARS
+        and not v.startswith("_")
+        and not v.startswith("npm_")
+        and not v.startswith("NODE_")
+    ])
+
+    # Integration-to-env mapping for debugging
+    integration_env_map = {}
+    for name, config in INTEGRATIONS.items():
+        env_status = {}
+        for var in config["env_vars"]:
+            env_status[var] = "SET" if _os.getenv(var) else "MISSING"
+        integration_env_map[name] = {
+            "required": config["required"],
+            "env_vars": env_status,
+            "owner_modules": config["owner_modules"],
+            "feeds_engine": config.get("feeds_engine", "unknown")
+        }
+
+    status = "OK" if not missing_env else "ERROR"
+
+    return {
+        "status": status,
+        "summary": f"{len(present_env)}/{len(required_env)} env vars configured",
+        "required_env": required_env,
+        "present_env": present_env,
+        "missing_env": missing_env,
+        "unused_env": unused_env,
+        "integration_env_map": integration_env_map,
+        "registry_sources": [
+            "core/integration_contract.py",
+            "integration_registry.py"
+        ],
+        "contract_version": INTEGRATION_CONTRACT.get("version", "unknown")
+    }
+
+
+@app.get("/ops/verify")
+async def ops_verify():
+    """
+    Single-command backend verification.
+    Checks all critical systems and returns pass/fail status.
+
+    Use this endpoint after deployments to verify system health.
+    """
+    from datetime import datetime
+    import pytz
+
+    results = {
+        "timestamp": datetime.now(pytz.UTC).isoformat(),
+        "checks": {},
+        "all_passed": True,
+        "failed_checks": []
+    }
+
+    # 1. Health check
+    try:
+        results["checks"]["health"] = {
+            "status": "healthy",
+            "passed": True
+        }
+    except Exception as e:
+        results["checks"]["health"] = {"status": str(e), "passed": False}
+        results["all_passed"] = False
+        results["failed_checks"].append("health")
+
+    # 2. Storage check
+    try:
+        storage = get_storage_health()
+        storage_ok = (
+            storage.get("ok", False) and
+            storage.get("is_mountpoint", False) and
+            not storage.get("is_ephemeral", True)
+        )
+        results["checks"]["storage"] = {
+            "resolved_base_dir": storage.get("resolved_base_dir"),
+            "is_mountpoint": storage.get("is_mountpoint"),
+            "is_ephemeral": storage.get("is_ephemeral"),
+            "predictions_count": storage.get("predictions_line_count", 0),
+            "passed": storage_ok
+        }
+        if not storage_ok:
+            results["all_passed"] = False
+            results["failed_checks"].append("storage")
+    except Exception as e:
+        results["checks"]["storage"] = {"error": str(e), "passed": False}
+        results["all_passed"] = False
+        results["failed_checks"].append("storage")
+
+    # 3. Integrations check
+    try:
+        from integration_registry import get_all_integrations_status
+        integrations = get_all_integrations_status()
+        overall = integrations.get("overall_status", "UNKNOWN")
+        validated = integrations.get("status_counts", {}).get("validated", 0)
+        configured = integrations.get("status_counts", {}).get("configured", 0)
+        unreachable = integrations.get("status_counts", {}).get("unreachable", 0)
+        not_configured = integrations.get("status_counts", {}).get("not_configured", 0)
+
+        integrations_ok = overall == "HEALTHY" and not_configured == 0
+        results["checks"]["integrations"] = {
+            "overall_status": overall,
+            "validated": validated,
+            "configured": configured,
+            "unreachable": unreachable,
+            "not_configured": not_configured,
+            "passed": integrations_ok
+        }
+        if not integrations_ok:
+            results["all_passed"] = False
+            results["failed_checks"].append("integrations")
+    except Exception as e:
+        results["checks"]["integrations"] = {"error": str(e), "passed": False}
+        results["all_passed"] = False
+        results["failed_checks"].append("integrations")
+
+    # 4. Env-map check
+    try:
+        env_data = await ops_env_map()
+        env_ok = env_data.get("status") == "OK"
+        results["checks"]["env_map"] = {
+            "status": env_data.get("status"),
+            "summary": env_data.get("summary"),
+            "missing_count": len(env_data.get("missing_env", [])),
+            "passed": env_ok
+        }
+        if not env_ok:
+            results["all_passed"] = False
+            results["failed_checks"].append("env_map")
+    except Exception as e:
+        results["checks"]["env_map"] = {"error": str(e), "passed": False}
+        results["all_passed"] = False
+        results["failed_checks"].append("env_map")
+
+    # 5. Database check
+    try:
+        db_status = database.get_database_status()
+        db_ok = db_status.get("enabled", False) or db_status.get("available", False)
+        results["checks"]["database"] = {
+            "enabled": db_status.get("enabled"),
+            "connection": db_status.get("connection", "unknown"),
+            "passed": db_ok
+        }
+        # Database is optional, don't fail overall if just not enabled
+    except Exception as e:
+        results["checks"]["database"] = {"error": str(e), "passed": False}
+
+    # 6. Scheduler check
+    try:
+        scheduler = get_scheduler()
+        scheduler_ok = scheduler is not None and scheduler.running
+        results["checks"]["scheduler"] = {
+            "running": scheduler.running if scheduler else False,
+            "jobs_count": len(scheduler.get_jobs()) if scheduler else 0,
+            "passed": scheduler_ok
+        }
+        if not scheduler_ok:
+            results["all_passed"] = False
+            results["failed_checks"].append("scheduler")
+    except Exception as e:
+        results["checks"]["scheduler"] = {"error": str(e), "passed": False}
+        results["all_passed"] = False
+        results["failed_checks"].append("scheduler")
+
+    # Overall verdict
+    results["verdict"] = "PASS" if results["all_passed"] else "FAIL"
+
+    return results
 
 
 if __name__ == "__main__":

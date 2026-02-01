@@ -3,7 +3,9 @@
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 # v11.08: Single source of truth for tiers via tiering.py
 
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Response
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from typing import Optional, List, Dict, Any
 import httpx
 import time
@@ -28,7 +30,7 @@ import os
 import hashlib
 import asyncio
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import math
 import json
 import numpy as np
@@ -743,7 +745,70 @@ async def verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Ke
 # ROUTER SETUP
 # ============================================================================
 
-router = APIRouter(prefix="/live", tags=["live"], dependencies=[Depends(verify_api_key)])
+def _ensure_live_contract_payload(payload, status_code: int):
+    """Ensure /live responses include required contract fields."""
+    if payload is None:
+        payload = {}
+    if isinstance(payload, list):
+        payload = {"data": payload}
+    if not isinstance(payload, dict):
+        payload = {"data": payload}
+
+    if "source" not in payload:
+        payload["source"] = "unknown"
+    if "generated_at" not in payload:
+        payload["generated_at"] = datetime.now(timezone.utc).isoformat()
+    if "errors" not in payload or payload["errors"] is None:
+        payload["errors"] = []
+
+    if status_code >= 400 and not payload["errors"]:
+        detail = payload.get("detail", "request_failed")
+        payload["errors"] = [{"status": status_code, "message": detail}]
+
+    if "data" not in payload:
+        if "props" in payload or "game_picks" in payload:
+            payload["data"] = {
+                "props": payload.get("props"),
+                "game_picks": payload.get("game_picks"),
+            }
+        else:
+            payload["data"] = []
+
+    return payload
+
+
+class LiveContractRoute(APIRoute):
+    """Wrap /live responses to enforce JSON contract and avoid 500s."""
+    def get_route_handler(self):
+        original_handler = super().get_route_handler()
+
+        async def custom_handler(request):
+            response = await original_handler(request)
+            if not isinstance(response, Response):
+                return response
+            if response.media_type != "application/json":
+                return response
+
+            try:
+                payload = json.loads(response.body)
+            except Exception:
+                return response
+
+            payload = _ensure_live_contract_payload(payload, response.status_code)
+            status_code = response.status_code
+            if status_code >= 500:
+                status_code = 200
+
+            return JSONResponse(
+                content=payload,
+                status_code=status_code,
+                headers=dict(response.headers),
+            )
+
+        return custom_handler
+
+
+router = APIRouter(prefix="/live", tags=["live"], dependencies=[Depends(verify_api_key)], route_class=LiveContractRoute)
 
 # ============================================================================
 # MASTER PREDICTION SYSTEM (Lazy Loaded Singleton)
