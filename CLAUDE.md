@@ -1,5 +1,16 @@
 # CLAUDE.md - Project Instructions for AI Assistants
 
+## Sister Repositories
+
+| Repo | Purpose | URL |
+|------|---------|-----|
+| **This repo** | Backend API (Python/FastAPI) | [ai-betting-backend](https://github.com/peterostrander2/ai-betting-backend) |
+| **Frontend** | Member dashboard (React/Vite) | [bookie-member-app](https://github.com/peterostrander2/bookie-member-app) |
+
+**Production:** https://web-production-7b2a.up.railway.app
+
+---
+
 ## 🚨 MASTER SYSTEM INVARIANTS (NEVER VIOLATE) 🚨
 
 **READ THIS FIRST BEFORE TOUCHING ANYTHING**
