@@ -70,6 +70,28 @@ echo ""
 
 # /live/* endpoints (X-API-Key)
 check_json "/live/best-bets/NBA" "best-bets NBA" 'has("props") and has("game_picks")' "X-API-Key"
+check_json "/live/best-bets/NBA" "best-bets NBA contract" '([
+  .props.picks[]?, .game_picks.picks[]?
+] | all(
+  (.bet_string // "") | length > 0
+  and .bet_string != "N/A"
+  and ((.selection // "") | length > 0)
+  and ((.market_label // "") | length > 0)
+  and (.odds_american != null)
+  and (.recommended_units != null)
+  and (.pick_type != "moneyline" or (.line != null))
+))' "X-API-Key"
+check_json "/live/best-bets/NHL" "best-bets NHL contract" '([
+  .props.picks[]?, .game_picks.picks[]?
+] | all(
+  (.bet_string // "") | length > 0
+  and .bet_string != "N/A"
+  and ((.selection // "") | length > 0)
+  and ((.market_label // "") | length > 0)
+  and (.odds_american != null)
+  and (.recommended_units != null)
+  and (.pick_type != "moneyline" or (.line != null))
+))' "X-API-Key"
 check_json "/live/grader/status" "grader status" '.available == true' "X-API-Key"
 check_json "/live/debug/time" "debug time" 'has("et_date")' "X-API-Key"
 check_json "/live/debug/integrations" "debug integrations" 'has("integrations")' "X-API-Key"

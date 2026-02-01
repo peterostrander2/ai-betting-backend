@@ -909,9 +909,22 @@ def _normalize_pick(pick: dict) -> dict:
     pick["odds_american"] = pick.get("odds", pick.get("odds_american", -110))
     pick["recommended_units"] = pick.get("units", 1.0)
 
+    # Ensure line exists when available under alternate keys
+    if pick.get("line") is None:
+        for key in ("point", "spread", "total", "line_value", "player_line"):
+            if pick.get(key) is not None:
+                pick["line"] = pick.get(key)
+                break
+
     # Ensure id exists
     if "id" not in pick:
         pick["id"] = pick.get("pick_id", pick.get("event_id", "unknown"))
+    # Ensure canonical score field
+    if "score" not in pick:
+        pick["score"] = pick.get("final_score", pick.get("total_score", 0))
+    # Ensure start_time exists (prefer ISO if available)
+    if "start_time" not in pick or not pick.get("start_time"):
+        pick["start_time"] = pick.get("start_time_et") or pick.get("commence_time") or pick.get("game_time")
 
     return pick
 
@@ -4500,6 +4513,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         ]
 
         logger.info("LIVE_MODE: Filtered to %d props, %d game_picks", len(top_props), len(top_game_picks))
+
+    # Normalize picks to enforce frontend contract fields
+    top_props = [_normalize_pick(p) for p in top_props]
+    top_game_picks = [_normalize_pick(p) for p in top_game_picks]
 
     # ============================================
     # BUILD FINAL RESPONSE
