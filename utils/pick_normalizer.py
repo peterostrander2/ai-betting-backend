@@ -150,7 +150,7 @@ def build_bet_string(pick: dict, pick_type: str, selection: str, market_label: s
     if odds is not None:
         odds_str = f"+{odds}" if odds > 0 else str(odds)
     else:
-        odds_str = "N/A"
+        odds_str = "—"
     units_str = f"{units}u"
 
     if pick_type == "player_prop":

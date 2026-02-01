@@ -35,6 +35,17 @@ import math
 import json
 import numpy as np
 
+# PickContract v1 - canonical normalizer
+try:
+    from utils.pick_normalizer import (
+        normalize_pick as contract_normalize_pick,
+        normalize_best_bets_response as contract_normalize_best_bets_response
+    )
+    PICK_CONTRACT_AVAILABLE = True
+except Exception as e:
+    PICK_CONTRACT_AVAILABLE = False
+    logger.warning("pick_normalizer not available: %s", e)
+
 # Import grader_store - SINGLE SOURCE OF TRUTH for persistence
 try:
     import grader_store
@@ -868,6 +879,8 @@ def _normalize_pick(pick: dict) -> dict:
     """
     if not isinstance(pick, dict):
         return pick
+    if PICK_CONTRACT_AVAILABLE:
+        return contract_normalize_pick(pick)
 
     # === CORE IDENTITY ===
     pick["id"] = pick.get("id") or pick.get("pick_id") or pick.get("event_id") or "unknown"
@@ -989,6 +1002,8 @@ def _normalize_best_bets_response(payload: dict) -> dict:
     """Normalize all picks in a best-bets response."""
     if not isinstance(payload, dict):
         return payload
+    if PICK_CONTRACT_AVAILABLE:
+        return contract_normalize_best_bets_response(payload)
 
     # Normalize props picks
     props = payload.get("props", {})
@@ -1023,14 +1038,8 @@ def _ensure_live_contract_payload(payload, status_code: int):
         detail = payload.get("detail", "request_failed")
         payload["errors"] = [{"status": status_code, "message": detail}]
 
-    if "data" not in payload:
-        if "props" in payload or "game_picks" in payload:
-            payload["data"] = {
-                "props": payload.get("props"),
-                "game_picks": payload.get("game_picks"),
-            }
-        else:
-            payload["data"] = []
+    if "data" not in payload and not ("props" in payload or "game_picks" in payload):
+        payload["data"] = []
 
     # Normalize best-bets response picks with guaranteed fields
     if "props" in payload or "game_picks" in payload:
@@ -2297,89 +2306,9 @@ async def get_props(sport: str):
         except Exception as e:
             logger.warning("Playbook API props failed for %s: %s", sport, e)
 
-    # If still no data, generate sample props from today's games
+    # If still no data, return empty (no sample props)
     if not data:
-        logger.info("No props from APIs, generating from game schedule for %s", sport)
-        try:
-            # Get today's games from Odds API (main odds endpoint works)
-            odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/odds"
-            resp = await fetch_with_retries(
-                "GET", odds_url,
-                params={
-                    "apiKey": ODDS_API_KEY,
-                    "regions": "us",
-                    "markets": "h2h",
-                    "oddsFormat": "american"
-                }
-            )
-
-            if resp and resp.status_code == 200:
-                games = resp.json()
-                # Import player data for realistic props
-                from player_birth_data import get_players_by_sport
-
-                sport_upper = sport.upper()
-                if sport_upper == "NCAAB":
-                    sport_upper = "NCAAB"
-                players = get_players_by_sport(sport_upper)
-                player_list = list(players.keys())
-
-                for game in games[:5]:  # Limit to 5 games
-                    home_team = game.get("home_team", "")
-                    away_team = game.get("away_team", "")
-
-                    # Find players on these teams
-                    team_players = [p for p, d in players.items() if d.get("team", "") in [home_team, away_team] or home_team in d.get("team", "") or away_team in d.get("team", "")]
-
-                    if not team_players and player_list:
-                        # Use random players if no team match
-                        import random
-                        random.seed(hash(home_team + away_team))
-                        team_players = random.sample(player_list, min(4, len(player_list)))
-
-                    game_props = {
-                        "game_id": game.get("id"),
-                        "home_team": home_team,
-                        "away_team": away_team,
-                        "commence_time": game.get("commence_time"),
-                        "props": []
-                    }
-
-                    # Generate props for found players
-                    prop_types = {
-                        "NBA": [("player_points", 22.5), ("player_rebounds", 6.5), ("player_assists", 5.5)],
-                        "NFL": [("player_pass_yds", 250.5), ("player_rush_yds", 65.5), ("player_rec_yds", 55.5)],
-                        "MLB": [("player_hits", 1.5), ("player_runs", 0.5), ("player_rbis", 0.5)],
-                        "NHL": [("player_points", 0.5), ("player_shots", 2.5), ("player_assists", 0.5)],
-                        "NCAAB": [("player_points", 15.5), ("player_rebounds", 5.5), ("player_assists", 3.5)],
-                    }
-
-                    for player in team_players[:3]:
-                        for prop_type, base_line in prop_types.get(sport.upper(), prop_types["NBA"]):
-                            game_props["props"].append({
-                                "player": player,
-                                "market": prop_type,
-                                "line": base_line,
-                                "odds": -110,
-                                "side": "Over",
-                                "book": "consensus"
-                            })
-                            game_props["props"].append({
-                                "player": player,
-                                "market": prop_type,
-                                "line": base_line,
-                                "odds": -110,
-                                "side": "Under",
-                                "book": "consensus"
-                            })
-
-                    if game_props["props"]:
-                        data.append(game_props)
-
-                logger.info("Generated props from schedule for %s: %d games with props", sport, len(data))
-
-        except Exception as e:
-            logger.warning("Failed to generate props from schedule for %s: %s", sport, e)
+        logger.info("No props from APIs for %s; returning empty list", sport)
 
     result = {"sport": sport.upper(), "source": "odds_api" if data else "generated", "count": len(data), "data": data}
     api_cache.set(cache_key, result)
