@@ -155,6 +155,38 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 
 ---
 
+### H) Pick Output Format / PickContract v1 / "Frontend can't render this pick"
+**Examples:** missing fields, wrong pick_type, selection_home_away missing, bet_string wrong format.
+
+**Canonical sources (edit here only):**
+- `utils/pick_normalizer.py` - Single source of truth for pick normalization
+- `docs/PICK_CONTRACT_V1.md` - Full specification
+
+**Related files:**
+- `live_data_router.py` - Applies normalization via `_normalize_pick()`
+- `jason_sim_confluence.py` - SHARP type mapping
+
+**Hard invariants:**
+- All picks MUST include ALL PickContract v1 fields (Core Identity, Bet Instruction, Reasoning)
+- `selection_home_away` MUST be computed from selection vs home/away team
+- `odds_american` MUST be actual value or null (NEVER fabricated)
+- Empty arrays for no data (NEVER sample/fake picks)
+
+**Tests:**
+- `tests/test_pick_contract_v1.py` (12 tests must pass)
+
+**Docs:**
+- `CLAUDE.md` (Invariant 13)
+- `docs/PICK_CONTRACT_V1.md`
+
+**Never do:**
+- Return picks without all required fields
+- Fabricate odds (default to -110)
+- Return sample/fallback data when real data unavailable
+- Skip pick normalization before API response
+
+---
+
 ## Canonical Sources of Truth — Quick Table
 
 | Topic | Canonical File(s) | What It Defines |
@@ -165,6 +197,7 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 | Storage | `storage_paths.py` + `data_dir.py` | All persisted paths rooted at volume mount |
 | Scheduler | `daily_scheduler.py` | Jobs + ET schedule + exported status |
 | Tiering | `tiering.py` | Tier assignment + filters |
+| **Pick output format** | `utils/pick_normalizer.py` + `docs/PICK_CONTRACT_V1.md` | PickContract v1 fields, normalization rules |
 | CI sessions | `scripts/ci_sanity_check.sh` | Sessions 1–10 must pass |
 
 ---
@@ -199,6 +232,7 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 | Any scheduler job / export | `/live/scheduler/status` output + Session 10 | Ensure observability |
 | Any integration env var usage | `integration_registry.py` + `docs/AUDIT_MAP.md` | Maintain env var → code mapping |
 | Any session spec changes | `scripts/ci_sanity_check.sh` + spot check scripts | CI must fail on regression |
+| Pick output fields/format | `utils/pick_normalizer.py` + `docs/PICK_CONTRACT_V1.md` | Maintain frontend contract |
 
 ---
 
@@ -246,6 +280,7 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 - `COMMIT_CHECKLIST.md` — code+docs commit discipline
 - `BACKEND_OPTIMIZATION_CHECKLIST.md` — sessions checklist + commands
 - `docs/AUDIT_MAP.md` — integration/env var mapping table (canonical)
+- `docs/PICK_CONTRACT_V1.md` — pick output format specification (PickContract v1)
 
 ---
 

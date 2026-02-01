@@ -1899,3 +1899,66 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 - Remove scheduler/Redis connection confirmations
 - Hide prediction load counts
 
+---
+
+### INVARIANT 13: PickContract v1 (Frontend-Proof Picks)
+
+**RULE:** Every pick from `/live/best-bets/{sport}` MUST include ALL PickContract v1 fields
+
+**Documentation:** `docs/PICK_CONTRACT_V1.md` (full specification)
+
+**Required Field Groups:**
+
+1. **Core Identity** (12 fields):
+   - `id`, `sport`, `league`, `event_id`, `matchup`, `home_team`, `away_team`
+   - `start_time_et`, `start_time_iso`, `status`, `has_started`, `is_live`
+
+2. **Bet Instruction** (12 fields):
+   - `pick_type`: `"spread"` | `"moneyline"` | `"total"` | `"player_prop"`
+   - `market_label`, `selection`, `selection_home_away`, `side_label`
+   - `line`, `line_signed`, `odds_american`, `units`, `bet_string`, `book`, `book_link`
+
+3. **Reasoning** (6 fields):
+   - `tier`, `score`, `confidence_label`, `signals_fired`, `confluence_reasons`, `engine_breakdown`
+
+**selection_home_away Logic:**
+```python
+if selection matches home_team → "HOME"
+if selection matches away_team → "AWAY"
+else → null  # totals, props
+```
+
+**SHARP Pick Normalization:**
+- SHARP with line → `pick_type: "spread"`
+- SHARP without line → `pick_type: "moneyline"`
+- Always sets `signal_label: "Sharp Signal"`
+
+**odds_american Policy:**
+- NEVER fabricate odds (no default -110)
+- If unavailable: `odds_american: null`, bet_string shows `"(N/A)"`
+
+**No Sample Data:**
+- Return empty arrays `[]` when no picks available
+- NEVER return fake/sample picks
+
+**Anti-Cache Headers (ALL /live/best-bets/* responses):**
+```
+Cache-Control: no-store, no-cache, must-revalidate, max-age=0, private
+Pragma: no-cache
+Expires: 0
+Vary: Origin, X-API-Key, Authorization
+```
+
+**Implementation Files:**
+- `utils/pick_normalizer.py` - Single source of truth
+- `live_data_router.py` - Applies normalization
+- `jason_sim_confluence.py` - SHARP type mapping
+
+**Tests:** `tests/test_pick_contract_v1.py` (12 tests)
+
+**Verification:**
+```bash
+pytest tests/test_pick_contract_v1.py -v
+# All 12 tests must pass
+```
+
