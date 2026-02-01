@@ -1,5 +1,9 @@
 # MASTER INDEX — START HERE
 
+Quick entry points:
+- `SESSION_START.md` (new session checklist)
+- `docs/RECOVERY.md` (what to do if things break)
+
 **This is the ONLY entry point for any code or documentation change.**
 
 If you are Claude (or any contributor): before touching code or docs, use this file to route yourself to the single canonical source for the change. The goal is **zero drift**.
