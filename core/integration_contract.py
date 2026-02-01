@@ -40,7 +40,7 @@ INTEGRATIONS = {
     
     "balldontlie": {
         "required": True,
-        "env_vars": ["BALLDONTLIE_API_KEY", "BDL_API_KEY"],  # Allow both
+        "env_vars": ["BALLDONTLIE_API_KEY"],  # Primary key only (BDL_API_KEY is fallback in code)
         "owner_modules": ["balldontlie.py", "auto_grader.py"],
         "debug_name": "BallDontLie API",
         "description": "NBA stats and player data for grading",
@@ -137,7 +137,7 @@ INTEGRATIONS = {
     },
     
     "astronomy_api": {
-        "required": True,
+        "required": False,  # Esoteric feature, not critical for core betting
         "env_vars": ["ASTRONOMY_API_ID", "ASTRONOMY_API_SECRET"],
         "owner_modules": ["astronomy_api.py"],
         "debug_name": "Astronomy API",
@@ -148,7 +148,7 @@ INTEGRATIONS = {
     },
     
     "noaa_space_weather": {
-        "required": True,
+        "required": False,  # Esoteric feature, not critical for core betting
         "env_vars": ["NOAA_BASE_URL"],
         "owner_modules": ["noaa_api.py"],
         "debug_name": "NOAA Space Weather",
