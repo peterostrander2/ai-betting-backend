@@ -1,21 +1,34 @@
 """
-Pick Normalization Utilities
+PickContract v1 - Pick Normalization Utilities
 
 Normalizes pick objects to ensure consistent frontend rendering.
-Every pick gets these guaranteed fields:
-- pick_type: "player_prop" | "moneyline" | "spread" | "total"
-- selection: team name or player name
-- market_label: "Spread" | "Moneyline" | "Total" | stat category for props
-- signal_label: "Sharp Signal" or None (separate from market_label)
-- side_label: "Over"/"Under" or team name
-- line_signed: "+1.5" or "-2.5" for spreads (signed string)
-- bet_string: canonical display string
-- odds_american: actual odds (never fabricated)
-- recommended_units: standardized units field
-- start_time: display string
-- start_time_iso: ISO 8601 format
-- start_time_utc: UTC timestamp
-- id: stable identifier
+This is the SINGLE SOURCE OF TRUTH for the pick contract.
+
+CORE IDENTITY FIELDS:
+- id: stable unique pick_id
+- sport, league
+- event_id
+- matchup, home_team, away_team
+- start_time_et (display string)
+- start_time_iso (ISO string or null)
+- status/has_started/is_live flags
+
+BET INSTRUCTION FIELDS:
+- pick_type: "spread" | "moneyline" | "total" | "player_prop"
+- market_label: human label ("Spread", "Points", etc.)
+- selection: exactly what user bets (team OR player)
+- selection_home_away: "HOME" | "AWAY" | null
+- line: numeric line value (null for pure ML)
+- line_signed: "+1.0" / "-2.5" / "O 220.5" / "U 220.5"
+- odds_american: number or null (NEVER fabricated)
+- units: recommended bet units
+- bet_string: final human-readable instruction
+- book, book_link
+
+REASONING FIELDS:
+- tier, score, confidence_label
+- signals_fired, confluence_reasons
+- engine_breakdown
 """
 
 from datetime import datetime, timezone
@@ -85,7 +98,7 @@ def normalize_pick_type(pick: dict) -> str:
     if existing in ("ML", "MONEYLINE", "H2H") or market in ("h2h", "moneyline"):
         return "moneyline"
     if existing == "SHARP" or market == "sharp_money":
-        # Sharp picks are typically spread or ML based on line
+        # Sharp picks: determine type based on line
         line = pick.get("line")
         if line is not None and line != 0:
             return "spread"
@@ -115,11 +128,11 @@ def normalize_side_label(pick: dict, pick_type: str) -> str:
 
     if pick_type in ("player_prop", "total"):
         # For props and totals, use Over/Under
-        if side.lower() in ("over", "under"):
+        if isinstance(side, str) and side.lower() in ("over", "under"):
             return side.title()
-        if direction.upper() in ("OVER", "UNDER"):
+        if isinstance(direction, str) and direction.upper() in ("OVER", "UNDER"):
             return direction.title()
-        if over_under.lower() in ("over", "under"):
+        if isinstance(over_under, str) and over_under.lower() in ("over", "under"):
             return over_under.title()
         return "Over"  # Default
 
@@ -156,16 +169,56 @@ def build_bet_string(pick: dict, pick_type: str, selection: str, market_label: s
             return f"{selection} {line_signed} ({odds_str}) — {units_str}"
         return f"{selection} ({odds_str}) — {units_str}"
 
-    # Moneyline: "Milwaukee Bucks Moneyline (-110) — 1u"
-    return f"{selection} Moneyline ({odds_str}) — {units_str}"
+    # Moneyline: "Milwaukee Bucks ML (-110) — 1u"
+    return f"{selection} ML ({odds_str}) — {units_str}"
 
 
 def normalize_pick(pick: dict) -> dict:
-    """Add normalized fields to a pick for frontend rendering."""
+    """
+    PickContract v1: Normalize pick to guarantee all required fields.
+    """
     if not isinstance(pick, dict):
         return pick
 
-    # Derive normalized values
+    # === CORE IDENTITY ===
+    pick["id"] = pick.get("id") or pick.get("pick_id") or pick.get("event_id") or "unknown"
+    pick["sport"] = (pick.get("sport") or "").upper() or "UNKNOWN"
+    pick["league"] = pick.get("league") or pick.get("sport", "").upper() or "UNKNOWN"
+    pick["event_id"] = pick.get("event_id") or pick.get("game_id") or pick["id"]
+
+    home_team = pick.get("home_team") or ""
+    away_team = pick.get("away_team") or ""
+    pick["home_team"] = home_team
+    pick["away_team"] = away_team
+    pick["matchup"] = pick.get("matchup") or pick.get("game") or f"{away_team} @ {home_team}"
+
+    # === START TIME ===
+    start_time_display = pick.get("start_time") or pick.get("start_time_et") or pick.get("game_time")
+    pick["start_time_et"] = start_time_display
+    pick["start_time"] = start_time_display
+
+    commence_iso = pick.get("commence_time_iso") or pick.get("commence_time")
+    pick["start_time_iso"] = commence_iso if commence_iso else None
+
+    if commence_iso and isinstance(commence_iso, str) and commence_iso.endswith("Z"):
+        pick["start_time_utc"] = commence_iso
+    elif commence_iso:
+        try:
+            dt = datetime.fromisoformat(str(commence_iso).replace("Z", "+00:00"))
+            pick["start_time_utc"] = dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        except Exception:
+            pick["start_time_utc"] = commence_iso
+    else:
+        pick["start_time_utc"] = None
+
+    # === STATUS FLAGS ===
+    pick["status"] = pick.get("status") or pick.get("game_status") or "unknown"
+    pick["has_started"] = pick.get("has_started", False)
+    pick["is_started_already"] = pick.get("is_started_already", pick.get("has_started", False))
+    pick["is_live"] = pick.get("is_live", False)
+    pick["is_live_bet_candidate"] = pick.get("is_live_bet_candidate", False)
+
+    # === BET INSTRUCTION FIELDS ===
     pick_type = normalize_pick_type(pick)
     stat_type = pick.get("stat_type", pick.get("prop_type", ""))
     market_label = normalize_market_label(pick_type, stat_type)
@@ -173,7 +226,7 @@ def normalize_pick(pick: dict) -> dict:
     selection = normalize_selection(pick, pick_type)
     side_label = normalize_side_label(pick, pick_type)
 
-    # Ensure line exists when available under alternate keys
+    # Ensure line exists
     line = pick.get("line")
     if line is None:
         for key in ("point", "spread", "total", "line_value", "player_line"):
@@ -182,56 +235,63 @@ def normalize_pick(pick: dict) -> dict:
                 pick["line"] = line
                 break
 
-    # Build line_signed for spreads
+    # Build line_signed
     line_signed = None
     if pick_type == "spread" and line is not None:
         line_signed = f"+{line}" if line > 0 else str(line)
-
-    # Build bet string
-    bet_string = build_bet_string(pick, pick_type, selection, market_label, side_label, line_signed)
+    elif pick_type == "total" and line is not None:
+        prefix = "O" if side_label.lower() == "over" else "U"
+        line_signed = f"{prefix} {line}"
+    elif pick_type == "player_prop" and line is not None:
+        prefix = "O" if side_label.lower() == "over" else "U"
+        line_signed = f"{prefix} {line}"
 
     # Get actual odds - NEVER fabricate
     raw_odds = pick.get("odds") or pick.get("odds_american")
     odds_american = raw_odds if raw_odds is not None else None
 
-    # Add normalized fields
+    # Build canonical bet string
+    bet_string = build_bet_string(pick, pick_type, selection, market_label, side_label, line_signed if pick_type == "spread" else None)
+
+    # Compute selection_home_away
+    selection_home_away = None
+    if selection and home_team and away_team:
+        sel_lower = selection.lower().strip()
+        home_lower = home_team.lower().strip()
+        away_lower = away_team.lower().strip()
+        if sel_lower == home_lower or home_lower in sel_lower or sel_lower in home_lower:
+            selection_home_away = "HOME"
+        elif sel_lower == away_lower or away_lower in sel_lower or sel_lower in away_lower:
+            selection_home_away = "AWAY"
+
+    # Set all bet instruction fields
     pick["pick_type"] = pick_type
-    pick["selection"] = selection
     pick["market_label"] = market_label
     pick["signal_label"] = signal_label
+    pick["selection"] = selection
+    pick["selection_home_away"] = selection_home_away
     pick["side_label"] = side_label
+    pick["line"] = line
     pick["line_signed"] = line_signed
-    pick["bet_string"] = bet_string
     pick["odds_american"] = odds_american
+    pick["units"] = pick.get("units", 1.0)
     pick["recommended_units"] = pick.get("units", 1.0)
+    pick["bet_string"] = bet_string
+    pick["book"] = pick.get("book") or pick.get("sportsbook_name") or "Consensus"
+    pick["book_link"] = pick.get("book_link") or pick.get("sportsbook_event_url") or ""
 
-    # Ensure id exists
-    if "id" not in pick:
-        pick["id"] = pick.get("pick_id", pick.get("event_id", "unknown"))
-    # Ensure canonical score field
-    if "score" not in pick:
-        pick["score"] = pick.get("final_score", pick.get("total_score", 0))
-
-    # Canonical start time fields
-    start_time_display = pick.get("start_time") or pick.get("start_time_et") or pick.get("game_time")
-    pick["start_time"] = start_time_display
-
-    commence_iso = pick.get("commence_time_iso") or pick.get("commence_time")
-    if commence_iso:
-        pick["start_time_iso"] = commence_iso
-    else:
-        pick["start_time_iso"] = None
-
-    if commence_iso and commence_iso.endswith("Z"):
-        pick["start_time_utc"] = commence_iso
-    elif commence_iso:
-        try:
-            dt = datetime.fromisoformat(commence_iso.replace("Z", "+00:00"))
-            pick["start_time_utc"] = dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-        except Exception:
-            pick["start_time_utc"] = commence_iso
-    else:
-        pick["start_time_utc"] = None
+    # === REASONING FIELDS ===
+    pick["tier"] = pick.get("tier") or pick.get("bet_tier", {}).get("tier") or "EDGE_LEAN"
+    pick["score"] = pick.get("score") or pick.get("final_score") or pick.get("total_score") or 0
+    pick["confidence_label"] = pick.get("confidence_label") or pick.get("confidence") or pick.get("action") or "PLAY"
+    pick["signals_fired"] = pick.get("signals_fired") or pick.get("signals_firing") or []
+    pick["confluence_reasons"] = pick.get("confluence_reasons") or []
+    pick["engine_breakdown"] = pick.get("engine_breakdown") or {
+        "ai": pick.get("ai_score", 0),
+        "research": pick.get("research_score", 0),
+        "esoteric": pick.get("esoteric_score", 0),
+        "jarvis": pick.get("jarvis_score") or pick.get("jarvis_rs", 0)
+    }
 
     return pick
 

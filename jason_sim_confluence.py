@@ -369,8 +369,27 @@ class JasonSimConfluence:
             injury_impact=0  # Could be enhanced with actual injury data
         )
 
-        # Evaluate based on pick type
-        if pick_type.upper() in ["SPREAD", "ML", "MONEYLINE"]:
+        # Normalize pick_type to canonical categories
+        # Map various input formats to the 4 canonical types
+        normalized_type = pick_type.upper()
+        type_mapping = {
+            "SPREAD": "SPREAD",
+            "SPREADS": "SPREAD",
+            "ML": "SPREAD_ML",
+            "MONEYLINE": "SPREAD_ML",
+            "H2H": "SPREAD_ML",
+            "TOTAL": "TOTAL",
+            "TOTALS": "TOTAL",
+            "PROP": "PROP",
+            "PLAYER_PROP": "PROP",
+            # SHARP picks: determine type based on spread value
+            "SHARP": "SPREAD" if spread != 0 else "SPREAD_ML",
+            "SHARP_MONEY": "SPREAD" if spread != 0 else "SPREAD_ML",
+        }
+        canonical_type = type_mapping.get(normalized_type, "SPREAD_ML")
+
+        # Evaluate based on canonical pick type
+        if canonical_type in ["SPREAD", "SPREAD_ML"]:
             eval_result = self.evaluate_spread_ml(
                 base_score=base_score,
                 pick_side=pick_side,
@@ -378,14 +397,14 @@ class JasonSimConfluence:
                 away_team=away_team,
                 sim_results=sim_results
             )
-        elif pick_type.upper() == "TOTAL":
+        elif canonical_type == "TOTAL":
             eval_result = self.evaluate_total(
                 base_score=base_score,
                 pick_side=pick_side,
                 total_line=total,
                 sim_results=sim_results
             )
-        elif pick_type.upper() == "PROP":
+        elif canonical_type == "PROP":
             eval_result = self.evaluate_prop(
                 base_score=base_score,
                 player_name=player_name,
@@ -394,11 +413,14 @@ class JasonSimConfluence:
                 sim_results=sim_results
             )
         else:
-            eval_result = {
-                "boost": 0.0,
-                "blocked": False,
-                "reasons": [f"Jason: Unknown pick type {pick_type}"]
-            }
+            # Fallback - should never reach here with proper mapping
+            eval_result = self.evaluate_spread_ml(
+                base_score=base_score,
+                pick_side=pick_side,
+                home_team=home_team,
+                away_team=away_team,
+                sim_results=sim_results
+            )
 
         # Build final output
         jason_sim_boost = eval_result["boost"]
