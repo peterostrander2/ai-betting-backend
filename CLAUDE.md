@@ -1693,6 +1693,56 @@ The BallDontLie integration **requires** the API key to be set in environment va
 **API Authentication is ENABLED.** Key stored in Railway environment variables (`API_AUTH_KEY`).
 - All `/live/*` endpoints require `X-API-Key` header
 - `/health` endpoint is public (for Railway health checks)
+- `/status` endpoint is public (browser-friendly HTML status page)
+
+### Public Endpoints (No Auth Required)
+
+| Endpoint | Purpose | Format |
+|----------|---------|--------|
+| `GET /health` | Health check for monitoring | JSON |
+| `GET /status` | Browser-friendly status page | HTML |
+| `GET /` | API info and endpoint list | JSON |
+
+### Protected Endpoints (Require X-API-Key Header)
+
+All `/live/*` endpoints require the `X-API-Key` header:
+```bash
+curl -H "X-API-Key: YOUR_API_KEY" https://web-production-7b2a.up.railway.app/live/best-bets/nba
+```
+
+### Browser Limitations
+
+**Browsers cannot set custom headers** like `X-API-Key`. This means:
+- You CANNOT access `/live/*` endpoints directly in a browser
+- Use curl, Postman, or the frontend app for protected endpoints
+- The `/status` page is designed for browser access and shows system health
+
+### /status Page Features
+
+The `/status` endpoint provides a browser-friendly HTML page showing:
+- **Build Info**: SHA, deploy version, engine version
+- **Current Time**: ET date and time
+- **Internal Health**: Storage, database, Redis, scheduler (✅/❌)
+- **Curl Examples**: How to access protected endpoints
+
+**Rate Limited**: 10 requests per minute per IP
+
+**Example**:
+```bash
+# Open in browser or curl
+curl https://web-production-7b2a.up.railway.app/status
+```
+
+### Smoke Test Script
+
+Use `scripts/smoke_test.sh` to verify basic functionality:
+```bash
+# Test production
+./scripts/smoke_test.sh
+
+# Test local
+BASE_URL=http://localhost:8000 ./scripts/smoke_test.sh
+```
 
 ---
 

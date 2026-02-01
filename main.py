@@ -24,8 +24,11 @@ import os as _os
 import logging
 import time
 
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import Response, JSONResponse, HTMLResponse
+from fastapi import Request
 from live_data_router import router as live_router, close_shared_client
+from collections import defaultdict
+from datetime import datetime
 import database
 from daily_scheduler import scheduler_router, init_scheduler, get_scheduler
 from auto_grader import get_grader
@@ -148,6 +151,233 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "version": "14.2", "database": database.DB_ENABLED}
+
+
+# =============================================================================
+# PUBLIC STATUS PAGE - No auth required, browser-friendly
+# =============================================================================
+
+# Rate limiter for /status endpoint (10 req/min per IP)
+_status_rate_limit: dict = defaultdict(list)
+_STATUS_RATE_LIMIT = 10  # requests
+_STATUS_RATE_WINDOW = 60  # seconds
+
+
+def _check_status_rate_limit(client_ip: str) -> bool:
+    """Check if client IP is within rate limit. Returns True if allowed."""
+    now = time.time()
+    # Clean old entries
+    _status_rate_limit[client_ip] = [
+        t for t in _status_rate_limit[client_ip] if now - t < _STATUS_RATE_WINDOW
+    ]
+    if len(_status_rate_limit[client_ip]) >= _STATUS_RATE_LIMIT:
+        return False
+    _status_rate_limit[client_ip].append(now)
+    return True
+
+
+@app.get("/status", response_class=HTMLResponse)
+async def public_status(request: Request):
+    """
+    Public HTML status page - browser-friendly, no auth required.
+
+    Shows:
+    - Build info (SHA, version, engine version)
+    - Current ET time and date
+    - Internal health checks (redis, db, storage) with simple ✅/❌
+    - Curl examples for protected endpoints
+
+    DOES NOT:
+    - Expose secrets or connection strings
+    - Probe external APIs
+    - Accept ?api_key= parameter
+    """
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_status_rate_limit(client_ip):
+        return HTMLResponse(
+            content="<html><body><h1>429 Too Many Requests</h1><p>Rate limit: 10 requests per minute</p></body></html>",
+            status_code=429
+        )
+
+    # Gather status information
+    try:
+        from core.time_et import now_et, et_day_bounds
+        et_now = now_et()
+        _, _, et_date = et_day_bounds()
+        time_et_str = et_now.strftime("%Y-%m-%d %H:%M:%S ET")
+    except Exception:
+        time_et_str = "unavailable"
+        et_date = "unavailable"
+
+    # Build info
+    build_sha = _os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:8] or "local"
+    deploy_version = "16.1"  # Current version
+    engine_version = "16.1"  # Tiering version
+
+    # Internal health checks (simple ✅/❌, no secrets)
+    checks = {}
+
+    # 1. Storage check
+    try:
+        storage_health = get_storage_health()
+        storage_ok = storage_health.get("is_mountpoint", False) and storage_health.get("writable", False)
+        checks["storage"] = storage_ok
+    except Exception:
+        checks["storage"] = False
+
+    # 2. Database check
+    try:
+        db_status = database.get_database_status()
+        checks["database"] = db_status.get("enabled", False)
+    except Exception:
+        checks["database"] = False
+
+    # 3. Redis check (from live_data_router cache)
+    try:
+        from live_data_router import _cache
+        if _cache:
+            cache_status = _cache.get_stats()
+            checks["redis"] = cache_status.get("redis_connected", False)
+        else:
+            checks["redis"] = False
+    except Exception:
+        checks["redis"] = False
+
+    # 4. Scheduler check
+    try:
+        sched = get_scheduler()
+        checks["scheduler"] = sched is not None and sched.running
+    except Exception:
+        checks["scheduler"] = False
+
+    # Build HTML
+    def status_icon(ok: bool) -> str:
+        return "✅" if ok else "❌"
+
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bookie-o-em Status</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 2rem;
+            max-width: 800px;
+            margin: 0 auto;
+        }}
+        h1 {{ color: #00d4ff; margin-bottom: 0.5rem; }}
+        .subtitle {{ color: #888; margin-bottom: 2rem; }}
+        .section {{
+            background: #16213e;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+        }}
+        .section h2 {{
+            color: #00d4ff;
+            margin-top: 0;
+            font-size: 1.1rem;
+            border-bottom: 1px solid #333;
+            padding-bottom: 0.5rem;
+        }}
+        .row {{
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #222;
+        }}
+        .row:last-child {{ border-bottom: none; }}
+        .label {{ color: #888; }}
+        .value {{ color: #fff; font-family: monospace; }}
+        .status-ok {{ color: #00ff88; }}
+        .status-fail {{ color: #ff4444; }}
+        pre {{
+            background: #0d1117;
+            padding: 1rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 0.85rem;
+        }}
+        code {{ color: #79c0ff; }}
+        .note {{
+            color: #666;
+            font-size: 0.85rem;
+            margin-top: 1rem;
+        }}
+    </style>
+</head>
+<body>
+    <h1>🎰 Bookie-o-em Status</h1>
+    <p class="subtitle">AI Sports Betting Backend</p>
+
+    <div class="section">
+        <h2>📦 Build Info</h2>
+        <div class="row"><span class="label">Build SHA</span><span class="value">{build_sha}</span></div>
+        <div class="row"><span class="label">Deploy Version</span><span class="value">{deploy_version}</span></div>
+        <div class="row"><span class="label">Engine Version</span><span class="value">{engine_version}</span></div>
+        <div class="row"><span class="label">Timestamp (UTC)</span><span class="value">{timestamp}</span></div>
+    </div>
+
+    <div class="section">
+        <h2>🕐 Current Time (ET)</h2>
+        <div class="row"><span class="label">Date (ET)</span><span class="value">{et_date}</span></div>
+        <div class="row"><span class="label">Time (ET)</span><span class="value">{time_et_str}</span></div>
+    </div>
+
+    <div class="section">
+        <h2>🔧 Internal Health</h2>
+        <div class="row">
+            <span class="label">Storage (Railway Volume)</span>
+            <span class="value {'status-ok' if checks['storage'] else 'status-fail'}">{status_icon(checks['storage'])} {'Connected' if checks['storage'] else 'Error'}</span>
+        </div>
+        <div class="row">
+            <span class="label">Database (PostgreSQL)</span>
+            <span class="value {'status-ok' if checks['database'] else 'status-fail'}">{status_icon(checks['database'])} {'Connected' if checks['database'] else 'Disabled'}</span>
+        </div>
+        <div class="row">
+            <span class="label">Cache (Redis)</span>
+            <span class="value {'status-ok' if checks['redis'] else 'status-fail'}">{status_icon(checks['redis'])} {'Connected' if checks['redis'] else 'In-Memory'}</span>
+        </div>
+        <div class="row">
+            <span class="label">Scheduler (APScheduler)</span>
+            <span class="value {'status-ok' if checks['scheduler'] else 'status-fail'}">{status_icon(checks['scheduler'])} {'Running' if checks['scheduler'] else 'Stopped'}</span>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🔑 API Examples</h2>
+        <p class="note">Protected endpoints require <code>X-API-Key</code> header:</p>
+        <pre><code># Health check (public)
+curl https://web-production-7b2a.up.railway.app/health
+
+# Best bets for NBA (requires API key)
+curl -H "X-API-Key: YOUR_API_KEY" \\
+  https://web-production-7b2a.up.railway.app/live/best-bets/nba
+
+# Debug time info (requires API key)
+curl -H "X-API-Key: YOUR_API_KEY" \\
+  https://web-production-7b2a.up.railway.app/live/debug/time
+
+# Integration status (requires API key)
+curl -H "X-API-Key: YOUR_API_KEY" \\
+  https://web-production-7b2a.up.railway.app/live/debug/integrations</code></pre>
+    </div>
+
+    <p class="note">
+        Note: Browsers cannot set custom headers like <code>X-API-Key</code>.
+        Use curl, Postman, or the frontend app to access protected endpoints.
+    </p>
+</body>
+</html>"""
+
+    return HTMLResponse(content=html)
 
 
 

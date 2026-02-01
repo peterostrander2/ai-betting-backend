@@ -3056,23 +3056,60 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             if _eso_magnitude == 0 and prop_line:
                 _eso_magnitude = abs(prop_line)
 
-        # --- B) NUMEROLOGY (35% weight, max 3.5 pts) - Pick-specific ---
+        # --- B) NUMEROLOGY (35% weight, max 3.5 pts) - Real Pythagorean numerology ---
+        # v16.1: Replace SHA-256 stub with actual numerology calculations
+        from esoteric_engine import calculate_generic_numerology, calculate_life_path
+        from player_birth_data import get_player_data
         from datetime import datetime as dt_now
-        day_of_year = dt_now.now().timetuple().tm_yday
-        daily_base = (day_of_year % 9 + 1) / 9  # 0.11 to 1.0
 
-        # Pick-specific seed (deterministic via SHA-256)
-        _pick_hash = _hl.sha256(f"{game_str}|{prop_line}|{player_name}".encode()).hexdigest()
-        _pick_seed = int(_pick_hash[:8], 16) % 9 + 1  # 1-9
-        pick_factor = _pick_seed / 9  # 0.11 to 1.0
+        numerology_signals = []
+        numerology_score_raw = 0.5  # Base score (neutral)
 
-        # Blend: 40% daily + 60% pick-specific
-        numerology_raw = (daily_base * 0.4) + (pick_factor * 0.6)
+        # 1. Universal Day Number (game date numerology)
+        _today = dt_now.now()
+        _day_sum = _today.day + _today.month + sum(int(d) for d in str(_today.year))
+        _universal_day = _day_sum
+        while _universal_day > 9 and _universal_day not in [11, 22, 33]:
+            _universal_day = sum(int(d) for d in str(_universal_day))
 
-        # Master number boost
+        # 2. Name numerology using Pythagorean
+        if player_name:
+            _name_num = calculate_generic_numerology(player_name, context="player")
+            if _name_num.get("is_master_number"):
+                numerology_score_raw += 0.15
+                numerology_signals.append(f"Master Number {_name_num['pythagorean_reduction']}")
+            if _name_num.get("is_tesla_number"):
+                numerology_score_raw += 0.1
+                numerology_signals.append(f"Tesla Number {_name_num['pythagorean_reduction']}")
+
+            # 3. Life Path sync with player birth date (if available)
+            _player_data = get_player_data(player_name)
+            if _player_data and _player_data.get("birth_date"):
+                _life_path = calculate_life_path(_player_data["birth_date"])
+                # Check harmony with universal day
+                if _life_path == _universal_day:
+                    numerology_score_raw += 0.25
+                    numerology_signals.append(f"Perfect Sync: Life Path {_life_path} = Universal Day")
+                elif abs(_life_path - _universal_day) <= 2 or (_life_path + _universal_day == 9):
+                    numerology_score_raw += 0.12
+                    numerology_signals.append(f"Harmonic: Life Path {_life_path} ~ Universal Day {_universal_day}")
+
+        # 4. Line numerology (spread/total/prop line)
+        _line_num = calculate_generic_numerology(prop_line if prop_line else spread, context="spread" if not prop_line else "player")
+        if _line_num.get("signals_hit"):
+            numerology_score_raw += _line_num.get("signal_strength", 0) * 0.5
+            numerology_signals.extend(_line_num["signals_hit"][:2])
+
+        # 5. Master number boost from game string
         if "11" in game_str or "22" in game_str or "33" in game_str:
-            numerology_raw = min(1.0, numerology_raw * 1.3)
+            numerology_score_raw += 0.08
+            numerology_signals.append("Master number in matchup")
+
+        # Cap at 1.0 and convert to weighted score
+        numerology_raw = min(1.0, numerology_score_raw)
         numerology_score = numerology_raw * 10 * ESOTERIC_WEIGHTS["numerology"]
+
+        logger.debug("Numerology[%s]: raw=%.2f signals=%s", player_name[:20] if player_name else game_str[:20], numerology_raw, numerology_signals[:3])
 
         if jarvis:
             # --- TRAP DEDUCTION (negative modifier) ---
@@ -4362,9 +4399,25 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         filtered_props_no_contradict = filtered_props
         filtered_games_no_contradict = filtered_game_picks
 
-    # Take top N after contradiction filtering
-    top_props = filtered_props_no_contradict[:max_props]
-    top_game_picks = filtered_games_no_contradict[:max_games]
+    # v16.1: Apply diversity filter to prevent same player appearing multiple times
+    # Max 1 prop per player, max 3 props per game
+    diversity_debug = {"total_dropped": 0, "player_limited": 0, "game_limited": 0}
+    try:
+        from utils.diversity_filter import apply_diversity_gate
+        filtered_props_diverse, filtered_games_diverse, diversity_debug = apply_diversity_gate(
+            filtered_props_no_contradict,
+            filtered_games_no_contradict,
+            debug=debug_mode
+        )
+    except Exception as e:
+        logger.error("DIVERSITY_FILTER: Failed to apply filter: %s", e)
+        # Fallback: use picks without diversity filter
+        filtered_props_diverse = filtered_props_no_contradict
+        filtered_games_diverse = filtered_games_no_contradict
+
+    # Take top N after diversity filtering
+    top_props = filtered_props_diverse[:max_props]
+    top_game_picks = filtered_games_diverse[:max_games]
 
     # CRITICAL FIX: Enforce book_key defaults before API response (BOTH props and games)
     # Applied UNCONDITIONALLY - never allow empty book_key in response
@@ -4382,6 +4435,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     if contradiction_debug.get("total_dropped", 0) > 0:
         logger.info("CONTRADICTION_GATE: blocked %d props, %d games (opposite sides)",
                    contradiction_debug.get("props_dropped", 0), contradiction_debug.get("games_dropped", 0))
+
+    if diversity_debug.get("total_dropped", 0) > 0:
+        logger.info("DIVERSITY_FILTER: blocked %d picks (player_limit=%d, game_limit=%d)",
+                   diversity_debug.get("total_dropped", 0),
+                   diversity_debug.get("player_limited", 0),
+                   diversity_debug.get("game_limited", 0))
 
 
     # ============================================
@@ -4678,6 +4737,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "out_of_window": _dropped_out_of_window_props + _dropped_out_of_window_games,
                 "total_filtered": (filtered_below_6_5_props + filtered_below_6_5_games +
                                   contradiction_debug.get("total_dropped", 0) +
+                                  diversity_debug.get("total_dropped", 0) +
                                   _dupe_dropped_props + _dupe_dropped_games +
                                   _dropped_out_of_window_props + _dropped_out_of_window_games),
             },
@@ -4695,6 +4755,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "contradiction_blocked_props": contradiction_debug["props_dropped"],
             "contradiction_blocked_games": contradiction_debug["games_dropped"],
             "contradiction_blocked_total": contradiction_debug["total_dropped"],
+            # v16.1 diversity filter telemetry
+            "diversity_player_limited": diversity_debug.get("player_limited", 0),
+            "diversity_game_limited": diversity_debug.get("game_limited", 0),
+            "diversity_total_dropped": diversity_debug.get("total_dropped", 0),
             # v15.1 diagnostics
             "sharp_lookup_size": len(sharp_lookup),
             "sharp_source": sharp_data.get("source", "unknown"),
