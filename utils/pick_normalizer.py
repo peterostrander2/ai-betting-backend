@@ -217,6 +217,14 @@ def build_bet_string(pick: dict, pick_type: str, selection: str, market_label: s
     if pick_type == "player_prop":
         # "Sam Hauser (BOS) — 3PT Made Over 4.5 (+130) — 2u"
         player_team = pick.get("player_team") or ""
+
+        # Fallback: extract team from canonical_player_id (e.g., "NBA:NAME:sam_hauser|boston_celtics")
+        if not player_team:
+            canonical_id = pick.get("canonical_player_id") or ""
+            if "|" in canonical_id:
+                team_part = canonical_id.split("|")[-1]  # "boston_celtics"
+                player_team = team_part.replace("_", " ").title()  # "Boston Celtics"
+
         team_abbrev = get_team_abbrev(player_team)
         team_str = f" ({team_abbrev})" if team_abbrev else ""
         line_str = f" {line}" if line is not None else ""
