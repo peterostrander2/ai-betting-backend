@@ -40,9 +40,9 @@ printf "\n"
 # GAP CHECK 5: Repo identification
 printf "Gap Check 5: Is it clear which repo is which?\n\n"
 printf "BACKEND has identifier:\n"
-grep -i "backend|bookie.*backend|ai-betting" "$BACKEND_DIR/README.md" 2>/dev/null | head -1 || echo "  ⚠️ No clear identifier in README"
+grep -Ei "backend|bookie.*backend|ai-betting" "$BACKEND_DIR/README.md" 2>/dev/null | head -1 || echo "  ⚠️ No clear identifier in README"
 printf "\nFRONTEND has identifier:\n"
-grep -i "frontend|member.*app|bookie.*member" "$FRONTEND_DIR/README.md" 2>/dev/null | head -1 || echo "  ⚠️ No clear identifier in README"
+grep -Ei "frontend|member.*app|bookie.*member" "$FRONTEND_DIR/README.md" 2>/dev/null | head -1 || echo "  ⚠️ No clear identifier in README"
 printf "\n"
 
 printf "============================================\n"
