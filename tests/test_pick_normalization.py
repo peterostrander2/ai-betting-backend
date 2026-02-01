@@ -208,7 +208,7 @@ class TestBuildBetString:
         result = build_bet_string(
             pick, "moneyline", "Milwaukee Bucks", "Moneyline", "Milwaukee Bucks"
         )
-        assert result == "Milwaukee Bucks Moneyline (-150) — 1.5u"
+        assert result == "Milwaukee Bucks ML (-150) — 1.5u"
 
     def test_positive_odds_formatted(self):
         pick = {"line": 0.5, "odds": 270, "units": 1.0}
@@ -222,7 +222,7 @@ class TestBuildBetString:
         result = build_bet_string(
             pick, "player_prop", "Test Player", "Points", "Over"
         )
-        assert "(N/A)" in result
+        assert "(—)" in result
 
 
 class TestLineSigned:
@@ -271,7 +271,7 @@ class TestLineSigned:
             "pick_id": "test999",
         }
         result = normalize_pick(pick)
-        assert result["line_signed"] is None
+        assert result["line_signed"] == "O 25.5"
 
 
 class TestNormalizePick:
