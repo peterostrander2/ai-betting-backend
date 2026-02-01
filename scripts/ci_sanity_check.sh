@@ -180,6 +180,14 @@ for i in $(seq 1 $TOTAL_SESSIONS); do
     echo -e "  Session $i (${SESSION_NAMES[$i]}): ${GREEN}PASS${NC}"
 done
 echo ""
+
+# Optional: cross-repo final audit (non-blocking)
+if [ -f "$SCRIPT_DIR/run_final_audit.sh" ]; then
+    echo -e "${YELLOW}Optional: Final cross-repo audit...${NC}"
+    bash "$SCRIPT_DIR/run_final_audit.sh" || echo "⚠️ Final audit skipped or failed (non-blocking)"
+    echo ""
+fi
+
 echo "========================================================"
 echo -e "${GREEN}ALL $TOTAL_SESSIONS SESSIONS PASSED${NC}"
 echo "========================================================"
