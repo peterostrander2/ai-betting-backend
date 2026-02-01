@@ -44,7 +44,7 @@ check() {
 # =====================================================
 # CHECK 1: Storage Health (/internal/storage/health)
 # =====================================================
-echo "[1/6] Validating storage persistence..."
+echo "[1/8] Validating storage persistence..."
 
 STORAGE_RESPONSE=$(curl -s "$BASE_URL/internal/storage/health")
 
@@ -80,7 +80,7 @@ echo ""
 # =====================================================
 # CHECK 2: Best-Bets Endpoint (/live/best-bets/nba)
 # =====================================================
-echo "[2/6] Validating best-bets endpoint..."
+echo "[2/8] Validating best-bets endpoint..."
 
 BEST_BETS_RESPONSE=$(curl -s "$BASE_URL/live/best-bets/nba?debug=1&max_props=10&max_games=10" \
     -H "X-API-Key: $API_KEY")
@@ -132,7 +132,7 @@ echo ""
 # =====================================================
 # CHECK 3: Titanium 3/4 Rule
 # =====================================================
-echo "[3/6] Validating Titanium 3-of-4 rule..."
+echo "[3/8] Validating Titanium 3-of-4 rule..."
 
 # Get all picks and check Titanium rule
 TITANIUM_VIOLATIONS=$(echo "$BEST_BETS_RESPONSE" | jq '
@@ -161,7 +161,7 @@ echo ""
 # =====================================================
 # CHECK 4: Grader Status (/live/grader/status)
 # =====================================================
-echo "[4/6] Validating grader status..."
+echo "[4/8] Validating grader status..."
 
 GRADER_RESPONSE=$(curl -s "$BASE_URL/live/grader/status" \
     -H "X-API-Key: $API_KEY")
@@ -191,7 +191,7 @@ echo ""
 # =====================================================
 # CHECK 5: ET Timezone (/live/debug/time)
 # =====================================================
-echo "[5/6] Validating ET timezone consistency..."
+echo "[5/8] Validating ET timezone consistency..."
 
 TIME_RESPONSE=$(curl -s "$BASE_URL/live/debug/time" \
     -H "X-API-Key: $API_KEY")
@@ -220,7 +220,7 @@ echo ""
 # =====================================================
 # CHECK 6: Weather Integration (/live/debug/integrations)
 # =====================================================
-echo "[6/6] Validating weather integration..."
+echo "[6/8] Validating weather integration..."
 
 WEATHER_STATUS=$(curl -s "$BASE_URL/live/debug/integrations" -H "X-API-Key: $API_KEY" |
     jq -r '.integrations.weather_api.validation.status // "NOT_FOUND"')
@@ -229,6 +229,57 @@ check "Weather: integration status is VALIDATED or NOT_RELEVANT" \
     "$(echo "$WEATHER_STATUS" | grep -qE "^(VALIDATED|NOT_RELEVANT)$" && echo true || echo false)" \
     "$WEATHER_STATUS" \
     "VALIDATED or NOT_RELEVANT"
+
+echo ""
+
+# =====================================================
+# CHECK 7: OPS Aliases (/ops/*)
+# =====================================================
+echo "[7/8] Validating /ops/* alias routes..."
+
+# Check /ops/integrations works (requires admin auth)
+OPS_INTEGRATIONS=$(curl -s "$BASE_URL/ops/integrations" -H "X-Admin-Token: $API_KEY")
+OPS_INTEGRATIONS_TOTAL=$(echo "$OPS_INTEGRATIONS" | jq -r '.total // 0')
+OPS_INTEGRATIONS_FAILURES=$(echo "$OPS_INTEGRATIONS" | jq -r '.required_failures | length // 0')
+
+check "OPS: /ops/integrations returns valid response" \
+    "$([ "$OPS_INTEGRATIONS_TOTAL" -gt 0 ] && echo true || echo false)" \
+    "total=$OPS_INTEGRATIONS_TOTAL, failures=$OPS_INTEGRATIONS_FAILURES" \
+    "total > 0"
+
+# Check /ops/storage works (requires admin auth)
+OPS_STORAGE=$(curl -s "$BASE_URL/ops/storage" -H "X-Admin-Token: $API_KEY")
+OPS_STORAGE_OK=$(echo "$OPS_STORAGE" | jq -r '.ok // false')
+
+check "OPS: /ops/storage returns valid response" \
+    "$([ "$OPS_STORAGE_OK" = "true" ] && echo true || echo false)" \
+    "$OPS_STORAGE_OK" \
+    "true"
+
+# Check /ops/env-map works (requires admin auth)
+OPS_ENV_MAP=$(curl -s "$BASE_URL/ops/env-map" -H "X-Admin-Token: $API_KEY")
+OPS_ENV_MISSING=$(echo "$OPS_ENV_MAP" | jq -r '.missing_required | length // -1')
+
+check "OPS: /ops/env-map returns no missing required vars" \
+    "$([ "$OPS_ENV_MISSING" = "0" ] && echo true || echo false)" \
+    "missing_required=$OPS_ENV_MISSING" \
+    "0"
+
+echo ""
+
+# =====================================================
+# CHECK 8: Full Verification (/ops/verify)
+# =====================================================
+echo "[8/8] Running comprehensive /ops/verify check..."
+
+OPS_VERIFY=$(curl -s "$BASE_URL/ops/verify")
+OPS_VERIFY_VERDICT=$(echo "$OPS_VERIFY" | jq -r '.verdict // "ERROR"')
+OPS_VERIFY_FAILED=$(echo "$OPS_VERIFY" | jq -r '.failed_checks | length // 0')
+
+check "OPS: /ops/verify returns PASS" \
+    "$([ "$OPS_VERIFY_VERDICT" = "PASS" ] && echo true || echo false)" \
+    "$OPS_VERIFY_VERDICT (failed: $OPS_VERIFY_FAILED)" \
+    "PASS"
 
 echo ""
 echo "================================================"
