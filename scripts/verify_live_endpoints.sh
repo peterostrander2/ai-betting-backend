@@ -9,38 +9,80 @@ if [ -z "$BASE_URL" ] || [ -z "$API_KEY" ]; then
   exit 2
 fi
 
-function check_endpoint() {
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+FAILED=0
+
+function check_json() {
   local path="$1"
   local label="$2"
+  local jq_test="$3"
+  local header="${4:-X-API-Key}"
 
-  echo "== $label ($path) =="
-  resp=$(curl -sS -H "X-API-Key: $API_KEY" "$BASE_URL$path" || true)
-  echo "$resp" | jq . >/dev/null 2>&1 || { echo "Invalid JSON for $path"; exit 1; }
+  echo -n "== $label ($path) == "
+  resp=$(curl -sS -H "$header: $API_KEY" "$BASE_URL$path" 2>/dev/null || echo '{}')
 
-  source=$(echo "$resp" | jq -r '.source // ""')
-  generated=$(echo "$resp" | jq -r '.generated_at // ""')
-  data_len=$(echo "$resp" | jq -r 'if (.data|type)=="array" then (.data|length) else if (.data|type)=="object" then ("object") else "" end')
-  errors_len=$(echo "$resp" | jq -r '.errors | length // 0')
+  # Check if valid JSON
+  if ! echo "$resp" | jq . >/dev/null 2>&1; then
+    echo -e "${RED}FAIL${NC} (invalid JSON)"
+    FAILED=1
+    return
+  fi
 
-  echo "source: $source"
-  echo "generated_at: $generated"
-  echo "data_len: $data_len"
-  echo "errors: $errors_len"
-  echo ""
-
-  if [ "$path" = "/live/best-bets/NBA" ]; then
-    if [ -z "$source" ] || [ -z "$generated" ]; then
-      echo "Missing required fields in $path"; exit 1; 
-    fi
+  # Run jq test
+  result=$(echo "$resp" | jq -r "$jq_test" 2>/dev/null || echo "false")
+  if [ "$result" = "true" ]; then
+    echo -e "${GREEN}OK${NC}"
+  else
+    echo -e "${RED}FAIL${NC}"
+    echo "  Response: $(echo "$resp" | jq -c '.' | head -c 200)..."
+    FAILED=1
   fi
 }
 
-echo "== health (/health) =="
-health_resp=$(curl -sS -H "X-API-Key: $API_KEY" "$BASE_URL/health" || true)
-echo "$health_resp" | jq . >/dev/null 2>&1 || { echo "Invalid JSON for /health"; exit 1; }
-echo "status: $(echo "$health_resp" | jq -r '.status // "unknown"')"
+echo "================================================"
+echo "LIVE ENDPOINT VERIFICATION"
+echo "Base URL: $BASE_URL"
+echo "================================================"
 echo ""
 
-check_endpoint "/ops/storage" "ops storage"
-check_endpoint "/ops/integrations" "ops integrations"
-check_endpoint "/live/best-bets/NBA" "best bets NBA"
+# Health (no auth)
+echo -n "== health (/health) == "
+health=$(curl -sS "$BASE_URL/health" 2>/dev/null || echo '{}')
+status=$(echo "$health" | jq -r '.status // "unknown"')
+if [ "$status" = "healthy" ]; then
+  echo -e "${GREEN}OK${NC} (status: $status)"
+else
+  echo -e "${RED}FAIL${NC} (status: $status)"
+  FAILED=1
+fi
+echo ""
+
+# /ops/* endpoints (X-Admin-Token)
+check_json "/ops/storage" "ops/storage" '.ok == true' "X-Admin-Token"
+check_json "/ops/integrations" "ops/integrations" '.total > 0' "X-Admin-Token"
+check_json "/ops/env-map" "ops/env-map" 'has("env_map")' "X-Admin-Token"
+check_json "/ops/verify" "ops/verify" '.verdict == "PASS"' "X-Admin-Token"
+echo ""
+
+# /live/* endpoints (X-API-Key)
+check_json "/live/best-bets/NBA" "best-bets NBA" 'has("props") and has("game_picks")' "X-API-Key"
+check_json "/live/grader/status" "grader status" '.available == true' "X-API-Key"
+check_json "/live/debug/time" "debug time" 'has("et_date")' "X-API-Key"
+check_json "/live/debug/integrations" "debug integrations" 'has("integrations")' "X-API-Key"
+echo ""
+
+# /internal/* endpoints (no auth)
+check_json "/internal/storage/health" "storage health" '.is_mountpoint == true' "X-API-Key"
+echo ""
+
+echo "================================================"
+if [ "$FAILED" -eq 0 ]; then
+  echo -e "${GREEN}ALL ENDPOINTS OK${NC}"
+  exit 0
+else
+  echo -e "${RED}SOME ENDPOINTS FAILED${NC}"
+  exit 1
+fi

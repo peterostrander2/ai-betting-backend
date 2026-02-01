@@ -1197,86 +1197,6 @@ async def ops_storage():
     return get_storage_health()
 
 
-@app.get("/ops/env-map")
-async def ops_env_map():
-    """
-    Environment variable audit endpoint.
-
-    Returns mapping of required env vars to their status:
-    - required_env: All env vars declared in integration_contract.py
-    - present_env: Env var names that are set (values hidden)
-    - missing_env: Required but not set
-    - unused_env: Present but not in registry (potential cruft)
-    - registry_sources: Canonical source files
-    - status: OK if no missing, ERROR if any missing
-    """
-    from core.integration_contract import INTEGRATIONS, ALL_ENV_VARS, INTEGRATION_CONTRACT
-
-    # Get all required env vars from contract
-    required_env = sorted(list(ALL_ENV_VARS))
-
-    # Check which are present (don't expose values, just names)
-    present_env = []
-    missing_env = []
-    for var in required_env:
-        if _os.getenv(var):
-            present_env.append(var)
-        else:
-            missing_env.append(var)
-
-    # Check for unused env vars (common Railway/system vars to ignore)
-    SYSTEM_VARS = {
-        "PATH", "HOME", "USER", "SHELL", "LANG", "TERM", "PWD", "HOSTNAME",
-        "PORT", "RAILWAY_ENVIRONMENT", "RAILWAY_SERVICE_NAME", "RAILWAY_PROJECT_ID",
-        "RAILWAY_STATIC_URL", "RAILWAY_GIT_COMMIT_SHA", "RAILWAY_GIT_BRANCH",
-        "RAILWAY_GIT_REPO_NAME", "RAILWAY_GIT_REPO_OWNER", "RAILWAY_DEPLOYMENT_ID",
-        "RAILWAY_SNAPSHOT_ID", "RAILWAY_REPLICA_ID", "NIXPACKS_METADATA",
-        "PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE", "DEBUG_MODE", "ADMIN_TOKEN",
-        "API_AUTH_KEY", "API_AUTH_ENABLED", "LOG_LEVEL", "SENTRY_DSN",
-    }
-
-    all_env_names = set(_os.environ.keys())
-    declared_vars = set(required_env)
-    unused_env = sorted([
-        v for v in all_env_names
-        if v not in declared_vars
-        and v not in SYSTEM_VARS
-        and not v.startswith("_")
-        and not v.startswith("npm_")
-        and not v.startswith("NODE_")
-    ])
-
-    # Integration-to-env mapping for debugging
-    integration_env_map = {}
-    for name, config in INTEGRATIONS.items():
-        env_status = {}
-        for var in config["env_vars"]:
-            env_status[var] = "SET" if _os.getenv(var) else "MISSING"
-        integration_env_map[name] = {
-            "required": config["required"],
-            "env_vars": env_status,
-            "owner_modules": config["owner_modules"],
-            "feeds_engine": config.get("feeds_engine", "unknown")
-        }
-
-    status = "OK" if not missing_env else "ERROR"
-
-    return {
-        "status": status,
-        "summary": f"{len(present_env)}/{len(required_env)} env vars configured",
-        "required_env": required_env,
-        "present_env": present_env,
-        "missing_env": missing_env,
-        "unused_env": unused_env,
-        "integration_env_map": integration_env_map,
-        "registry_sources": [
-            "core/integration_contract.py",
-            "integration_registry.py"
-        ],
-        "contract_version": INTEGRATION_CONTRACT.get("version", "unknown")
-    }
-
-
 @app.get("/ops/verify")
 async def ops_verify():
     """
@@ -1332,7 +1252,7 @@ async def ops_verify():
     # 3. Integrations check
     try:
         from integration_registry import get_all_integrations_status
-        integrations = get_all_integrations_status()
+        integrations = await get_all_integrations_status()
         overall = integrations.get("overall_status", "UNKNOWN")
         validated = integrations.get("status_counts", {}).get("validated", 0)
         configured = integrations.get("status_counts", {}).get("configured", 0)
@@ -1359,11 +1279,16 @@ async def ops_verify():
     # 4. Env-map check
     try:
         env_data = await ops_env_map()
-        env_ok = env_data.get("status") == "OK"
+        env_status = env_data.get("status", "MISSING_REQUIRED")
+        missing_required = env_data.get("missing_required", [])
+        total_vars = env_data.get("total_env_vars", 0)
+        configured = total_vars - len(env_data.get("missing_any", []))
+        # OK if no required vars missing
+        env_ok = env_status == "OK"
         results["checks"]["env_map"] = {
-            "status": env_data.get("status"),
-            "summary": env_data.get("summary"),
-            "missing_count": len(env_data.get("missing_env", [])),
+            "status": env_status,
+            "summary": f"{configured}/{total_vars} env vars configured",
+            "missing_required": len(missing_required),
             "passed": env_ok
         }
         if not env_ok:
@@ -1389,14 +1314,20 @@ async def ops_verify():
 
     # 6. Scheduler check
     try:
-        scheduler = get_scheduler()
-        scheduler_ok = scheduler is not None and scheduler.running
+        sched = get_scheduler()
+        sched_ok = sched is not None and sched.running
+        jobs_count = 0
+        if sched and sched.scheduler:
+            try:
+                jobs_count = len(sched.scheduler.get_jobs())
+            except Exception:
+                jobs_count = -1  # APScheduler not available
         results["checks"]["scheduler"] = {
-            "running": scheduler.running if scheduler else False,
-            "jobs_count": len(scheduler.get_jobs()) if scheduler else 0,
-            "passed": scheduler_ok
+            "running": sched.running if sched else False,
+            "jobs_count": jobs_count,
+            "passed": sched_ok
         }
-        if not scheduler_ok:
+        if not sched_ok:
             results["all_passed"] = False
             results["failed_checks"].append("scheduler")
     except Exception as e:
