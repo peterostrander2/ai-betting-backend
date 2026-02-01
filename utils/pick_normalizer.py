@@ -140,6 +140,67 @@ def normalize_side_label(pick: dict, pick_type: str) -> str:
     return pick.get("team") or pick.get("side") or "Unknown"
 
 
+def get_team_abbrev(team_name: str) -> str:
+    """Convert team name to 3-letter abbreviation."""
+    if not team_name:
+        return ""
+
+    # Common team abbreviations
+    abbrevs = {
+        # NBA
+        "atlanta hawks": "ATL", "boston celtics": "BOS", "brooklyn nets": "BKN",
+        "charlotte hornets": "CHA", "chicago bulls": "CHI", "cleveland cavaliers": "CLE",
+        "dallas mavericks": "DAL", "denver nuggets": "DEN", "detroit pistons": "DET",
+        "golden state warriors": "GSW", "houston rockets": "HOU", "indiana pacers": "IND",
+        "los angeles clippers": "LAC", "la clippers": "LAC", "los angeles lakers": "LAL",
+        "la lakers": "LAL", "memphis grizzlies": "MEM", "miami heat": "MIA",
+        "milwaukee bucks": "MIL", "minnesota timberwolves": "MIN", "new orleans pelicans": "NOP",
+        "new york knicks": "NYK", "oklahoma city thunder": "OKC", "orlando magic": "ORL",
+        "philadelphia 76ers": "PHI", "phoenix suns": "PHX", "portland trail blazers": "POR",
+        "sacramento kings": "SAC", "san antonio spurs": "SAS", "toronto raptors": "TOR",
+        "utah jazz": "UTA", "washington wizards": "WAS",
+        # NHL
+        "anaheim ducks": "ANA", "arizona coyotes": "ARI", "boston bruins": "BOS",
+        "buffalo sabres": "BUF", "calgary flames": "CGY", "carolina hurricanes": "CAR",
+        "chicago blackhawks": "CHI", "colorado avalanche": "COL", "columbus blue jackets": "CBJ",
+        "dallas stars": "DAL", "detroit red wings": "DET", "edmonton oilers": "EDM",
+        "florida panthers": "FLA", "los angeles kings": "LAK", "minnesota wild": "MIN",
+        "montreal canadiens": "MTL", "nashville predators": "NSH", "new jersey devils": "NJD",
+        "new york islanders": "NYI", "new york rangers": "NYR", "ottawa senators": "OTT",
+        "philadelphia flyers": "PHI", "pittsburgh penguins": "PIT", "san jose sharks": "SJS",
+        "seattle kraken": "SEA", "st. louis blues": "STL", "st louis blues": "STL",
+        "tampa bay lightning": "TBL", "toronto maple leafs": "TOR", "vancouver canucks": "VAN",
+        "vegas golden knights": "VGK", "washington capitals": "WSH", "winnipeg jets": "WPG",
+        # NFL
+        "arizona cardinals": "ARI", "atlanta falcons": "ATL", "baltimore ravens": "BAL",
+        "buffalo bills": "BUF", "carolina panthers": "CAR", "chicago bears": "CHI",
+        "cincinnati bengals": "CIN", "cleveland browns": "CLE", "dallas cowboys": "DAL",
+        "denver broncos": "DEN", "detroit lions": "DET", "green bay packers": "GB",
+        "houston texans": "HOU", "indianapolis colts": "IND", "jacksonville jaguars": "JAX",
+        "kansas city chiefs": "KC", "las vegas raiders": "LV", "los angeles chargers": "LAC",
+        "los angeles rams": "LAR", "miami dolphins": "MIA", "minnesota vikings": "MIN",
+        "new england patriots": "NE", "new orleans saints": "NO", "new york giants": "NYG",
+        "new york jets": "NYJ", "philadelphia eagles": "PHI", "pittsburgh steelers": "PIT",
+        "san francisco 49ers": "SF", "seattle seahawks": "SEA", "tampa bay buccaneers": "TB",
+        "tennessee titans": "TEN", "washington commanders": "WAS",
+        # MLB
+        "arizona diamondbacks": "ARI", "atlanta braves": "ATL", "baltimore orioles": "BAL",
+        "boston red sox": "BOS", "chicago cubs": "CHC", "chicago white sox": "CWS",
+        "cincinnati reds": "CIN", "cleveland guardians": "CLE", "colorado rockies": "COL",
+        "detroit tigers": "DET", "houston astros": "HOU", "kansas city royals": "KC",
+        "los angeles angels": "LAA", "los angeles dodgers": "LAD", "miami marlins": "MIA",
+        "milwaukee brewers": "MIL", "minnesota twins": "MIN", "new york mets": "NYM",
+        "new york yankees": "NYY", "oakland athletics": "OAK", "philadelphia phillies": "PHI",
+        "pittsburgh pirates": "PIT", "san diego padres": "SD", "san francisco giants": "SF",
+        "seattle mariners": "SEA", "st. louis cardinals": "STL", "st louis cardinals": "STL",
+        "tampa bay rays": "TB", "texas rangers": "TEX", "toronto blue jays": "TOR",
+        "washington nationals": "WAS",
+    }
+
+    key = team_name.lower().strip()
+    return abbrevs.get(key, team_name[:3].upper())
+
+
 def build_bet_string(pick: dict, pick_type: str, selection: str, market_label: str, side_label: str, line_signed: str = None) -> str:
     """Build canonical bet display string."""
     line = pick.get("line")
@@ -154,9 +215,12 @@ def build_bet_string(pick: dict, pick_type: str, selection: str, market_label: s
     units_str = f"{units}u"
 
     if pick_type == "player_prop":
-        # "Sam Hauser — 3PT Made Over 4.5 (+130) — 2u"
+        # "Sam Hauser (BOS) — 3PT Made Over 4.5 (+130) — 2u"
+        player_team = pick.get("player_team") or ""
+        team_abbrev = get_team_abbrev(player_team)
+        team_str = f" ({team_abbrev})" if team_abbrev else ""
         line_str = f" {line}" if line is not None else ""
-        return f"{selection} — {market_label} {side_label}{line_str} ({odds_str}) — {units_str}"
+        return f"{selection}{team_str} — {market_label} {side_label}{line_str} ({odds_str}) — {units_str}"
 
     if pick_type == "total":
         # "Bucks/Celtics Over 228.5 (-110) — 1u"
