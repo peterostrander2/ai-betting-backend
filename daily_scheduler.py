@@ -58,6 +58,14 @@ try:
 except ImportError:
     logger.warning("live_data_router not available - cache pre-warm disabled")
 
+# v16.1: ML Model Retraining
+ML_RETRAIN_AVAILABLE = False
+try:
+    from ml_integration import get_lstm_manager, get_ensemble_manager, get_ml_status
+    ML_RETRAIN_AVAILABLE = True
+except ImportError:
+    logger.warning("ml_integration not available - ML retraining disabled")
+
 
 async def warm_best_bets_cache():
     """Pre-warm best-bets cache for sports with games today. Called by scheduler."""
@@ -447,6 +455,25 @@ class DailyScheduler:
             threading.Timer(120, _startup_warm).start()
             logger.info("Startup cache warm scheduled in 2 minutes")
 
+        # v16.1: Weekly LSTM retraining (Sundays 4 AM ET)
+        if ML_RETRAIN_AVAILABLE:
+            self.scheduler.add_job(
+                self._run_lstm_retrain,
+                CronTrigger(day_of_week="sun", hour=4, minute=0, timezone="America/New_York"),
+                id="lstm_retrain_weekly",
+                name="Weekly LSTM Retrain"
+            )
+            logger.info("LSTM retraining enabled: runs weekly on Sundays at 4 AM ET")
+
+            # v16.1: Daily ensemble retraining (6:45 AM ET, after grading at 6:30 AM)
+            self.scheduler.add_job(
+                self._run_ensemble_retrain,
+                CronTrigger(hour=6, minute=45, timezone="America/New_York"),
+                id="ensemble_retrain_daily",
+                name="Daily Ensemble Retrain"
+            )
+            logger.info("Ensemble retraining enabled: runs daily at 6:45 AM ET")
+
         self.scheduler.start()
         logger.info("APScheduler started with daily audit at 6 AM")
 
@@ -480,6 +507,83 @@ class DailyScheduler:
                 loop.close()
         except Exception as e:
             logger.error("Cache warm failed: %s", e)
+
+    def _run_lstm_retrain(self):
+        """
+        v16.1: Weekly LSTM model retraining.
+
+        Retrains LSTM models on accumulated prediction data.
+        Only runs if sufficient graded data is available.
+        """
+        if not ML_RETRAIN_AVAILABLE:
+            return
+
+        logger.info("🧠 Starting weekly LSTM retrain check...")
+        try:
+            # Check if we have enough data for retraining
+            # This is a placeholder - full LSTM retraining would require
+            # the lstm_training_pipeline module which handles data collection
+            # and model training
+
+            from lstm_training_pipeline import LSTMTrainingPipeline
+            pipeline = LSTMTrainingPipeline()
+
+            # Check data availability
+            stats = pipeline.get_data_stats()
+            if stats.get("total_samples", 0) < 500:
+                logger.info("LSTM retrain skipped: only %d samples (need 500+)",
+                          stats.get("total_samples", 0))
+                return
+
+            # Run retraining for each sport/stat combo with sufficient data
+            results = pipeline.retrain_all_models(min_samples=100)
+            logger.info("🧠 LSTM retrain complete: %s", results)
+
+        except ImportError:
+            logger.warning("lstm_training_pipeline not available - LSTM retrain skipped")
+        except Exception as e:
+            logger.error("LSTM retrain failed: %s", e)
+
+    def _run_ensemble_retrain(self):
+        """
+        v16.1: Daily ensemble model retraining.
+
+        Retrains the ensemble hit predictor on all graded predictions.
+        Runs after daily grading to incorporate fresh results.
+        """
+        if not ML_RETRAIN_AVAILABLE:
+            return
+
+        logger.info("🎯 Starting daily ensemble retrain...")
+        try:
+            import subprocess
+            import sys
+
+            # Run the training script
+            script_path = os.path.join(os.path.dirname(__file__), "scripts", "train_ensemble.py")
+
+            if not os.path.exists(script_path):
+                logger.warning("Ensemble training script not found: %s", script_path)
+                return
+
+            # Run with minimum picks threshold
+            result = subprocess.run(
+                [sys.executable, script_path, "--min-picks", "100"],
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+
+            if result.returncode == 0:
+                logger.info("🎯 Ensemble retrain complete:\n%s", result.stdout[-500:] if result.stdout else "")
+            else:
+                logger.warning("Ensemble retrain exited with code %d: %s",
+                             result.returncode, result.stderr[-500:] if result.stderr else "")
+
+        except subprocess.TimeoutExpired:
+            logger.error("Ensemble retrain timed out after 5 minutes")
+        except Exception as e:
+            logger.error("Ensemble retrain failed: %s", e)
 
     def _start_simple_scheduler(self):
         """Fallback simple scheduler using threading."""

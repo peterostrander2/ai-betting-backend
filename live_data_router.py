@@ -235,6 +235,18 @@ except ImportError:
     TRAVEL_MODULE_AVAILABLE = False
     print("[WARNING] travel module not available - rest days calculation disabled")
 
+# Import ML Integration Module for LSTM-powered prop predictions (v16.1)
+try:
+    from ml_integration import (
+        get_lstm_ai_score,
+        get_lstm_manager,
+        get_ml_status,
+    )
+    ML_INTEGRATION_AVAILABLE = True
+except ImportError:
+    ML_INTEGRATION_AVAILABLE = False
+    print("[WARNING] ml_integration module not available - using heuristic AI scores")
+
 # Redis import with fallback
 try:
     import redis
@@ -2850,8 +2862,46 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         return result
 
+    # v16.1: Helper function for heuristic AI score calculation (fallback when LSTM unavailable)
+    def _calculate_heuristic_ai_score(base_ai, sharp_signal, spread, player_name):
+        """Calculate AI score using heuristic rules (pre-LSTM method)."""
+        ai_reasons = []
+        _ai_boost = 0.0
+        ai_reasons.append(f"Base AI: {base_ai}/8")
+
+        # Odds data present: +0.5
+        if sharp_signal:
+            _ai_boost += 0.5
+            ai_reasons.append("Sharp data present (+0.5)")
+
+        # Strong/moderate sharp signal aligns with model: +1.0 / +0.5
+        _ss = sharp_signal.get("signal_strength", "NONE") if sharp_signal else "NONE"
+        if _ss == "STRONG":
+            _ai_boost += 1.0
+            ai_reasons.append("STRONG signal alignment (+1.0)")
+        elif _ss == "MODERATE":
+            _ai_boost += 0.5
+            ai_reasons.append("MODERATE signal alignment (+0.5)")
+        elif _ss == "MILD":
+            _ai_boost += 0.25
+            ai_reasons.append("MILD signal alignment (+0.25)")
+
+        # Favorable line value (spread in predictable range 3-10): +0.5
+        if 3 <= abs(spread) <= 10:
+            _ai_boost += 0.5
+            ai_reasons.append(f"Favorable spread {spread} (+0.5)")
+
+        # Player name present for props (more data = better model): +0.25
+        if player_name:
+            _ai_boost += 0.25
+            ai_reasons.append("Player data available (+0.25)")
+
+        ai_score = min(8.0, base_ai + _ai_boost)
+        return ai_score, ai_reasons
+
     # Helper function to calculate scores with v15.0 4-engine architecture + Jason Sim
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0):
+    # v16.1: Added market parameter for LSTM model routing
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market=""):
         # =====================================================================
         # v15.0 FOUR-ENGINE ARCHITECTURE (Clean Separation)
         # =====================================================================
@@ -2885,36 +2935,49 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         pillars_passed = []
         pillars_failed = []
         ai_reasons = []
+        lstm_metadata = None
 
         # --- AI SCORE (Dynamic Model - 0-8 scale) ---
-        # v15.1: AI score is calibrated based on data quality signals
-        # Base AI (5.0 props, 4.5 games) + boosts for data availability
-        _ai_boost = 0.0
-        ai_reasons.append(f"Base AI: {base_ai}/8")
-        # Odds data present: +0.5
-        if sharp_signal:
-            _ai_boost += 0.5
-            ai_reasons.append("Sharp data present (+0.5)")
-        # Strong/moderate sharp signal aligns with model: +1.0 / +0.5
-        _ss = sharp_signal.get("signal_strength", "NONE")
-        if _ss == "STRONG":
-            _ai_boost += 1.0
-            ai_reasons.append("STRONG signal alignment (+1.0)")
-        elif _ss == "MODERATE":
-            _ai_boost += 0.5
-            ai_reasons.append("MODERATE signal alignment (+0.5)")
-        elif _ss == "MILD":
-            _ai_boost += 0.25
-            ai_reasons.append("MILD signal alignment (+0.25)")
-        # Favorable line value (spread in predictable range 3-10): +0.5
-        if 3 <= abs(spread) <= 10:
-            _ai_boost += 0.5
-            ai_reasons.append(f"Favorable spread {spread} (+0.5)")
-        # Player name present for props (more data = better model): +0.25
-        if player_name:
-            _ai_boost += 0.25
-            ai_reasons.append("Player data available (+0.25)")
-        ai_score = min(8.0, base_ai + _ai_boost)
+        # v16.1: Use LSTM for props if available, otherwise fallback to heuristics
+        if pick_type == "PROP" and ML_INTEGRATION_AVAILABLE and market:
+            # Try LSTM-powered AI score for props
+            try:
+                lstm_ai_score, lstm_metadata = get_lstm_ai_score(
+                    sport=sport_upper,  # Use sport_upper from outer scope
+                    market=market,
+                    prop_line=prop_line,
+                    player_name=player_name,
+                    home_team=home_team,
+                    away_team=away_team,
+                    player_team=None,  # Could be passed if available
+                    player_stats=None,  # Could be enriched with player data
+                    game_data={"def_rank": 16, "pace": 100.0},  # Default game context
+                    base_ai=base_ai
+                )
+                if lstm_metadata.get("source") == "lstm":
+                    ai_score = lstm_ai_score
+                    ai_reasons.append(f"LSTM AI: {ai_score:.2f}/8 ({lstm_metadata.get('model_key', 'unknown')})")
+                    ai_reasons.append(f"LSTM confidence: {lstm_metadata.get('confidence', 0):.1f}%")
+                    if lstm_metadata.get("adjustment", 0) > 0:
+                        ai_reasons.append(f"LSTM lean: +{lstm_metadata.get('adjustment', 0):.2f}")
+                    elif lstm_metadata.get("adjustment", 0) < 0:
+                        ai_reasons.append(f"LSTM lean: {lstm_metadata.get('adjustment', 0):.2f}")
+                else:
+                    # Fallback to heuristic
+                    ai_score, ai_reasons = _calculate_heuristic_ai_score(
+                        base_ai, sharp_signal, spread, player_name
+                    )
+            except Exception as e:
+                logger.warning(f"LSTM prediction failed, using heuristic: {e}")
+                ai_score, ai_reasons = _calculate_heuristic_ai_score(
+                    base_ai, sharp_signal, spread, player_name
+                )
+        else:
+            # Games and non-prop picks use heuristic AI score
+            ai_score, ai_reasons = _calculate_heuristic_ai_score(
+                base_ai, sharp_signal, spread, player_name
+            )
+
         # Scale AI to 0-10 for use in base_score formula
         ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
 
@@ -3492,7 +3555,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "research_reasons": research_reasons,
             "ai_reasons": ai_reasons,
             "pillars_passed": pillars_passed,
-            "pillars_failed": pillars_failed
+            "pillars_failed": pillars_failed,
+            # v16.1 LSTM ML fields (for props with LSTM prediction)
+            "lstm_adjustment": lstm_metadata.get("adjustment", 0.0) if lstm_metadata else 0.0,
+            "lstm_confidence": lstm_metadata.get("confidence", 0.0) if lstm_metadata else 0.0,
+            "lstm_model_key": lstm_metadata.get("model_key") if lstm_metadata else None,
+            "lstm_source": lstm_metadata.get("source", "heuristic") if lstm_metadata else "heuristic"
         }
 
     # ============================================
@@ -4148,7 +4216,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     public_pct=sharp_signal.get("public_pct", sharp_signal.get("ticket_pct", 50)),
                     pick_type="PROP",
                     pick_side=side,
-                    prop_line=line
+                    prop_line=line,
+                    market=market  # v16.1: Pass market for LSTM model routing
                 )
 
                 # v16.0: Apply weather modifier to props (capped at ±1.0)
@@ -5770,13 +5839,26 @@ async def lstm_status():
     """Check LSTM model availability and status."""
     try:
         from lstm_brain import LSTMBrain, TF_AVAILABLE
-        return {
-            "available": True,
-            "tensorflow_available": TF_AVAILABLE,
-            "mode": "tensorflow" if TF_AVAILABLE else "numpy_fallback",
-            "note": "LSTM requires historical player data for predictions.",
-            "timestamp": datetime.now().isoformat()
-        }
+
+        # v16.1: Also check ml_integration module for enhanced status
+        if ML_INTEGRATION_AVAILABLE:
+            ml_status = get_ml_status()
+            return {
+                "available": True,
+                "tensorflow_available": TF_AVAILABLE,
+                "mode": "tensorflow" if TF_AVAILABLE else "numpy_fallback",
+                "note": "LSTM active for props. Models loaded on-demand.",
+                "ml_integration": ml_status,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "available": True,
+                "tensorflow_available": TF_AVAILABLE,
+                "mode": "tensorflow" if TF_AVAILABLE else "numpy_fallback",
+                "note": "LSTM brain available but ml_integration not loaded.",
+                "timestamp": datetime.now().isoformat()
+            }
     except ImportError:
         return {
             "available": False,
@@ -5785,6 +5867,107 @@ async def lstm_status():
             "note": "LSTM module not available",
             "timestamp": datetime.now().isoformat()
         }
+
+
+@router.get("/ml/status")
+async def ml_status():
+    """
+    v16.1: Comprehensive ML infrastructure status.
+
+    Returns status of all ML components:
+    - LSTM models for props (loaded/available/predictions)
+    - Ensemble model for games (loaded/trained_at/metrics)
+    - TensorFlow availability
+    - Model performance metrics
+    """
+    result = {
+        "timestamp": datetime.now().isoformat(),
+        "available": ML_INTEGRATION_AVAILABLE
+    }
+
+    if not ML_INTEGRATION_AVAILABLE:
+        result["error"] = "ml_integration module not available"
+        return result
+
+    try:
+        # Get comprehensive ML status
+        ml_status_data = get_ml_status()
+        result.update(ml_status_data)
+
+        # Calculate performance metrics from graded predictions
+        try:
+            import grader_store
+            predictions = grader_store.load_predictions()
+
+            # Filter to graded predictions from last 7 days
+            from datetime import timedelta
+            cutoff = (datetime.now() - timedelta(days=7)).isoformat()
+            recent_graded = [
+                p for p in predictions
+                if p.get("grade_status") == "GRADED"
+                and p.get("created_at", "") >= cutoff
+            ]
+
+            # Calculate hit rates
+            if recent_graded:
+                # Overall hit rate
+                hits = sum(1 for p in recent_graded if p.get("result", "").upper() in ["WIN", "HIT"])
+                total = len(recent_graded)
+                result["performance"] = {
+                    "period": "7_days",
+                    "total_graded": total,
+                    "hits": hits,
+                    "hit_rate": round(hits / total, 3) if total > 0 else 0,
+                }
+
+                # Split by LSTM vs heuristic (props)
+                lstm_props = [p for p in recent_graded
+                             if p.get("pick_type") == "PROP"
+                             and p.get("lstm_source") == "lstm"]
+                heuristic_props = [p for p in recent_graded
+                                  if p.get("pick_type") == "PROP"
+                                  and p.get("lstm_source") != "lstm"]
+
+                if lstm_props:
+                    lstm_hits = sum(1 for p in lstm_props if p.get("result", "").upper() in ["WIN", "HIT"])
+                    result["performance"]["lstm_props"] = {
+                        "total": len(lstm_props),
+                        "hits": lstm_hits,
+                        "hit_rate": round(lstm_hits / len(lstm_props), 3)
+                    }
+
+                if heuristic_props:
+                    heur_hits = sum(1 for p in heuristic_props if p.get("result", "").upper() in ["WIN", "HIT"])
+                    result["performance"]["heuristic_props"] = {
+                        "total": len(heuristic_props),
+                        "hits": heur_hits,
+                        "hit_rate": round(heur_hits / len(heuristic_props), 3)
+                    }
+
+                # Game picks (ensemble vs heuristic)
+                game_picks = [p for p in recent_graded if p.get("pick_type") != "PROP"]
+                if game_picks:
+                    game_hits = sum(1 for p in game_picks if p.get("result", "").upper() in ["WIN", "HIT"])
+                    result["performance"]["game_picks"] = {
+                        "total": len(game_picks),
+                        "hits": game_hits,
+                        "hit_rate": round(game_hits / len(game_picks), 3)
+                    }
+            else:
+                result["performance"] = {
+                    "period": "7_days",
+                    "total_graded": 0,
+                    "note": "No graded predictions in the last 7 days"
+                }
+
+        except Exception as e:
+            result["performance"] = {"error": str(e)}
+
+        return result
+
+    except Exception as e:
+        result["error"] = str(e)
+        return result
 
 
 @router.get("/grader/status")
