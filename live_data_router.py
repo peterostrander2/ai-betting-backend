@@ -5893,6 +5893,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "picks_with_weather": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("weather_available", False)),
                 "picks_with_modifier": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("weather_modifier", 0) != 0),
             },
+            # v17.4 SERP Intelligence status banner
+            "serp": {
+                "available": SERP_INTEL_AVAILABLE,
+                "shadow_mode": SERP_SHADOW_MODE if SERP_INTEL_AVAILABLE else True,
+                "mode": "shadow" if (SERP_INTEL_AVAILABLE and SERP_SHADOW_MODE) else ("live" if SERP_INTEL_AVAILABLE else "disabled"),
+                "status": get_serp_status() if (SERP_INTEL_AVAILABLE and callable(get_serp_status)) else {"error": "serp_intel_unavailable"},
+            },
             # v17.3 ESPN Integration telemetry
             "espn": {
                 "available": ESPN_OFFICIALS_AVAILABLE,
