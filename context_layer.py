@@ -402,11 +402,119 @@ NCAAB_TEAM_MAPPING = {
     "Georgetown Hoyas": "Georgetown", "Butler Bulldogs": "Butler",
     "DePaul Blue Demons": "DePaul",
 
-    # Other Power Programs
+    # Other Power Programs & Tournament Regulars
     "Gonzaga Bulldogs": "Gonzaga", "San Diego State Aztecs": "San Diego State",
     "Memphis Tigers": "Memphis", "Saint Mary's Gaels": "Saint Mary's",
     "Nevada Wolf Pack": "Nevada", "New Mexico Lobos": "New Mexico",
     "VCU Rams": "VCU", "Dayton Flyers": "Dayton",
+
+    # Mountain West
+    "UNLV Rebels": "UNLV", "Boise State Broncos": "Boise State",
+    "Utah State Aggies": "Utah State", "Wyoming Cowboys": "Wyoming",
+    "Fresno State Bulldogs": "Fresno State", "Air Force Falcons": "Air Force",
+    "Colorado State Rams": "Colorado State",
+
+    # American Athletic (AAC)
+    "Tulane Green Wave": "Tulane", "South Florida Bulls": "South Florida",
+    "UAB Blazers": "UAB", "FAU Owls": "FAU", "Wichita State Shockers": "Wichita State",
+    "Temple Owls": "Temple", "East Carolina Pirates": "East Carolina",
+    "Tulsa Golden Hurricane": "Tulsa", "Charlotte 49ers": "Charlotte",
+    "North Texas Mean Green": "North Texas", "Rice Owls": "Rice",
+
+    # West Coast Conference (WCC)
+    "Santa Clara Broncos": "Santa Clara", "San Francisco Dons": "San Francisco",
+    "Loyola Marymount Lions": "Loyola Marymount", "Pepperdine Waves": "Pepperdine",
+    "Portland Pilots": "Portland", "Pacific Tigers": "Pacific",
+
+    # Atlantic 10 (A-10)
+    "Richmond Spiders": "Richmond", "Rhode Island Rams": "Rhode Island",
+    "George Mason Patriots": "George Mason", "Saint Louis Billikens": "Saint Louis",
+    "St. Bonaventure Bonnies": "St. Bonaventure", "Davidson Wildcats": "Davidson",
+    "Fordham Rams": "Fordham", "Duquesne Dukes": "Duquesne",
+    "George Washington Colonials": "George Washington", "UMass Minutemen": "UMass",
+    "La Salle Explorers": "La Salle", "Loyola Chicago Ramblers": "Loyola Chicago",
+
+    # Mid-American Conference (MAC)
+    "Toledo Rockets": "Toledo", "Ohio Bobcats": "Ohio",
+    "Akron Zips": "Akron", "Buffalo Bulls": "Buffalo",
+    "Kent State Golden Flashes": "Kent State", "Ball State Cardinals": "Ball State",
+    "Miami (OH) RedHawks": "Miami (OH)", "Bowling Green Falcons": "Bowling Green",
+    "Western Michigan Broncos": "Western Michigan", "Eastern Michigan Eagles": "Eastern Michigan",
+    "Central Michigan Chippewas": "Central Michigan", "Northern Illinois Huskies": "Northern Illinois",
+
+    # Missouri Valley Conference (MVC)
+    "Drake Bulldogs": "Drake", "Indiana State Sycamores": "Indiana State",
+    "Murray State Racers": "Murray State", "UNI Panthers": "UNI",
+    "Missouri State Bears": "Missouri State", "Bradley Braves": "Bradley",
+    "Southern Illinois Salukis": "Southern Illinois", "Valparaiso Beacons": "Valparaiso",
+    "Illinois State Redbirds": "Illinois State", "Evansville Purple Aces": "Evansville",
+
+    # Conference USA (C-USA)
+    "New Mexico State Aggies": "New Mexico State", "Sam Houston Bearkats": "Sam Houston",
+    "Liberty Flames": "Liberty", "Jacksonville State Gamecocks": "Jacksonville State",
+    "Louisiana Tech Bulldogs": "Louisiana Tech", "UTEP Miners": "UTEP",
+    "FIU Panthers": "FIU", "Middle Tennessee Blue Raiders": "Middle Tennessee",
+    "Western Kentucky Hilltoppers": "Western Kentucky",
+
+    # Sun Belt
+    "Appalachian State Mountaineers": "Appalachian State", "Georgia State Panthers": "Georgia State",
+    "Marshall Thundering Herd": "Marshall", "South Alabama Jaguars": "South Alabama",
+    "James Madison Dukes": "James Madison", "Old Dominion Monarchs": "Old Dominion",
+    "Coastal Carolina Chanticleers": "Coastal Carolina", "Texas State Bobcats": "Texas State",
+    "Arkansas State Red Wolves": "Arkansas State", "UL Monroe Warhawks": "UL Monroe",
+    "Southern Miss Golden Eagles": "Southern Miss", "Troy Trojans": "Troy",
+
+    # Southland/WAC/Big Sky
+    "Grand Canyon Antelopes": "Grand Canyon", "Abilene Christian Wildcats": "Abilene Christian",
+    "Stephen F. Austin Lumberjacks": "Stephen F. Austin", "Tarleton State Texans": "Tarleton State",
+    "Sacramento State Hornets": "Sacramento State", "Montana Grizzlies": "Montana",
+    "Montana State Bobcats": "Montana State", "Weber State Wildcats": "Weber State",
+    "Portland State Vikings": "Portland State", "Northern Colorado Bears": "Northern Colorado",
+
+    # Ivy League
+    "Princeton Tigers": "Princeton", "Yale Bulldogs": "Yale",
+    "Penn Quakers": "Penn", "Harvard Crimson": "Harvard",
+    "Cornell Big Red": "Cornell", "Columbia Lions": "Columbia",
+    "Brown Bears": "Brown", "Dartmouth Big Green": "Dartmouth",
+
+    # Patriot League
+    "Colgate Raiders": "Colgate", "Navy Midshipmen": "Navy",
+    "Army Black Knights": "Army", "Lehigh Mountain Hawks": "Lehigh",
+    "Bucknell Bison": "Bucknell", "Holy Cross Crusaders": "Holy Cross",
+    "Lafayette Leopards": "Lafayette", "Boston University Terriers": "Boston University",
+    "American Eagles": "American", "Loyola Maryland Greyhounds": "Loyola Maryland",
+
+    # CAA (Colonial Athletic)
+    "College of Charleston Cougars": "College of Charleston", "Hofstra Pride": "Hofstra",
+    "Drexel Dragons": "Drexel", "Delaware Blue Hens": "Delaware",
+    "UNCW Seahawks": "UNCW", "Towson Tigers": "Towson",
+    "Northeastern Huskies": "Northeastern", "William & Mary Tribe": "William & Mary",
+    "Monmouth Hawks": "Monmouth", "Stony Brook Seawolves": "Stony Brook",
+    "Campbell Fighting Camels": "Campbell", "Hampton Pirates": "Hampton",
+    "North Carolina A&T Aggies": "North Carolina A&T", "Elon Phoenix": "Elon",
+
+    # Horizon League
+    "Oakland Golden Grizzlies": "Oakland", "Cleveland State Vikings": "Cleveland State",
+    "Wright State Raiders": "Wright State", "Milwaukee Panthers": "Milwaukee",
+    "Youngstown State Penguins": "Youngstown State", "Detroit Mercy Titans": "Detroit Mercy",
+    "Green Bay Phoenix": "Green Bay", "IUPUI Jaguars": "IUPUI",
+    "Purdue Fort Wayne Mastodons": "Purdue Fort Wayne", "Robert Morris Colonials": "Robert Morris",
+
+    # ASUN (Atlantic Sun)
+    "Florida Gulf Coast Eagles": "Florida Gulf Coast", "Bellarmine Knights": "Bellarmine",
+    "Lipscomb Bisons": "Lipscomb", "Stetson Hatters": "Stetson",
+    "Kennesaw State Owls": "Kennesaw State", "North Florida Ospreys": "North Florida",
+    "NJIT Highlanders": "NJIT", "Queens Royals": "Queens",
+    "Austin Peay Governors": "Austin Peay", "Central Arkansas Bears": "Central Arkansas",
+    "Eastern Kentucky Colonels": "Eastern Kentucky",
+
+    # Big West
+    "UC Santa Barbara Gauchos": "UC Santa Barbara", "UC Irvine Anteaters": "UC Irvine",
+    "Hawaii Rainbow Warriors": "Hawaii", "Long Beach State Beach": "Long Beach State",
+    "UC San Diego Tritons": "UC San Diego", "Cal Poly Mustangs": "Cal Poly",
+    "Cal State Fullerton Titans": "Cal State Fullerton", "UC Davis Aggies": "UC Davis",
+    "UC Riverside Highlanders": "UC Riverside", "Cal State Bakersfield Roadrunners": "Cal State Bakersfield",
+    "Cal State Northridge Matadors": "Cal State Northridge",
 }
 
 TEAM_ALIASES = {
