@@ -3437,6 +3437,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # Integrate orphaned esoteric signals: Chrome Resonance, Void Moon, Hurst, Kp-Index
         glitch_adjustment = 0.0
         glitch_reasons = []
+        _game_date_obj = None  # Initialize here so MSRF can use it even if GLITCH try block fails
 
         try:
             from esoteric_engine import get_glitch_aggregate, calculate_chrome_resonance
