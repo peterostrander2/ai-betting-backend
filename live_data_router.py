@@ -2119,10 +2119,12 @@ async def get_injuries(sport: str):
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
     # Check cache first
+    # v17.2: Return dict (not JSONResponse) so internal callers can use .get()
+    # FastAPI auto-serializes dicts for endpoint responses
     cache_key = f"injuries:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
-        return JSONResponse(_sanitize_public(cached))
+        return cached  # Return dict for dual-use compatibility
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
@@ -2143,7 +2145,7 @@ async def get_injuries(sport: str):
                     logger.info("Playbook injuries retrieved for %s: %d records", sport, len(injuries))
                     result = {"sport": sport.upper(), "source": "playbook", "count": len(injuries), "data": injuries, "injuries": injuries}  # injuries alias for frontend
                     api_cache.set(cache_key, result)
-                    return JSONResponse(_sanitize_public(result))
+                    return result  # v17.2: Return dict for dual-use compatibility
                 except ValueError as e:
                     logger.error("Failed to parse Playbook injuries response: %s", e)
 
@@ -2185,7 +2187,7 @@ async def get_injuries(sport: str):
 
     result = {"sport": sport.upper(), "source": "espn" if data else "none", "count": len(data), "data": data, "injuries": data}  # injuries alias for frontend
     api_cache.set(cache_key, result)
-    return JSONResponse(_sanitize_public(result))
+    return result  # v17.2: Return dict for dual-use compatibility
 
 
 @router.get("/lines/{sport}")
@@ -3151,12 +3153,24 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     # Pillar 14: Pace Vector (average of both teams)
                     _pace = PaceVectorService.get_game_pace(sport_upper, home_team, away_team)
 
-                    # Pillar 15: Usage Vacuum from injuries (if available from candidate)
-                    # Note: injuries would need to be passed in - use 0.0 as default
-                    _vacuum = 0.0  # Could be enhanced with injury data lookup
+                    # Pillar 15: Usage Vacuum from injuries
+                    # v17.2: Use _injuries_by_team to calculate vacuum for player's team
+                    _vacuum = 0.0
+                    if _injuries_by_team:
+                        # Get injuries for player's team (teammate injuries = usage opportunity)
+                        team_injuries = _injuries_by_team.get(_player_team, [])
+                        if team_injuries and CONTEXT_LAYER_AVAILABLE:
+                            try:
+                                _vacuum = UsageVacuumService.calculate_vacuum(sport_upper, team_injuries)
+                            except Exception as ve:
+                                logger.debug("Vacuum calculation failed: %s", ve)
+                        # Fallback: count OUT players if service fails
+                        if _vacuum == 0.0 and team_injuries:
+                            out_count = sum(1 for inj in team_injuries if inj.get("status", "").upper() in ["OUT", "DOUBTFUL"])
+                            _vacuum = min(25.0, out_count * 5.0)  # Each OUT player = 5% vacuum, max 25%
 
-                    logger.debug("LSTM context: def_rank=%d, pace=%.1f, vacuum=%.1f (opponent=%s, pos=%s)",
-                                 _def_rank, _pace, _vacuum, opponent, position)
+                    logger.debug("LSTM context: def_rank=%d, pace=%.1f, vacuum=%.1f (opponent=%s, pos=%s, injuries=%d)",
+                                 _def_rank, _pace, _vacuum, opponent, position, len(_injuries_by_team.get(_player_team, [])))
                 except Exception as e:
                     logger.debug(f"Context lookup failed, using defaults: {e}")
 
@@ -3681,14 +3695,17 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         # ===== v17.0 PILLAR 16: OFFICIALS ADJUSTMENT =====
         # Referee/Umpire tendencies can impact totals, spreads, and props
+        # NOTE: Code is ready, but requires a referee data source (Odds API doesn't provide this)
+        # Future enhancement: Integrate ESPN or RapidAPI for referee assignments
         officials_adjustment = 0.0
         officials_reason = None
 
         if sport_upper in ["NBA", "NFL", "MLB", "NHL", "NCAAB"] and CONTEXT_LAYER_AVAILABLE:
             try:
-                # Get officials from candidate data (would need to be passed from outer scope)
-                # For now, we check if these are available in the pick context
-                lead_official = ""  # Would come from odds API or external data
+                # v17.2: DATA DEPENDENCY - Officials data not yet available from our APIs
+                # TODO: Add referee data source (ESPN, RapidAPI, or scraping)
+                # OfficialsService is ready to use once we have: lead_official, official_2, official_3
+                lead_official = ""  # DATA NEEDED: Would come from external referee API
                 official_2 = ""
                 official_3 = ""
 
@@ -4155,9 +4172,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             }
         )
 
-    props_data, game_odds_resp = await asyncio.gather(
+    # v17.2: Add injuries fetch for vacuum calculation (Pillar 15)
+    async def _fetch_injuries():
+        try:
+            return await get_injuries(sport)
+        except Exception as e:
+            logger.debug("Injuries fetch failed: %s", e)
+            return {"data": []}
+
+    props_data, game_odds_resp, injuries_data = await asyncio.gather(
         _fetch_props(),
         _fetch_game_odds(),
+        _fetch_injuries(),
         return_exceptions=True
     )
     # Handle exceptions from gather
@@ -4167,7 +4193,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     if isinstance(game_odds_resp, Exception):
         logger.warning("Game odds fetch failed in parallel: %s", game_odds_resp)
         game_odds_resp = None
+    if isinstance(injuries_data, Exception):
+        logger.debug("Injuries fetch failed in parallel: %s", injuries_data)
+        injuries_data = {"data": []}
     _record("parallel_fetch", _s)
+
+    # v17.2: Build injuries lookup by team for vacuum calculation
+    _injuries_by_team = {}
+    if injuries_data and isinstance(injuries_data, dict):
+        for inj in injuries_data.get("data", injuries_data.get("injuries", [])):
+            team = inj.get("team", "")
+            if team:
+                if team not in _injuries_by_team:
+                    _injuries_by_team[team] = []
+                _injuries_by_team[team].append(inj)
 
     # ============================================
     # APPLY ET DAY GATE to both datasets
@@ -4478,6 +4517,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
 
                             # v16.0: Compute context modifiers for this game pick
+                            # v17.2: Pass injuries data for vacuum calculation
                             _game_ctx_mods = await compute_context_modifiers(
                                 sport=sport.upper(),
                                 home_team=home_team,
@@ -4485,7 +4525,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 player_team="",
                                 pick_type="GAME",
                                 pick_side=pick_side,
-                                injuries_data=None
+                                injuries_data=_injuries_by_team
                             )
 
                             game_picks.append({
@@ -4600,6 +4640,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     start_time_et = ""
 
             # v16.0: Compute context modifiers for sharp fallback picks
+            # v17.2: Pass injuries data for vacuum calculation
             _sharp_ctx_mods = await compute_context_modifiers(
                 sport=sport.upper(),
                 home_team=home_team,
@@ -4607,7 +4648,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 player_team="",
                 pick_type="SHARP",
                 pick_side=signal.get("side", "HOME"),
-                injuries_data=None
+                injuries_data=_injuries_by_team
             )
 
             game_picks.append({
@@ -4842,6 +4883,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
 
                 # v16.0: Compute context modifiers for this prop
+                # v17.2: Pass injuries data for vacuum calculation
                 _ctx_mods = await compute_context_modifiers(
                     sport=sport.upper(),
                     home_team=home_team,
@@ -4849,7 +4891,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     player_team=player_team or "",
                     pick_type="PROP",
                     pick_side=side,
-                    injuries_data=None  # Injury data per-team would be fetched separately
+                    injuries_data=_injuries_by_team
                 )
 
                 props_picks.append({
