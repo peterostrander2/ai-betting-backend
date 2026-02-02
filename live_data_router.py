@@ -3853,9 +3853,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         # ===== v17.0 ENSEMBLE MODEL FOR GAME PICKS =====
         # Use trained ensemble model to predict hit probability for game picks
+        # Game pick types: SPREAD, TOTAL, MONEYLINE, SHARP (not "GAME" - that's the default)
         ensemble_metadata = None
+        _GAME_PICK_TYPES = {"SPREAD", "TOTAL", "MONEYLINE", "SHARP", "GAME"}
 
-        if pick_type == "GAME" and ENSEMBLE_AVAILABLE and ML_INTEGRATION_AVAILABLE:
+        if pick_type in _GAME_PICK_TYPES and ENSEMBLE_AVAILABLE and ML_INTEGRATION_AVAILABLE:
             try:
                 ensemble_ai, ensemble_metadata = get_ensemble_ai_score(
                     ai_score=ai_scaled,
