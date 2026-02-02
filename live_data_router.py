@@ -1172,7 +1172,8 @@ class LiveContractRoute(APIRoute):
             response = await original_handler(request)
             if not isinstance(response, Response):
                 return response
-            if response.media_type != "application/json":
+            media_type = (response.media_type or "").lower()
+            if not media_type.startswith("application/json"):
                 return response
 
             try:
