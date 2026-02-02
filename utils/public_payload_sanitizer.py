@@ -14,6 +14,7 @@ DROP_EXACT = {
     "commence_time",
     "commence_time_iso",
     "game_time",
+    "startTime",
 }
 
 DROP_SUFFIXES = (
