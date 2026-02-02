@@ -4470,15 +4470,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     _odds_reasons.append(f"{key[0][:10]}: ERR {str(result)[:30]}")
                     logger.debug("ESPN odds error for %s: %s", key, result)
                     continue
-                if result and result.get("available"):
+                # Handle case where result is not a dict
+                if not isinstance(result, dict):
+                    _odds_errors += 1
+                    _odds_reasons.append(f"{key[0][:10]}: BADTYPE {type(result).__name__}={str(result)[:20]}")
+                    continue
+                if result.get("available"):
                     _espn_odds_by_game[key] = result
                     _odds_reasons.append(f"{key[0][:10]}: OK spread={result.get('spread')}")
                 else:
                     _odds_unavailable += 1
-                    reason = result.get("reason") if result else "None"
-                    error = result.get("error") if result else None
+                    reason = result.get("reason", "")
+                    error = result.get("error", "")
                     _odds_reasons.append(f"{key[0][:10]}: {reason or error or 'unknown'}")
-                    logger.debug("ESPN odds unavailable for %s: %s", key, result.get("reason") if result else "None")
+                    logger.debug("ESPN odds unavailable for %s: %s", key, reason or error)
             logger.info("ESPN ODDS BATCH: success=%d, errors=%d, unavailable=%d",
                        len(_espn_odds_by_game), _odds_errors, _odds_unavailable)
 
