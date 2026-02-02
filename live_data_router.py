@@ -4199,14 +4199,34 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _record("parallel_fetch", _s)
 
     # v17.2: Build injuries lookup by team for vacuum calculation
+    # Handles both Playbook format (team objects with players array) and ESPN format (flat list)
     _injuries_by_team = {}
     if injuries_data and isinstance(injuries_data, dict):
-        for inj in injuries_data.get("data", injuries_data.get("injuries", [])):
-            team = inj.get("team", "")
-            if team:
-                if team not in _injuries_by_team:
-                    _injuries_by_team[team] = []
-                _injuries_by_team[team].append(inj)
+        for item in injuries_data.get("data", injuries_data.get("injuries", [])):
+            # Check if Playbook format (has 'players' array)
+            if "players" in item and isinstance(item.get("players"), list):
+                team_name = item.get("teamName", item.get("team", ""))
+                if team_name:
+                    if team_name not in _injuries_by_team:
+                        _injuries_by_team[team_name] = []
+                    for player in item["players"]:
+                        # Normalize player injury to common format
+                        _injuries_by_team[team_name].append({
+                            "team": team_name,
+                            "player": player.get("name", ""),
+                            "status": player.get("status", ""),
+                            "position": player.get("position", ""),
+                            "reason": player.get("reason", "")
+                        })
+            else:
+                # ESPN format (flat list with team field per injury)
+                team = item.get("team", "")
+                if team:
+                    if team not in _injuries_by_team:
+                        _injuries_by_team[team] = []
+                    _injuries_by_team[team].append(item)
+
+    logger.info("INJURIES LOOKUP: %d teams with injuries loaded", len(_injuries_by_team))
 
     # ============================================
     # APPLY ET DAY GATE to both datasets
