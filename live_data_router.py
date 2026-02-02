@@ -51,6 +51,20 @@ except Exception as e:
     PICK_CONTRACT_AVAILABLE = False
     logger.warning("pick_normalizer not available: %s", e)
 
+# Public payload sanitizer (ET-only + remove telemetry/UTC)
+try:
+    from utils.public_payload_sanitizer import sanitize_public_payload
+    PUBLIC_SANITIZER_AVAILABLE = True
+except Exception as e:
+    PUBLIC_SANITIZER_AVAILABLE = False
+    logger.warning("public_payload_sanitizer not available: %s", e)
+
+
+def _sanitize_public(payload: dict) -> dict:
+    if PUBLIC_SANITIZER_AVAILABLE:
+        return sanitize_public_payload(payload)
+    return payload
+
 # Import grader_store - SINGLE SOURCE OF TRUTH for persistence
 try:
     import grader_store
@@ -1730,7 +1744,7 @@ async def get_sharp_money(sport: str):
     cache_key = f"sharp:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
-        return cached
+        return JSONResponse(_sanitize_public(cached))
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
@@ -1854,7 +1868,7 @@ async def get_sharp_money(sport: str):
                         logger.info("Playbook sharp signals derived for %s: %d signals", sport, len(data))
                         result = {"sport": sport.upper(), "source": "playbook+odds_api", "count": len(data), "data": data, "movements": data}
                         api_cache.set(cache_key, result)
-                        return result
+                        return JSONResponse(_sanitize_public(result))
                 except ValueError as e:
                     logger.error("Failed to parse Playbook response: %s", e)
 
@@ -1880,7 +1894,7 @@ async def get_sharp_money(sport: str):
             data = generate_fallback_sharp(sport_lower)
             result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
             api_cache.set(cache_key, result)
-            return result
+            return JSONResponse(_sanitize_public(result))
 
         if resp.status_code == 429:
             raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
@@ -1893,7 +1907,7 @@ async def get_sharp_money(sport: str):
             data = generate_fallback_sharp(sport_lower)
             result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
             api_cache.set(cache_key, result)
-            return result
+            return JSONResponse(_sanitize_public(result))
 
         for game in games:
             spreads = []
@@ -1937,11 +1951,11 @@ async def get_sharp_money(sport: str):
         data = generate_fallback_sharp(sport_lower)
         result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
         api_cache.set(cache_key, result)
-        return result
+        return JSONResponse(_sanitize_public(result))
 
     result = {"sport": sport.upper(), "source": "odds_api", "count": len(data), "data": data, "movements": data}  # movements alias for frontend
     api_cache.set(cache_key, result)
-    return result
+    return JSONResponse(_sanitize_public(result))
 
 
 @router.get("/splits/{sport}")
@@ -1965,7 +1979,7 @@ async def get_splits(sport: str):
     cache_key = f"splits:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
-        return cached
+        return JSONResponse(_sanitize_public(cached))
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
@@ -1987,7 +2001,7 @@ async def get_splits(sport: str):
                     logger.info("Playbook splits data retrieved for %s: %d games", sport, len(games))
                     result = {"sport": sport.upper(), "source": "playbook", "count": len(games), "data": games}
                     api_cache.set(cache_key, result)
-                    return result
+                    return JSONResponse(_sanitize_public(result))
                 except ValueError as e:
                     logger.error("Failed to parse Playbook splits response: %s", e)
 
@@ -2053,7 +2067,7 @@ async def get_splits(sport: str):
 
     result = {"sport": sport.upper(), "source": "estimated", "count": len(data), "data": data}
     api_cache.set(cache_key, result)
-    return result
+    return JSONResponse(_sanitize_public(result))
 
 
 @router.get("/injuries/{sport}")
@@ -2077,7 +2091,7 @@ async def get_injuries(sport: str):
     cache_key = f"injuries:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
-        return cached
+        return JSONResponse(_sanitize_public(cached))
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
@@ -2098,7 +2112,7 @@ async def get_injuries(sport: str):
                     logger.info("Playbook injuries retrieved for %s: %d records", sport, len(injuries))
                     result = {"sport": sport.upper(), "source": "playbook", "count": len(injuries), "data": injuries, "injuries": injuries}  # injuries alias for frontend
                     api_cache.set(cache_key, result)
-                    return result
+                    return JSONResponse(_sanitize_public(result))
                 except ValueError as e:
                     logger.error("Failed to parse Playbook injuries response: %s", e)
 
@@ -2140,7 +2154,7 @@ async def get_injuries(sport: str):
 
     result = {"sport": sport.upper(), "source": "espn" if data else "none", "count": len(data), "data": data, "injuries": data}  # injuries alias for frontend
     api_cache.set(cache_key, result)
-    return result
+    return JSONResponse(_sanitize_public(result))
 
 
 @router.get("/lines/{sport}")
@@ -2164,7 +2178,7 @@ async def get_lines(sport: str):
     cache_key = f"lines:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
-        return cached
+        return JSONResponse(_sanitize_public(cached))
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
@@ -2185,7 +2199,7 @@ async def get_lines(sport: str):
                     logger.info("Playbook lines retrieved for %s: %d games", sport, len(lines))
                     result = {"sport": sport.upper(), "source": "playbook", "count": len(lines), "data": lines}
                     api_cache.set(cache_key, result)
-                    return result
+                    return JSONResponse(_sanitize_public(result))
                 except ValueError as e:
                     logger.error("Failed to parse Playbook lines response: %s", e)
 
@@ -2255,7 +2269,7 @@ async def get_lines(sport: str):
 
     result = {"sport": sport.upper(), "source": "odds_api" if data else "none", "count": len(data), "data": data}
     api_cache.set(cache_key, result)
-    return result
+    return JSONResponse(_sanitize_public(result))
 
 
 @router.get("/props/{sport}")
@@ -2273,8 +2287,8 @@ async def get_props(sport: str):
     """
     sport_lower = sport.lower()
     if sport_lower == "ncaab":
-        return {"sport": "NCAAB", "source": "disabled", "count": 0, "data": [],
-                "note": "NCAAB player props disabled — state legality varies"}
+        return JSONResponse(_sanitize_public({"sport": "NCAAB", "source": "disabled", "count": 0, "data": [],
+                "note": "NCAAB player props disabled — state legality varies"}))
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
@@ -2282,7 +2296,7 @@ async def get_props(sport: str):
     cache_key = f"props:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
-        return cached
+        return JSONResponse(_sanitize_public(cached))
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
@@ -2413,7 +2427,7 @@ async def get_props(sport: str):
 
     result = {"sport": sport.upper(), "source": "odds_api" if data else "generated", "count": len(data), "data": data}
     api_cache.set(cache_key, result)
-    return result
+    return JSONResponse(_sanitize_public(result))
 
 
 @router.get("/best-bets/{sport}")
@@ -2460,7 +2474,7 @@ async def get_best_bets(
         cache_key = f"best-bets:{sport_lower}" + (":live" if live_mode else "")
         cached = api_cache.get(cache_key)
         if cached:
-            return cached
+            return JSONResponse(_sanitize_public(cached))
     else:
         cache_key = None  # Don't cache debug responses
 
@@ -2483,7 +2497,9 @@ async def get_best_bets(
         )
         logger.info("best-bets %s completed in %.1fs (request_id=%s, debug=%s, min=%.1f)",
                      sport, time.time() - _start, request_id, debug_mode, effective_min_score)
-        return result
+        if debug_mode:
+            return result
+        return JSONResponse(_sanitize_public(result))
     except HTTPException:
         raise
     except Exception as e:
@@ -7726,7 +7742,7 @@ async def get_logged_picks_today(sport: Optional[str] = None):
 
     try:
         picks = get_today_picks(sport)
-        return {
+        payload = {
             "date": datetime.now().strftime("%Y-%m-%d"),
             "sport": sport.upper() if sport else "ALL",
             "count": len(picks),
@@ -7748,6 +7764,7 @@ async def get_logged_picks_today(sport: Optional[str] = None):
             ],
             "timestamp": datetime.now().isoformat()
         }
+        return JSONResponse(_sanitize_public(payload))
     except Exception as e:
         logger.exception("Failed to get today's picks: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -8720,7 +8737,7 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
     cache_key = f"line-shop:{sport_lower}:{game_id or 'all'}"
     cached = api_cache.get(cache_key)
     if cached:
-        return cached
+        return JSONResponse(_sanitize_public(cached))
 
     sport_config = SPORT_MAPPINGS[sport_lower]
 
@@ -8751,7 +8768,7 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
                 "timestamp": datetime.now().isoformat()
             }
             api_cache.set(cache_key, result, ttl=120)
-            return result
+            return JSONResponse(_sanitize_public(result))
 
         games = resp.json()
         line_shop_data = []
@@ -8836,7 +8853,7 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
         }
 
         api_cache.set(cache_key, result, ttl=120)  # 2 min cache for line shopping
-        return result
+        return JSONResponse(_sanitize_public(result))
 
     except HTTPException:
         raise
@@ -8853,7 +8870,7 @@ async def get_line_shopping(sport: str, game_id: Optional[str] = None):
             "timestamp": datetime.now().isoformat()
         }
         api_cache.set(cache_key, result, ttl=120)
-        return result
+        return JSONResponse(_sanitize_public(result))
 
 
 @router.get("/betslip/generate")
