@@ -940,6 +940,472 @@ The **Silent Spike** is our most valuable untapped signal:
 
 ---
 
+#### COMPREHENSIVE SERPAPI INTEGRATION (ALL SPORTS, ALL ENGINES)
+
+Since SerpAPI is our primary paid intelligence API ($75/month), we maximize its value by integrating it across ALL 5 sports and ALL 5 scoring engines.
+
+##### Sport-Specific Search Patterns
+
+| Sport | Key Searches | Signals Extracted |
+|-------|-------------|-------------------|
+| **NBA** | `"{team} injury report"`, `"{player} load management"`, `"{team} back to back"` | Rest patterns, injury status, fatigue |
+| **NFL** | `"{team} inactive list"`, `"{team} weather"`, `"{player} practice report"` | Gameday inactives, weather impact, injury |
+| **MLB** | `"{team} starting pitcher"`, `"{team} lineup"`, `"{team} bullpen"` | SP matchup, lineup changes, bullpen usage |
+| **NHL** | `"{team} starting goalie"`, `"{player} scratched"`, `"{team} back to back"` | Goalie confirmation, healthy scratches |
+| **NCAAB** | `"{team} tournament"`, `"{team} upset"`, `"{team} bracket"` | Tournament narratives, upset potential |
+
+##### Implementation - Sport-Specific Intelligence
+
+```python
+SPORT_SEARCH_CONFIG = {
+    "NBA": {
+        "injury_query": '"{team}" injury report OR questionable OR doubtful',
+        "situational_query": '"{team}" back to back OR rest OR load management',
+        "player_query": '"{player}" minutes OR usage OR hot streak',
+        "narrative_query": '"{team}" revenge OR rivalry OR playoff',
+    },
+    "NFL": {
+        "injury_query": '"{team}" injury report wednesday OR inactive',
+        "situational_query": '"{team}" weather forecast OR wind OR cold',
+        "player_query": '"{player}" practice report OR limited OR DNP',
+        "narrative_query": '"{team}" revenge game OR primetime OR division',
+    },
+    "MLB": {
+        "injury_query": '"{team}" injured list OR IL OR day-to-day',
+        "situational_query": '"{team}" starting pitcher OR bullpen tired',
+        "player_query": '"{player}" hot streak OR slump OR batting average',
+        "narrative_query": '"{team}" playoff race OR wild card OR rivalry',
+    },
+    "NHL": {
+        "injury_query": '"{team}" injury OR IR OR day-to-day',
+        "situational_query": '"{team}" starting goalie confirmed OR back to back',
+        "player_query": '"{player}" scratched OR lineup OR healthy scratch',
+        "narrative_query": '"{team}" playoff OR standings OR rivalry',
+    },
+    "NCAAB": {
+        "injury_query": '"{team}" injury OR out OR questionable',
+        "situational_query": '"{team}" tournament OR bubble OR seed',
+        "player_query": '"{player}" draft OR transfer OR minutes',
+        "narrative_query": '"{team}" upset OR underdog OR cinderella',
+    }
+}
+
+async def get_sport_specific_intelligence(team: str, sport: str, player: str = None) -> dict:
+    """
+    Get sport-specific intelligence from SerpAPI.
+    Each sport has tailored search patterns for maximum signal extraction.
+    """
+    config = SPORT_SEARCH_CONFIG.get(sport, SPORT_SEARCH_CONFIG["NBA"])
+    signals = {"sport": sport, "team": team}
+
+    async with httpx.AsyncClient() as client:
+        # 1. Injury Intelligence
+        injury_q = config["injury_query"].format(team=team)
+        injury_results = await _serp_search(client, injury_q, news=True)
+        signals["injury_articles"] = len(injury_results)
+        signals["injury_headlines"] = [r.get("title", "") for r in injury_results[:3]]
+
+        # Parse injury severity from headlines
+        injury_keywords = {
+            "out": 3, "ruled out": 3, "miss": 3,
+            "doubtful": 2, "questionable": 1, "probable": 0,
+            "day-to-day": 1, "IL": 3, "IR": 3
+        }
+        signals["injury_severity"] = 0
+        for headline in signals["injury_headlines"]:
+            for kw, severity in injury_keywords.items():
+                if kw.lower() in headline.lower():
+                    signals["injury_severity"] = max(signals["injury_severity"], severity)
+
+        # 2. Situational Factors
+        sit_q = config["situational_query"].format(team=team)
+        sit_results = await _serp_search(client, sit_q, news=True)
+        signals["situational_factors"] = _extract_situational(sit_results, sport)
+
+        # 3. Player-Specific (if provided)
+        if player:
+            player_q = config["player_query"].format(player=player)
+            player_results = await _serp_search(client, player_q, news=True)
+            signals["player_buzz"] = len(player_results)
+            signals["player_sentiment"] = _analyze_sentiment(player_results)
+
+        # 4. Narrative Signals
+        narr_q = config["narrative_query"].format(team=team)
+        narr_results = await _serp_search(client, narr_q, news=True)
+        signals["narrative_signals"] = _extract_narratives(narr_results, sport)
+
+    return signals
+
+
+def _extract_situational(results: list, sport: str) -> dict:
+    """Extract situational factors from search results."""
+    factors = {}
+    text = " ".join([r.get("snippet", "") for r in results]).lower()
+
+    if sport == "NBA":
+        factors["back_to_back"] = "back to back" in text or "b2b" in text
+        factors["rest_advantage"] = "rest" in text and "advantage" in text
+        factors["load_management"] = "load management" in text or "rest" in text
+
+    elif sport == "NFL":
+        factors["weather_concern"] = any(w in text for w in ["wind", "rain", "snow", "cold", "weather"])
+        factors["primetime"] = any(w in text for w in ["sunday night", "monday night", "thursday night"])
+        factors["divisional"] = "division" in text
+
+    elif sport == "MLB":
+        factors["bullpen_tired"] = "bullpen" in text and any(w in text for w in ["tired", "taxed", "overworked"])
+        factors["ace_pitching"] = any(w in text for w in ["ace", "cy young", "dominant"])
+        factors["day_game_after_night"] = "day game" in text
+
+    elif sport == "NHL":
+        factors["goalie_confirmed"] = "starting" in text and "goalie" in text
+        factors["back_to_back"] = "back to back" in text
+        factors["backup_goalie"] = "backup" in text
+
+    elif sport == "NCAAB":
+        factors["tournament_pressure"] = any(w in text for w in ["tournament", "march", "bracket"])
+        factors["upset_narrative"] = "upset" in text or "underdog" in text
+        factors["rivalry_game"] = "rivalry" in text
+
+    return factors
+
+
+def _extract_narratives(results: list, sport: str) -> list:
+    """Extract narrative signals that could affect game outcome."""
+    narratives = []
+    text = " ".join([r.get("snippet", "") + " " + r.get("title", "") for r in results]).lower()
+
+    # Universal narratives
+    if "revenge" in text:
+        narratives.append({"type": "REVENGE", "boost": 0.25})
+    if "rivalry" in text:
+        narratives.append({"type": "RIVALRY", "boost": 0.15})
+    if "playoff" in text and ("clinch" in text or "elimination" in text):
+        narratives.append({"type": "PLAYOFF_IMPLICATIONS", "boost": 0.30})
+    if "streak" in text:
+        if "win" in text or "winning" in text:
+            narratives.append({"type": "HOT_STREAK", "boost": 0.20})
+        elif "lose" in text or "losing" in text:
+            narratives.append({"type": "COLD_STREAK", "boost": -0.15})
+
+    return narratives
+```
+
+##### Engine Integration Matrix
+
+SerpAPI data flows into ALL 5 scoring engines:
+
+| Engine | SerpAPI Signal | How It's Used | Boost Range |
+|--------|---------------|---------------|-------------|
+| **AI (15%)** | Silent Spike, Injury Intel | Adjusts LSTM confidence | ±0.5 |
+| **Research (20%)** | Sharp Chatter, RLM, Public Fade | Validates Playbook splits | ±0.5 |
+| **Esoteric (15%)** | Noosphere, Search Velocity | Hive mind / collective consciousness | ±0.3 |
+| **Jarvis (10%)** | Narrative Signals | Revenge, rivalry confirmation | ±0.25 |
+| **Context (30%)** | Situational Factors | B2B, weather, rest patterns | ±0.4 |
+
+##### Master Integration Function
+
+```python
+async def get_complete_serp_intelligence(
+    team: str,
+    opponent: str,
+    sport: str,
+    player: str = None,
+    playbook_splits: dict = None
+) -> dict:
+    """
+    Master function that extracts ALL SerpAPI signals for a pick.
+    Called once per game, results cached for 60 minutes.
+
+    Returns boosts for each engine:
+    - ai_boost: Silent spike, injury intel
+    - research_boost: Sharp confirmation, fade signals
+    - esoteric_boost: Noosphere, search velocity
+    - jarvis_boost: Narrative signals
+    - context_boost: Situational factors
+    """
+
+    result = {
+        "ai_boost": 0, "ai_reasons": [],
+        "research_boost": 0, "research_reasons": [],
+        "esoteric_boost": 0, "esoteric_reasons": [],
+        "jarvis_boost": 0, "jarvis_reasons": [],
+        "context_boost": 0, "context_reasons": [],
+        "total_serp_boost": 0,
+        "signals_fired": [],
+        "searches_used": 0
+    }
+
+    # 1. Base team intelligence (noosphere, silent spike, news)
+    team_intel = await get_full_serp_intelligence(team, player)
+    result["searches_used"] += 2  # trends + news
+
+    # 2. Sport-specific intelligence
+    sport_intel = await get_sport_specific_intelligence(team, sport, player)
+    result["searches_used"] += 3  # injury, situational, narrative
+
+    # 3. Betting intelligence (sharp money, RLM)
+    betting_intel = await get_betting_intelligence(team, opponent)
+    result["searches_used"] += 3  # sharp, rlm, public
+
+    # === AI ENGINE BOOST ===
+    if team_intel.get("silent_spike"):
+        boost = 0.5 if team_intel["silent_spike_confidence"] == "HIGH" else 0.25
+        result["ai_boost"] += boost
+        result["ai_reasons"].append(f"🔇 SILENT SPIKE: {team_intel['silent_spike_insight']}")
+        result["signals_fired"].append("SILENT_SPIKE")
+
+    if sport_intel.get("injury_severity", 0) >= 2:
+        result["ai_boost"] += 0.3
+        result["ai_reasons"].append(f"🏥 INJURY INTEL: Key player injury news detected")
+        result["signals_fired"].append("INJURY_INTEL")
+
+    # === RESEARCH ENGINE BOOST ===
+    if betting_intel.get("sharp_chatter_detected"):
+        result["research_boost"] += 0.4
+        result["research_reasons"].append(f"🦈 SHARP CHATTER: {betting_intel['insights'][0]}")
+        result["signals_fired"].append("SHARP_CHATTER")
+
+    if betting_intel.get("rlm_discussion"):
+        result["research_boost"] += 0.25
+        result["research_reasons"].append("📈 RLM DISCUSSION: Line movement chatter detected")
+        result["signals_fired"].append("RLM_DISCUSSION")
+
+    if betting_intel.get("public_heavy"):
+        result["research_boost"] += 0.15
+        result["research_reasons"].append("📢 FADE SIGNAL: Heavy public detected")
+        result["signals_fired"].append("PUBLIC_FADE")
+
+    # Cross-validate with Playbook if available
+    if playbook_splits:
+        confirmation = await get_sharp_confirmation(team, playbook_splits.get("sharp_signal", "NONE"))
+        if confirmation.get("serp_confirms"):
+            result["research_boost"] += confirmation["confidence_boost"]
+            result["research_reasons"].append(f"✅ CONFIRMED: {confirmation['reason']}")
+            result["signals_fired"].append("SHARP_CONFIRMED")
+
+    # === ESOTERIC ENGINE BOOST ===
+    if team_intel.get("spike_detected"):
+        result["esoteric_boost"] += 0.25
+        result["esoteric_reasons"].append(f"🌐 NOOSPHERE: Search velocity spike {team_intel['search_velocity']:.0%}")
+        result["signals_fired"].append("NOOSPHERE_SPIKE")
+
+    if team_intel.get("search_momentum", 0) > 0.3:
+        result["esoteric_boost"] += 0.15
+        result["esoteric_reasons"].append("📊 TREND MOMENTUM: Rising search interest")
+        result["signals_fired"].append("TREND_MOMENTUM")
+
+    if team_intel.get("injury_buzz") or team_intel.get("trade_buzz"):
+        buzz_type = "injury" if team_intel.get("injury_buzz") else "trade"
+        result["esoteric_boost"] += 0.2
+        result["esoteric_reasons"].append(f"🔍 RELATED QUERIES: {buzz_type} searches trending")
+        result["signals_fired"].append("RELATED_QUERIES")
+
+    # === JARVIS ENGINE BOOST ===
+    for narrative in sport_intel.get("narrative_signals", []):
+        result["jarvis_boost"] += narrative["boost"]
+        result["jarvis_reasons"].append(f"📖 NARRATIVE: {narrative['type']} detected")
+        result["signals_fired"].append(f"NARRATIVE_{narrative['type']}")
+
+    # === CONTEXT ENGINE BOOST ===
+    sit_factors = sport_intel.get("situational_factors", {})
+
+    if sit_factors.get("back_to_back"):
+        result["context_boost"] -= 0.3  # Negative for tired team
+        result["context_reasons"].append("😴 B2B: Back-to-back game detected")
+        result["signals_fired"].append("BACK_TO_BACK")
+
+    if sit_factors.get("rest_advantage"):
+        result["context_boost"] += 0.25
+        result["context_reasons"].append("💪 REST: Rest advantage confirmed")
+        result["signals_fired"].append("REST_ADVANTAGE")
+
+    if sit_factors.get("weather_concern"):
+        result["context_boost"] += 0.2  # Context for under bets
+        result["context_reasons"].append("🌧️ WEATHER: Weather impact likely")
+        result["signals_fired"].append("WEATHER_CONCERN")
+
+    if sit_factors.get("primetime"):
+        result["context_boost"] += 0.15
+        result["context_reasons"].append("🌟 PRIMETIME: National TV game")
+        result["signals_fired"].append("PRIMETIME")
+
+    if sit_factors.get("bullpen_tired"):
+        result["context_boost"] += 0.3
+        result["context_reasons"].append("⚾ BULLPEN: Overworked bullpen")
+        result["signals_fired"].append("BULLPEN_TIRED")
+
+    if sit_factors.get("goalie_confirmed"):
+        result["context_boost"] += 0.2
+        result["context_reasons"].append("🥅 GOALIE: Starter confirmed")
+        result["signals_fired"].append("GOALIE_CONFIRMED")
+
+    # Calculate totals
+    result["total_serp_boost"] = (
+        result["ai_boost"] +
+        result["research_boost"] +
+        result["esoteric_boost"] +
+        result["jarvis_boost"] +
+        result["context_boost"]
+    )
+
+    return result
+```
+
+##### Player Props Enhancement
+
+For player props, SerpAPI provides additional value:
+
+```python
+async def get_player_prop_intelligence(player: str, prop_type: str, sport: str) -> dict:
+    """
+    Specific intelligence for player props.
+
+    Args:
+        player: Player name
+        prop_type: "points", "assists", "rebounds", "passing_yards", etc.
+        sport: Sport code
+
+    Returns:
+        Dict with prop-specific signals
+    """
+    signals = {"player": player, "prop_type": prop_type}
+
+    async with httpx.AsyncClient() as client:
+        # 1. Recent performance search
+        perf_query = f'"{player}" {prop_type} OR stats OR performance'
+        perf_results = await _serp_search(client, perf_query, news=True)
+
+        hot_keywords = ["hot", "streak", "career", "record", "dominant", "explosion"]
+        cold_keywords = ["cold", "slump", "struggling", "quiet", "limited"]
+
+        text = " ".join([r.get("snippet", "") for r in perf_results]).lower()
+
+        signals["hot_streak"] = any(kw in text for kw in hot_keywords)
+        signals["cold_streak"] = any(kw in text for kw in cold_keywords)
+
+        # 2. Matchup-specific search
+        matchup_query = f'"{player}" matchup OR defense OR coverage'
+        matchup_results = await _serp_search(client, matchup_query, news=True)
+        signals["matchup_articles"] = len(matchup_results)
+
+        # 3. Usage/minutes search
+        usage_query = f'"{player}" minutes OR usage OR touches OR targets'
+        usage_results = await _serp_search(client, usage_query, news=True)
+
+        usage_keywords = ["increased", "more", "higher", "expanded"]
+        reduced_keywords = ["reduced", "less", "limited", "restricted"]
+
+        usage_text = " ".join([r.get("snippet", "") for r in usage_results]).lower()
+        signals["usage_trending_up"] = any(kw in usage_text for kw in usage_keywords)
+        signals["usage_trending_down"] = any(kw in usage_text for kw in reduced_keywords)
+
+    # Calculate prop boost
+    prop_boost = 0
+    reasons = []
+
+    if signals["hot_streak"]:
+        prop_boost += 0.3
+        reasons.append(f"🔥 HOT: {player} on a hot streak")
+    if signals["cold_streak"]:
+        prop_boost -= 0.25
+        reasons.append(f"❄️ COLD: {player} in a slump")
+    if signals["usage_trending_up"]:
+        prop_boost += 0.2
+        reasons.append(f"📈 USAGE UP: Increased role for {player}")
+    if signals["usage_trending_down"]:
+        prop_boost -= 0.2
+        reasons.append(f"📉 USAGE DOWN: Reduced role for {player}")
+
+    signals["prop_boost"] = prop_boost
+    signals["prop_reasons"] = reasons
+
+    return signals
+```
+
+##### Caching Strategy
+
+```python
+from functools import lru_cache
+from datetime import datetime, timedelta
+
+# Cache SerpAPI results aggressively to stay within budget
+SERP_CACHE = {}
+CACHE_TTL = timedelta(hours=1)
+
+async def _serp_search(client, query: str, news: bool = False) -> list:
+    """Cached SerpAPI search with TTL."""
+    cache_key = f"{query}:{news}"
+
+    if cache_key in SERP_CACHE:
+        cached_time, cached_data = SERP_CACHE[cache_key]
+        if datetime.now() - cached_time < CACHE_TTL:
+            return cached_data  # Return cached, don't count against quota
+
+    # Make actual API call
+    params = {
+        "q": query,
+        "api_key": SERPAPI_KEY,
+        "num": 10,
+        "tbs": "qdr:d"  # Last 24 hours
+    }
+    if news:
+        params["tbm"] = "nws"
+
+    response = await client.get("https://serpapi.com/search", params=params)
+    data = response.json()
+
+    results = data.get("news_results" if news else "organic_results", [])
+
+    # Cache the results
+    SERP_CACHE[cache_key] = (datetime.now(), results)
+
+    return results
+```
+
+##### Budget Tracking
+
+```python
+_daily_serp_usage = {"date": None, "count": 0, "by_type": {}}
+
+def track_serp_usage(search_type: str):
+    """Track SerpAPI usage for budget monitoring."""
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    if _daily_serp_usage["date"] != today:
+        _daily_serp_usage["date"] = today
+        _daily_serp_usage["count"] = 0
+        _daily_serp_usage["by_type"] = {}
+
+    _daily_serp_usage["count"] += 1
+    _daily_serp_usage["by_type"][search_type] = _daily_serp_usage["by_type"].get(search_type, 0) + 1
+
+def get_serp_usage_report() -> dict:
+    """Get current SerpAPI usage stats."""
+    return {
+        "date": _daily_serp_usage["date"],
+        "searches_today": _daily_serp_usage["count"],
+        "daily_limit": 166,
+        "remaining": 166 - _daily_serp_usage["count"],
+        "by_type": _daily_serp_usage["by_type"],
+        "budget_status": "OK" if _daily_serp_usage["count"] < 150 else "WARNING" if _daily_serp_usage["count"] < 166 else "EXCEEDED"
+    }
+```
+
+##### Signal Summary by Engine
+
+| Engine | SerpAPI Signals | Max Boost | When It Fires |
+|--------|----------------|-----------|---------------|
+| **AI** | Silent Spike, Injury Intel | +0.8 | Insider activity or injury news |
+| **Research** | Sharp Chatter, RLM, Public Fade, Confirmation | +1.3 | Betting-related searches confirm |
+| **Esoteric** | Noosphere, Momentum, Related Queries | +0.6 | Search trends align with pick |
+| **Jarvis** | Narratives (Revenge, Rivalry, Playoff) | +0.7 | Motivational factors present |
+| **Context** | B2B, Rest, Weather, Primetime, Bullpen, Goalie | +0.9/-0.3 | Situational factors detected |
+
+**Maximum Total SerpAPI Boost: +4.3 points** (when all signals fire)
+
+---
+
 ### 7. Twitter API - FREE TIER MINIMAL USAGE
 
 **Status:** Configured - MINIMAL USE (budget constraint)
