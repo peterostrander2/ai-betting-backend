@@ -3564,6 +3564,34 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             logger.info("HARMONIC_CONVERGENCE: Research=%.1f, Esoteric=%.1f, boost=+%.1f",
                         research_score, esoteric_score, harmonic_boost)
 
+        # ===== v17.2 MSRF RESONANCE BOOST =====
+        # Mathematical Sequence Resonance Framework: turn date detection using Pi, Phi, sacred numbers
+        # Adds confluence boost when game date aligns with mathematically significant projections
+        msrf_boost = 0.0
+        msrf_metadata = {"source": "not_run"}
+        try:
+            from signals.msrf_resonance import get_msrf_confluence_boost, MSRF_ENABLED
+            if MSRF_ENABLED:
+                msrf_boost, msrf_metadata = get_msrf_confluence_boost(
+                    game_date=game_date,
+                    player_name=player_name,
+                    home_team=home_team,
+                    away_team=away_team,
+                    sport=sport_upper
+                )
+                if msrf_boost > 0:
+                    confluence["boost"] = confluence.get("boost", 0) + msrf_boost
+                    confluence["msrf_level"] = msrf_metadata.get("level", "UNKNOWN")
+                    esoteric_reasons.append(f"MSRF: {msrf_metadata.get('level', 'RESONANCE')} (+{msrf_boost:.2f})")
+                    logger.info("MSRF[%s vs %s]: %s, boost=+%.2f, points=%.1f",
+                                home_team or "?", away_team or "?",
+                                msrf_metadata.get("level", "?"),
+                                msrf_boost, msrf_metadata.get("points", 0))
+        except ImportError:
+            logger.debug("MSRF module not available")
+        except Exception as e:
+            logger.warning("MSRF calculation failed: %s", e)
+
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
 
@@ -4043,6 +4071,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             },
             # v17.0 Harmonic Convergence
             "harmonic_boost": harmonic_boost,
+            # v17.2 MSRF Resonance
+            "msrf_boost": msrf_boost,
+            "msrf_metadata": msrf_metadata,
             # v17.0 Ensemble Model (for GAME picks)
             "ensemble_metadata": ensemble_metadata
         }

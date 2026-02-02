@@ -1,7 +1,7 @@
 """
 SIGNALS MODULE - Centralized Signal Calculations
 =================================================
-v15.0 - Single-calculation policy for signals
+v15.1 - Single-calculation policy for signals + MSRF resonance
 
 This module provides centralized signal calculations to prevent
 double-counting across engines.
@@ -12,6 +12,7 @@ Modules:
 - hive_mind: Noosphere, Void Moon, Linguistic Divergence, Founder's Echo
 - market: RLM, Teammate Void, Correlation Matrix, Steam Move
 - math_glitch: Benford Anomaly, Golden Ratio, Prime Resonance, Numerical Symmetry
+- msrf_resonance: Mathematical Sequence Resonance Framework (turn date detection)
 
 ALL SIGNAL MODULES RETURN:
 - score: float (0-1 normalized)
@@ -71,6 +72,17 @@ from .math_glitch import (
     MATH_GLITCH_ENABLED,
 )
 
+# MSRF - Mathematical Sequence Resonance Framework (Confluence Boost)
+from .msrf_resonance import (
+    calculate_msrf_resonance,
+    get_msrf_confluence_boost,
+    get_significant_dates,
+    MSRF_ENABLED,
+    MSRF_NORMAL,
+    MSRF_IMPORTANT,
+    MSRF_VORTEX,
+)
+
 __all__ = [
     # Public Fade
     "calculate_public_fade",
@@ -113,4 +125,13 @@ __all__ = [
     "PHI",
     "PRIMES_TO_100",
     "MATH_GLITCH_ENABLED",
+
+    # MSRF
+    "calculate_msrf_resonance",
+    "get_msrf_confluence_boost",
+    "get_significant_dates",
+    "MSRF_ENABLED",
+    "MSRF_NORMAL",
+    "MSRF_IMPORTANT",
+    "MSRF_VORTEX",
 ]
