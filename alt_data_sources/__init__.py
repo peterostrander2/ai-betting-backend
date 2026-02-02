@@ -57,11 +57,24 @@ except ImportError:
 
 try:
     from .espn_lineups import (
+        # Core functions
         get_lineups_for_game,
         get_referee_impact,
         get_todays_games,
         get_game_details,
-        get_espn_status
+        get_espn_status,
+        get_espn_scoreboard,
+        get_espn_event_id,
+        get_officials_for_event,
+        get_officials_for_game,
+        get_officials_sync,
+        # Expanded data extraction
+        get_espn_odds,
+        get_espn_injuries,
+        get_espn_player_stats,
+        get_espn_venue_info,
+        get_game_summary_enriched,
+        get_all_games_enriched,
     )
     ESPN_AVAILABLE = True
 except ImportError:
@@ -81,6 +94,39 @@ except ImportError:
 
     def get_espn_status():
         return {"configured": False}
+
+    def get_espn_scoreboard(*args, **kwargs):
+        return {"events": []}
+
+    def get_espn_event_id(*args, **kwargs):
+        return None
+
+    def get_officials_for_event(*args, **kwargs):
+        return {"available": False}
+
+    def get_officials_for_game(*args, **kwargs):
+        return {"available": False}
+
+    def get_officials_sync(*args, **kwargs):
+        return {"available": False}
+
+    def get_espn_odds(*args, **kwargs):
+        return {"available": False}
+
+    def get_espn_injuries(*args, **kwargs):
+        return {"available": False, "injuries": []}
+
+    def get_espn_player_stats(*args, **kwargs):
+        return {"available": False}
+
+    def get_espn_venue_info(*args, **kwargs):
+        return {"available": False}
+
+    def get_game_summary_enriched(*args, **kwargs):
+        return {"available": False}
+
+    def get_all_games_enriched(*args, **kwargs):
+        return []
 
 # Weather, Refs, Stadium, Travel - Stub modules (always available)
 try:
@@ -238,12 +284,23 @@ __all__ = [
     "get_twitter_sentiment",
     "is_twitter_configured",
     "TWITTER_AVAILABLE",
-    # ESPN Lineups & Referees
+    # ESPN - Lineups, Referees, Odds, Injuries, Venue
     "get_lineups_for_game",
     "get_referee_impact",
     "get_todays_games",
     "get_game_details",
     "get_espn_status",
+    "get_espn_scoreboard",
+    "get_espn_event_id",
+    "get_officials_for_event",
+    "get_officials_for_game",
+    "get_officials_sync",
+    "get_espn_odds",
+    "get_espn_injuries",
+    "get_espn_player_stats",
+    "get_espn_venue_info",
+    "get_game_summary_enriched",
+    "get_all_games_enriched",
     "ESPN_AVAILABLE",
     # NOAA Space Weather (GLITCH Protocol)
     "fetch_kp_index_live",
