@@ -291,10 +291,11 @@ NHL_PACE = {
 
 
 # ============================================================
-# NCAAB DATA (Top 50 Teams)
+# NCAAB DATA (Top 75 Teams)
 # ============================================================
 
 NCAAB_DEFENSE_VS_GUARDS = {
+    # Power Conference Teams (1-50)
     "Houston": 1, "Auburn": 2, "Tennessee": 3, "Duke": 4, "Kansas": 5,
     "Alabama": 6, "Iowa State": 7, "Purdue": 8, "Texas": 9, "Arizona": 10,
     "Kentucky": 11, "Gonzaga": 12, "Marquette": 13, "Creighton": 14, "Baylor": 15,
@@ -305,9 +306,16 @@ NCAAB_DEFENSE_VS_GUARDS = {
     "Colorado": 36, "Oregon": 37, "Memphis": 38, "Pittsburgh": 39, "Clemson": 40,
     "Iowa": 41, "Oklahoma": 42, "USC": 43, "Missouri": 44, "Michigan": 45,
     "NC State": 46, "Texas A&M": 47, "South Carolina": 48, "Kansas State": 49, "Utah": 50,
+    # Mid-Major Tournament Teams (51-75)
+    "VCU": 51, "Dayton": 52, "Saint Mary's": 53, "Nevada": 54, "New Mexico": 55,
+    "UNLV": 56, "Drake": 57, "Murray State": 58, "Richmond": 59, "Davidson": 60,
+    "Wichita State": 61, "FAU": 62, "UAB": 63, "Grand Canyon": 64, "Akron": 65,
+    "Toledo": 66, "Boise State": 67, "Utah State": 68, "Colorado State": 69, "George Mason": 70,
+    "Saint Louis": 71, "Loyola Chicago": 72, "Princeton": 73, "Yale": 74, "Liberty": 75,
 }
 
 NCAAB_DEFENSE_VS_WINGS = {
+    # Power Conference Teams (1-50)
     "Houston": 1, "Tennessee": 2, "Auburn": 3, "Duke": 4, "Alabama": 5,
     "Kansas": 6, "Purdue": 7, "Iowa State": 8, "Arizona": 9, "Texas": 10,
     "Gonzaga": 11, "Kentucky": 12, "Marquette": 13, "Creighton": 14, "UConn": 15,
@@ -318,9 +326,16 @@ NCAAB_DEFENSE_VS_WINGS = {
     "Oregon": 36, "Colorado": 37, "Memphis": 38, "Pittsburgh": 39, "Iowa": 40,
     "Clemson": 41, "Oklahoma": 42, "USC": 43, "Michigan": 44, "Missouri": 45,
     "NC State": 46, "Texas A&M": 47, "Kansas State": 48, "South Carolina": 49, "Utah": 50,
+    # Mid-Major Tournament Teams (51-75)
+    "VCU": 51, "Dayton": 52, "Saint Mary's": 53, "Nevada": 54, "New Mexico": 55,
+    "UNLV": 56, "Drake": 57, "Murray State": 58, "Richmond": 59, "Davidson": 60,
+    "Wichita State": 61, "FAU": 62, "UAB": 63, "Grand Canyon": 64, "Akron": 65,
+    "Toledo": 66, "Boise State": 67, "Utah State": 68, "Colorado State": 69, "George Mason": 70,
+    "Saint Louis": 71, "Loyola Chicago": 72, "Princeton": 73, "Yale": 74, "Liberty": 75,
 }
 
 NCAAB_DEFENSE_VS_BIGS = {
+    # Power Conference Teams (1-50)
     "Houston": 1, "Tennessee": 2, "Purdue": 3, "Auburn": 4, "Duke": 5,
     "Alabama": 6, "Kansas": 7, "Arizona": 8, "Iowa State": 9, "Texas": 10,
     "Kentucky": 11, "Gonzaga": 12, "UConn": 13, "Marquette": 14, "Creighton": 15,
@@ -331,9 +346,16 @@ NCAAB_DEFENSE_VS_BIGS = {
     "Colorado": 36, "Oregon": 37, "Pittsburgh": 38, "Memphis": 39, "Iowa": 40,
     "Clemson": 41, "Oklahoma": 42, "Michigan": 43, "USC": 44, "Missouri": 45,
     "Texas A&M": 46, "NC State": 47, "Kansas State": 48, "South Carolina": 49, "Utah": 50,
+    # Mid-Major Tournament Teams (51-75)
+    "VCU": 51, "Dayton": 52, "Saint Mary's": 53, "Nevada": 54, "New Mexico": 55,
+    "UNLV": 56, "Drake": 57, "Murray State": 58, "Richmond": 59, "Davidson": 60,
+    "Wichita State": 61, "FAU": 62, "UAB": 63, "Grand Canyon": 64, "Akron": 65,
+    "Toledo": 66, "Boise State": 67, "Utah State": 68, "Colorado State": 69, "George Mason": 70,
+    "Saint Louis": 71, "Loyola Chicago": 72, "Princeton": 73, "Yale": 74, "Liberty": 75,
 }
 
 NCAAB_PACE = {
+    # Power Conference Teams
     "Gonzaga": 75.5, "Arkansas": 74.8, "Alabama": 74.5, "Auburn": 74.0,
     "Kentucky": 73.5, "Kansas": 73.0, "Duke": 72.5, "North Carolina": 72.0,
     "Creighton": 71.5, "Marquette": 71.0, "Texas": 70.5, "Arizona": 70.0,
@@ -342,6 +364,12 @@ NCAAB_PACE = {
     "Indiana": 65.5, "Purdue": 65.0, "Houston": 64.5, "Tennessee": 64.0,
     "Iowa State": 63.5, "UConn": 63.0, "San Diego State": 62.5, "Texas Tech": 62.0,
     "Wisconsin": 61.5, "Virginia": 61.0, "TCU": 60.5, "Ohio State": 60.0,
+    # Mid-Major Tournament Teams
+    "VCU": 71.0, "Dayton": 68.0, "Saint Mary's": 64.5, "Nevada": 70.5, "New Mexico": 72.0,
+    "UNLV": 69.5, "Drake": 66.0, "Murray State": 70.0, "Richmond": 67.5, "Davidson": 73.0,
+    "Wichita State": 67.0, "FAU": 71.5, "UAB": 68.5, "Grand Canyon": 69.0, "Akron": 66.5,
+    "Toledo": 68.0, "Boise State": 65.5, "Utah State": 66.5, "Colorado State": 67.0, "George Mason": 68.5,
+    "Saint Louis": 67.0, "Loyola Chicago": 64.0, "Princeton": 63.5, "Yale": 65.0, "Liberty": 70.5,
 }
 
 
@@ -700,7 +728,7 @@ class DefensiveRankService:
     @classmethod
     def get_total_teams(cls, sport: str) -> int:
         """Get number of teams for normalization"""
-        totals = {"NBA": 30, "NFL": 32, "MLB": 30, "NHL": 32, "NCAAB": 50}
+        totals = {"NBA": 30, "NFL": 32, "MLB": 30, "NHL": 32, "NCAAB": 75}
         return totals.get(sport.upper(), 30)
     
     @classmethod
