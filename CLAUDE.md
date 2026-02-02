@@ -2883,6 +2883,34 @@ curl "/live/best-bets/NBA?debug=1" -H "X-API-Key: KEY"
 
 **Fixed in:** Commit `1cf5290` (Feb 2026)
 
+### Lesson 12: API Data Format Mismatches (Playbook vs ESPN)
+**Problem:** Injuries data wasn't being parsed correctly. Playbook and ESPN return injuries in different formats:
+- **Playbook:** Team objects with nested `players` array (`{"teamName": "...", "players": [...]}`)
+- **ESPN:** Flat list with `team` field per injury (`{"team": "...", "player": "..."}`)
+
+**Root Cause:** Code assumed ESPN format (flat list), but production uses Playbook which nests players under team objects.
+
+**Prevention:**
+- When integrating API data, check BOTH format variations the API might return
+- Add format detection: `if "players" in item and isinstance(item.get("players"), list)`
+- Normalize to common format before use
+- Test with actual production API responses, not assumptions
+
+**Fixed in:** Commit `01b372c` (Feb 2026)
+
+### Lesson 13: Scope Issues with Context Calculations
+**Problem:** Context values (def_rank, pace, vacuum) were only calculated for PROP picks, not GAME picks. GAME picks got default values (def_rank=16, pace=100, vacuum=0).
+
+**Root Cause:** The context lookup code was inside the `if pick_type == "PROP"` block instead of running for ALL pick types.
+
+**Prevention:**
+- Context calculations (Pillars 13-15) should run BEFORE the pick_type branch
+- Move shared context setup OUTSIDE type-specific blocks
+- Verify all pick types show real values in debug output, not just defaults
+- Test: `curl /live/best-bets/NBA?debug=1 | jq '.game_picks.picks[0].context_layer'`
+
+**Fixed in:** Commit `6780c93` (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ML & GLITCH)
@@ -3088,6 +3116,13 @@ curl -s "https://web-production-7b2a.up.railway.app/live/sharp/NBA" \
 29. **NEVER** use variables from outer scope without checking all code paths initialize them
 30. **NEVER** add new variables to nested functions without grepping for all usages
 31. **NEVER** modify scoring pipeline without testing all 5 sports (NBA, NHL, NFL, MLB, NCAAB)
+
+## 🚫 NEVER DO THESE (API & Data Integration)
+
+32. **NEVER** assume a single API format - check for format variations (Playbook vs ESPN, nested vs flat)
+33. **NEVER** put shared context calculations inside pick_type-specific blocks - context runs for ALL types
+34. **NEVER** assume injuries/data will match team names exactly - compare actual API responses to game data
+35. **NEVER** skip parallel fetching for critical data (props, games, injuries should fetch concurrently)
 
 ---
 
