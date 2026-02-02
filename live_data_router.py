@@ -14,6 +14,16 @@ import logging
 # CRITICAL: Define logger BEFORE any import handlers use it
 logger = logging.getLogger("live_data")
 
+# Deterministic sort key for pick lists to avoid hash churn on equal scores.
+def _stable_pick_sort_key(p: dict) -> tuple:
+    score = p.get("total_score", p.get("final_score", 0)) or 0
+    return (
+        -score,
+        str(p.get("pick_id") or p.get("id") or ""),
+        str(p.get("selection") or p.get("player") or p.get("player_name") or ""),
+        str(p.get("matchup") or p.get("game") or ""),
+    )
+
 # Import Pydantic models for request/response validation
 try:
     from models.api_models import (
@@ -2515,10 +2525,10 @@ async def get_best_bets(
         import traceback as _tb
         logger.error("best-bets CRASH request_id=%s sport=%s: %s\n%s",
                      request_id, sport, e, _tb.format_exc())
-        raise HTTPException(status_code=500, detail={
-            "message": "best-bets failed",
-            "request_id": request_id
-        })
+        detail = {"message": "best-bets failed"}
+        if debug_mode:
+            detail["request_id"] = request_id
+        raise HTTPException(status_code=500, detail=detail)
 
 
 async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
@@ -4881,7 +4891,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         total_dropped = 0
         for pid, dupes in groups.items():
             # Sort: highest score → best book → first seen
-            dupes.sort(key=lambda x: (-x.get("total_score", 0), _book_priority(x)))
+            dupes.sort(key=lambda x: (-x.get("total_score", 0), _book_priority(x), str(x.get("pick_id", ""))))
             winner = dupes[0]
             kept.append(winner)
             if len(dupes) > 1:
@@ -4898,7 +4908,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     # v15.0: Filter to min_score threshold before taking top picks
     COMMUNITY_MIN_SCORE = min_score
-    deduplicated_props.sort(key=lambda x: x["total_score"], reverse=True)
+    deduplicated_props.sort(key=_stable_pick_sort_key)
 
     # Capture ALL candidates for debug/distribution before filtering
     _all_prop_candidates = deduplicated_props  # Keep ref for debug output
@@ -4909,7 +4919,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     # v15.3: Deduplicate game picks too
     deduplicated_games, _dupe_dropped_games, _dupe_groups_games = _dedupe_picks(game_picks)
-    deduplicated_games.sort(key=lambda x: x["total_score"], reverse=True)
+    deduplicated_games.sort(key=_stable_pick_sort_key)
     _all_game_candidates = deduplicated_games  # Keep ref for debug output
 
     filtered_game_picks = [p for p in deduplicated_games if p["total_score"] >= COMMUNITY_MIN_SCORE]
@@ -5375,7 +5385,7 @@ async def get_live_bets(sport: str):
                     live_picks.append(pick)
 
     # Sort by final_score descending
-    live_picks.sort(key=lambda x: x.get("final_score", 0), reverse=True)
+    live_picks.sort(key=_stable_pick_sort_key)
 
     return {
         "sport": sport.upper(),
@@ -5942,8 +5952,8 @@ async def debug_pick_breakdown(sport: str):
         logger.warning("Game odds fetch failed for debug breakdown: %s", e)
 
     # Sort by final_score
-    props_breakdown.sort(key=lambda x: x.get("final_score", 0), reverse=True)
-    game_breakdown.sort(key=lambda x: x.get("final_score", 0), reverse=True)
+    props_breakdown.sort(key=_stable_pick_sort_key)
+    game_breakdown.sort(key=_stable_pick_sort_key)
 
     return {
         "sport": sport.upper(),
