@@ -347,6 +347,8 @@ def normalize_pick(pick: dict) -> dict:
             pick["start_time_utc"] = commence_iso
     else:
         pick["start_time_utc"] = None
+    # Do not expose UTC fields to clients (ET only)
+    pick.pop("start_time_utc", None)
 
     # Fallback: derive ET display time from commence_time if missing
     if not start_time_display and commence_iso:
