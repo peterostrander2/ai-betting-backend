@@ -32,6 +32,17 @@ REASONING FIELDS:
 """
 
 from datetime import datetime, timezone
+try:
+    from zoneinfo import ZoneInfo
+    _ET = ZoneInfo("America/New_York")
+except Exception:
+    _ET = None
+
+try:
+    from core.time_et import get_game_start_time_et
+    _TIME_ET_AVAILABLE = True
+except Exception:
+    _TIME_ET_AVAILABLE = False
 
 
 def normalize_market_label(pick_type: str, stat_type: str = None) -> str:
@@ -335,6 +346,21 @@ def normalize_pick(pick: dict) -> dict:
             pick["start_time_utc"] = commence_iso
     else:
         pick["start_time_utc"] = None
+
+    # Fallback: derive ET display time from commence_time if missing
+    if not start_time_display and commence_iso:
+        try:
+            if _TIME_ET_AVAILABLE:
+                start_time_display = get_game_start_time_et(commence_iso)
+            elif _ET is not None:
+                dt = datetime.fromisoformat(str(commence_iso).replace("Z", "+00:00"))
+                start_time_display = dt.astimezone(_ET).strftime("%-I:%M %p ET")
+        except Exception:
+            start_time_display = ""
+        pick["start_time_et"] = start_time_display
+        pick["start_time"] = start_time_display
+
+    pick["start_time_status"] = "OK" if start_time_display else "UNAVAILABLE"
 
     # === STATUS FLAGS ===
     pick["status"] = pick.get("status") or pick.get("game_status") or "unknown"

@@ -31,6 +31,11 @@ import hashlib
 import asyncio
 import random
 from datetime import datetime, timedelta, timezone
+try:
+    from zoneinfo import ZoneInfo
+    _ET = ZoneInfo("America/New_York")
+except Exception:
+    _ET = None
 import math
 import json
 import numpy as np
@@ -962,6 +967,21 @@ def _normalize_pick(pick: dict) -> dict:
             pick["start_time_utc"] = commence_iso
     else:
         pick["start_time_utc"] = None
+
+    # Fallback: derive ET display time from commence_time if missing
+    if not start_time_display and commence_iso:
+        try:
+            if TIME_FILTERS_AVAILABLE:
+                start_time_display = get_game_start_time_et(commence_iso)
+            elif _ET is not None:
+                dt = datetime.fromisoformat(str(commence_iso).replace("Z", "+00:00"))
+                start_time_display = dt.astimezone(_ET).strftime("%-I:%M %p ET")
+        except Exception:
+            start_time_display = ""
+        pick["start_time_et"] = start_time_display
+        pick["start_time"] = start_time_display
+
+    pick["start_time_status"] = "OK" if start_time_display else "UNAVAILABLE"
 
     # === STATUS FLAGS ===
     pick["status"] = pick.get("status") or pick.get("game_status") or "unknown"
@@ -6883,7 +6903,6 @@ async def debug_time(api_key: str = Depends(verify_api_key)):
     """
     try:
         from core.time_et import now_et, et_day_bounds, assert_et_bounds
-        from datetime import datetime, timezone
 
         # Current times
         now_utc = datetime.now(timezone.utc)
