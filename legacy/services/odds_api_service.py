@@ -1,6 +1,9 @@
 """
 The Odds API Integration Service
 UPDATED: Uses ALL sportsbooks, not filtered
+
+SECURITY: Demo data is GATED behind ENABLE_DEMO=true env var.
+Without it, API failures return empty responses, not sample data.
 """
 
 import os
@@ -8,6 +11,10 @@ import requests
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from loguru import logger
+
+# Demo data gate - must be explicitly enabled
+ENABLE_DEMO = os.getenv("ENABLE_DEMO", "").lower() == "true"
+
 
 class OddsAPIService:
     BASE_URL = "https://api.the-odds-api.com/v4"
@@ -23,37 +30,48 @@ class OddsAPIService:
     def __init__(self):
         self.api_key = os.getenv("ODDS_API_KEY")
         if not self.api_key:
-            logger.warning("ODDS_API_KEY not set - using demo mode")
-            self.demo_mode = True
+            if ENABLE_DEMO:
+                logger.warning("ODDS_API_KEY not set - demo mode enabled via ENABLE_DEMO=true")
+                self.demo_mode = True
+            else:
+                logger.warning("ODDS_API_KEY not set - returning empty data (set ENABLE_DEMO=true for demo mode)")
+                self.demo_mode = False
         else:
             self.demo_mode = False
-            logger.info(f"Odds API initialized with key: {self.api_key[:8]}...")
-    
+            logger.info("Odds API initialized with key: [REDACTED]")
+
     def get_sports(self) -> List[Dict]:
-        if self.demo_mode:
+        if self.demo_mode and ENABLE_DEMO:
             return self._demo_sports()
+        if not self.api_key:
+            return []  # No demo data without ENABLE_DEMO
         try:
             response = requests.get(f"{self.BASE_URL}/sports", params={"apiKey": self.api_key})
             response.raise_for_status()
             return response.json()
         except Exception as e:
             logger.error(f"Failed to fetch sports: {e}")
-            return self._demo_sports()
-    
+            if ENABLE_DEMO:
+                return self._demo_sports()
+            return []  # Empty response, no demo data
+
     def get_odds(
-        self, 
-        sport: str = "basketball_nba", 
+        self,
+        sport: str = "basketball_nba",
         regions: str = "us,us2",  # Multiple regions for more books
-        markets: str = "h2h,spreads,totals", 
+        markets: str = "h2h,spreads,totals",
         odds_format: str = "american",
         bookmakers: Optional[List[str]] = None  # None = ALL books
     ) -> List[Dict]:
         """
         Fetch odds from ALL sportsbooks (no filtering)
         """
-        if self.demo_mode:
-            logger.info("Using demo odds (no API key)")
+        if self.demo_mode and ENABLE_DEMO:
+            logger.info("Using demo odds (ENABLE_DEMO=true)")
             return self._demo_odds(sport)
+        if not self.api_key:
+            logger.warning("No API key and ENABLE_DEMO not set - returning empty")
+            return []
         
         try:
             params = {
@@ -79,34 +97,40 @@ class OddsAPIService:
             
             if response.status_code != 200:
                 logger.error(f"Odds API error: {response.status_code} - {response.text}")
-                return self._demo_odds(sport)
-            
+                if ENABLE_DEMO:
+                    return self._demo_odds(sport)
+                return []  # Empty, no demo
+
             data = response.json()
-            
+
             # Log how many books we got per game
             if data:
                 book_count = len(data[0].get("bookmakers", []))
                 logger.success(f"Fetched {len(data)} games with {book_count} sportsbooks each")
-            
+
             if not data:
-                logger.warning("No games scheduled - using demo")
-                return self._demo_odds(sport)
-            
+                logger.warning("No games scheduled")
+                return []  # Empty is valid, no demo fallback
+
             return data
         except Exception as e:
             logger.error(f"Odds API error: {e}")
-            return self._demo_odds(sport)
-    
+            if ENABLE_DEMO:
+                return self._demo_odds(sport)
+            return []  # Empty, no demo
+
     def get_player_props(
-        self, 
-        sport: str = "basketball_nba", 
+        self,
+        sport: str = "basketball_nba",
         event_id: str = None,
         markets: str = "player_points,player_rebounds,player_assists,player_threes,player_blocks,player_steals,player_turnovers",
         regions: str = "us,us2"
     ) -> List[Dict]:
         """Fetch player props from ALL books"""
-        if self.demo_mode:
+        if self.demo_mode and ENABLE_DEMO:
             return self._demo_player_props()
+        if not self.api_key:
+            return {"id": event_id, "bookmakers": [], "error": "no_api_key"}
         try:
             params = {
                 "apiKey": self.api_key, 
@@ -123,7 +147,9 @@ class OddsAPIService:
             return response.json()
         except Exception as e:
             logger.error(f"Props error: {e}")
-            return self._demo_player_props()
+            if ENABLE_DEMO:
+                return self._demo_player_props()
+            return {"id": event_id, "bookmakers": [], "error": str(e)}
     
     def get_best_odds(self, odds_data: List[Dict]) -> List[Dict]:
         """

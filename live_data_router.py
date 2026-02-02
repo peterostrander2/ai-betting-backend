@@ -601,7 +601,12 @@ def generate_fallback_line_shop(sport: str) -> List[Dict[str, Any]]:
 
 
 def _DEPRECATED_generate_fallback_line_shop(sport: str) -> List[Dict[str, Any]]:
-    """DEPRECATED: Old sample data generator - kept for reference only."""
+    """DEPRECATED: Old sample data generator - kept for reference only.
+
+    SECURITY: Returns empty list unless ENABLE_DEMO=true.
+    """
+    if os.getenv("ENABLE_DEMO", "").lower() != "true":
+        return []  # No sample data without explicit demo mode
     matchups = SAMPLE_MATCHUPS.get(sport, SAMPLE_MATCHUPS["nba"])
     line_shop_data = []
 
@@ -6650,9 +6655,10 @@ async def debug_system_health(api_key: str = Depends(verify_api_key)):
     try:
         odds_api_key = os.getenv("ODDS_API_KEY", "")
         if odds_api_key:
-            test_url = "https://api.the-odds-api.com/v4/sports/?apiKey=" + odds_api_key
+            # Use params dict instead of embedding key in URL (prevents log leakage)
+            test_url = "https://api.the-odds-api.com/v4/sports/"
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(test_url)
+                resp = await client.get(test_url, params={"apiKey": odds_api_key})
                 api_checks["odds_api"] = {
                     "ok": resp.status_code == 200,
                     "status_code": resp.status_code,

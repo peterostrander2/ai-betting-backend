@@ -667,8 +667,20 @@ async def debug_pending_picks():
 
 
 @app.post("/debug/seed-pick", dependencies=[Depends(_require_admin)])
-async def debug_seed_pick():
-    """Create 1 fake pending pick dated yesterday for autograder testing."""
+async def debug_seed_pick(mode: str = None):
+    """Create 1 fake pending pick dated yesterday for autograder testing.
+
+    SECURITY: Requires mode=demo query param OR ENABLE_DEMO=true env var.
+    """
+    enable_demo = _os.getenv("ENABLE_DEMO", "").lower() == "true"
+    if mode != "demo" and not enable_demo:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "Demo data gated",
+                "detail": "Set mode=demo query param or ENABLE_DEMO=true env var",
+            },
+        )
     try:
         from pick_logger import get_pick_logger
         from datetime import datetime, timedelta
@@ -802,8 +814,20 @@ async def debug_prediction_store_status():
 
 
 @app.post("/debug/seed-pick-and-grade", dependencies=[Depends(_require_admin)])
-async def debug_seed_pick_and_grade():
-    """Seed a fake pick, persist it, run one grading pass, return the updated record."""
+async def debug_seed_pick_and_grade(mode: str = None):
+    """Seed a fake pick, persist it, run one grading pass, return the updated record.
+
+    SECURITY: Requires mode=demo query param OR ENABLE_DEMO=true env var.
+    """
+    enable_demo = _os.getenv("ENABLE_DEMO", "").lower() == "true"
+    if mode != "demo" and not enable_demo:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "Demo data gated",
+                "detail": "Set mode=demo query param or ENABLE_DEMO=true env var",
+            },
+        )
     try:
         from pick_logger import get_pick_logger
         from result_fetcher import auto_grade_picks
@@ -859,12 +883,23 @@ async def debug_seed_pick_and_grade():
 
 
 @app.post("/debug/e2e-proof", dependencies=[Depends(_require_admin)])
-async def debug_e2e_proof():
+async def debug_e2e_proof(mode: str = None):
     """
     E2E proof: find a real finished NBA game from yesterday, seed a prop pick
     for a real player using real stats, then autograde it. This proves the full
     pipeline: pending → graded with real data.
+
+    SECURITY: Requires mode=demo query param OR ENABLE_DEMO=true env var.
     """
+    enable_demo = _os.getenv("ENABLE_DEMO", "").lower() == "true"
+    if mode != "demo" and not enable_demo:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "Demo data gated",
+                "detail": "Set mode=demo query param or ENABLE_DEMO=true env var",
+            },
+        )
     try:
         from pick_logger import get_pick_logger
         from result_fetcher import auto_grade_picks

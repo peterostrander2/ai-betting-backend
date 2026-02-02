@@ -6,6 +6,8 @@ import logging
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
+from core.log_sanitizer import sanitize_url, sanitize_dict
+
 logger = logging.getLogger(__name__)
 
 PLAYBOOK_BASE_URL = os.getenv("PLAYBOOK_API_BASE", "https://api.playbook-api.com/v1")
@@ -208,7 +210,8 @@ async def playbook_fetch(
     try:
         url, query_params = build_playbook_url(endpoint_name, params, api_key)
 
-        logger.debug("Playbook API request: %s %s", url, query_params)
+        # Log request without exposing API key
+        logger.debug("Playbook API request: %s params=%s", url, sanitize_dict(query_params))
 
         resp = await client.get(url, params=query_params, timeout=30.0)
 
