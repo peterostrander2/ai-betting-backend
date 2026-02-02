@@ -2253,23 +2253,48 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.noaa, .serpapi'
 
 ---
 
-### INVARIANT 16: 17-Pillar Scoring System (v17.1)
+### INVARIANT 16: 17-Pillar Scoring System (v17.2 - COMPLETE)
 
 **RULE:** All 17 pillars must contribute to scoring. No pillar may be orphaned.
 
 **Pillar Map:**
-| # | Pillar | Engine | Weight | Implementation |
-|---|--------|--------|--------|----------------|
-| 1-8 | 8 AI Models | AI (15%) | Direct | `advanced_ml_backend.py` |
-| 9 | Sharp Money (RLM) | Research (20%) | Direct | Playbook API splits |
-| 10 | Line Variance | Research | Direct | Cross-book comparison |
-| 11 | Public Fade | Research | Direct | Ticket-money divergence |
-| 12 | Splits Base | Research | Direct | Real data presence boost |
-| 13 | Defensive Rank | Context (30%) | 50% | `DefensiveRankService` |
-| 14 | Pace Vector | Context | 30% | `PaceVectorService` |
-| 15 | Usage Vacuum | Context | 20% | `UsageVacuumService` |
-| 16 | Officials | Research | Adjustment | `OfficialsService` (lines 3522-3560) |
-| 17 | Park Factors | Esoteric | MLB only | `ParkFactorService` (lines 3564-3597) |
+| # | Pillar | Engine | Weight | Implementation | Status |
+|---|--------|--------|--------|----------------|--------|
+| 1-8 | 8 AI Models | AI (15%) | Direct | `advanced_ml_backend.py` | ✅ |
+| 9 | Sharp Money (RLM) | Research (20%) | Direct | Playbook API splits | ✅ |
+| 10 | Line Variance | Research | Direct | Cross-book comparison | ✅ |
+| 11 | Public Fade | Research | Direct | Ticket-money divergence | ✅ |
+| 12 | Splits Base | Research | Direct | Real data presence boost | ✅ |
+| 13 | Defensive Rank | Context (30%) | 50% | `DefensiveRankService` | ✅ Real values |
+| 14 | Pace Vector | Context | 30% | `PaceVectorService` | ✅ Real values |
+| 15 | Usage Vacuum | Context | 20% | `UsageVacuumService` + injuries | ✅ Real values |
+| 16 | Officials | Research | Adjustment | `OfficialsService` | ⏳ Needs data source |
+| 17 | Park Factors | Esoteric | MLB only | `ParkFactorService` | ✅ |
+
+**v17.2 Completion Status (Feb 2026):**
+- ✅ **Pillars 13-15 now use REAL DATA** (not hardcoded defaults)
+- ✅ **Injuries fetched in parallel** with props and game odds
+- ✅ **Context calculation runs for ALL pick types** (PROP, GAME, SHARP)
+- ⏳ **Pillar 16 (Officials)** - Code ready, waiting for referee data API
+
+**Data Flow (v17.2):**
+```
+_best_bets_inner()
+  │
+  ├── Parallel Fetch (asyncio.gather)
+  │     ├── get_props(sport)
+  │     ├── fetch_game_odds()
+  │     └── get_injuries(sport)  ← NEW in v17.2
+  │
+  ├── Build _injuries_by_team lookup (handles Playbook + ESPN formats)
+  │
+  └── calculate_pick_score() [for ALL pick types]
+        ├── Pillar 13: DefensiveRankService.get_rank()
+        ├── Pillar 14: PaceVectorService.get_game_pace()
+        ├── Pillar 15: UsageVacuumService.calculate_vacuum(_injuries_by_team)
+        ├── Pillar 16: OfficialsService (pending data source)
+        └── Pillar 17: ParkFactorService (MLB only)
+```
 
 **Engine Weights (scoring_contract.py):**
 ```python
@@ -2282,20 +2307,46 @@ ENGINE_WEIGHTS = {
 }
 ```
 
-**Verification:**
+**Verification - Check REAL Values (Not Defaults):**
 ```bash
-# Check all pillars in pick output
-curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '{
-  ai: .props.picks[0].ai_score,
-  research: .props.picks[0].research_score,
-  esoteric: .props.picks[0].esoteric_score,
-  jarvis: .props.picks[0].jarvis_score,
-  context: .props.picks[0].context_score,
-  officials: .props.picks[0].officials_adjustment,
-  park: .props.picks[0].park_adjustment,
-  glitch: .props.picks[0].glitch_adjustment
+# 1. Check context layer has REAL values (not defaults)
+# Default def_rank=16, pace=100.0, vacuum=0.0 - if ALL picks show these, it's broken
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '[.game_picks.picks[0:3][] | {
+  matchup: .matchup,
+  def_rank: .context_layer.def_rank,
+  pace: .context_layer.pace,
+  vacuum: .context_layer.vacuum,
+  context_score: .context_score
+}]'
+# SHOULD show varying def_rank (1-30), varying pace (94-104), context_score varies
+
+# 2. Check injuries are loaded
+curl /live/injuries/NBA -H "X-API-Key: KEY" | jq '{source: .source, count: .count, teams: [.data[].teamName]}'
+# SHOULD show source: "playbook", count > 0, teams list
+
+# 3. Check all engines in pick output
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.game_picks.picks[0] | {
+  ai: .ai_score,
+  research: .research_score,
+  esoteric: .esoteric_score,
+  jarvis: .jarvis_score,
+  context: .context_score,
+  officials: .context_layer.officials_adjustment,
+  park: .context_layer.park_adjustment
 }'
 ```
+
+**Key Files (v17.2):**
+| File | Lines | Purpose |
+|------|-------|---------|
+| `live_data_router.py` | 4172-4227 | Parallel fetch including injuries |
+| `live_data_router.py` | 4201-4227 | Build _injuries_by_team (Playbook + ESPN format) |
+| `live_data_router.py` | 3139-3183 | Context calculation for ALL pick types |
+| `context_layer.py` | 413-472 | DefensiveRankService |
+| `context_layer.py` | 543-635 | PaceVectorService |
+| `context_layer.py` | 637-706 | UsageVacuumService |
+| `context_layer.py` | 713-763 | ParkFactorService |
+| `context_layer.py` | 1527-1620 | OfficialsService (ready, needs data) |
 
 ---
 
