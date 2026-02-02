@@ -460,6 +460,12 @@ async def get_espn_odds(sport: str, event_id: str) -> Dict[str, Any]:
         # Parse the first odds provider (usually consensus)
         primary_odds = odds_data[0] if odds_data else {}
 
+        # Ensure primary_odds is a dict (ESPN sometimes returns strings in pickcenter)
+        if not isinstance(primary_odds, dict):
+            logger.warning("ESPN odds: primary_odds is not a dict, type=%s, value=%s",
+                         type(primary_odds).__name__, str(primary_odds)[:100])
+            return {"available": False, "reason": f"UNEXPECTED_FORMAT: {type(primary_odds).__name__}"}
+
         result = {
             "available": True,
             "source": "espn_summary",
