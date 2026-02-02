@@ -15,6 +15,8 @@ DROP_EXACT = {
     "commence_time_iso",
     "game_time",
     "startTime",
+    "startTimeEst",
+    "start_time",
 }
 
 DROP_SUFFIXES = (
@@ -31,14 +33,16 @@ ISO_LIKE_RE = re.compile(r"(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})|(?:Z$)|(?:\+\
 # If you want to be strict: remove any private telemetry keys starting with "_"
 DROP_PRIVATE_PREFIX = "_"
 
+_DROP_EXACT_LOWER = {k.lower() for k in DROP_EXACT}
+
 
 def _should_drop_key(k: str) -> bool:
-    if k in DROP_EXACT:
+    if k in DROP_EXACT or k.lower() in _DROP_EXACT_LOWER:
         return True
     if k.startswith(DROP_PRIVATE_PREFIX):
         return True
     for suf in DROP_SUFFIXES:
-        if k.endswith(suf):
+        if k.lower().endswith(suf):
             return True
     return False
 
@@ -58,13 +62,16 @@ def sanitize_public_payload(obj: Any) -> Any:
                 continue
 
             if isinstance(k, str) and (
-                k.endswith("_utc") or k.endswith("_iso") or k.endswith("_timestamp") or k.endswith("_epoch")
+                k.lower().endswith("_utc")
+                or k.lower().endswith("_iso")
+                or k.lower().endswith("_timestamp")
+                or k.lower().endswith("_epoch")
             ):
                 continue
 
             vv = sanitize_public_payload(v)
 
-            if isinstance(k, str) and any(tok in k for tok in ("time", "date", "timestamp", "generated", "persisted")):
+            if isinstance(k, str) and any(tok in k.lower() for tok in ("time", "date", "timestamp", "generated", "persisted")):
                 if isinstance(vv, str) and ISO_LIKE_RE.search(vv):
                     if " ET" not in vv and " EDT" not in vv and " EST" not in vv:
                         continue
