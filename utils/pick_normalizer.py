@@ -150,6 +150,48 @@ def resolve_home_away_intent(pick: dict) -> str:
         return "AWAY"
     return ""
 
+def enforce_home_away_consistency(pick: dict) -> dict:
+    """Final enforcement: align selection with HOME/AWAY intent for game picks."""
+    pick_type = pick.get("pick_type")
+    if pick_type not in ("spread", "moneyline"):
+        return pick
+
+    home_team = pick.get("home_team") or ""
+    away_team = pick.get("away_team") or ""
+    if not home_team or not away_team:
+        return pick
+
+    intent = resolve_home_away_intent(pick)
+    if not intent:
+        return pick
+
+    desired_team = home_team if intent == "HOME" else away_team
+    if not desired_team:
+        return pick
+
+    if pick.get("selection") != desired_team:
+        correction_flags = pick.get("correction_flags") or []
+        correction_flags.append("FIELD_CONTRADICTION_CORRECTED")
+        pick["correction_flags"] = correction_flags
+        pick["selection"] = desired_team
+        pick["team"] = desired_team
+        pick["side_label"] = desired_team
+        pick["selection_home_away"] = intent
+
+        # Rebuild bet_string with corrected selection
+        market_label = pick.get("market_label") or normalize_market_label(pick_type, pick.get("stat_type", ""))
+        line_signed = pick.get("line_signed")
+        pick["bet_string"] = build_bet_string(
+            pick,
+            pick_type,
+            desired_team,
+            market_label,
+            desired_team,
+            line_signed if pick_type == "spread" else None
+        )
+
+    return pick
+
 
 def get_team_abbrev(team_name: str) -> str:
     """Convert team name to 3-letter abbreviation."""
@@ -412,6 +454,6 @@ def normalize_best_bets_response(payload: dict) -> dict:
     # Normalize game picks
     game_picks = payload.get("game_picks", {})
     if isinstance(game_picks, dict) and "picks" in game_picks:
-        game_picks["picks"] = [normalize_pick(p) for p in game_picks.get("picks", [])]
+        game_picks["picks"] = [enforce_home_away_consistency(normalize_pick(p)) for p in game_picks.get("picks", [])]
 
     return payload
