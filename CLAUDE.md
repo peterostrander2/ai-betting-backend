@@ -2081,3 +2081,387 @@ Vary: Origin, X-API-Key, Authorization
 pytest tests/test_pick_contract_v1.py -v
 # All 12 tests must pass
 ```
+
+---
+
+## 🧠 ML MODEL ACTIVATION & GLITCH PROTOCOL (v17.2)
+
+**Implemented:** February 2026
+**Status:** 100% Complete - All 19 features + 6 APIs active
+
+This section documents the ML infrastructure and GLITCH Protocol esoteric signals that were dormant and have now been fully activated.
+
+---
+
+### INVARIANT 14: ML Model Activation (LSTM + Ensemble)
+
+**RULE:** Props use LSTM models, Games use Ensemble model. Fallback to heuristic on failure.
+
+**Architecture:**
+```
+PROPS:  LSTM (13 models) → ai_score adjustment ±3.0
+GAMES:  XGBoost Ensemble → hit probability → confidence adjustment
+```
+
+**LSTM Models (13 weight files in `/models/`):**
+| Sport | Stats | Files |
+|-------|-------|-------|
+| NBA | points, assists, rebounds | 3 |
+| NFL | passing_yards, rushing_yards, receiving_yards | 3 |
+| MLB | hits, total_bases, strikeouts | 3 |
+| NHL | points, shots | 2 |
+| NCAAB | points, rebounds | 2 |
+
+**Key Files:**
+```
+ml_integration.py           # Core ML integration (725 LOC)
+├── PropLSTMManager         # Lazy-loads LSTM models on demand
+├── EnsembleModelManager    # XGBoost hit predictor for games
+├── get_lstm_ai_score()     # Props: returns (ai_score, metadata)
+└── get_ensemble_ai_score() # Games: returns (ai_score, metadata)
+
+scripts/train_ensemble.py   # XGBoost training script (413 LOC)
+daily_scheduler.py          # Retrain jobs (lines 458-476)
+```
+
+**Scheduler Jobs:**
+| Job | Schedule | Threshold |
+|-----|----------|-----------|
+| LSTM Retrain | Sundays 4:00 AM ET | 500+ samples |
+| Ensemble Retrain | Daily 6:45 AM ET | 100+ graded picks |
+
+**Fallback Behavior:**
+- If LSTM unavailable → Uses heuristic `base_ai = 5.0` with rule-based boosts
+- If Ensemble unavailable → Uses heuristic game scoring
+- All failures are SILENT to user (logged internally)
+
+**Context Data Wiring (Pillars 13-15 → LSTM):**
+```python
+# live_data_router.py lines 3030-3054
+game_data={
+    "def_rank": DefensiveRankService.get_rank(...),   # Pillar 13
+    "pace": PaceVectorService.get_game_pace(...),     # Pillar 14
+    "vacuum": UsageVacuumService.calculate_vacuum(...) # Pillar 15
+}
+```
+
+**Verification:**
+```bash
+# Check ML status
+curl /live/ml/status -H "X-API-Key: KEY"
+# Should show: lstm.loaded_count > 0, ensemble.available: true/false
+
+# Check LSTM in pick metadata
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.props.picks[0].lstm_metadata'
+```
+
+---
+
+### INVARIANT 15: GLITCH Protocol (6 Signals)
+
+**RULE:** All 6 GLITCH signals must be wired into `get_glitch_aggregate()` and called from scoring.
+
+**GLITCH Protocol Signals:**
+| # | Signal | Weight | Source | Triggered When |
+|---|--------|--------|--------|----------------|
+| 1 | Chrome Resonance | 0.25 | Player birthday + game date | Chromatic interval is Perfect 5th/4th/Unison |
+| 2 | Void Moon | 0.20 | Astronomical calculation | Moon is void-of-course |
+| 3 | Noosphere Velocity | 0.15 | SerpAPI (Google Trends) | Search velocity > ±0.2 |
+| 4 | Hurst Exponent | 0.25 | Line history analysis | H ≠ 0.5 (trending/mean-reverting) |
+| 5 | Kp-Index | 0.25 | NOAA Space Weather API | Geomagnetic storm (Kp ≥ 5) |
+| 6 | Benford Anomaly | 0.10 | Line value distribution | Chi-squared deviation ≥ 0.25 |
+
+**Key Files:**
+```
+esoteric_engine.py
+├── calculate_chrome_resonance()    # Line 896
+├── calculate_void_moon()           # Line 145
+├── calculate_hurst_exponent()      # Line 313
+├── get_schumann_frequency()        # Line 379 (Kp fallback)
+└── get_glitch_aggregate()          # Line 1002 - COMBINES ALL 6
+
+alt_data_sources/
+├── noaa.py                         # NOAA Kp-Index client (FREE API)
+│   ├── fetch_kp_index_live()       # 3-hour cache
+│   └── get_kp_betting_signal()     # Betting interpretation
+├── serpapi.py                      # SerpAPI client (already paid)
+│   ├── get_search_trend()          # Google search volume
+│   ├── get_team_buzz()             # Team comparison
+│   └── get_noosphere_data()        # Hive mind velocity
+└── __init__.py                     # Exports all signals
+
+signals/math_glitch.py
+└── check_benford_anomaly()         # First-digit distribution
+```
+
+**Integration Point (live_data_router.py lines 3321-3375):**
+```python
+# GLITCH signals adjust esoteric_score by ±0.75 max
+glitch_result = get_glitch_aggregate(
+    birth_date_str=player_birthday,
+    game_date=game_date,
+    game_time=game_datetime,
+    line_history=line_history,
+    value_for_benford=line_values,
+    primary_value=prop_line
+)
+glitch_adjustment = (glitch_result["glitch_score_10"] - 5.0) * 0.15
+esoteric_raw += glitch_adjustment
+```
+
+**API Configuration:**
+| API | Env Var | Cost | Cache TTL |
+|-----|---------|------|-----------|
+| NOAA Space Weather | None (public) | FREE | 3 hours |
+| SerpAPI | `SERPAPI_KEY` | Already paid | 30 minutes |
+
+**Verification:**
+```bash
+# Check GLITCH in esoteric breakdown
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.props.picks[0].esoteric_reasons'
+# Should include: "GLITCH: chrome_resonance", "GLITCH: void_moon_warning", etc.
+
+# Check alt_data_sources status
+curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.noaa, .serpapi'
+```
+
+---
+
+### INVARIANT 16: 17-Pillar Scoring System (v17.1)
+
+**RULE:** All 17 pillars must contribute to scoring. No pillar may be orphaned.
+
+**Pillar Map:**
+| # | Pillar | Engine | Weight | Implementation |
+|---|--------|--------|--------|----------------|
+| 1-8 | 8 AI Models | AI (15%) | Direct | `advanced_ml_backend.py` |
+| 9 | Sharp Money (RLM) | Research (20%) | Direct | Playbook API splits |
+| 10 | Line Variance | Research | Direct | Cross-book comparison |
+| 11 | Public Fade | Research | Direct | Ticket-money divergence |
+| 12 | Splits Base | Research | Direct | Real data presence boost |
+| 13 | Defensive Rank | Context (30%) | 50% | `DefensiveRankService` |
+| 14 | Pace Vector | Context | 30% | `PaceVectorService` |
+| 15 | Usage Vacuum | Context | 20% | `UsageVacuumService` |
+| 16 | Officials | Research | Adjustment | `OfficialsService` (lines 3522-3560) |
+| 17 | Park Factors | Esoteric | MLB only | `ParkFactorService` (lines 3564-3597) |
+
+**Engine Weights (scoring_contract.py):**
+```python
+ENGINE_WEIGHTS = {
+    "ai": 0.15,        # Pillars 1-8
+    "research": 0.20,  # Pillars 9-12, 16
+    "esoteric": 0.15,  # Pillar 17 + GLITCH
+    "jarvis": 0.10,    # Gematria triggers
+    "context": 0.30,   # Pillars 13-15
+}
+```
+
+**Verification:**
+```bash
+# Check all pillars in pick output
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '{
+  ai: .props.picks[0].ai_score,
+  research: .props.picks[0].research_score,
+  esoteric: .props.picks[0].esoteric_score,
+  jarvis: .props.picks[0].jarvis_score,
+  context: .props.picks[0].context_score,
+  officials: .props.picks[0].officials_adjustment,
+  park: .props.picks[0].park_adjustment,
+  glitch: .props.picks[0].glitch_adjustment
+}'
+```
+
+---
+
+### INVARIANT 17: Harmonic Convergence (+1.5 Boost)
+
+**RULE:** When Research ≥ 8.0 AND Esoteric ≥ 8.0, add +1.5 "Golden Boost"
+
+**Implementation (live_data_router.py lines 3424-3435):**
+```python
+HARMONIC_THRESHOLD = 8.0
+HARMONIC_BOOST = 1.5
+
+if research_score >= HARMONIC_THRESHOLD and esoteric_score >= HARMONIC_THRESHOLD:
+    confluence = {
+        "level": "HARMONIC_CONVERGENCE",
+        "boost": confluence.get("boost", 0) + HARMONIC_BOOST,
+        ...
+    }
+```
+
+**Rationale:** When both analytical (Research/Math) and intuitive (Esoteric/Magic) signals strongly agree, this represents exceptional alignment worthy of extra confidence.
+
+---
+
+## 📚 MASTER FILE INDEX (ML & GLITCH)
+
+### Core ML Files
+| File | Purpose | Key Functions |
+|------|---------|---------------|
+| `ml_integration.py` | ML model management | `get_lstm_ai_score()`, `get_ensemble_ai_score()` |
+| `lstm_brain.py` | LSTM model wrapper | `LSTMBrain.predict_from_context()` |
+| `scripts/train_ensemble.py` | Ensemble training | Run with `--min-picks 100` |
+| `models/*.weights.h5` | 13 LSTM weight files | Loaded on-demand |
+
+### GLITCH Protocol Files
+| File | Purpose | Key Functions |
+|------|---------|---------------|
+| `esoteric_engine.py` | GLITCH aggregator | `get_glitch_aggregate()`, `calculate_chrome_resonance()` |
+| `alt_data_sources/noaa.py` | Kp-Index client | `fetch_kp_index_live()`, `get_kp_betting_signal()` |
+| `alt_data_sources/serpapi.py` | Noosphere client | `get_noosphere_data()`, `get_team_buzz()` |
+| `signals/math_glitch.py` | Benford analysis | `check_benford_anomaly()` |
+| `signals/physics.py` | Hurst exponent | `calculate_hurst_exponent()` |
+| `signals/hive_mind.py` | Void moon | `get_void_moon()` |
+
+### Context Layer Files
+| File | Purpose | Key Classes |
+|------|---------|-------------|
+| `context_layer.py` | Pillars 13-17 | `DefensiveRankService`, `PaceVectorService`, `UsageVacuumService`, `OfficialsService`, `ParkFactorService` |
+
+### Scoring Contract
+| File | Purpose |
+|------|---------|
+| `core/scoring_contract.py` | Single source of truth for weights, thresholds, gates |
+
+---
+
+## 🔴 LESSONS LEARNED (NEVER REPEAT)
+
+### Lesson 1: Dormant Code Detection
+**Problem:** 8 AI models + 14 LSTM weights existed but were never called. Production used `base_ai = 5.0` hardcoded.
+
+**Root Cause:** Code was written but integration points were never added to `live_data_router.py`.
+
+**Prevention:**
+- Every new feature MUST have an integration point in the scoring pipeline
+- Use `grep -r "function_name" live_data_router.py` to verify integration
+- Add to this MASTER FILE INDEX when creating new modules
+
+### Lesson 2: Orphaned Signal Detection
+**Problem:** GLITCH Protocol had 19 features designed, but only 10 were active. 9 were "orphaned" (code exists, never called).
+
+**Root Cause:** `get_glitch_aggregate()` was created but individual signals weren't wired in.
+
+**Prevention:**
+- Every signal function MUST be called somewhere
+- Use grep to verify: `grep -r "function_name" *.py | grep -v "^def\|^#"`
+- Document signal weights and integration points
+
+### Lesson 3: API Stubbing vs. Real Implementation
+**Problem:** NOAA and SerpAPI were "stubbed" (returning default values) instead of making real API calls.
+
+**Root Cause:** Stub code was written for development but never replaced with real implementation.
+
+**Prevention:**
+- Check for `return {"source": "fallback"}` patterns
+- Verify env vars are set: `curl /live/debug/integrations`
+- Real APIs should show `"source": "xxx_live"` in responses
+
+### Lesson 4: Parameter Passing
+**Problem:** `get_glitch_aggregate()` accepted `value_for_benford` parameter but ignored it internally.
+
+**Root Cause:** Function signature was updated but body wasn't.
+
+**Prevention:**
+- Search for unused parameters: functions should USE what they accept
+- Read function body after changing signature
+
+### Lesson 5: Weight Normalization
+**Problem:** GLITCH aggregate weights didn't sum properly, causing score drift.
+
+**Prevention:**
+- Always verify: `sum(weights) == 1.0` or use `weighted_score / total_weight`
+- Document weights in function docstring
+
+---
+
+## ✅ VERIFICATION CHECKLIST (ML & GLITCH)
+
+Run these after ANY change to ML or GLITCH code:
+
+```bash
+# 1. Syntax check
+python -m py_compile esoteric_engine.py ml_integration.py live_data_router.py
+
+# 2. ML Status
+curl /live/ml/status -H "X-API-Key: KEY" | jq '{
+  lstm_loaded: .lstm.loaded_count,
+  ensemble_available: .ensemble.available,
+  tensorflow: .tensorflow_available
+}'
+
+# 3. GLITCH signals in output
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.props.picks[0] | {
+    glitch_adj: .glitch_adjustment,
+    esoteric_reasons: .esoteric_reasons | map(select(startswith("GLITCH")))
+  }'
+
+# 4. Context pillars
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.props.picks[0] | {
+    def_rank: .def_rank,
+    pace: .pace,
+    vacuum: .vacuum,
+    context_score: .context_score
+  }'
+
+# 5. Alt data sources
+curl /live/debug/integrations -H "X-API-Key: KEY" | \
+  jq '{noaa: .noaa, serpapi: .serpapi}'
+
+# 6. Harmonic Convergence (check high-scoring picks)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.props.picks[] | select(.research_score >= 8 and .esoteric_score >= 8) | {
+    research: .research_score,
+    esoteric: .esoteric_score,
+    confluence: .confluence_level
+  }'
+```
+
+---
+
+## 🚫 NEVER DO THESE (ML & GLITCH)
+
+1. **NEVER** add a new signal without wiring it into the scoring pipeline
+2. **NEVER** add a function parameter without using it in the function body
+3. **NEVER** leave API clients as stubs in production (verify `source != "fallback"`)
+4. **NEVER** hardcode `base_ai = 5.0` when LSTM models are available
+5. **NEVER** skip the ML fallback chain (LSTM → Ensemble → Heuristic)
+6. **NEVER** change ENGINE_WEIGHTS without updating `core/scoring_contract.py`
+7. **NEVER** add a new pillar without documenting it in the 17-pillar map
+8. **NEVER** modify `get_glitch_aggregate()` without updating its docstring weights
+
+---
+
+## 📊 FEATURE AUDIT TEMPLATE
+
+Use this template when auditing for dormant/orphaned code:
+
+```markdown
+## Feature Audit: [FEATURE NAME]
+
+### Status Matrix
+| Feature | Implemented | Called | Active in Pipeline |
+|---------|-------------|--------|-------------------|
+| Feature1 | ✅/❌ | ✅/❌ | ✅/❌ |
+
+### Verification Commands
+```bash
+# Check if function exists
+grep -n "def function_name" *.py
+
+# Check if function is called
+grep -rn "function_name(" *.py | grep -v "^def "
+
+# Check if result is used in scoring
+grep -n "function_name" live_data_router.py
+```
+
+### Integration Point
+- File: `live_data_router.py`
+- Line: XXXX
+- How it affects score: [describe]
+```
