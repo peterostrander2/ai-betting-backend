@@ -97,7 +97,53 @@ Watch for these patterns that have caused production issues:
 
 ---
 
-### 3. Anti-Drift Architecture (Feb 2026)
+### 3. v17.0/v17.1 5-Engine Architecture (Feb 2026)
+
+**What happened:**
+- Upgraded from 4-engine to 5-engine scoring architecture
+- Added Context engine (30% weight) aggregating Pillars 13-15
+- Wired real context data to LSTM (previously hardcoded)
+- Integrated Officials (Pillar 16) and Park Factors (Pillar 17)
+- Implemented Harmonic Convergence boost (+1.5 when Research AND Esoteric both >= 8.0)
+
+**Impact:** Scoring system now leverages all 17 pillars instead of 15
+
+**Root cause:** LSTM was receiving hardcoded `def_rank=16, pace=100.0, vacuum=0.0` instead of real values from context layer services
+
+**Changes Made:**
+1. `core/scoring_contract.py` - Updated ENGINE_WEIGHTS to 5-engine (ai:0.15, research:0.20, esoteric:0.15, jarvis:0.10, context:0.30)
+2. `live_data_router.py` - Added context_score calculation, Harmonic Convergence, Officials/Park adjustments
+3. Added GOLD_STAR gate for `context_score >= 4.0`
+4. Titanium rule now 3/5 engines (was 3/4)
+5. LSTM call now passes real `{def_rank, pace, vacuum}` from context layer services
+
+**Fix Summary:**
+- Context Layer Services (DefensiveRankService, PaceVectorService, UsageVacuumService) provide real data
+- OfficialsAnalyzer adjusts research_score based on referee tendencies
+- ParkFactorService adjusts esoteric_score for MLB venue effects
+
+**Lesson:**
+- When adding new engines/pillars, update ALL canonical sources together:
+  - `core/scoring_contract.py` (weights, gates)
+  - `SCORING_LOGIC.md` (formula)
+  - `CLAUDE.md` (invariants)
+- Always verify ML models receive real data, not hardcoded defaults
+- Test context integration end-to-end before production
+
+**Verification:**
+```bash
+# Check LSTM receives real context
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/NBA?debug=1" \
+  -H "X-API-Key: KEY" | jq '.props.picks[0].lstm_metadata.features_used'
+
+# Verify 5-engine weights in /health
+curl -s "https://web-production-7b2a.up.railway.app/health" | jq '.deploy_version'
+# Should show: "17.1"
+```
+
+---
+
+### 4. Anti-Drift Architecture (Feb 2026)
 
 **Problem:** Risk of duplicate work, forgotten canonical sources, frontend/backend drift.
 

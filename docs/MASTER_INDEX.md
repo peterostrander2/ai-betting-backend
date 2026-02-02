@@ -23,8 +23,14 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 
 ## Decision Tree — Where to Look and What to Edit
 
-### A) Scoring / Thresholds / Tier Rules / Confluence
+### A) Scoring / Thresholds / Tier Rules / Confluence (v17.1 - 5 Engines)
 **Examples:** engine weights, MIN_FINAL_SCORE, Gold Star gates, Titanium rule, confluence boost values.
+
+**Current Architecture (v17.1):**
+- 5 engines: AI (15%), Research (20%), Esoteric (15%), Jarvis (10%), Context (30%)
+- Titanium: 3/5 engines >= 8.0
+- GOLD_STAR gates: ai>=6.8, research>=5.5, jarvis>=6.5, esoteric>=4.0, context>=4.0
+- Harmonic Convergence: +1.5 when Research >= 8.0 AND Esoteric >= 8.0
 
 **Canonical source (edit here only):**
 - `core/scoring_contract.py`
@@ -34,6 +40,7 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 - `tiering.py`
 - `core/titanium.py`
 - `core/scoring_pipeline.py`
+- `context_layer.py` (DefensiveRankService, PaceVectorService, UsageVacuumService)
 
 **Docs that must match the contract (via validator):**
 - `SCORING_LOGIC.md`
@@ -42,6 +49,7 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 **Never do:**
 - Add/modify scoring literals directly in `live_data_router.py` / `tiering.py` / `core/titanium.py`
 - Duplicate thresholds anywhere outside the contract
+- Pass hardcoded context values to LSTM (must use context layer services)
 
 ---
 
@@ -191,7 +199,9 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 
 | Topic | Canonical File(s) | What It Defines |
 |---|---|---|
-| Scoring contract | `core/scoring_contract.py` | Weights, thresholds, gates, boost levels |
+| Scoring contract | `core/scoring_contract.py` | Weights, thresholds, gates, boost levels (v17.1: 5-engine) |
+| Context layer | `context_layer.py` | DefensiveRank, Pace, Vacuum services (Pillars 13-15) |
+| ML integration | `ml_integration.py` | LSTM, Ensemble models with real context data |
 | Integrations mapping | `integration_registry.py` + `docs/AUDIT_MAP.md` | Env vars → modules/endpoints + validation |
 | ET window | `core/time_et.py` | ET bounds + timezone correctness |
 | Storage | `storage_paths.py` + `data_dir.py` | All persisted paths rooted at volume mount |
@@ -226,13 +236,16 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 
 | Change | Must also update | Why |
 |---|---|---|
-| `core/scoring_contract.py` | `SCORING_LOGIC.md` (contract block) | Prevent scoring drift |
+| `core/scoring_contract.py` | `SCORING_LOGIC.md` (contract block), `CLAUDE.md` invariants | Prevent scoring drift |
+| Context layer services | `live_data_router.py` (LSTM call), `ml_integration.py` | Ensure LSTM gets real context |
+| Engine weights | `SCORING_LOGIC.md`, `CLAUDE.md`, frontend display | All must show same weights |
 | Any invariant behavior | `CLAUDE.md` invariants section | Keep ops rules aligned |
 | Any persisted path logic | `storage_paths.py` / `data_dir.py` only | Keep everything under volume mount |
 | Any scheduler job / export | `/live/scheduler/status` output + Session 10 | Ensure observability |
 | Any integration env var usage | `integration_registry.py` + `docs/AUDIT_MAP.md` | Maintain env var → code mapping |
 | Any session spec changes | `scripts/ci_sanity_check.sh` + spot check scripts | CI must fail on regression |
 | Pick output fields/format | `utils/pick_normalizer.py` + `docs/PICK_CONTRACT_V1.md` | Maintain frontend contract |
+| Pillar additions (13-17) | `context_layer.py`, `live_data_router.py`, docs | All 17 pillars must be documented |
 
 ---
 

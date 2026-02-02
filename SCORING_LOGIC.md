@@ -1,9 +1,10 @@
-# 8 Pillars Scoring System
+# 17 Pillars Scoring System (v17.1)
 
 <!-- SCORING_CONTRACT_JSON
 {
   "confluence_levels": {
     "DIVERGENT": 0.0,
+    "HARMONIC_CONVERGENCE": 4.5,
     "IMMORTAL": 10.0,
     "JARVIS_PERFECT": 7.0,
     "MODERATE": 1.0,
@@ -11,16 +12,18 @@
     "STRONG": 3.0
   },
   "engine_weights": {
-    "ai": 0.25,
-    "esoteric": 0.2,
-    "jarvis": 0.15,
-    "research": 0.3
+    "ai": 0.15,
+    "research": 0.20,
+    "esoteric": 0.15,
+    "jarvis": 0.10,
+    "context": 0.30
   },
   "gold_star_gates": {
     "ai_score": 6.8,
-    "esoteric_score": 4.0,
+    "research_score": 5.5,
     "jarvis_score": 6.5,
-    "research_score": 5.5
+    "esoteric_score": 4.0,
+    "context_score": 4.0
   },
   "gold_star_threshold": 7.5,
   "min_final_score": 6.5,
@@ -38,23 +41,23 @@
 SCORING_CONTRACT_JSON -->
 
 
-## Formula
-BASE = (AI × 0.25) + (Research × 0.30) + (Esoteric × 0.20) + (Jarvis × 0.15)
+## Formula (v17.1 - 5 Engine Architecture)
+BASE = (AI × 0.15) + (Research × 0.20) + (Esoteric × 0.15) + (Jarvis × 0.10) + (Context × 0.30)
 FINAL = BASE + confluence_boost + jason_sim_boost
 
 Minimum output: 6.5
 
-## ENGINE 1: AI Score (25%)
+## ENGINE 1: AI Score (15%)
 File: advanced_ml_backend.py
 8 AI models, range 0-10
 
-## ENGINE 2: Research Score (30%)
+## ENGINE 2: Research Score (20%)
 - Sharp Money (0-3 pts)
 - Line Variance (0-3 pts)
 - Public Fade (0-2 pts)
 - Base (2-3 pts)
 
-## ENGINE 3: Esoteric Score (20%)
+## ENGINE 3: Esoteric Score (15%)
 File: live_data_router.py
 Expected: 2.0-5.5 range
 
@@ -68,7 +71,7 @@ Components:
 For props: uses prop_line for magnitude calculation
 For games: uses spread for magnitude calculation
 
-## ENGINE 4: Jarvis Score (15%) - v16.0 ADDITIVE MODEL
+## ENGINE 4: Jarvis Score (10%) - v16.0 ADDITIVE MODEL
 File: live_data_router.py `calculate_jarvis_engine_score()`
 
 ### v16.0 Additive Trigger Scoring
@@ -126,10 +129,45 @@ Every pick includes these fields:
 }
 ```
 
+## ENGINE 5: Context Score (30%) - v17.1 NEW
+File: live_data_router.py
+Range: 0-10
+
+Context engine aggregates Pillars 13-15 (Defensive Rank, Pace, Vacuum):
+
+### Components
+| Component | Weight | Source | Formula |
+|-----------|--------|--------|---------|
+| Defensive Rank | 50% | DefensiveRankService | `(total_teams - rank) / (total_teams - 1) * 10` |
+| Pace | 30% | PaceVectorService | `(pace - 90) / 20 * 10` (clamped 0-10) |
+| Vacuum | 20% | UsageVacuumService | `5 + (vacuum / 5)` (clamped 0-10) |
+
+### Context Score Formula
+```python
+context_score = (def_component * 0.5) + (pace_component * 0.3) + (vacuum_component * 0.2)
+```
+
+### LSTM Integration
+- LSTM model receives real context data (`def_rank`, `pace`, `vacuum`)
+- Previously hardcoded to `def_rank=16, pace=100, vacuum=0`
+- Now fetches from context layer services
+
+### Pillar 16: Officials (v17.0)
+- Applied as adjustment to research_score
+- Gets lead official, official_2, official_3 from candidate data
+- OfficialsAnalyzer returns adjustment value
+
+### Pillar 17: Park Factors (v17.0 - MLB Only)
+- Applied as adjustment to esoteric_score
+- ParkFactorService considers home venue effects
+- Colorado (Coors Field) adds ~+0.3-0.5 for hitter props
+
+---
+
 ## Tier Assignment
 
 ### TITANIUM_SMASH
-- Rule: ≥3 of 4 engines ≥8.0 (STRICT)
+- Rule: ≥3 of 5 engines ≥8.0 (STRICT)
 - Overrides all other tiers
 - File: `core/titanium.py`
 
@@ -139,6 +177,7 @@ Every pick includes these fields:
   - research_score ≥ 5.5
   - esoteric_score ≥ 4.0
   - **jarvis_rs ≥ 6.5** (requires triggers to fire)
+  - **context_score ≥ 4.0** (NEW - Pillars 13-15 must contribute)
 - If any gate fails → downgrade to EDGE_LEAN
 
 ### EDGE_LEAN
@@ -156,11 +195,18 @@ Every pick includes these fields:
 | IMMORTAL | +10 | 2178 + both ≥7.5 + alignment ≥80% |
 | JARVIS_PERFECT | +7 | Trigger + both ≥7.5 + alignment ≥80% |
 | PERFECT | +5 | both ≥7.5 + alignment ≥80% |
+| **HARMONIC_CONVERGENCE** | +4.5 | **Research ≥8.0 AND Esoteric ≥8.0** (Math+Magic alignment) |
 | STRONG | +3 | alignment ≥80% + active signal |
 | MODERATE | +1 | alignment ≥60% |
 | DIVERGENT | +0 | below 60% |
 
 Alignment = 1 - |research - esoteric| / 10
+
+### Harmonic Convergence (v17.0 "Golden Boost")
+When both Research (Math/Market signals) AND Esoteric (Magic/Cosmic signals) score ≥8.0:
+- Represents exceptional alignment between analytical and intuitive signals
+- Adds +1.5 to final score (equivalent to +15 on 100-point scale)
+- Overrides regular confluence level calculation
 
 ## Output Filter
 
