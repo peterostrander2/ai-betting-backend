@@ -171,6 +171,32 @@ except ImportError:
     def get_space_weather_summary(*args, **kwargs):
         return {"betting_outlook": "NEUTRAL", "outlook_reason": "NOAA unavailable"}
 
+# SerpAPI (GLITCH Protocol - Noosphere Velocity / Search Trends)
+try:
+    from .serpapi import (
+        get_search_trend,
+        get_team_buzz,
+        get_player_buzz,
+        get_noosphere_data,
+        SERPAPI_ENABLED,
+    )
+    SERPAPI_AVAILABLE = True
+except ImportError:
+    SERPAPI_AVAILABLE = False
+    SERPAPI_ENABLED = False
+
+    def get_search_trend(*args, **kwargs):
+        return {"trend_score": 0.5, "source": "fallback"}
+
+    def get_team_buzz(*args, **kwargs):
+        return {"velocity": 0.0, "direction": "NEUTRAL", "source": "fallback"}
+
+    def get_player_buzz(*args, **kwargs):
+        return {"buzz_score": 0.5, "interest_level": "MODERATE", "source": "fallback"}
+
+    def get_noosphere_data(*args, **kwargs):
+        return {"velocity": 0.0, "direction": "NEUTRAL", "source": "fallback"}
+
 # Integration helpers
 def get_alt_data_status():
     """Get status of all alternative data sources."""
@@ -191,6 +217,11 @@ def get_alt_data_status():
             "available": NOAA_AVAILABLE,
             "enabled": NOAA_ENABLED,
             "purpose": "GLITCH Protocol - Kp-Index geomagnetic data"
+        },
+        "serpapi": {
+            "available": SERPAPI_AVAILABLE,
+            "enabled": SERPAPI_ENABLED,
+            "purpose": "GLITCH Protocol - Noosphere Velocity (search trends)"
         }
     }
 
@@ -220,6 +251,13 @@ __all__ = [
     "get_space_weather_summary",
     "NOAA_AVAILABLE",
     "NOAA_ENABLED",
+    # SerpAPI (GLITCH Protocol - Noosphere)
+    "get_search_trend",
+    "get_team_buzz",
+    "get_player_buzz",
+    "get_noosphere_data",
+    "SERPAPI_AVAILABLE",
+    "SERPAPI_ENABLED",
     # Integration
     "get_alt_data_status",
 ]

@@ -1035,10 +1035,10 @@ def get_glitch_aggregate(
             triggered_signals.append("chrome_resonance")
         reasons.append(f"CHROME: {chrome['reason']}")
 
-    # 2. Void Moon (weight: 0.25)
+    # 2. Void Moon (weight: 0.20)
     void_moon = calculate_void_moon(game_date)
     results["void_moon"] = void_moon
-    weight = 0.25
+    weight = 0.20
     # Void moon: is_void = bad (lower score)
     void_score = 0.3 if void_moon["is_void"] else 0.7
     weighted_score += void_score * weight
@@ -1048,6 +1048,28 @@ def get_glitch_aggregate(
         reasons.append(f"VOID_MOON: Active until {void_moon.get('void_end', 'unknown')}")
     else:
         reasons.append(f"VOID_MOON: Clear - {void_moon.get('moon_sign', 'unknown')}")
+
+    # 2b. Noosphere Velocity from SerpAPI (weight: 0.15) - real search trends
+    noosphere_data = None
+    try:
+        from alt_data_sources.serpapi import get_noosphere_data, SERPAPI_ENABLED
+        if SERPAPI_ENABLED:
+            # Extract team names if available (would need to be passed in)
+            noosphere_data = get_noosphere_data(teams=None, player=None)
+    except ImportError:
+        pass
+
+    if noosphere_data and noosphere_data.get("source") == "serpapi_live":
+        results["noosphere"] = noosphere_data
+        weight = 0.15
+        # Convert velocity to score (0-1)
+        velocity = noosphere_data.get("velocity", 0.0)
+        noosphere_score = 0.5 + (velocity * 0.3)  # -1 to 1 -> 0.2 to 0.8
+        weighted_score += noosphere_score * weight
+        total_weight += weight
+        if noosphere_data.get("triggered"):
+            triggered_signals.append(f"noosphere_{noosphere_data.get('direction', 'unknown').lower()}")
+        reasons.append(f"NOOSPHERE: {noosphere_data.get('direction', 'NEUTRAL')} (v={velocity:.2f})")
 
     # 3. Hurst Exponent (weight: 0.25)
     if line_history and len(line_history) >= 10:
