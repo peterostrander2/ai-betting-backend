@@ -116,7 +116,7 @@ INTEGRATIONS = {
     
     "serpapi": {
         "required": True,
-        "env_vars": ["SERPAPI_KEY"],
+        "env_vars": ["SERPAPI_KEY", "SERP_API_KEY"],
         "owner_modules": ["serpapi.py"],
         "debug_name": "SerpAPI",
         "description": "Search engine results for research",
