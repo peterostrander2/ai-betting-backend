@@ -3163,7 +3163,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     # For game picks, use home team perspective
                     _player_team = home_team
                     opponent = away_team
-                    position = "Guard"  # Default position for game picks
+                    # v17.2: Sport-specific default positions for defensive rank lookup
+                    _default_positions = {
+                        "NBA": "Guard", "NCAAB": "Guard",
+                        "NFL": "WR", "NHL": "Center", "MLB": "Batter"
+                    }
+                    position = _default_positions.get(sport_upper, "Guard")
 
                 # Pillar 13: Defensive Rank (lower = better defense)
                 _def_rank = DefensiveRankService.get_rank(sport_upper, opponent, position)

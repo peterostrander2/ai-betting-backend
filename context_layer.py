@@ -482,6 +482,7 @@ NCAAB_TEAM_MAPPING = {
     "Army Black Knights": "Army", "Lehigh Mountain Hawks": "Lehigh",
     "Bucknell Bison": "Bucknell", "Holy Cross Crusaders": "Holy Cross",
     "Lafayette Leopards": "Lafayette", "Boston University Terriers": "Boston University",
+    "Boston Univ. Terriers": "Boston University",  # API abbreviation variant
     "American Eagles": "American", "Loyola Maryland Greyhounds": "Loyola Maryland",
 
     # CAA (Colonial Athletic)
