@@ -264,6 +264,21 @@ except ImportError:
     TRAVEL_MODULE_AVAILABLE = False
     print("[WARNING] travel module not available - rest days calculation disabled")
 
+# Import ESPN Lineups/Officials Module for referee data (v17.2)
+try:
+    from alt_data_sources.espn_lineups import (
+        get_officials_for_game,
+        get_espn_scoreboard,
+        get_espn_status,
+    )
+    ESPN_OFFICIALS_AVAILABLE = True
+except ImportError:
+    ESPN_OFFICIALS_AVAILABLE = False
+    print("[WARNING] espn_lineups module not available - officials data disabled")
+
+    async def get_officials_for_game(*args, **kwargs):
+        return {"available": False, "reason": "MODULE_NOT_LOADED"}
+
 # Import ML Integration Module for LSTM-powered prop predictions (v16.1)
 try:
     from ml_integration import (
@@ -3702,23 +3717,32 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         jason_sim_boost = jason_output.get("jason_sim_boost", 0.0)
         final_score = base_score + jason_sim_boost
 
-        # ===== v17.0 PILLAR 16: OFFICIALS ADJUSTMENT =====
+        # ===== v17.2 PILLAR 16: OFFICIALS ADJUSTMENT =====
         # Referee/Umpire tendencies can impact totals, spreads, and props
-        # NOTE: Code is ready, but requires a referee data source (Odds API doesn't provide this)
-        # Future enhancement: Integrate ESPN or RapidAPI for referee assignments
+        # v17.2: ESPN Hidden API integration for referee assignments
         officials_adjustment = 0.0
         officials_reason = None
 
         if sport_upper in ["NBA", "NFL", "MLB", "NHL", "NCAAB"] and CONTEXT_LAYER_AVAILABLE:
             try:
-                # v17.2: DATA DEPENDENCY - Officials data not yet available from our APIs
-                # TODO: Add referee data source (ESPN, RapidAPI, or scraping)
-                # OfficialsService is ready to use once we have: lead_official, official_2, official_3
-                lead_official = ""  # DATA NEEDED: Would come from external referee API
+                # v17.2: Lookup officials from ESPN prefetched data
+                # _officials_by_game keys are (home_team_lower, away_team_lower)
+                lead_official = ""
                 official_2 = ""
                 official_3 = ""
 
-                # Only apply if we have official data (placeholder for future integration)
+                if home_team and away_team and _officials_by_game:
+                    game_key = (home_team.lower(), away_team.lower())
+                    officials_data = _officials_by_game.get(game_key)
+                    if officials_data and officials_data.get("available"):
+                        lead_official = officials_data.get("lead_official", "")
+                        official_2 = officials_data.get("official_2", "")
+                        official_3 = officials_data.get("official_3", "")
+                        logger.debug("OFFICIALS[%s @ %s]: lead=%s, o2=%s, o3=%s (source: %s)",
+                                    away_team, home_team, lead_official, official_2, official_3,
+                                    officials_data.get("source", "unknown"))
+
+                # Only apply if we have official data
                 if lead_official:
                     # Determine bet type for officials analysis
                     if player_name:
@@ -4189,10 +4213,21 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             logger.debug("Injuries fetch failed: %s", e)
             return {"data": []}
 
-    props_data, game_odds_resp, injuries_data = await asyncio.gather(
+    # v17.2: Add ESPN scoreboard fetch for officials data (Pillar 16)
+    async def _fetch_espn_scoreboard():
+        if not ESPN_OFFICIALS_AVAILABLE:
+            return {"events": []}
+        try:
+            return await get_espn_scoreboard(sport, date_str)
+        except Exception as e:
+            logger.debug("ESPN scoreboard fetch failed: %s", e)
+            return {"events": []}
+
+    props_data, game_odds_resp, injuries_data, espn_scoreboard = await asyncio.gather(
         _fetch_props(),
         _fetch_game_odds(),
         _fetch_injuries(),
+        _fetch_espn_scoreboard(),
         return_exceptions=True
     )
     # Handle exceptions from gather
@@ -4205,6 +4240,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     if isinstance(injuries_data, Exception):
         logger.debug("Injuries fetch failed in parallel: %s", injuries_data)
         injuries_data = {"data": []}
+    if isinstance(espn_scoreboard, Exception):
+        logger.debug("ESPN scoreboard failed in parallel: %s", espn_scoreboard)
+        espn_scoreboard = {"events": []}
     _record("parallel_fetch", _s)
 
     # v17.2: Build injuries lookup by team for vacuum calculation
@@ -4236,6 +4274,57 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     _injuries_by_team[team].append(item)
 
     logger.info("INJURIES LOOKUP: %d teams with injuries loaded", len(_injuries_by_team))
+
+    # v17.2: Build ESPN event lookup for officials (Pillar 16)
+    # Maps (home_team_lower, away_team_lower) -> espn_event_id
+    _espn_events_by_teams = {}
+    if espn_scoreboard and isinstance(espn_scoreboard, dict):
+        for event in espn_scoreboard.get("events", []):
+            event_id = event.get("id")
+            if not event_id:
+                continue
+            competitions = event.get("competitions", [])
+            if not competitions:
+                continue
+            comp = competitions[0]
+            competitors = comp.get("competitors", [])
+            home_team = None
+            away_team = None
+            for team_data in competitors:
+                team_info = team_data.get("team", {})
+                team_name = team_info.get("displayName", "").lower()
+                if team_data.get("homeAway") == "home":
+                    home_team = team_name
+                else:
+                    away_team = team_name
+            if home_team and away_team:
+                _espn_events_by_teams[(home_team, away_team)] = event_id
+
+    logger.info("ESPN EVENTS LOOKUP: %d games mapped", len(_espn_events_by_teams))
+
+    # v17.2: Prefetch officials for all ESPN events (batch operation)
+    _officials_by_game = {}
+    if ESPN_OFFICIALS_AVAILABLE and _espn_events_by_teams:
+        async def _fetch_officials_batch():
+            tasks = []
+            keys = []
+            from alt_data_sources.espn_lineups import get_officials_for_event
+            for (home, away), event_id in _espn_events_by_teams.items():
+                keys.append((home, away))
+                tasks.append(get_officials_for_event(sport, event_id))
+            if tasks:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for key, result in zip(keys, results):
+                    if isinstance(result, Exception):
+                        continue
+                    if result.get("available"):
+                        _officials_by_game[key] = result
+        try:
+            await _fetch_officials_batch()
+        except Exception as e:
+            logger.debug("Officials batch fetch failed: %s", e)
+
+    logger.info("OFFICIALS LOOKUP: %d games with officials data", len(_officials_by_game))
 
     # ============================================
     # APPLY ET DAY GATE to both datasets

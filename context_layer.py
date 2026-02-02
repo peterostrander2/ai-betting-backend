@@ -465,10 +465,20 @@ def standardize_team(team: str, sport: str = None) -> str:
     """Convert team name to standardized format for context layer lookup.
 
     For NCAAB: Strips mascot suffixes ("North Carolina Tar Heels" -> "North Carolina")
+    For NHL: Handles accent characters ("Montréal" -> "Montreal")
     For other sports: Handles abbreviations via TEAM_ALIASES
     """
     if not team:
         return team
+
+    # NHL accent normalization (v17.2)
+    # ESPN may return "Montréal Canadiens" but our data uses "Montreal Canadiens"
+    NHL_ACCENT_MAP = {
+        "Montréal Canadiens": "Montreal Canadiens",
+        "Montréal": "Montreal",
+    }
+    if team in NHL_ACCENT_MAP:
+        team = NHL_ACCENT_MAP[team]
 
     # Check NCAAB mascot mapping first (exact match)
     if team in NCAAB_TEAM_MAPPING:

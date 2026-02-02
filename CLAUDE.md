@@ -2999,6 +2999,56 @@ MASCOT_SUFFIXES = {
 
 **Fixed in:** Commits `98117dc`, `6518478` (Feb 2026)
 
+### Lesson 15: ESPN Officials Integration (Pillar 16)
+**Problem:** Pillar 16 (Officials) code was ready in `OfficialsService` but had no data source - the placeholder code had empty strings for `lead_official`, `official_2`, `official_3`.
+
+**Solution Implemented (v17.2):**
+1. Created `alt_data_sources/espn_lineups.py` - ESPN Hidden API integration (FREE, no auth)
+2. Added ESPN scoreboard fetch to parallel gather in `_best_bets_inner()`
+3. Prefetch officials for all games in batch operation
+4. Store in `_officials_by_game[(home_lower, away_lower)]` lookup
+5. Scoring function accesses via closure (like `_injuries_by_team`)
+
+**ESPN Hidden API Endpoints:**
+- Scoreboard: `https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard`
+- Officials: `https://sports.core.api.espn.com/v2/sports/{sport}/leagues/{league}/events/{id}/competitions/{id}/officials`
+
+**Key Files:**
+```
+alt_data_sources/espn_lineups.py    # NEW - ESPN API client
+live_data_router.py:266-277         # NEW - ESPN import
+live_data_router.py:4207-4222       # MODIFIED - Parallel fetch includes ESPN
+live_data_router.py:4267-4311       # NEW - Officials lookup building
+live_data_router.py:3720-3770       # MODIFIED - Officials section uses prefetched data
+```
+
+**Verification:**
+```bash
+# Check if officials data appears in picks
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {officials_adjustment, research_reasons}'
+# Should include "Officials: ..." in research_reasons when refs are assigned
+```
+
+**Note:** ESPN may not have officials data for all games (refs assigned closer to game time). The system gracefully falls back when data is unavailable.
+
+**Fixed in:** Commit (Feb 2026)
+
+### Lesson 16: NHL Team Name Accent Normalization
+**Problem:** ESPN may return "Montréal Canadiens" (with accent) but context layer data uses "Montreal Canadiens" (without accent), causing lookup misses.
+
+**Solution:** Added `NHL_ACCENT_MAP` to `standardize_team()` in `context_layer.py`:
+```python
+NHL_ACCENT_MAP = {
+    "Montréal Canadiens": "Montreal Canadiens",
+    "Montréal": "Montreal",
+}
+```
+
+**Prevention:** When integrating external APIs, check for Unicode character variants (accents, special characters) that may differ from local data.
+
+**Fixed in:** Commit (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ML & GLITCH)
