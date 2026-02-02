@@ -1625,6 +1625,17 @@ NBA_OFFICIALS = {
     "jonathan sterling": {"avg_total": 217.2, "home_win_pct": 50.5, "fouls_per_game": 37.2, "over_pct": 47.2, "tendency": "UNDER"},
     "mark lindsay": {"avg_total": 218.6, "home_win_pct": 51.6, "fouls_per_game": 38.6, "over_pct": 49.6, "tendency": "NEUTRAL"},
     "ashley moyer-gleich": {"avg_total": 219.5, "home_win_pct": 52.5, "fouls_per_game": 39.5, "over_pct": 50.5, "tendency": "NEUTRAL"},
+    "gediminas petraitis": {"avg_total": 218.0, "home_win_pct": 51.0, "fouls_per_game": 38.0, "over_pct": 49.0, "tendency": "NEUTRAL"},
+    "eric dalen": {"avg_total": 222.0, "home_win_pct": 54.8, "fouls_per_game": 42.0, "over_pct": 55.0, "tendency": "OVER"},
+    "blanca burns": {"avg_total": 219.8, "home_win_pct": 52.8, "fouls_per_game": 39.8, "over_pct": 51.2, "tendency": "SLIGHT_OVER"},
+    "danielle scott": {"avg_total": 218.5, "home_win_pct": 51.5, "fouls_per_game": 38.5, "over_pct": 49.5, "tendency": "NEUTRAL"},
+    "john butler": {"avg_total": 216.8, "home_win_pct": 50.5, "fouls_per_game": 36.8, "over_pct": 46.8, "tendency": "UNDER"},
+    "suyash mehta": {"avg_total": 219.2, "home_win_pct": 52.2, "fouls_per_game": 39.2, "over_pct": 50.2, "tendency": "NEUTRAL"},
+    "jamahl ralls": {"avg_total": 220.8, "home_win_pct": 53.5, "fouls_per_game": 40.8, "over_pct": 53.0, "tendency": "OVER"},
+    "evan scott": {"avg_total": 217.5, "home_win_pct": 51.0, "fouls_per_game": 37.5, "over_pct": 47.5, "tendency": "UNDER"},
+    "brent barnaky": {"avg_total": 219.0, "home_win_pct": 52.0, "fouls_per_game": 39.0, "over_pct": 50.0, "tendency": "NEUTRAL"},
+    "david jones": {"avg_total": 221.2, "home_win_pct": 54.0, "fouls_per_game": 41.0, "over_pct": 53.5, "tendency": "OVER"},
+    "jason goldenberg": {"avg_total": 218.2, "home_win_pct": 51.5, "fouls_per_game": 38.2, "over_pct": 49.2, "tendency": "NEUTRAL"},
 }
 
 
@@ -1673,6 +1684,14 @@ NFL_OFFICIALS = {
     "shawn smith": {"penalties_per_game": 12.8, "home_win_pct": 51.5, "over_pct": 46.5, "pass_int_rate": 0.68, "tendency": "UNDER"},
     "land clark": {"penalties_per_game": 11.5, "home_win_pct": 55.2, "over_pct": 50.8, "pass_int_rate": 0.55, "tendency": "HOME"},
     "alex kemp": {"penalties_per_game": 12.0, "home_win_pct": 56.2, "over_pct": 51.5, "pass_int_rate": 0.58, "tendency": "HOME"},
+    "scott novak": {"penalties_per_game": 11.8, "home_win_pct": 52.0, "over_pct": 53.8, "pass_int_rate": 0.55, "tendency": "OVER"},
+    "brad rogers": {"penalties_per_game": 12.5, "home_win_pct": 52.8, "over_pct": 49.5, "pass_int_rate": 0.60, "tendency": "NEUTRAL"},
+    "wayne mackie": {"penalties_per_game": 10.5, "home_win_pct": 51.0, "over_pct": 52.5, "pass_int_rate": 0.45, "tendency": "LET_PLAY"},
+    "mike defee": {"penalties_per_game": 13.0, "home_win_pct": 53.5, "over_pct": 47.8, "pass_int_rate": 0.70, "tendency": "FLAG_HEAVY"},
+    "ryan dickson": {"penalties_per_game": 11.0, "home_win_pct": 51.5, "over_pct": 51.0, "pass_int_rate": 0.52, "tendency": "NEUTRAL"},
+    "don willard": {"penalties_per_game": 12.2, "home_win_pct": 52.2, "over_pct": 50.5, "pass_int_rate": 0.58, "tendency": "NEUTRAL"},
+    "mark butterworth": {"penalties_per_game": 10.2, "home_win_pct": 50.5, "over_pct": 53.0, "pass_int_rate": 0.42, "tendency": "LET_PLAY"},
+    "pat turaani": {"penalties_per_game": 11.5, "home_win_pct": 51.8, "over_pct": 50.2, "pass_int_rate": 0.55, "tendency": "NEUTRAL"},
 }
 
 
@@ -1718,6 +1737,16 @@ MLB_OFFICIALS = {
     "jeremie rehak": {"strike_zone": "average", "runs_per_game": 8.6, "home_win_pct": 52.2, "over_pct": 50.5, "k_rate": 16.9, "tendency": "NEUTRAL"},
     "ryan blakney": {"strike_zone": "wide", "runs_per_game": 7.6, "home_win_pct": 51.8, "over_pct": 45.5, "k_rate": 19.0, "tendency": "UNDER"},
     "manny gonzalez": {"strike_zone": "average", "runs_per_game": 8.5, "home_win_pct": 52.0, "over_pct": 50.0, "k_rate": 17.0, "tendency": "NEUTRAL"},
+    "david rackley": {"strike_zone": "tight", "runs_per_game": 9.4, "home_win_pct": 51.2, "over_pct": 55.0, "k_rate": 15.5, "tendency": "OVER"},
+    "rob drake": {"strike_zone": "wide", "runs_per_game": 7.5, "home_win_pct": 52.0, "over_pct": 45.0, "k_rate": 19.2, "tendency": "UNDER"},
+    "cory blaser": {"strike_zone": "average", "runs_per_game": 8.5, "home_win_pct": 51.8, "over_pct": 50.2, "k_rate": 17.0, "tendency": "NEUTRAL"},
+    "tripp gibson": {"strike_zone": "tight", "runs_per_game": 9.1, "home_win_pct": 50.5, "over_pct": 53.8, "k_rate": 16.0, "tendency": "OVER"},
+    "john libka": {"strike_zone": "average", "runs_per_game": 8.6, "home_win_pct": 52.2, "over_pct": 50.5, "k_rate": 16.9, "tendency": "NEUTRAL"},
+    "mike muchlinski": {"strike_zone": "wide", "runs_per_game": 7.7, "home_win_pct": 52.5, "over_pct": 46.2, "k_rate": 18.8, "tendency": "UNDER"},
+    "quinn wolcott": {"strike_zone": "average", "runs_per_game": 8.4, "home_win_pct": 51.5, "over_pct": 49.8, "k_rate": 17.2, "tendency": "NEUTRAL"},
+    "ben may": {"strike_zone": "tight", "runs_per_game": 9.3, "home_win_pct": 51.0, "over_pct": 54.5, "k_rate": 15.8, "tendency": "OVER"},
+    "ramon de jesus": {"strike_zone": "average", "runs_per_game": 8.5, "home_win_pct": 52.0, "over_pct": 50.0, "k_rate": 17.0, "tendency": "NEUTRAL"},
+    "shane livensparger": {"strike_zone": "tight", "runs_per_game": 9.0, "home_win_pct": 50.8, "over_pct": 53.2, "k_rate": 16.2, "tendency": "OVER"},
 }
 
 
@@ -1757,6 +1786,23 @@ NHL_OFFICIALS = {
     "dan o'rourke": {"penalties_per_game": 6.5, "home_win_pct": 52.0, "over_pct": 50.2, "pp_opportunities": 6.0, "tendency": "NEUTRAL"},
     "marc joannette": {"penalties_per_game": 6.4, "home_win_pct": 51.8, "over_pct": 50.5, "pp_opportunities": 5.9, "tendency": "NEUTRAL"},
     "chris rooney": {"penalties_per_game": 6.6, "home_win_pct": 52.2, "over_pct": 49.8, "pp_opportunities": 6.1, "tendency": "NEUTRAL"},
+
+    # v17.3: Expanded NHL Officials (Feb 2026)
+    "jon mclsaac": {"penalties_per_game": 6.8, "home_win_pct": 52.5, "over_pct": 51.5, "pp_opportunities": 6.3, "tendency": "NEUTRAL"},
+    "trevor hanson": {"penalties_per_game": 7.2, "home_win_pct": 53.2, "over_pct": 52.8, "pp_opportunities": 6.8, "tendency": "WHISTLE_HAPPY"},
+    "kendrick nicholson": {"penalties_per_game": 6.0, "home_win_pct": 51.0, "over_pct": 49.0, "pp_opportunities": 5.5, "tendency": "LET_PLAY"},
+    "furman south": {"penalties_per_game": 6.4, "home_win_pct": 51.5, "over_pct": 50.0, "pp_opportunities": 5.9, "tendency": "NEUTRAL"},
+    "graham skilliter": {"penalties_per_game": 7.0, "home_win_pct": 52.8, "over_pct": 53.5, "pp_opportunities": 6.5, "tendency": "OVER"},
+    "kyle rehman": {"penalties_per_game": 5.8, "home_win_pct": 50.5, "over_pct": 47.5, "pp_opportunities": 5.2, "tendency": "UNDER"},
+    "michael markovic": {"penalties_per_game": 6.6, "home_win_pct": 52.0, "over_pct": 50.5, "pp_opportunities": 6.1, "tendency": "NEUTRAL"},
+    "peter macdougall": {"penalties_per_game": 7.5, "home_win_pct": 54.0, "over_pct": 52.0, "pp_opportunities": 7.0, "tendency": "WHISTLE_HAPPY"},
+    "corey syvret": {"penalties_per_game": 6.2, "home_win_pct": 51.2, "over_pct": 49.5, "pp_opportunities": 5.7, "tendency": "NEUTRAL"},
+    "reid anderson": {"penalties_per_game": 5.5, "home_win_pct": 50.8, "over_pct": 48.0, "pp_opportunities": 5.0, "tendency": "LET_PLAY"},
+    "brandon blandina": {"penalties_per_game": 6.8, "home_win_pct": 53.5, "over_pct": 54.0, "pp_opportunities": 6.3, "tendency": "OVER"},
+    "chris schlenker": {"penalties_per_game": 6.0, "home_win_pct": 51.0, "over_pct": 46.5, "pp_opportunities": 5.5, "tendency": "UNDER"},
+    "ian walsh": {"penalties_per_game": 6.5, "home_win_pct": 52.2, "over_pct": 50.8, "pp_opportunities": 6.0, "tendency": "NEUTRAL"},
+    "pierre lambert": {"penalties_per_game": 7.8, "home_win_pct": 53.8, "over_pct": 51.8, "pp_opportunities": 7.2, "tendency": "WHISTLE_HAPPY"},
+    "mitch dunning": {"penalties_per_game": 5.9, "home_win_pct": 51.5, "over_pct": 47.0, "pp_opportunities": 5.4, "tendency": "LET_PLAY"},
 }
 
 
@@ -1795,6 +1841,26 @@ NCAAB_OFFICIALS = {
     "rick crawford": {"avg_total": 143.0, "home_win_pct": 52.0, "fouls_per_game": 35.5, "over_pct": 50.5, "tendency": "NEUTRAL"},
     "mike nance": {"avg_total": 142.8, "home_win_pct": 51.8, "fouls_per_game": 35.0, "over_pct": 50.0, "tendency": "NEUTRAL"},
     "randy mcall": {"avg_total": 143.2, "home_win_pct": 52.2, "fouls_per_game": 35.8, "over_pct": 50.8, "tendency": "NEUTRAL"},
+
+    # v17.3: Expanded NCAAB Officials (Feb 2026)
+    "brian dorsey": {"avg_total": 145.0, "home_win_pct": 53.5, "fouls_per_game": 36.5, "over_pct": 53.5, "tendency": "OVER"},
+    "bill ek": {"avg_total": 140.5, "home_win_pct": 51.0, "fouls_per_game": 33.5, "over_pct": 46.5, "tendency": "UNDER"},
+    "jeff anderson": {"avg_total": 142.0, "home_win_pct": 52.0, "fouls_per_game": 35.0, "over_pct": 50.0, "tendency": "NEUTRAL"},
+    "lamar simpson": {"avg_total": 146.5, "home_win_pct": 54.5, "fouls_per_game": 38.0, "over_pct": 55.0, "tendency": "OVER"},
+    "pat adams": {"avg_total": 143.8, "home_win_pct": 57.5, "fouls_per_game": 35.8, "over_pct": 51.0, "tendency": "HOME"},
+    "mike roberts": {"avg_total": 141.5, "home_win_pct": 51.5, "fouls_per_game": 34.0, "over_pct": 48.5, "tendency": "SLIGHT_UNDER"},
+    "ron groover": {"avg_total": 144.2, "home_win_pct": 53.0, "fouls_per_game": 36.0, "over_pct": 52.0, "tendency": "SLIGHT_OVER"},
+    "terry wymer": {"avg_total": 139.5, "home_win_pct": 50.5, "fouls_per_game": 33.0, "over_pct": 45.0, "tendency": "UNDER"},
+    "les jones": {"avg_total": 143.5, "home_win_pct": 52.5, "fouls_per_game": 35.5, "over_pct": 50.5, "tendency": "NEUTRAL"},
+    "jeb hartness": {"avg_total": 147.0, "home_win_pct": 54.0, "fouls_per_game": 37.5, "over_pct": 54.5, "tendency": "OVER"},
+    "doug shows": {"avg_total": 142.8, "home_win_pct": 52.2, "fouls_per_game": 35.2, "over_pct": 50.2, "tendency": "NEUTRAL"},
+    "mike sanzere": {"avg_total": 140.0, "home_win_pct": 51.0, "fouls_per_game": 33.5, "over_pct": 46.0, "tendency": "UNDER"},
+    "tony padilla": {"avg_total": 145.5, "home_win_pct": 53.8, "fouls_per_game": 37.0, "over_pct": 53.0, "tendency": "OVER"},
+    "aj desai": {"avg_total": 143.0, "home_win_pct": 52.0, "fouls_per_game": 35.5, "over_pct": 50.5, "tendency": "NEUTRAL"},
+    "keith kimble": {"avg_total": 144.5, "home_win_pct": 56.0, "fouls_per_game": 36.0, "over_pct": 51.5, "tendency": "HOME"},
+    "d.j. carstensen": {"avg_total": 141.0, "home_win_pct": 51.2, "fouls_per_game": 34.2, "over_pct": 47.5, "tendency": "SLIGHT_UNDER"},
+    "steve mcjunkins": {"avg_total": 146.0, "home_win_pct": 53.5, "fouls_per_game": 37.5, "over_pct": 54.0, "tendency": "OVER"},
+    "tim comer": {"avg_total": 142.5, "home_win_pct": 52.5, "fouls_per_game": 35.5, "over_pct": 50.5, "tendency": "NEUTRAL"},
 }
 
 
