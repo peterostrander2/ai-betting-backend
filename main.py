@@ -150,7 +150,15 @@ async def root():
 # Health check at root level (some frontends expect this)
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "version": "14.2", "database": database.DB_ENABLED}
+    build_sha = _os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:8] or "local"
+    deploy_version = "17.1"  # Update with each release
+    return {
+        "status": "healthy",
+        "version": "17.1",
+        "build_sha": build_sha,
+        "deploy_version": deploy_version,
+        "database": database.DB_ENABLED
+    }
 
 
 # =============================================================================
