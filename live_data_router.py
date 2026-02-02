@@ -4463,22 +4463,28 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # Process odds
             _odds_errors = 0
             _odds_unavailable = 0
+            _odds_reasons = []
             for key, result in zip(keys, odds_results):
                 if isinstance(result, Exception):
                     _odds_errors += 1
+                    _odds_reasons.append(f"{key[0][:10]}: ERR {str(result)[:30]}")
                     logger.debug("ESPN odds error for %s: %s", key, result)
                     continue
                 if result and result.get("available"):
                     _espn_odds_by_game[key] = result
+                    _odds_reasons.append(f"{key[0][:10]}: OK spread={result.get('spread')}")
                 else:
                     _odds_unavailable += 1
+                    reason = result.get("reason") if result else "None"
+                    error = result.get("error") if result else None
+                    _odds_reasons.append(f"{key[0][:10]}: {reason or error or 'unknown'}")
                     logger.debug("ESPN odds unavailable for %s: %s", key, result.get("reason") if result else "None")
             logger.info("ESPN ODDS BATCH: success=%d, errors=%d, unavailable=%d",
                        len(_espn_odds_by_game), _odds_errors, _odds_unavailable)
 
             # Store counts for debug output
             nonlocal _espn_fetch_error
-            _espn_fetch_error = f"odds: success={len(_espn_odds_by_game)}, errors={_odds_errors}, unavailable={_odds_unavailable}"
+            _espn_fetch_error = f"odds: success={len(_espn_odds_by_game)}, errors={_odds_errors}, unavailable={_odds_unavailable}; reasons={_odds_reasons}"
 
             # Process injuries (merge into team-based lookup)
             for key, result in zip(keys, injury_results):
