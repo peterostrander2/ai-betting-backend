@@ -139,6 +139,17 @@ def normalize_side_label(pick: dict, pick_type: str) -> str:
     # For spread/ML, use team name
     return pick.get("team") or pick.get("side") or "Unknown"
 
+def resolve_home_away_intent(pick: dict) -> str:
+    """Derive intended HOME/AWAY from pick_side hints."""
+    pick_side = (pick.get("pick_side") or "").lower()
+    if not pick_side:
+        return ""
+    if "home" in pick_side:
+        return "HOME"
+    if "away" in pick_side or "visitor" in pick_side:
+        return "AWAY"
+    return ""
+
 
 def get_team_abbrev(team_name: str) -> str:
     """Convert team name to 3-letter abbreviation."""
@@ -322,8 +333,28 @@ def normalize_pick(pick: dict) -> dict:
     raw_odds = pick.get("odds") or pick.get("odds_american")
     odds_american = raw_odds if raw_odds is not None else None
 
+    # Enforce canonical side resolution for game picks (HOME/AWAY)
+    correction_flags = pick.get("correction_flags") or []
+    if pick_type in ("spread", "moneyline"):
+        intent = resolve_home_away_intent(pick)
+        if intent and home_team and away_team:
+            desired_team = home_team if intent == "HOME" else away_team
+            if selection and desired_team and selection.strip() != desired_team:
+                correction_flags.append("FIELD_CONTRADICTION_CORRECTED")
+                selection = desired_team
+                pick["team"] = desired_team
+                side_label = desired_team
+    pick["correction_flags"] = correction_flags
+
     # Build canonical bet string
-    bet_string = build_bet_string(pick, pick_type, selection, market_label, side_label, line_signed if pick_type == "spread" else None)
+    bet_string = build_bet_string(
+        pick,
+        pick_type,
+        selection,
+        market_label,
+        side_label,
+        line_signed if pick_type == "spread" else None
+    )
 
     # Compute selection_home_away
     selection_home_away = None
