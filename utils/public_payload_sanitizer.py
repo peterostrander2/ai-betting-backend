@@ -11,6 +11,9 @@ DROP_EXACT = {
     "_cached_at",
     "_elapsed_s",
     "_timed_out_components",
+    "commence_time",
+    "commence_time_iso",
+    "game_time",
 }
 
 DROP_SUFFIXES = (
