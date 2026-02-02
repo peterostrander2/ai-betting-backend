@@ -1163,6 +1163,18 @@ def _ensure_live_contract_payload(payload, status_code: int):
         detail = payload.get("detail", "request_failed")
         payload["errors"] = [{"status": status_code, "message": detail}]
 
+    # Deterministic error ordering (avoid hash churn)
+    if isinstance(payload.get("errors"), list):
+        def _err_key(e):
+            if isinstance(e, dict):
+                return (
+                    str(e.get("code", "")),
+                    str(e.get("status", "")),
+                    str(e.get("message", "")),
+                )
+            return (str(e), "", "")
+        payload["errors"] = sorted(payload["errors"], key=_err_key)
+
     if "data" not in payload and not ("props" in payload or "game_picks" in payload):
         payload["data"] = []
 
