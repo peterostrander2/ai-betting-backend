@@ -36,7 +36,12 @@ from data_dir import ensure_dirs, DATA_DIR
 from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILABLE
 import grader_store
 from storage_paths import ensure_persistent_storage_ready, get_storage_health
-from integration_registry import list_integrations, check_integration_health
+from integration_registry import (
+    list_integrations,
+    check_integration_health,
+    get_integrations_summary,
+    get_health_check_loud,
+)
 from core.integration_contract import INTEGRATIONS as CONTRACT_INTEGRATIONS, ALL_ENV_VARS
 
 _logger = logging.getLogger(__name__)
@@ -152,12 +157,88 @@ async def root():
 async def health():
     build_sha = _os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:8] or "local"
     deploy_version = "17.1"  # Update with each release
+
+    # --- Truthful health probes (no external calls, fail-soft) ---
+    errors = []
+    degraded_reasons = []
+
+    # Storage
+    try:
+        storage_health = get_storage_health()
+        storage_ok = storage_health.get("is_mountpoint", False) and storage_health.get("writable", False)
+        if not storage_ok:
+            errors.append("storage_not_persistent_or_not_writable")
+    except Exception as e:
+        storage_health = {"ok": False, "error": str(e)}
+        errors.append("storage_health_exception")
+
+    # Database (configured vs enabled)
+    try:
+        db_status = database.get_database_status()
+        if db_status.get("configured", False) and not db_status.get("enabled", False):
+            degraded_reasons.append("database_configured_but_not_enabled")
+    except Exception as e:
+        db_status = {"enabled": False, "configured": False, "error": str(e)}
+        degraded_reasons.append("database_status_exception")
+
+    # Redis cache
+    try:
+        from live_data_router import _cache
+        if _cache:
+            cache_status = _cache.get_stats()
+            redis_ok = cache_status.get("redis_connected", False)
+        else:
+            cache_status = {"redis_connected": False}
+            redis_ok = False
+        if not redis_ok:
+            degraded_reasons.append("redis_not_connected")
+    except Exception as e:
+        cache_status = {"redis_connected": False, "error": str(e)}
+        degraded_reasons.append("redis_status_exception")
+
+    # Scheduler
+    try:
+        sched = get_scheduler()
+        scheduler_ok = sched is not None and sched.running
+        if not scheduler_ok:
+            degraded_reasons.append("scheduler_not_running")
+    except Exception as e:
+        scheduler_ok = False
+        degraded_reasons.append(f"scheduler_exception:{e}")
+
+    # Integrations (env-only check; no external probes)
+    try:
+        integrations_summary = get_integrations_summary()
+        integrations_health = get_health_check_loud()
+    except Exception as e:
+        integrations_summary = {"error": str(e)}
+        integrations_health = {"status": "ERROR", "error": str(e)}
+        degraded_reasons.append("integrations_check_exception")
+
+    # Compute overall status
+    if errors:
+        status = "critical"
+    elif degraded_reasons or integrations_health.get("status") in ["DEGRADED", "CRITICAL", "ERROR"]:
+        status = "degraded"
+    else:
+        status = "healthy"
+
     return {
-        "status": "healthy",
+        "status": status,
+        "ok": status == "healthy",
         "version": "17.1",
         "build_sha": build_sha,
         "deploy_version": deploy_version,
-        "database": database.DB_ENABLED
+        "database": database.DB_ENABLED,
+        "database_status": db_status,
+        "storage": storage_health,
+        "redis": cache_status,
+        "scheduler": {"running": scheduler_ok},
+        "integrations": integrations_summary,
+        "integrations_health": integrations_health,
+        "errors": errors,
+        "degraded_reasons": degraded_reasons,
+        "timestamp_utc": datetime.utcnow().isoformat() + "Z",
     }
 
 
