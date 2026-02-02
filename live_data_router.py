@@ -4454,11 +4454,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             venue_results = results[2*n:]
 
             # Process odds
+            _odds_errors = 0
+            _odds_unavailable = 0
             for key, result in zip(keys, odds_results):
                 if isinstance(result, Exception):
+                    _odds_errors += 1
+                    logger.debug("ESPN odds error for %s: %s", key, result)
                     continue
                 if result and result.get("available"):
                     _espn_odds_by_game[key] = result
+                else:
+                    _odds_unavailable += 1
+                    logger.debug("ESPN odds unavailable for %s: %s", key, result.get("reason") if result else "None")
+            logger.info("ESPN ODDS BATCH: success=%d, errors=%d, unavailable=%d",
+                       len(_espn_odds_by_game), _odds_errors, _odds_unavailable)
 
             # Process injuries (merge into team-based lookup)
             for key, result in zip(keys, injury_results):
