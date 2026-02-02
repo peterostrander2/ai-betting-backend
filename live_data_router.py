@@ -3524,7 +3524,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             alignment = 1 - abs(research_score - esoteric_score) / 10
             alignment_pct = alignment * 100
             both_high = research_score >= 7.5 and esoteric_score >= 7.5
-            jarvis_high = jarvis_rs >= 7.5
+            jarvis_high = jarvis_rs is not None and jarvis_rs >= 7.5
             if immortal_detected and both_high and jarvis_high and alignment_pct >= 80:
                 confluence = {"level": "IMMORTAL", "boost": 10, "alignment_pct": alignment_pct}
             elif jarvis_triggered and both_high and jarvis_high and alignment_pct >= 80:
