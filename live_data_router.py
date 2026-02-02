@@ -3,7 +3,7 @@
 # Production-safe with retries, logging, rate-limit handling, deterministic fallbacks
 # v11.08: Single source of truth for tiers via tiering.py
 
-from fastapi import APIRouter, HTTPException, Depends, Header, Response
+from fastapi import APIRouter, HTTPException, Depends, Header, Response, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from typing import Optional, List, Dict, Any
