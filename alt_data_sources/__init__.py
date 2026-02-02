@@ -149,6 +149,28 @@ except ImportError as e:
     STADIUM_ENABLED = False
     TRAVEL_ENABLED = False
 
+# NOAA Space Weather (GLITCH Protocol - Kp-Index)
+try:
+    from .noaa import (
+        fetch_kp_index_live,
+        get_kp_betting_signal,
+        get_space_weather_summary,
+        NOAA_ENABLED,
+    )
+    NOAA_AVAILABLE = True
+except ImportError:
+    NOAA_AVAILABLE = False
+    NOAA_ENABLED = False
+
+    def fetch_kp_index_live(*args, **kwargs):
+        return {"kp_value": 3.0, "storm_level": "QUIET", "source": "fallback"}
+
+    def get_kp_betting_signal(*args, **kwargs):
+        return {"score": 0.6, "reason": "KP_FALLBACK", "triggered": False, "kp_value": 3.0}
+
+    def get_space_weather_summary(*args, **kwargs):
+        return {"betting_outlook": "NEUTRAL", "outlook_reason": "NOAA unavailable"}
+
 # Integration helpers
 def get_alt_data_status():
     """Get status of all alternative data sources."""
@@ -164,6 +186,11 @@ def get_alt_data_status():
         "espn": {
             "available": ESPN_AVAILABLE,
             "configured": True if ESPN_AVAILABLE else False
+        },
+        "noaa": {
+            "available": NOAA_AVAILABLE,
+            "enabled": NOAA_ENABLED,
+            "purpose": "GLITCH Protocol - Kp-Index geomagnetic data"
         }
     }
 
@@ -187,6 +214,12 @@ __all__ = [
     "get_game_details",
     "get_espn_status",
     "ESPN_AVAILABLE",
+    # NOAA Space Weather (GLITCH Protocol)
+    "fetch_kp_index_live",
+    "get_kp_betting_signal",
+    "get_space_weather_summary",
+    "NOAA_AVAILABLE",
+    "NOAA_ENABLED",
     # Integration
     "get_alt_data_status",
 ]

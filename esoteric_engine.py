@@ -887,3 +887,229 @@ def analyze_parlay_correlations(legs: List[Dict[str, Any]]) -> Dict[str, Any]:
         "average_biorhythm": round(avg_biorhythm, 1) if avg_biorhythm else None,
         "biorhythm_alignment": "FAVORABLE" if avg_biorhythm and avg_biorhythm > 25 else "UNFAVORABLE" if avg_biorhythm and avg_biorhythm < -25 else "NEUTRAL"
     }
+
+
+# =============================================================================
+# 11. CHROME RESONANCE (GLITCH Protocol - Chromatic Harmony)
+# =============================================================================
+
+def calculate_chrome_resonance(birth_date_str: str, game_date: date = None) -> Dict[str, Any]:
+    """
+    Calculate chromatic resonance between player birth date and game date.
+
+    Based on chromatic scale theory - each date has a frequency signature.
+    The 12-note chromatic scale maps to day-of-year positions.
+
+    Perfect intervals (unison, fifth, fourth) = high resonance
+    Dissonant intervals (tritone, minor second) = low resonance
+
+    Args:
+        birth_date_str: Player birth date (YYYY-MM-DD format)
+        game_date: Game date (defaults to today)
+
+    Returns:
+        Dict with score (0-1), reason, triggered, interval_name, resonance_type
+    """
+    if game_date is None:
+        game_date = date.today()
+
+    try:
+        # Parse birth date
+        if isinstance(birth_date_str, str):
+            birth_date = datetime.strptime(birth_date_str, "%Y-%m-%d").date()
+        elif isinstance(birth_date_str, date):
+            birth_date = birth_date_str
+        else:
+            return {
+                "score": 0.5,
+                "reason": "INVALID_BIRTH_DATE",
+                "triggered": False,
+                "interval_name": None,
+                "resonance_type": None
+            }
+
+        # Map day-of-year to chromatic note (0-11)
+        # This creates a 12-tone cycle based on position in year
+        birth_day_of_year = birth_date.timetuple().tm_yday
+        game_day_of_year = game_date.timetuple().tm_yday
+
+        birth_note = birth_day_of_year % 12
+        game_note = game_day_of_year % 12
+
+        # Calculate interval (semitones apart)
+        interval = abs(game_note - birth_note)
+        if interval > 6:
+            interval = 12 - interval  # Use smaller interval
+
+        # Chromatic interval names and resonance values
+        # Based on music theory consonance/dissonance
+        interval_data = {
+            0: ("Unison", 1.0, "PERFECT"),           # Same note - perfect resonance
+            1: ("Minor 2nd", 0.3, "DISSONANT"),      # Half step - tension
+            2: ("Major 2nd", 0.5, "MILD"),           # Whole step - neutral
+            3: ("Minor 3rd", 0.65, "CONSONANT"),     # Minor third - emotional
+            4: ("Major 3rd", 0.7, "CONSONANT"),      # Major third - bright
+            5: ("Perfect 4th", 0.85, "STRONG"),      # Fourth - stable
+            6: ("Tritone", 0.25, "DISSONANT"),       # Tritone - unstable
+            7: ("Perfect 5th", 0.9, "STRONG"),       # Fifth - power
+        }
+
+        # Get interval data (default to neutral for any edge cases)
+        interval_name, resonance, resonance_type = interval_data.get(
+            interval, ("Unknown", 0.5, "NEUTRAL")
+        )
+
+        # Determine if triggered (strong or perfect resonance)
+        triggered = resonance >= 0.7
+
+        # Build reason string
+        if resonance >= 0.85:
+            reason = f"CHROME_PERFECT_{interval_name.upper().replace(' ', '_')}"
+        elif resonance >= 0.65:
+            reason = f"CHROME_CONSONANT_{interval_name.upper().replace(' ', '_')}"
+        elif resonance <= 0.35:
+            reason = f"CHROME_DISSONANT_{interval_name.upper().replace(' ', '_')}"
+        else:
+            reason = f"CHROME_NEUTRAL_{interval_name.upper().replace(' ', '_')}"
+
+        return {
+            "score": resonance,
+            "reason": reason,
+            "triggered": triggered,
+            "interval_name": interval_name,
+            "interval_semitones": interval,
+            "resonance_type": resonance_type,
+            "birth_note": birth_note,
+            "game_note": game_note,
+            "birth_day": birth_day_of_year,
+            "game_day": game_day_of_year
+        }
+
+    except Exception as e:
+        return {
+            "score": 0.5,
+            "reason": f"CHROME_ERROR: {str(e)}",
+            "triggered": False,
+            "interval_name": None,
+            "resonance_type": None
+        }
+
+
+# =============================================================================
+# 12. GLITCH AGGREGATE SCORE
+# =============================================================================
+
+def get_glitch_aggregate(
+    birth_date_str: str = None,
+    game_date: date = None,
+    game_time: datetime = None,
+    line_history: list = None,
+    value_for_benford: list = None,
+    primary_value: float = None
+) -> Dict[str, Any]:
+    """
+    Calculate aggregate GLITCH Protocol score from all orphaned signals.
+
+    Combines:
+    - Chrome Resonance (if birth_date provided)
+    - Void Moon (always)
+    - Hurst Exponent (if line_history provided)
+    - Kp-Index / Schumann (always)
+
+    Returns aggregated score and breakdown for esoteric engine integration.
+    """
+    results = {}
+    total_weight = 0
+    weighted_score = 0
+    triggered_signals = []
+    reasons = []
+
+    # 1. Chrome Resonance (weight: 0.25)
+    if birth_date_str:
+        chrome = calculate_chrome_resonance(birth_date_str, game_date)
+        results["chrome_resonance"] = chrome
+        weight = 0.25
+        weighted_score += chrome["score"] * weight
+        total_weight += weight
+        if chrome["triggered"]:
+            triggered_signals.append("chrome_resonance")
+        reasons.append(f"CHROME: {chrome['reason']}")
+
+    # 2. Void Moon (weight: 0.25)
+    void_moon = calculate_void_moon(game_date)
+    results["void_moon"] = void_moon
+    weight = 0.25
+    # Void moon: is_void = bad (lower score)
+    void_score = 0.3 if void_moon["is_void"] else 0.7
+    weighted_score += void_score * weight
+    total_weight += weight
+    if void_moon["is_void"]:
+        triggered_signals.append("void_moon_warning")
+        reasons.append(f"VOID_MOON: Active until {void_moon.get('void_end', 'unknown')}")
+    else:
+        reasons.append(f"VOID_MOON: Clear - {void_moon.get('moon_sign', 'unknown')}")
+
+    # 3. Hurst Exponent (weight: 0.25)
+    if line_history and len(line_history) >= 10:
+        hurst = calculate_hurst_exponent(line_history)
+        results["hurst"] = hurst
+        weight = 0.25
+        # Hurst away from 0.5 = stronger signal
+        hurst_score = 0.5 + abs(hurst["h_value"] - 0.5)
+        weighted_score += hurst_score * weight
+        total_weight += weight
+        if hurst["regime"] != "RANDOM_WALK":
+            triggered_signals.append(f"hurst_{hurst['regime'].lower()}")
+        reasons.append(f"HURST: {hurst['regime']} (H={hurst['h_value']:.2f})")
+
+    # 4. Kp-Index from NOAA (weight: 0.25) - Falls back to Schumann if unavailable
+    kp_data = None
+    try:
+        from alt_data_sources.noaa import get_kp_betting_signal, NOAA_ENABLED
+        if NOAA_ENABLED:
+            kp_data = get_kp_betting_signal(game_time)
+    except ImportError:
+        pass  # NOAA module not available, use Schumann fallback
+
+    if kp_data and kp_data.get("source") != "fallback":
+        # Use real NOAA Kp-Index data
+        results["kp_index"] = kp_data
+        weight = 0.25
+        kp_score = kp_data["score"]
+        weighted_score += kp_score * weight
+        total_weight += weight
+        if kp_data["triggered"]:
+            triggered_signals.append(f"kp_{kp_data['storm_level'].lower()}")
+        reasons.append(f"KP: {kp_data['storm_level']} (Kp={kp_data['kp_value']})")
+    else:
+        # Fallback to Schumann simulation
+        schumann = get_schumann_frequency(game_date)
+        results["schumann"] = schumann
+        weight = 0.25
+        # Normal conditions = good, elevated = potentially volatile
+        if schumann["status"] == "NORMAL":
+            schumann_score = 0.7
+        elif "ELEVATED" in schumann["status"]:
+            schumann_score = 0.5
+            triggered_signals.append("schumann_elevated")
+        else:
+            schumann_score = 0.6
+        weighted_score += schumann_score * weight
+        total_weight += weight
+        reasons.append(f"SCHUMANN: {schumann['status']} ({schumann['current_hz']}Hz)")
+
+    # Normalize score if we have weights
+    if total_weight > 0:
+        final_score = weighted_score / total_weight
+    else:
+        final_score = 0.5
+
+    return {
+        "glitch_score": round(final_score, 3),
+        "glitch_score_10": round(final_score * 10, 2),  # 0-10 scale for engine
+        "triggered_count": len(triggered_signals),
+        "triggered_signals": triggered_signals,
+        "reasons": reasons,
+        "breakdown": results,
+        "weights_used": round(total_weight, 2)
+    }

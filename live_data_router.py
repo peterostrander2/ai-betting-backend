@@ -3317,6 +3317,63 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             daily_edge_score +    # 10% weight (0-1.0)
             trap_mod              # Modifier (negative)
         )
+
+        # ===== GLITCH PROTOCOL SIGNALS (v17.2) =====
+        # Integrate orphaned esoteric signals: Chrome Resonance, Void Moon, Hurst, Kp-Index
+        glitch_adjustment = 0.0
+        glitch_reasons = []
+
+        try:
+            from esoteric_engine import get_glitch_aggregate, calculate_chrome_resonance
+            from player_birth_data import get_player_data as get_player_birth
+
+            # Get player birth date for Chrome Resonance (props only)
+            _player_birth = None
+            if player_name:
+                _pdata = get_player_birth(player_name)
+                if _pdata and _pdata.get("birth_date"):
+                    _player_birth = _pdata["birth_date"]
+
+            # Get game date
+            _game_date_obj = None
+            if game_datetime:
+                _game_date_obj = game_datetime.date() if hasattr(game_datetime, 'date') else game_datetime
+
+            # Calculate GLITCH aggregate
+            glitch_result = get_glitch_aggregate(
+                birth_date_str=_player_birth,
+                game_date=_game_date_obj,
+                game_time=game_datetime,
+                line_history=None,  # TODO: Pass line history when available
+                primary_value=prop_line if prop_line else spread
+            )
+
+            # GLITCH score (0-10 scale) adjusts esoteric
+            # Weight: 15% of esoteric score comes from GLITCH signals
+            _glitch_score = glitch_result.get("glitch_score_10", 5.0)
+            glitch_adjustment = (_glitch_score - 5.0) * 0.15  # ±0.75 max adjustment
+
+            # Add triggered signals to reasons
+            if glitch_result.get("triggered_count", 0) > 0:
+                for sig in glitch_result.get("triggered_signals", []):
+                    glitch_reasons.append(f"GLITCH: {sig}")
+
+            # Add specific Chrome Resonance if strong
+            if "chrome_resonance" in glitch_result.get("breakdown", {}):
+                chrome = glitch_result["breakdown"]["chrome_resonance"]
+                if chrome.get("triggered"):
+                    glitch_reasons.append(f"Chrome: {chrome.get('interval_name', 'unknown')} ({chrome.get('resonance_type', '')})")
+
+            # Log GLITCH signals
+            if glitch_adjustment != 0:
+                logger.debug("GLITCH[%s]: score=%.2f, adj=%.2f, signals=%s",
+                            game_str[:30], _glitch_score, glitch_adjustment, glitch_result.get("triggered_signals", []))
+        except Exception as e:
+            logger.debug("GLITCH signals unavailable: %s", e)
+
+        # Apply GLITCH adjustment to esoteric_raw
+        esoteric_raw += glitch_adjustment
+
         # Clamp to 0-10
         esoteric_score = max(0, min(10, esoteric_raw))
         logger.debug("Esoteric[%s]: mag=%.1f num=%.2f astro=%.2f fib=%.2f vortex=%.2f daily=%.2f trap=%.2f → raw=%.2f",
