@@ -38,15 +38,19 @@ GOLD_STAR_GATES = {
 
 # Confluence boost levels (must match production implementation)
 # v17.0: Added HARMONIC_CONVERGENCE for Math+Magic alignment
+# v17.3: Lowered HARMONIC_CONVERGENCE threshold from 8.0 to 7.5 for more triggers
 CONFLUENCE_LEVELS = {
     "IMMORTAL": 10.0,
     "JARVIS_PERFECT": 7.0,
     "PERFECT": 5.0,
-    "HARMONIC_CONVERGENCE": 4.5,  # NEW - Research + Esoteric both >= 8.0
+    "HARMONIC_CONVERGENCE": 4.5,  # Research + Esoteric both >= threshold
     "STRONG": 3.0,
     "MODERATE": 1.0,
     "DIVERGENT": 0.0,
 }
+
+# v17.3: Harmonic Convergence threshold (lowered from 8.0 for better trigger rate)
+HARMONIC_CONVERGENCE_THRESHOLD = 7.5
 
 # Status enums used in outputs (must be deterministic)
 WEATHER_STATUS = ["APPLIED", "NOT_RELEVANT", "UNAVAILABLE", "ERROR"]
@@ -60,4 +64,5 @@ SCORING_CONTRACT = {
     "gold_star_gates": GOLD_STAR_GATES,
     "confluence_levels": CONFLUENCE_LEVELS,
     "weather_status_enum": WEATHER_STATUS,
+    "harmonic_convergence_threshold": HARMONIC_CONVERGENCE_THRESHOLD,  # v17.3
 }

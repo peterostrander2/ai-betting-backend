@@ -1608,6 +1608,23 @@ NBA_OFFICIALS = {
     "kevin scott": {"avg_total": 217.8, "home_win_pct": 51.8, "fouls_per_game": 38.9, "over_pct": 48.1, "tendency": "SLIGHT_UNDER"},
     "mousa dagher": {"avg_total": 219.5, "home_win_pct": 52.1, "fouls_per_game": 39.1, "over_pct": 50.2, "tendency": "NEUTRAL"},
     "kevin cutler": {"avg_total": 218.4, "home_win_pct": 51.4, "fouls_per_game": 38.4, "over_pct": 49.1, "tendency": "NEUTRAL"},
+
+    # v17.3: Additional NBA Officials (Expanded Coverage - Feb 2026)
+    "courtney kirkland": {"avg_total": 220.2, "home_win_pct": 53.8, "fouls_per_game": 40.5, "over_pct": 52.8, "tendency": "SLIGHT_OVER"},
+    "scott wall": {"avg_total": 218.5, "home_win_pct": 51.2, "fouls_per_game": 38.2, "over_pct": 49.5, "tendency": "NEUTRAL"},
+    "brett nansel": {"avg_total": 217.9, "home_win_pct": 50.8, "fouls_per_game": 37.9, "over_pct": 48.8, "tendency": "SLIGHT_UNDER"},
+    "jb derose": {"avg_total": 219.8, "home_win_pct": 52.8, "fouls_per_game": 39.8, "over_pct": 51.5, "tendency": "SLIGHT_OVER"},
+    "cheryl flores": {"avg_total": 218.2, "home_win_pct": 51.5, "fouls_per_game": 38.0, "over_pct": 49.2, "tendency": "NEUTRAL"},
+    "simone jelks": {"avg_total": 220.5, "home_win_pct": 53.2, "fouls_per_game": 40.8, "over_pct": 53.2, "tendency": "OVER"},
+    "natalie sago": {"avg_total": 219.0, "home_win_pct": 52.0, "fouls_per_game": 39.0, "over_pct": 50.0, "tendency": "NEUTRAL"},
+    "karl lane": {"avg_total": 217.5, "home_win_pct": 51.0, "fouls_per_game": 37.5, "over_pct": 47.8, "tendency": "UNDER"},
+    "sean corbin": {"avg_total": 221.8, "home_win_pct": 54.5, "fouls_per_game": 41.2, "over_pct": 54.5, "tendency": "OVER"},
+    "tyler ford": {"avg_total": 218.8, "home_win_pct": 51.8, "fouls_per_game": 38.8, "over_pct": 49.8, "tendency": "NEUTRAL"},
+    "phenizee ransom": {"avg_total": 219.2, "home_win_pct": 52.2, "fouls_per_game": 39.2, "over_pct": 50.2, "tendency": "NEUTRAL"},
+    "ray acosta": {"avg_total": 220.0, "home_win_pct": 53.0, "fouls_per_game": 40.0, "over_pct": 51.8, "tendency": "SLIGHT_OVER"},
+    "jonathan sterling": {"avg_total": 217.2, "home_win_pct": 50.5, "fouls_per_game": 37.2, "over_pct": 47.2, "tendency": "UNDER"},
+    "mark lindsay": {"avg_total": 218.6, "home_win_pct": 51.6, "fouls_per_game": 38.6, "over_pct": 49.6, "tendency": "NEUTRAL"},
+    "ashley moyer-gleich": {"avg_total": 219.5, "home_win_pct": 52.5, "fouls_per_game": 39.5, "over_pct": 50.5, "tendency": "NEUTRAL"},
 }
 
 
@@ -1646,6 +1663,16 @@ NFL_OFFICIALS = {
     # Neutral
     "tony corrente": {"penalties_per_game": 11.8, "home_win_pct": 52.0, "over_pct": 50.5, "pass_int_rate": 0.55, "tendency": "NEUTRAL"},
     "craig wrolstad": {"penalties_per_game": 12.0, "home_win_pct": 51.8, "over_pct": 50.2, "pass_int_rate": 0.58, "tendency": "NEUTRAL"},
+
+    # v17.3: Additional NFL Officials (Expanded Coverage - Feb 2026)
+    "alan eck": {"penalties_per_game": 11.5, "home_win_pct": 51.5, "over_pct": 49.8, "pass_int_rate": 0.52, "tendency": "NEUTRAL"},
+    "shawn hochuli": {"penalties_per_game": 13.5, "home_win_pct": 53.8, "over_pct": 48.5, "pass_int_rate": 0.72, "tendency": "FLAG_HEAVY"},
+    "ronald torbert": {"penalties_per_game": 10.8, "home_win_pct": 51.2, "over_pct": 52.8, "pass_int_rate": 0.48, "tendency": "LET_PLAY"},
+    "adrian hill": {"penalties_per_game": 12.2, "home_win_pct": 52.5, "over_pct": 53.5, "pass_int_rate": 0.55, "tendency": "OVER"},
+    "tra blake": {"penalties_per_game": 11.2, "home_win_pct": 51.8, "over_pct": 54.2, "pass_int_rate": 0.50, "tendency": "OVER"},
+    "shawn smith": {"penalties_per_game": 12.8, "home_win_pct": 51.5, "over_pct": 46.5, "pass_int_rate": 0.68, "tendency": "UNDER"},
+    "land clark": {"penalties_per_game": 11.5, "home_win_pct": 55.2, "over_pct": 50.8, "pass_int_rate": 0.55, "tendency": "HOME"},
+    "alex kemp": {"penalties_per_game": 12.0, "home_win_pct": 56.2, "over_pct": 51.5, "pass_int_rate": 0.58, "tendency": "HOME"},
 }
 
 
@@ -1681,6 +1708,16 @@ MLB_OFFICIALS = {
     "brian gorman": {"strike_zone": "average", "runs_per_game": 8.4, "home_win_pct": 52.2, "over_pct": 49.8, "k_rate": 17.1, "tendency": "NEUTRAL"},
     "alfonso marquez": {"strike_zone": "average", "runs_per_game": 8.5, "home_win_pct": 51.5, "over_pct": 50.0, "k_rate": 17.0, "tendency": "NEUTRAL"},
     "todd tichenor": {"strike_zone": "average", "runs_per_game": 8.7, "home_win_pct": 52.5, "over_pct": 50.8, "k_rate": 16.8, "tendency": "NEUTRAL"},
+
+    # v17.3: Additional MLB Umpires (Expanded Coverage - Feb 2026)
+    "andy fletcher": {"strike_zone": "tight", "runs_per_game": 9.2, "home_win_pct": 51.0, "over_pct": 54.0, "k_rate": 16.0, "tendency": "OVER"},
+    "alan porter": {"strike_zone": "average", "runs_per_game": 8.4, "home_win_pct": 52.0, "over_pct": 50.0, "k_rate": 17.2, "tendency": "NEUTRAL"},
+    "jordan baker": {"strike_zone": "wide", "runs_per_game": 7.8, "home_win_pct": 52.5, "over_pct": 46.0, "k_rate": 18.5, "tendency": "UNDER"},
+    "dan iassogna": {"strike_zone": "average", "runs_per_game": 8.5, "home_win_pct": 51.5, "over_pct": 50.2, "k_rate": 17.0, "tendency": "NEUTRAL"},
+    "stu scheurwater": {"strike_zone": "tight", "runs_per_game": 9.0, "home_win_pct": 50.8, "over_pct": 53.5, "k_rate": 16.2, "tendency": "OVER"},
+    "jeremie rehak": {"strike_zone": "average", "runs_per_game": 8.6, "home_win_pct": 52.2, "over_pct": 50.5, "k_rate": 16.9, "tendency": "NEUTRAL"},
+    "ryan blakney": {"strike_zone": "wide", "runs_per_game": 7.6, "home_win_pct": 51.8, "over_pct": 45.5, "k_rate": 19.0, "tendency": "UNDER"},
+    "manny gonzalez": {"strike_zone": "average", "runs_per_game": 8.5, "home_win_pct": 52.0, "over_pct": 50.0, "k_rate": 17.0, "tendency": "NEUTRAL"},
 }
 
 

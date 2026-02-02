@@ -138,7 +138,7 @@ except ImportError:
     logger.warning("tiering module not available - using legacy tier logic")
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
-from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES
+from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD
 
 # Import Time ET - SINGLE SOURCE OF TRUTH for ET timezone
 try:
@@ -3626,10 +3626,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             else:
                 confluence = {"level": "DIVERGENT", "boost": 0, "alignment_pct": alignment_pct}
 
-        # ===== v17.0 HARMONIC CONVERGENCE CHECK =====
-        # "Golden Boost" when Math (Research) + Magic (Esoteric) both exceed 8.0
+        # ===== v17.3 HARMONIC CONVERGENCE CHECK =====
+        # "Golden Boost" when Math (Research) + Magic (Esoteric) both exceed threshold
         # This represents exceptional alignment between market intelligence and cosmic signals
-        HARMONIC_THRESHOLD = 8.0  # 80/100 on 10-point scale
+        # v17.3: Lowered from 8.0 to 7.5 for better trigger rate
+        HARMONIC_THRESHOLD = HARMONIC_CONVERGENCE_THRESHOLD  # From scoring_contract.py (7.5)
         HARMONIC_BOOST = 1.5      # +1.5 on 10-point scale (equivalent to +15 on 100-point)
 
         harmonic_boost = 0.0
