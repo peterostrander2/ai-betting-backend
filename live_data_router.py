@@ -3963,7 +3963,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "ai_score": round(ai_scaled, 2),
             "research_score": round(research_score, 2),
             "esoteric_score": round(esoteric_score, 2),
-            "jarvis_score": round(jarvis_rs, 2),  # Alias for jarvis_rs
+            "jarvis_score": round(jarvis_rs, 2) if jarvis_rs is not None else None,  # Alias for jarvis_rs
             "context_score": round(context_score, 2),  # v17.1: NEW 5th engine
             # Detailed breakdowns
             "scoring_breakdown": {
