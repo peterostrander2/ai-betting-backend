@@ -3261,6 +3261,35 @@ Loyola Chicago, Princeton, Yale, Liberty
 
 **Fixed in:** Commit `018d9ef` (Feb 2026)
 
+### Lesson 20: Contradiction Gate Silent Failure
+**Problem:** Both Over AND Under were returned for same totals. Contradiction gate wasn't blocking anything.
+
+**Root Cause:** `filter_contradictions()` returned `[], {}` (empty dict) when props list was empty, but `apply_contradiction_gate()` expected dict with `contradictions_detected` key. This caused a silent `KeyError` that was caught by the try/except fallback.
+
+**The Silent Failure Pattern:**
+```python
+try:
+    filtered_props, filtered_games, debug = apply_contradiction_gate(...)
+except Exception as e:
+    # Fallback silently used - BUG HIDDEN
+    filtered_props = filtered_props
+    filtered_games = filtered_game_picks
+```
+
+**Fix:** Return proper dict structure when empty:
+```python
+if not picks:
+    return [], {"contradictions_detected": 0, "picks_dropped": 0, "contradiction_groups": []}
+```
+
+**Prevention:**
+- Always return consistent dict structure, not empty `{}`
+- Log exceptions in fallback blocks (don't just swallow)
+- Add assertions for expected dict keys in tests
+- Test contradiction gate with empty props + non-empty games (the failure case)
+
+**Fixed in:** Commit `b5ffc3c` (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
