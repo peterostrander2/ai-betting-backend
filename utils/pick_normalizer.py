@@ -332,6 +332,7 @@ def normalize_pick(pick: dict) -> dict:
     start_time_display = pick.get("start_time") or pick.get("start_time_et") or pick.get("game_time")
     pick["start_time_et"] = start_time_display
     pick["start_time"] = start_time_display
+    pick["start_time_timezone"] = "ET"
 
     commence_iso = pick.get("commence_time_iso") or pick.get("commence_time")
     pick["start_time_iso"] = commence_iso if commence_iso else None
@@ -359,11 +360,13 @@ def normalize_pick(pick: dict) -> dict:
             start_time_display = ""
         pick["start_time_et"] = start_time_display
         pick["start_time"] = start_time_display
+        pick["start_time_timezone"] = "ET"
 
     if not start_time_display or start_time_display == "TBD ET":
         start_time_display = "TBD ET"
         pick["start_time_et"] = start_time_display
         pick["start_time"] = start_time_display
+        pick["start_time_timezone"] = "ET"
         pick["start_time_status"] = "UNAVAILABLE"
     else:
         pick["start_time_status"] = "OK"
