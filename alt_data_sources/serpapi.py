@@ -21,7 +21,7 @@ logger = logging.getLogger("serpapi")
 try:
     from core.serp_guardrails import (
         record_cache_hit, record_cache_miss, record_cache_error,
-        increment_quota, check_quota_available, SERP_CACHE_TTL
+        increment_quota, check_quota_available, SERP_CACHE_TTL, SERP_TIMEOUT
     )
     GUARDRAILS_AVAILABLE = True
 except ImportError:
@@ -35,7 +35,7 @@ SERPAPI_ENABLED = bool(SERPAPI_KEY)
 # Cache settings (search trends don't change rapidly)
 _trend_cache: Dict[str, Any] = {}
 _cache_time: Dict[str, float] = {}
-CACHE_TTL = 90 * 60  # 90 minutes (5400s) - conserve quota
+CACHE_TTL = SERP_CACHE_TTL if GUARDRAILS_AVAILABLE else 90 * 60  # 90 minutes default
 
 # SerpAPI endpoints
 SERPAPI_BASE = "https://serpapi.com/search"
@@ -89,7 +89,8 @@ def get_search_trend(query: str, location: str = "United States") -> Dict[str, A
             "num": 10,  # Only need count, not full results
         }
 
-        with httpx.Client(timeout=2.0) as client:  # Strict 2s timeout
+        timeout_s = SERP_TIMEOUT if GUARDRAILS_AVAILABLE else 2.0
+        with httpx.Client(timeout=timeout_s) as client:
             response = client.get(SERPAPI_BASE, params=params)
             response.raise_for_status()
             data = response.json()
