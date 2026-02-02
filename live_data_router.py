@@ -1775,7 +1775,7 @@ async def get_sharp_money(sport: str):
     cache_key = f"sharp:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
-        return JSONResponse(_sanitize_public(cached))
+        return cached  # Return dict, FastAPI auto-serializes for endpoints
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
@@ -1899,7 +1899,7 @@ async def get_sharp_money(sport: str):
                         logger.info("Playbook sharp signals derived for %s: %d signals", sport, len(data))
                         result = {"sport": sport.upper(), "source": "playbook+odds_api", "count": len(data), "data": data, "movements": data}
                         api_cache.set(cache_key, result)
-                        return JSONResponse(_sanitize_public(result))
+                        return result  # Return dict, FastAPI auto-serializes for endpoints
                 except ValueError as e:
                     logger.error("Failed to parse Playbook response: %s", e)
 
@@ -1925,7 +1925,7 @@ async def get_sharp_money(sport: str):
             data = generate_fallback_sharp(sport_lower)
             result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
             api_cache.set(cache_key, result)
-            return JSONResponse(_sanitize_public(result))
+            return result  # Return dict, FastAPI auto-serializes for endpoints
 
         if resp.status_code == 429:
             raise HTTPException(status_code=503, detail="Odds API rate limited (429). Try again later.")
@@ -1938,7 +1938,7 @@ async def get_sharp_money(sport: str):
             data = generate_fallback_sharp(sport_lower)
             result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
             api_cache.set(cache_key, result)
-            return JSONResponse(_sanitize_public(result))
+            return result  # Return dict, FastAPI auto-serializes for endpoints
 
         for game in games:
             spreads = []
@@ -1982,11 +1982,11 @@ async def get_sharp_money(sport: str):
         data = generate_fallback_sharp(sport_lower)
         result = {"sport": sport.upper(), "source": "fallback", "count": len(data), "data": data, "movements": data}
         api_cache.set(cache_key, result)
-        return JSONResponse(_sanitize_public(result))
+        return result  # Return dict, FastAPI auto-serializes for endpoints
 
     result = {"sport": sport.upper(), "source": "odds_api", "count": len(data), "data": data, "movements": data}  # movements alias for frontend
     api_cache.set(cache_key, result)
-    return JSONResponse(_sanitize_public(result))
+    return result  # Return dict, FastAPI auto-serializes for endpoints
 
 
 @router.get("/splits/{sport}")
