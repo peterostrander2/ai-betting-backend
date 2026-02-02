@@ -9,7 +9,7 @@ Manages:
 - Status reporting for /debug/integrations
 
 Environment Variables:
-- SERP_SHADOW_MODE: bool (default: true) - When true, boosts are zeroed
+- SERP_SHADOW_MODE: bool (default: false) - When true, boosts are zeroed; false = LIVE MODE
 - SERP_INTEL_ENABLED: bool (default: true) - Feature flag
 - SERP_DAILY_QUOTA: int (default: 166) - Daily API calls (5000/30)
 - SERP_MONTHLY_QUOTA: int (default: 5000) - Monthly API calls
@@ -49,7 +49,8 @@ def _env_float(key: str, default: float) -> float:
         return default
 
 # Shadow mode - when True, all boosts are zeroed (safe observation mode)
-SERP_SHADOW_MODE = _env_bool("SERP_SHADOW_MODE", True)
+# Default: False (LIVE MODE - boosts are applied to scoring)
+SERP_SHADOW_MODE = _env_bool("SERP_SHADOW_MODE", False)
 
 # Feature flag - master enable/disable
 SERP_INTEL_ENABLED = _env_bool("SERP_INTEL_ENABLED", True)
