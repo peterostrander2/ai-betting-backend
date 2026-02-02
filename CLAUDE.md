@@ -2295,6 +2295,114 @@ if research_score >= HARMONIC_THRESHOLD and esoteric_score >= HARMONIC_THRESHOLD
 
 ---
 
+### INVARIANT 18: Secret Redaction (Log Sanitizer)
+
+**RULE:** API keys, tokens, and auth headers MUST NEVER appear in logs.
+
+**Implementation:** `core/log_sanitizer.py` (NEW - Feb 2026)
+
+**Sensitive Data Classes:**
+| Category | Examples | Redaction |
+|----------|----------|-----------|
+| Headers | `X-API-Key`, `Authorization`, `Cookie` | → `[REDACTED]` |
+| Query Params | `apiKey`, `api_key`, `token`, `secret` | → `[REDACTED]` |
+| Env Var Values | `ODDS_API_KEY`, `PLAYBOOK_API_KEY`, etc. | → `[REDACTED]` |
+| Token Patterns | Bearer tokens, JWTs, long alphanumeric | → `[REDACTED]` |
+
+**Key Functions:**
+```python
+from core.log_sanitizer import (
+    sanitize_headers,    # Dict[str, Any] → Dict[str, str] with sensitive values redacted
+    sanitize_dict,       # Recursively redacts api_key, token, etc.
+    sanitize_url,        # Redacts ?apiKey=xxx query params
+    sanitize,            # Text sanitization for Bearer/JWT/alphanumeric
+    safe_log_request,    # Safe HTTP request logging
+    safe_log_response,   # Safe HTTP response logging
+)
+```
+
+**Files Updated:**
+| File | Line | Change |
+|------|------|--------|
+| `playbook_api.py` | 211 | Uses `sanitize_dict(query_params)` |
+| `live_data_router.py` | 6653 | Uses `params={}` not `?apiKey=` in URL |
+| `legacy/services/odds_api_service.py` | 30 | Changed `key[:8]...` to `[REDACTED]` |
+
+**NEVER:**
+- Log `request.headers` without sanitizing
+- Construct URLs with `?apiKey=VALUE` (use `params={}` dict)
+- Log partial keys like `key[:8]...` (reconnaissance risk)
+- Print exception messages that might contain secrets
+
+**Tests:** `tests/test_log_sanitizer.py` (20 tests)
+
+**Verification:**
+```bash
+# Run sanitizer tests
+pytest tests/test_log_sanitizer.py -v
+
+# Check no secrets in recent logs
+railway logs | grep -i "apikey\|authorization\|bearer" | head -5
+# Should return empty or only "[REDACTED]"
+```
+
+---
+
+### INVARIANT 19: Demo Data Hard Gate
+
+**RULE:** Sample/demo/fallback data ONLY returned when explicitly enabled.
+
+**Implementation:** Gated behind `ENABLE_DEMO=true` env var OR `mode=demo` query param.
+
+**What's Gated:**
+| Location | Demo Data | Gate |
+|----------|-----------|------|
+| `legacy/services/odds_api_service.py` | Lakers/Warriors demo game | `ENABLE_DEMO=true` |
+| `main.py:/debug/seed-pick` | Fake LeBron/LAL pick | `mode=demo` or `ENABLE_DEMO` |
+| `main.py:/debug/seed-pick-and-grade` | Fake LeBron/LAL pick | `mode=demo` or `ENABLE_DEMO` |
+| `main.py:/debug/e2e-proof` | Test pick with `e2e_` prefix | `mode=demo` or `ENABLE_DEMO` |
+| `live_data_router.py:_DEPRECATED_*` | Sample matchups | `ENABLE_DEMO=true` |
+
+**Behavior When Live Data Unavailable:**
+| Scenario | Before | After |
+|----------|--------|-------|
+| No `ODDS_API_KEY` | Demo Lakers/Warriors game | Empty `[]` |
+| API returns error | Demo fallback data | Empty `[]` + error logged |
+| No games scheduled | Demo data | Empty `[]` |
+
+**Endpoint Response When Gated:**
+```json
+{
+  "error": "Demo data gated",
+  "detail": "Set mode=demo query param or ENABLE_DEMO=true env var"
+}
+```
+HTTP 403 Forbidden
+
+**NEVER:**
+- Return sample picks without explicit demo flag
+- Use hardcoded player data (LeBron, Mahomes) in production responses
+- Fall back to demo on API failure (return empty instead)
+
+**Tests:** `tests/test_no_demo_data.py` (12 tests)
+
+**Verification:**
+```bash
+# Debug endpoints should be blocked without flag
+curl -X POST /debug/seed-pick -H "X-Admin-Key: KEY"
+# Should return 403 "Demo data gated"
+
+# With flag should work
+curl -X POST "/debug/seed-pick?mode=demo" -H "X-Admin-Key: KEY"
+# Should return seeded pick
+
+# Best-bets should never have sample data
+curl /live/best-bets/NHL -H "X-API-Key: KEY" | jq '.props.picks[].matchup'
+# Should never show "Lakers @ Celtics" or other hardcoded matchups
+```
+
+---
+
 ## 📚 MASTER FILE INDEX (ML & GLITCH)
 
 ### Core ML Files
@@ -2324,6 +2432,13 @@ if research_score >= HARMONIC_THRESHOLD and esoteric_score >= HARMONIC_THRESHOLD
 | File | Purpose |
 |------|---------|
 | `core/scoring_contract.py` | Single source of truth for weights, thresholds, gates |
+
+### Security Files (Added Feb 2026)
+| File | Purpose | Key Functions |
+|------|---------|---------------|
+| `core/log_sanitizer.py` | Centralized secret redaction | `sanitize_headers()`, `sanitize_dict()`, `sanitize_url()` |
+| `tests/test_log_sanitizer.py` | 20 tests for sanitizer | Tests headers, dicts, URLs, tokens |
+| `tests/test_no_demo_data.py` | 12 tests for demo gate | Tests fallback behavior, endpoint gating |
 
 ---
 
@@ -2375,6 +2490,35 @@ if research_score >= HARMONIC_THRESHOLD and esoteric_score >= HARMONIC_THRESHOLD
 - Always verify: `sum(weights) == 1.0` or use `weighted_score / total_weight`
 - Document weights in function docstring
 
+### Lesson 6: Secret Leakage in Logs (SECURITY)
+**Problem:** API keys were logged in multiple places:
+- `playbook_api.py:211` logged full query params including `api_key`
+- `live_data_router.py:6653` constructed URL with bare `?apiKey=VALUE`
+- `legacy/services/odds_api_service.py:30` logged `key[:8]...` (reconnaissance risk)
+
+**Root Cause:** No centralized log sanitization. Each developer logged debug info without thinking about secrets.
+
+**Prevention:**
+- Use `core/log_sanitizer.py` for ALL logging that might contain sensitive data
+- NEVER construct URLs with `?apiKey=` - use `params={}` dict instead
+- NEVER log partial keys - even `key[:8]` is a security risk
+- Run `grep -rn "apiKey\|api_key\|authorization" *.py` and verify all are sanitized
+
+**Fixed in:** Commit `2e67adc` (Feb 2026)
+
+### Lesson 7: Demo Data Leakage (SECURITY)
+**Problem:** Sample/demo data (Lakers/Warriors, LeBron James picks) could leak to production when APIs failed.
+
+**Root Cause:** Fallback code returned demo data without any gate. Any API failure would expose fake picks.
+
+**Prevention:**
+- ALL demo data MUST be gated behind `ENABLE_DEMO=true` or `mode=demo`
+- When live data unavailable, return EMPTY response, not sample data
+- Debug seed endpoints MUST check for demo flag before creating test picks
+- Search for hardcoded player names in non-test files: `grep -rn "LeBron\|Lakers" --include="*.py" | grep -v test`
+
+**Fixed in:** Commit `2e67adc` (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ML & GLITCH)
@@ -2423,6 +2567,46 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
 
 ---
 
+## ✅ VERIFICATION CHECKLIST (SECURITY)
+
+Run these after ANY change that touches logging, API clients, or debug endpoints:
+
+```bash
+# 1. Log sanitizer tests
+pytest tests/test_log_sanitizer.py -v
+# All 20 tests must pass
+
+# 2. Demo data gate tests
+pytest tests/test_no_demo_data.py -v
+# All 12 tests must pass (some skip if deps missing)
+
+# 3. Check for secret patterns in logs (should be empty or [REDACTED])
+grep -rn "apiKey=\|api_key=\|Authorization:" *.py | grep -v "REDACTED\|sanitize\|test_"
+# Should return few/no results
+
+# 4. Verify demo endpoints are gated
+curl -X POST /debug/seed-pick -H "X-Admin-Key: KEY" 2>/dev/null | jq '.error'
+# Should return "Demo data gated"
+
+# 5. Verify fallback returns empty (not demo data)
+ENABLE_DEMO=false python3 -c "
+from legacy.services.odds_api_service import OddsAPIService
+import os
+os.environ['ODDS_API_KEY'] = ''
+os.environ['ENABLE_DEMO'] = 'false'
+s = OddsAPIService()
+result = s.get_odds('basketball_nba')
+assert result == [], f'Expected empty, got {result}'
+print('✓ Demo data properly gated')
+"
+
+# 6. Check sensitive env vars are in sanitizer
+grep -c "ODDS_API_KEY\|PLAYBOOK_API_KEY" core/log_sanitizer.py
+# Should return 2+ (vars are listed)
+```
+
+---
+
 ## 🚫 NEVER DO THESE (ML & GLITCH)
 
 1. **NEVER** add a new signal without wiring it into the scoring pipeline
@@ -2433,6 +2617,16 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
 6. **NEVER** change ENGINE_WEIGHTS without updating `core/scoring_contract.py`
 7. **NEVER** add a new pillar without documenting it in the 17-pillar map
 8. **NEVER** modify `get_glitch_aggregate()` without updating its docstring weights
+
+## 🚫 NEVER DO THESE (SECURITY)
+
+9. **NEVER** log `request.headers` without using `sanitize_headers()`
+10. **NEVER** construct URLs with `?apiKey=VALUE` - use `params={}` dict
+11. **NEVER** log partial keys like `key[:8]...` (reconnaissance risk)
+12. **NEVER** return demo/sample data without `ENABLE_DEMO=true` or `mode=demo`
+13. **NEVER** fall back to demo data on API failure (return empty instead)
+14. **NEVER** hardcode player names (LeBron, Mahomes) in production responses
+15. **NEVER** add new env var secrets without adding to `SENSITIVE_ENV_VARS` in log_sanitizer.py
 
 ---
 
