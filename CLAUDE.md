@@ -389,10 +389,19 @@ top_picks = no_contradictions[:max_picks]
     "line": float,             # 3.5, 246.5, +6.5, etc.
     "odds_american": int,      # -110, +135, etc.
     "book": str,               # "draftkings"
-    "start_time_et": str,      # ISO timestamp in ET
+    "start_time_et": str,      # Display string in ET (e.g., "9:10 PM ET")
+    "start_time_timezone": str,# Always "ET"
+    "start_time_status": str,  # "OK" | "UNAVAILABLE"
     "game_status": str,        # "SCHEDULED", "LIVE", "FINAL"
 }
 ```
+
+**Public Payload ET-Only Rule (MANDATORY):**
+- Member-facing `/live/*` responses MUST NOT include UTC/ISO/telemetry keys.
+- Drop keys: `generated_at`, `persisted_at`, `timestamp`, `_cached_at`, `_elapsed_s`, `_timed_out_components`,
+  any `*_utc`, `*_iso`, `*_epoch`, and vendor time keys like `startTime`, `startTimeEst`.
+- ET display strings are allowed: `start_time_et`, `run_timestamp_et`, `date_et`.
+- Sanitizer is the single choke point: `utils/public_payload_sanitizer.py` + `LiveContractRoute`.
 
 **NEVER:**
 - Generic labels like "Game" without context
@@ -432,11 +441,23 @@ curl -X POST /live/grader/dry-run -H "X-API-Key: KEY" \
   -d '{"date":"2026-01-29","mode":"pre"}'
 # MUST show: pre_mode_pass: true, failed: 0
 
-# 6. Run tests
+# 6. Cache headers on /live (GET/HEAD)
+curl -sD - /live/best-bets/NBA -H "X-API-Key: KEY" -o /dev/null \
+ | egrep -i 'cache-control|pragma|expires|vary'
+# MUST include no-store + vary headers
+
+# 7. Public payload has no UTC/telemetry keys
+curl -s /live/best-bets/NBA -H "X-API-Key: KEY" \
+ | jq -r '.. | objects | keys[]' \
+ | egrep -i 'generated_at|persisted_at|timestamp|_cached_at|_elapsed_s|_timed_out_components|_utc$|_iso$|starttime' \
+ | head
+# MUST be empty
+
+# 8. Run tests
 pytest tests/test_titanium_fix.py tests/test_best_bets_contract.py
 # MUST pass: 12/12 tests
 
-# 7. Scheduler status (no import errors)
+# 9. Scheduler status (no import errors)
 curl /live/scheduler/status -H "X-API-Key: KEY"
 # MUST show: available: true (no import errors)
 ```
@@ -466,6 +487,10 @@ These checks catch the exact regressions that previously slipped through.
 5) **Freshness**
    - response includes `date_et` and `run_timestamp_et`
    - cache TTL matches expectations (best-bets shorter than others)
+
+6) **No UTC/Telemetry Leaks**
+   - no `*_utc`, `*_iso`, `startTime*`, `generated_at`, `persisted_at`, `_cached_at`
+   - ET display strings only
 
 ### /health TRUTH FIX (REQUIRED)
 

@@ -141,6 +141,8 @@ Watch for these patterns that have caused production issues:
 3) Hard gates (final_score >= 6.5, Titanium 3-of-4)
 4) Fail-soft (200 + errors, debug integrations loud)
 5) Freshness (date_et/run_timestamp_et + cache TTL)
+6) No UTC/telemetry leaks (startTime*, generated_at, *_utc, *_iso)
+7) Cache headers present on /live (GET/HEAD)
 - Test context integration end-to-end before production
 
 **Verification:**
@@ -153,6 +155,27 @@ curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/NBA?debug=1" 
 curl -s "https://web-production-7b2a.up.railway.app/health" | jq '.deploy_version'
 # Should show: "17.1"
 ```
+
+---
+
+## Lesson: ET-only public payloads + deterministic responses (Feb 2026)
+
+**What happened:**
+- UTC/ISO timestamps leaked into member-facing `/live/*` responses.
+- Cache headers were missing on some /live responses.
+- Hashes changed every hit due to ordering + volatile fields.
+
+**Fix:**
+- Added `utils/public_payload_sanitizer.py` as the single choke point.
+- Applied sanitizer in `LiveContractRoute` for member endpoints.
+- Added /live no-store headers middleware.
+- Stabilized ordering with deterministic sort key.
+- Added stable error code for best-bets failures (`BEST_BETS_FAILED`).
+
+**Lesson:**
+- ET display strings only; never emit UTC/ISO in public payloads.
+- Cache headers must be enforced at a single middleware.
+- Stable ordering prevents hash churn when scores tie.
 
 ---
 

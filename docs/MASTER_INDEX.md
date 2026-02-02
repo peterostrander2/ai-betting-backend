@@ -233,6 +233,7 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 | Scheduler | `daily_scheduler.py` | Jobs + ET schedule + exported status |
 | Tiering | `tiering.py` | Tier assignment + filters |
 | **Pick output format** | `utils/pick_normalizer.py` + `docs/PICK_CONTRACT_V1.md` | PickContract v1 fields, normalization rules |
+| **Public payload sanitizer** | `utils/public_payload_sanitizer.py` + `live_data_router.py` | ET-only public payloads, strip UTC/telemetry |
 | CI sessions | `scripts/ci_sanity_check.sh` | Sessions 1–10 must pass |
 
 ---
@@ -271,6 +272,8 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 | Any session spec changes | `scripts/ci_sanity_check.sh` + spot check scripts | CI must fail on regression |
 | Pick output fields/format | `utils/pick_normalizer.py` + `docs/PICK_CONTRACT_V1.md` | Maintain frontend contract |
 | Pillar additions (13-17) | `context_layer.py`, `live_data_router.py`, docs | All 17 pillars must be documented |
+| Public payload ET-only rules | `utils/public_payload_sanitizer.py` + `CLAUDE.md` | No UTC/telemetry leaks; ET display only |
+| Live caching headers | `main.py` middleware + `live_data_router.py` | Ensure no-store headers on GET/HEAD |
 
 ---
 
@@ -281,6 +284,7 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 - Write persisted data outside `RAILWAY_VOLUME_MOUNT_PATH`
 - Add/rename integrations without updating the canonical mapping
 - Let required endpoints return 500; fail-soft everywhere except debug/health which must fail-loud with explicit reasons
+- Ship UTC/ISO timestamps or telemetry in public `/live/*` payloads (use sanitizer)
 
 ### /health must be truthful (no greenwashing)
 
