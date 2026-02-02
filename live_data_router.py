@@ -2535,11 +2535,15 @@ async def get_best_bets(
         raise
     except Exception as e:
         import traceback as _tb
+        _tb_str = _tb.format_exc()
         logger.error("best-bets CRASH request_id=%s sport=%s: %s\n%s",
-                     request_id, sport, e, _tb.format_exc())
+                     request_id, sport, e, _tb_str)
         detail = {"code": "BEST_BETS_FAILED", "message": "best-bets failed"}
         if debug_mode:
             detail["request_id"] = request_id
+            detail["error_type"] = type(e).__name__
+            detail["error_message"] = str(e)
+            detail["traceback"] = _tb_str[-2000:]  # Last 2000 chars of traceback
         raise HTTPException(status_code=500, detail=detail)
 
 
