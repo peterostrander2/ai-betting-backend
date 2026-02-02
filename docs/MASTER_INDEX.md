@@ -46,6 +46,30 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 - `SCORING_LOGIC.md`
 - `CLAUDE.md` (if an invariant changes)
 
+## Post-change gates (run after ANY backend change)
+
+1) **Auth**
+   - no header → `Missing`
+   - wrong key → `Invalid`
+   - correct key → success
+
+2) **Shape contract**
+   - required: `ai_score`, `research_score`, `esoteric_score`, `jarvis_score`, `context_score`
+   - required: `total_score`, `final_score`
+   - required: `bet_tier` object
+
+3) **Hard gates**
+   - no picks with `final_score < 6.5` ever returned
+   - Titanium triggers only when ≥3/4 engines ≥8.0
+
+4) **Fail-soft**
+   - integration failures still return 200 with `errors` populated
+   - `/live/debug/integrations` must loudly show missing/unhealthy items
+
+5) **Freshness**
+   - response includes `date_et` and `run_timestamp_et`
+   - cache TTL matches expectations (best-bets shorter than others)
+
 **Never do:**
 - Add/modify scoring literals directly in `live_data_router.py` / `tiering.py` / `core/titanium.py`
 - Duplicate thresholds anywhere outside the contract
@@ -256,6 +280,13 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 - Write persisted data outside `RAILWAY_VOLUME_MOUNT_PATH`
 - Add/rename integrations without updating the canonical mapping
 - Let required endpoints return 500; fail-soft everywhere except debug/health which must fail-loud with explicit reasons
+
+### /health must be truthful (no greenwashing)
+
+`/health` is public for Railway but must report **real** internal status:
+- probes: storage, db, redis, scheduler, integrations env map
+- outputs: `status` + `ok` + `errors` + `degraded_reasons`
+- fail-soft (200) but never “healthy” when probes fail
 - "Fix" something by changing docs only (or code only). They must match.
 - Lower log level globally or suppress INFO telemetry in production (see Observability below)
 

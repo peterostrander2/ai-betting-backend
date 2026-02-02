@@ -441,6 +441,40 @@ curl /live/scheduler/status -H "X-API-Key: KEY"
 # MUST show: available: true (no import errors)
 ```
 
+### POST-CHANGE GATES (RUN AFTER ANY BACKEND CHANGE)
+
+These checks catch the exact regressions that previously slipped through.
+
+1) **Auth**
+   - no header → `Missing`
+   - wrong key → `Invalid`
+   - correct key → success
+
+2) **Shape contract**
+   - required: `ai_score`, `research_score`, `esoteric_score`, `jarvis_score`, `context_score`
+   - required: `total_score`, `final_score`
+   - required: `bet_tier` object
+
+3) **Hard gates**
+   - no picks with `final_score < 6.5` ever returned
+   - Titanium triggers only when ≥3/4 engines ≥8.0
+
+4) **Fail-soft**
+   - integration failures still return 200 with `errors` populated
+   - `/live/debug/integrations` must loudly show missing/unhealthy items
+
+5) **Freshness**
+   - response includes `date_et` and `run_timestamp_et`
+   - cache TTL matches expectations (best-bets shorter than others)
+
+### /health TRUTH FIX (REQUIRED)
+
+`/health` is public for Railway, but it must be **truthful**:
+- It now runs internal probes (storage, db, redis, scheduler, integrations env map)
+- It returns `status: healthy|degraded|critical`, plus `errors` + `degraded_reasons`
+- No external API calls; fail-soft only
+- If any critical probe fails, `/health` must show **degraded/critical**, not “healthy”
+
 ---
 
 ### NEVER BREAK THESE RULES
@@ -2047,4 +2081,3 @@ Vary: Origin, X-API-Key, Authorization
 pytest tests/test_pick_contract_v1.py -v
 # All 12 tests must pass
 ```
-

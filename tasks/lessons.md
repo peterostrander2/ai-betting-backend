@@ -128,6 +128,19 @@ Watch for these patterns that have caused production issues:
   - `SCORING_LOGIC.md` (formula)
   - `CLAUDE.md` (invariants)
 - Always verify ML models receive real data, not hardcoded defaults
+
+## Lesson: /health must be truthful (no greenwashing)
+- `/health` is public for Railway but must report real internal status.
+- Required probes: storage, db, redis, scheduler, integrations env map.
+- Output must include: `status`, `ok`, `errors`, `degraded_reasons`.
+- Fail-soft (200) but never return “healthy” when probes fail.
+
+## Lesson: Post-change gates (run after ANY backend change)
+1) Auth (missing/invalid/correct key)
+2) Shape contract (engine scores, total/final, bet_tier)
+3) Hard gates (final_score >= 6.5, Titanium 3-of-4)
+4) Fail-soft (200 + errors, debug integrations loud)
+5) Freshness (date_et/run_timestamp_et + cache TTL)
 - Test context integration end-to-end before production
 
 **Verification:**
