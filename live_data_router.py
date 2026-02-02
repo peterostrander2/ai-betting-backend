@@ -8709,6 +8709,49 @@ async def scheduler_status():
         }
 
 
+@router.post("/ml/train-ensemble")
+async def trigger_ensemble_training(background_tasks: BackgroundTasks):
+    """
+    Manually trigger ensemble model training.
+
+    Runs the training script in the background.
+    Requires at least 100 graded picks.
+    """
+    import subprocess
+    import sys
+
+    script_path = os.path.join(os.path.dirname(__file__), "scripts", "train_ensemble.py")
+
+    if not os.path.exists(script_path):
+        return {"success": False, "error": "Training script not found", "path": script_path}
+
+    def run_training():
+        try:
+            result = subprocess.run(
+                [sys.executable, script_path, "--min-picks", "100"],
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            logger.info("Ensemble training result: returncode=%d", result.returncode)
+            if result.stdout:
+                logger.info("Ensemble training stdout: %s", result.stdout[-1000:])
+            if result.stderr:
+                logger.warning("Ensemble training stderr: %s", result.stderr[-500:])
+        except Exception as e:
+            logger.error("Ensemble training failed: %s", e)
+
+    background_tasks.add_task(run_training)
+
+    return {
+        "success": True,
+        "message": "Ensemble training started in background",
+        "script": script_path,
+        "min_picks": 100,
+        "note": "Check /live/ml/status after a few minutes to see if model loaded"
+    }
+
+
 @router.get("/esoteric-edge")
 async def get_esoteric_edge():
     """
