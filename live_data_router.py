@@ -313,6 +313,23 @@ except ImportError:
     ENSEMBLE_AVAILABLE = False
     print("[WARNING] ensemble model not available - skipping ensemble prediction")
 
+# Import SERP Intelligence for betting signals (v17.4)
+try:
+    from alt_data_sources.serp_intelligence import (
+        get_serp_betting_intelligence,
+        get_serp_prop_intelligence,
+    )
+    from core.serp_guardrails import (
+        is_serp_available,
+        get_serp_status,
+        SERP_SHADOW_MODE,
+    )
+    SERP_INTEL_AVAILABLE = True
+except ImportError:
+    SERP_INTEL_AVAILABLE = False
+    SERP_SHADOW_MODE = True  # Default to shadow mode if module not available
+    print("[WARNING] serp_intelligence module not available - SERP signals disabled")
+
 # Redis import with fallback
 try:
     import redis
@@ -3674,6 +3691,64 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         except Exception as e:
             logger.warning("MSRF calculation failed: %s", e)
 
+        # ===== v17.4 SERP BETTING INTELLIGENCE =====
+        # Search trend signals from SerpAPI mapped to 5 engines
+        # SHADOW MODE by default: logs signals but applies 0 boost
+        serp_intel = None
+        serp_boost_total = 0.0
+        serp_reasons = []
+
+        if SERP_INTEL_AVAILABLE and is_serp_available():
+            try:
+                if player_name:
+                    # Prop bets - use prop intelligence
+                    serp_intel = get_serp_prop_intelligence(
+                        sport=sport_upper,
+                        player_name=player_name,
+                        home_team=home_team,
+                        away_team=away_team,
+                        market=market,
+                        prop_line=prop_line
+                    )
+                else:
+                    # Game bets - use game intelligence
+                    serp_intel = get_serp_betting_intelligence(
+                        sport=sport_upper,
+                        home_team=home_team,
+                        away_team=away_team,
+                        pick_side=pick_side,
+                    )
+
+                if serp_intel and serp_intel.get("available"):
+                    # Apply SERP boosts to engine scores (already capped and shadow-mode applied)
+                    serp_boosts = serp_intel.get("boosts", {})
+
+                    # Add to confluence boost (SERP signals augment base confluence)
+                    serp_boost_total = sum(serp_boosts.values())
+                    if serp_boost_total > 0:
+                        confluence["boost"] = confluence.get("boost", 0) + serp_boost_total
+                        confluence["serp_boost"] = serp_boost_total
+
+                    # Log triggered signals
+                    for sig in serp_intel.get("signals", []):
+                        if sig.get("triggered"):
+                            serp_reasons.append(f"SERP[{sig['engine']}]: {sig.get('reason', 'signal triggered')}")
+
+                    # Log shadow mode status
+                    if SERP_SHADOW_MODE and serp_intel.get("boosts_raw"):
+                        raw_total = sum(serp_intel["boosts_raw"].values())
+                        if raw_total > 0:
+                            logger.info("SERP SHADOW[%s]: Would apply +%.2f (AI:%.2f R:%.2f E:%.2f J:%.2f C:%.2f)",
+                                        game_str[:30], raw_total,
+                                        serp_intel["boosts_raw"].get("ai", 0),
+                                        serp_intel["boosts_raw"].get("research", 0),
+                                        serp_intel["boosts_raw"].get("esoteric", 0),
+                                        serp_intel["boosts_raw"].get("jarvis", 0),
+                                        serp_intel["boosts_raw"].get("context", 0))
+            except Exception as e:
+                logger.debug("SERP intelligence failed: %s", e)
+                serp_intel = {"available": False, "error": str(e)}
+
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
 
@@ -4169,6 +4244,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # v17.2 MSRF Resonance
             "msrf_boost": msrf_boost,
             "msrf_metadata": msrf_metadata,
+            # v17.4 SERP Intelligence
+            "serp_intel": serp_intel,
+            "serp_boost": serp_boost_total,
+            "serp_reasons": serp_reasons,
+            "serp_shadow_mode": SERP_SHADOW_MODE if SERP_INTEL_AVAILABLE else True,
             # v17.0 Ensemble Model (for GAME picks)
             "ensemble_metadata": ensemble_metadata
         }

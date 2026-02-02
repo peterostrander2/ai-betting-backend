@@ -17,6 +17,17 @@ from datetime import datetime
 
 logger = logging.getLogger("serpapi")
 
+# Import guardrails for quota/cache tracking
+try:
+    from core.serp_guardrails import (
+        record_cache_hit, record_cache_miss, record_cache_error,
+        increment_quota, check_quota_available, SERP_CACHE_TTL
+    )
+    GUARDRAILS_AVAILABLE = True
+except ImportError:
+    GUARDRAILS_AVAILABLE = False
+    logger.debug("serp_guardrails not available - tracking disabled")
+
 # Configuration
 SERPAPI_KEY = os.getenv("SERPAPI_KEY") or os.getenv("SERP_API_KEY")
 SERPAPI_ENABLED = bool(SERPAPI_KEY)
@@ -24,7 +35,7 @@ SERPAPI_ENABLED = bool(SERPAPI_KEY)
 # Cache settings (search trends don't change rapidly)
 _trend_cache: Dict[str, Any] = {}
 _cache_time: Dict[str, float] = {}
-CACHE_TTL = 30 * 60  # 30 minutes
+CACHE_TTL = 90 * 60  # 90 minutes (5400s) - conserve quota
 
 # SerpAPI endpoints
 SERPAPI_BASE = "https://serpapi.com/search"
@@ -52,7 +63,20 @@ def get_search_trend(query: str, location: str = "United States") -> Dict[str, A
     cache_key = f"{query}|{location}"
     now = time.time()
     if cache_key in _trend_cache and (now - _cache_time.get(cache_key, 0)) < CACHE_TTL:
+        if GUARDRAILS_AVAILABLE:
+            record_cache_hit()
         return {**_trend_cache[cache_key], "source": "cache"}
+
+    # Check quota before making API call
+    if GUARDRAILS_AVAILABLE:
+        quota_ok, quota_status = check_quota_available()
+        if not quota_ok:
+            return {
+                "trend_score": 0.5,
+                "source": "quota_exceeded",
+                "reason": quota_status.get("reason", "QUOTA_EXCEEDED")
+            }
+        record_cache_miss()
 
     try:
         import httpx
@@ -65,7 +89,7 @@ def get_search_trend(query: str, location: str = "United States") -> Dict[str, A
             "num": 10,  # Only need count, not full results
         }
 
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=2.0) as client:  # Strict 2s timeout
             response = client.get(SERPAPI_BASE, params=params)
             response.raise_for_status()
             data = response.json()
@@ -121,11 +145,17 @@ def get_search_trend(query: str, location: str = "United States") -> Dict[str, A
         _trend_cache[cache_key] = result
         _cache_time[cache_key] = now
 
+        # Track quota usage
+        if GUARDRAILS_AVAILABLE:
+            increment_quota()
+
         logger.info("SerpAPI trend: '%s' = %.2f (%s)", query, trend_score, result["interest_level"])
         return result
 
     except Exception as e:
         logger.warning("SerpAPI error for '%s': %s", query, e)
+        if GUARDRAILS_AVAILABLE:
+            record_cache_error()
         return {
             "trend_score": 0.5,
             "source": "fallback",

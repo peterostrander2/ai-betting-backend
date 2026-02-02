@@ -243,6 +243,45 @@ except ImportError:
     def get_noosphere_data(*args, **kwargs):
         return {"velocity": 0.0, "direction": "NEUTRAL", "source": "fallback"}
 
+# SERP Intelligence (v17.4 - Betting Signals from Search Trends)
+try:
+    from .serp_intelligence import (
+        get_serp_betting_intelligence,
+        get_serp_prop_intelligence,
+        detect_silent_spike,
+        detect_sharp_chatter,
+        detect_narrative,
+        detect_situational,
+        detect_noosphere,
+        SPORT_QUERIES,
+    )
+    SERP_INTEL_AVAILABLE = True
+except ImportError:
+    SERP_INTEL_AVAILABLE = False
+
+    def get_serp_betting_intelligence(*args, **kwargs):
+        return {"available": False, "boosts": {"ai": 0, "research": 0, "esoteric": 0, "jarvis": 0, "context": 0}}
+
+    def get_serp_prop_intelligence(*args, **kwargs):
+        return {"available": False, "boosts": {"ai": 0, "research": 0, "esoteric": 0, "jarvis": 0, "context": 0}}
+
+    def detect_silent_spike(*args, **kwargs):
+        return {"triggered": False, "boost": 0.0}
+
+    def detect_sharp_chatter(*args, **kwargs):
+        return {"triggered": False, "boost": 0.0}
+
+    def detect_narrative(*args, **kwargs):
+        return {"triggered": False, "boost": 0.0}
+
+    def detect_situational(*args, **kwargs):
+        return {"triggered": False, "boost": 0.0}
+
+    def detect_noosphere(*args, **kwargs):
+        return {"triggered": False, "boost": 0.0}
+
+    SPORT_QUERIES = {}
+
 # Integration helpers
 def get_alt_data_status():
     """Get status of all alternative data sources."""
@@ -268,6 +307,10 @@ def get_alt_data_status():
             "available": SERPAPI_AVAILABLE,
             "enabled": SERPAPI_ENABLED,
             "purpose": "GLITCH Protocol - Noosphere Velocity (search trends)"
+        },
+        "serp_intelligence": {
+            "available": SERP_INTEL_AVAILABLE,
+            "purpose": "v17.4 - Betting signals from search trends (5 engines)"
         }
     }
 
@@ -315,6 +358,15 @@ __all__ = [
     "get_noosphere_data",
     "SERPAPI_AVAILABLE",
     "SERPAPI_ENABLED",
+    # SERP Intelligence (v17.4 - Betting Signals)
+    "get_serp_betting_intelligence",
+    "get_serp_prop_intelligence",
+    "detect_silent_spike",
+    "detect_sharp_chatter",
+    "detect_narrative",
+    "detect_situational",
+    "detect_noosphere",
+    "SERP_INTEL_AVAILABLE",
     # Integration
     "get_alt_data_status",
 ]

@@ -579,6 +579,91 @@ async def validate_storage() -> Dict[str, Any]:
         return {"configured": False, "reachable": False, "error": str(e)}
 
 
+async def validate_serpapi() -> Dict[str, Any]:
+    """
+    Validate SerpAPI connectivity and return enhanced status with quota/cache stats.
+
+    Returns comprehensive SERP integration status including:
+    - API key configuration
+    - Shadow mode status
+    - Quota usage (daily/monthly)
+    - Cache performance
+    - Boost caps configuration
+    """
+    key = get_env_value("SERPAPI_KEY", "SERP_API_KEY")
+    if not key:
+        return {
+            "configured": False,
+            "reachable": False,
+            "status": "NOT_CONFIGURED",
+            "error": "SERPAPI_KEY or SERP_API_KEY not set"
+        }
+
+    result = {
+        "configured": True,
+        "status": "CONFIGURED",
+    }
+
+    # Get SERP guardrails status
+    try:
+        from core.serp_guardrails import get_serp_status, SERP_SHADOW_MODE
+        serp_status = get_serp_status()
+        result["serp_status"] = serp_status
+        result["shadow_mode"] = SERP_SHADOW_MODE
+        result["quota"] = serp_status.get("quota", {})
+        result["cache"] = serp_status.get("cache", {})
+    except ImportError:
+        result["serp_status"] = {"error": "serp_guardrails module not available"}
+        result["shadow_mode"] = True  # Default to shadow mode if module missing
+
+    # Test API connectivity with a simple query
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            # Use a minimal test query
+            resp = await client.get(
+                "https://serpapi.com/search",
+                params={
+                    "engine": "google",
+                    "q": "test",
+                    "api_key": key,
+                    "num": 1,
+                }
+            )
+            if resp.status_code == 200:
+                record_success("serpapi")
+                result["reachable"] = True
+                result["status"] = "VALIDATED"
+                result["response_time_ms"] = int(resp.elapsed.total_seconds() * 1000)
+            elif resp.status_code == 401:
+                record_failure("serpapi", "Invalid API key")
+                result["reachable"] = False
+                result["status"] = "UNREACHABLE"
+                result["error"] = "Invalid API key (401)"
+            elif resp.status_code == 429:
+                record_failure("serpapi", "Rate limited")
+                result["reachable"] = False
+                result["status"] = "RATE_LIMITED"
+                result["error"] = "API rate limit exceeded (429)"
+            else:
+                record_failure("serpapi", f"HTTP {resp.status_code}")
+                result["reachable"] = False
+                result["status"] = "UNREACHABLE"
+                result["error"] = f"HTTP {resp.status_code}"
+    except httpx.TimeoutException:
+        record_failure("serpapi", "Timeout")
+        result["reachable"] = False
+        result["status"] = "UNREACHABLE"
+        result["error"] = "Request timeout (2s)"
+    except Exception as e:
+        record_failure("serpapi", str(e))
+        result["reachable"] = False
+        result["status"] = "UNREACHABLE"
+        result["error"] = str(e)[:100]
+
+    return result
+
+
 # Map of validation function names to actual functions
 VALIDATORS: Dict[str, Callable] = {
     "validate_odds_api": validate_odds_api,
@@ -586,6 +671,7 @@ VALIDATORS: Dict[str, Callable] = {
     "validate_balldontlie": validate_balldontlie,
     "validate_weather_api": validate_weather_api,
     "validate_storage": validate_storage,
+    "validate_serpapi": validate_serpapi,
 }
 
 
