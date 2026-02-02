@@ -2428,6 +2428,78 @@ curl /live/best-bets/NHL -H "X-API-Key: KEY" | jq '.props.picks[].matchup'
 
 ---
 
+### INVARIANT 20: MSRF Confluence Boost (v17.2)
+
+**RULE:** MSRF (Mathematical Sequence Resonance Framework) calculates turn date resonance and adds confluence boost when mathematically significant.
+
+**Implementation:** `signals/msrf_resonance.py` → `get_msrf_confluence_boost()`
+
+**Mathematical Constants:**
+| Constant | Value | Significance |
+|----------|-------|--------------|
+| `OPH_PI` | 3.14159... | Circle constant, cycles |
+| `OPH_PHI` | 1.618... | Golden Ratio, natural growth |
+| `OPH_CRV` | 2.618... | Phi² (curved growth) |
+| `OPH_HEP` | 7.0 | Heptagon (7-fold symmetry) |
+
+**MSRF Number Lists:**
+| List | Count | Examples |
+|------|-------|----------|
+| `MSRF_NORMAL` | ~250 | 666, 777, 888, 2178 |
+| `MSRF_IMPORTANT` | 36 | 144, 432, 720, 1080, 2520 |
+| `MSRF_VORTEX` | 19 | 21.7, 144.3, 217.8 |
+
+**16 Operations:** Transform time intervals (Y1, Y2, Y3) between last 3 significant dates using constants, then project forward to check if game date aligns.
+
+**Boost Levels (added to confluence):**
+| Level | Points Required | Boost | Triggered |
+|-------|----------------|-------|-----------|
+| EXTREME_RESONANCE | ≥ 8 | +1.0 | ✅ |
+| HIGH_RESONANCE | ≥ 5 | +0.5 | ✅ |
+| MODERATE_RESONANCE | ≥ 3 | +0.25 | ✅ |
+| MILD_RESONANCE | ≥ 1 | +0.0 | ❌ |
+| NO_RESONANCE | 0 | +0.0 | ❌ |
+
+**Data Sources:**
+1. **Stored Predictions:** High-confidence hits from `/data/grader/predictions.jsonl` (min_score ≥ 7.5)
+2. **BallDontLie (NBA only):** Player standout games (points ≥ 150% of average)
+
+**Integration Point:** `live_data_router.py:3567-3591` (after Harmonic Convergence, before confluence_boost extraction)
+
+**Output Fields (debug mode):**
+```python
+{
+    "msrf_boost": float,        # 0.0, 0.25, 0.5, or 1.0
+    "msrf_metadata": {
+        "source": "msrf_live",
+        "level": "HIGH_RESONANCE",
+        "points": 5.5,
+        "matching_operations": [...],
+        "significant_dates_used": ["2025-11-15", "2025-12-24", "2026-01-15"]
+    }
+}
+```
+
+**Feature Flag:** `MSRF_ENABLED` env var (default: `true`)
+
+**Verification:**
+```bash
+# Check MSRF in pick output
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.props.picks[0] | {msrf_boost, msrf_level: .msrf_metadata.level, msrf_points: .msrf_metadata.points}'
+
+# Check MSRF in esoteric_reasons
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.props.picks[0].esoteric_reasons | map(select(startswith("MSRF")))'
+```
+
+**NEVER:**
+- Add MSRF boost without sufficient significant dates (need 3+)
+- Call MSRF for indoor sports without player/team context
+- Modify MSRF number lists without understanding sacred number theory
+
+---
+
 ## 📚 MASTER FILE INDEX (ML & GLITCH)
 
 ### Core ML Files
@@ -2469,6 +2541,28 @@ curl /live/best-bets/NHL -H "X-API-Key: KEY" | jq '.props.picks[].matchup'
 | `core/log_sanitizer.py` | Centralized secret redaction | `sanitize_headers()`, `sanitize_dict()`, `sanitize_url()` |
 | `tests/test_log_sanitizer.py` | 20 tests for sanitizer | Tests headers, dicts, URLs, tokens |
 | `tests/test_no_demo_data.py` | 12 tests for demo gate | Tests fallback behavior, endpoint gating |
+
+### MSRF Files (Added Feb 2026)
+| File | Purpose | Key Functions |
+|------|---------|---------------|
+| `signals/msrf_resonance.py` | Turn date resonance (~565 LOC) | `calculate_msrf_resonance()`, `get_msrf_confluence_boost()` |
+| `signals/__init__.py` | Exports MSRF functions | `MSRF_ENABLED`, `MSRF_NORMAL`, `MSRF_IMPORTANT`, `MSRF_VORTEX` |
+| `docs/MSRF_INTEGRATION_PLAN.md` | Implementation plan | Reference for MSRF architecture decisions |
+
+**MSRF Data Flow:**
+```
+get_significant_dates()
+  ├── get_significant_dates_from_predictions() → /data/grader/predictions.jsonl
+  └── get_significant_dates_from_player_history() → BallDontLie API (NBA only)
+        ↓
+calculate_msrf_resonance(dates, game_date)
+  ├── 16 operations × 3 intervals → transformed values
+  └── Match against MSRF_NORMAL/IMPORTANT/VORTEX → points
+        ↓
+get_msrf_confluence_boost() → (boost, metadata)
+        ↓
+live_data_router.py:3567 → adds to confluence["boost"]
+```
 
 ---
 
@@ -2549,6 +2643,35 @@ curl /live/best-bets/NHL -H "X-API-Key: KEY" | jq '.props.picks[].matchup'
 
 **Fixed in:** Commit `2e67adc` (Feb 2026)
 
+### Lesson 8: New Signal Integration Pattern (MSRF)
+**Problem:** How to integrate a new esoteric signal (MSRF) without disrupting existing scoring.
+
+**Solution:** Use CONFLUENCE BOOST pattern instead of creating a 6th engine.
+
+**Integration Pattern (RECOMMENDED for new signals):**
+1. Create standalone module in `signals/` directory
+2. Export main function as `get_XXX_confluence_boost(context) → (boost, metadata)`
+3. Return boost value (0.0, 0.25, 0.5, 1.0) + full metadata dict
+4. Integrate in `live_data_router.py` AFTER Harmonic Convergence, BEFORE `confluence_boost =`
+5. Add to `confluence["boost"]` (not to engine scores directly)
+6. Log boost in `esoteric_reasons` (for debug visibility)
+7. Include `XXX_boost` and `XXX_metadata` in pick output
+
+**Why Confluence Boost:**
+- Avoids diluting existing 5-engine weights
+- Easy to enable/disable via feature flag
+- Provides additive boost only when signal fires
+- Keeps engines clean and focused
+
+**Files Changed for MSRF:**
+```
+signals/msrf_resonance.py     # NEW - Core module
+signals/__init__.py           # MODIFIED - Export functions
+live_data_router.py:3567-3591 # MODIFIED - Integration point
+```
+
+**Fixed in:** Commit `ce083ef` (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ML & GLITCH)
@@ -2592,6 +2715,23 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
     research: .research_score,
     esoteric: .esoteric_score,
     confluence: .confluence_level
+  }'
+
+# 7. MSRF Resonance (check turn date detection)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.props.picks[0] | {
+    msrf_boost: .msrf_boost,
+    msrf_level: .msrf_metadata.level,
+    msrf_points: .msrf_metadata.points,
+    msrf_dates: .msrf_metadata.significant_dates_used
+  }'
+
+# 8. MSRF in esoteric_reasons (verify integration)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.props.picks[] | select(.msrf_boost > 0) | {
+    player: .player_name,
+    msrf: .msrf_boost,
+    level: .msrf_metadata.level
   }'
 ```
 
@@ -2647,6 +2787,14 @@ grep -c "ODDS_API_KEY\|PLAYBOOK_API_KEY" core/log_sanitizer.py
 6. **NEVER** change ENGINE_WEIGHTS without updating `core/scoring_contract.py`
 7. **NEVER** add a new pillar without documenting it in the 17-pillar map
 8. **NEVER** modify `get_glitch_aggregate()` without updating its docstring weights
+
+## 🚫 NEVER DO THESE (MSRF)
+
+16. **NEVER** call MSRF with fewer than 3 significant dates (will return no boost)
+17. **NEVER** modify MSRF number lists without understanding sacred geometry theory
+18. **NEVER** add MSRF as a 6th engine - use confluence boost pattern instead
+19. **NEVER** skip feature flag check (`MSRF_ENABLED`) before MSRF calculations
+20. **NEVER** hardcode significant dates - always pull from data sources
 
 ## 🚫 NEVER DO THESE (SECURITY)
 
