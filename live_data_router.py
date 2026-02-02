@@ -2537,7 +2537,7 @@ async def get_best_bets(
         import traceback as _tb
         logger.error("best-bets CRASH request_id=%s sport=%s: %s\n%s",
                      request_id, sport, e, _tb.format_exc())
-        detail = {"message": "best-bets failed"}
+        detail = {"code": "BEST_BETS_FAILED", "message": "best-bets failed"}
         if debug_mode:
             detail["request_id"] = request_id
         raise HTTPException(status_code=500, detail=detail)
