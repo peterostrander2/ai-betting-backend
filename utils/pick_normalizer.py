@@ -360,7 +360,13 @@ def normalize_pick(pick: dict) -> dict:
         pick["start_time_et"] = start_time_display
         pick["start_time"] = start_time_display
 
-    pick["start_time_status"] = "OK" if start_time_display else "UNAVAILABLE"
+    if not start_time_display:
+        start_time_display = "TBD ET"
+        pick["start_time_et"] = start_time_display
+        pick["start_time"] = start_time_display
+        pick["start_time_status"] = "UNAVAILABLE"
+    else:
+        pick["start_time_status"] = "OK"
 
     # === STATUS FLAGS ===
     pick["status"] = pick.get("status") or pick.get("game_status") or "unknown"
