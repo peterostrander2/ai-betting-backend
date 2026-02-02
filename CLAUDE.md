@@ -2962,6 +2962,43 @@ curl "/live/best-bets/NBA?debug=1" -H "X-API-Key: KEY"
 
 **Fixed in:** Commit `6780c93` (Feb 2026)
 
+### Lesson 14: NCAAB Team Name Matching (Mascot Stripping)
+**Problem:** NCAAB team names from Odds API include mascots ("North Carolina Tar Heels") but context layer data uses short names ("North Carolina"). This caused all NCAAB picks to get default context values.
+
+**Additional Issue:** Aggressive fuzzy matching caused false positives where "Alabama St Hornets" matched "Alabama" (Crimson Tide) and "North Carolina Central Eagles" matched "North Carolina" (Tar Heels) - completely different schools.
+
+**Root Cause:** The `standardize_team()` function only handled abbreviations, not NCAAB mascot suffixes.
+
+**Solution Implemented:**
+1. Added `NCAAB_TEAM_MAPPING` dict with 80+ major program mappings
+2. Added `MASCOT_SUFFIXES` whitelist for conservative fuzzy matching
+3. Only strip suffixes that are known mascots (not school identifiers like "St" or "Central")
+
+**Key Code (context_layer.py):**
+```python
+NCAAB_TEAM_MAPPING = {
+    "North Carolina Tar Heels": "North Carolina",
+    "Duke Blue Devils": "Duke",
+    "Syracuse Orange": "Syracuse",
+    # ... 80+ mappings
+}
+
+MASCOT_SUFFIXES = {
+    "Wildcats", "Tigers", "Bulldogs", "Eagles", "Tar Heels",
+    "Blue Devils", "Orange", "Crimson Tide", ...
+}
+```
+
+**Prevention:**
+- Always check API team name format vs data format when adding new sports/data
+- Use explicit mappings for common cases, conservative fuzzy matching for edge cases
+- Test with both major programs AND small schools to catch false positives
+- Verify: `curl /live/best-bets/NCAAB?debug=1 | jq '[.game_picks.picks[] | {matchup, pace}] | unique'`
+
+**Known Limitation:** Small schools not in data (SE Louisiana, Gardner-Webb, etc.) will correctly get defaults.
+
+**Fixed in:** Commits `98117dc`, `6518478` (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ML & GLITCH)
