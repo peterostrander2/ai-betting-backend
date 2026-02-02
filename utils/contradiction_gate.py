@@ -127,7 +127,7 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
     """
     logger.info(f"GATE: filter_contradictions called with {len(picks) if picks else 0} picks")
     if not picks:
-        return [], {}
+        return [], {"contradictions_detected": 0, "picks_dropped": 0, "contradiction_groups": []}
 
     # Helper function to get field from dict or object
     def _get(pick, key, default=""):
