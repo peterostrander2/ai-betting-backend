@@ -478,17 +478,37 @@ def standardize_team(team: str, sport: str = None) -> str:
     if team.upper() in TEAM_ALIASES:
         return TEAM_ALIASES[team.upper()]
 
-    # For NCAAB, try fuzzy matching by stripping common suffixes
+    # For NCAAB, try conservative fuzzy matching
+    # Only strip if the suffix is a common mascot word (not a school identifier like "St" or "Central")
     if sport and sport.upper() == "NCAAB":
-        # Try to match by removing common mascot words
+        # Common mascot suffixes that are safe to strip
+        MASCOT_SUFFIXES = {
+            "Wildcats", "Tigers", "Bulldogs", "Eagles", "Bears", "Cardinals",
+            "Cougars", "Huskies", "Terrapins", "Volunteers", "Crimson Tide",
+            "Blue Devils", "Tar Heels", "Seminoles", "Hurricanes", "Cavaliers",
+            "Yellow Jackets", "Hokies", "Demon Deacons", "Fighting Irish",
+            "Orange", "Panthers", "Razorbacks", "Gators", "Gamecocks",
+            "Commodores", "Rebels", "Aggies", "Longhorns", "Sooners",
+            "Boilermakers", "Spartans", "Fighting Illini", "Wolverines",
+            "Hoosiers", "Buckeyes", "Badgers", "Hawkeyes", "Golden Gophers",
+            "Cornhuskers", "Nittany Lions", "Scarlet Knights", "Bruins",
+            "Trojans", "Ducks", "Jayhawks", "Cyclones", "Red Raiders",
+            "Horned Frogs", "Mountaineers", "Cowboys", "Sun Devils",
+            "Buffaloes", "Utes", "Golden Eagles", "Bluejays", "Musketeers",
+            "Friars", "Red Storm", "Pirates", "Hoyas", "Blue Demons",
+            "Gaels", "Aztecs", "Rams", "Flyers", "Wolf Pack", "Lobos",
+        }
+
         words = team.split()
         if len(words) >= 2:
-            # Try progressively shorter prefixes
-            for i in range(len(words) - 1, 0, -1):
-                prefix = " ".join(words[:i])
-                # Check if this prefix exists in any NCAAB data
-                if prefix in NCAAB_PACE or prefix in NCAAB_DEFENSE_VS_GUARDS:
-                    return prefix
+            # Check if the last 1-2 words are a mascot
+            for suffix_len in [2, 1]:
+                if len(words) > suffix_len:
+                    suffix = " ".join(words[-suffix_len:])
+                    if suffix in MASCOT_SUFFIXES:
+                        prefix = " ".join(words[:-suffix_len])
+                        if prefix in NCAAB_PACE or prefix in NCAAB_DEFENSE_VS_GUARDS:
+                            return prefix
 
     return team
 
