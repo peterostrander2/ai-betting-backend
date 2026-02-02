@@ -2608,6 +2608,64 @@ done
 
 ---
 
+### INVARIANT 22: ESPN Data Integration (v17.3)
+
+**RULE:** ESPN data is a FREE secondary source for cross-validation and supplementation, NOT a replacement.
+
+**Data Usage Hierarchy:**
+| Data Type | Primary Source | ESPN Role | Integration |
+|-----------|---------------|-----------|-------------|
+| **Odds** | Odds API | Cross-validation | +0.25-0.5 research boost when confirmed |
+| **Injuries** | Playbook API | Supplement | Merge into `_injuries_by_team` |
+| **Officials** | ESPN (primary) | Primary for Pillar 16 | `_officials_by_game` lookup |
+| **Weather** | Weather API | Fallback | Only for MLB/NFL when primary fails |
+| **Venue** | ESPN | Supplementary | Indoor/outdoor, grass/turf info |
+
+**Implementation Requirements:**
+1. **Batch Parallel Fetching** - NEVER fetch ESPN data synchronously in scoring loop
+2. **Graceful Fallback** - ESPN data unavailable → continue without it (no errors)
+3. **Team Name Normalization** - Case-insensitive matching, handle accents
+4. **Closure Access** - Scoring function accesses via closure from `_best_bets_inner()`
+
+**Lookup Variables (defined in `_best_bets_inner()`):**
+```python
+_espn_events_by_teams = {}    # (home_lower, away_lower) → event_id
+_officials_by_game = {}       # (home_lower, away_lower) → officials dict
+_espn_odds_by_game = {}       # (home_lower, away_lower) → odds dict
+_espn_injuries_supplement = {} # team_name → list of injuries
+_espn_venue_by_game = {}      # (home_lower, away_lower) → venue dict (MLB/NFL only)
+```
+
+**ESPN Cache TTL:** 5 minutes (per-request cache, not global)
+
+**Sport Support:**
+| Sport | Officials | Odds | Injuries | Venue/Weather |
+|-------|-----------|------|----------|---------------|
+| NBA | ✅ | ✅ | ✅ | ❌ (indoor) |
+| NFL | ✅ | ✅ | ✅ | ✅ |
+| MLB | ✅ | ✅ | ✅ | ✅ |
+| NHL | ✅ | ✅ | ✅ | ❌ (indoor) |
+| NCAAB | ✅ | ✅ | ✅ | ❌ (indoor) |
+
+**Verification:**
+```bash
+# Check ESPN integration active
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '{espn_events: .debug.espn_events_mapped, officials: .debug.officials_available, espn_odds: .debug.espn_odds_count}'
+
+# Verify cross-validation in research_reasons
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0].research_reasons | map(select(contains("ESPN")))'
+```
+
+**NEVER:**
+- Replace Odds API with ESPN odds (ESPN is secondary validation only)
+- Fetch ESPN data inside the scoring loop (batch before scoring)
+- Skip team name normalization (causes lookup misses)
+- Assume ESPN has all data (refs assigned late, not all games covered)
+
+---
+
 ## 📚 MASTER FILE INDEX (ML & GLITCH)
 
 ### Core ML Files
@@ -2671,6 +2729,71 @@ get_msrf_confluence_boost() → (boost, metadata)
         ↓
 live_data_router.py:3567 → adds to confluence["boost"]
 ```
+
+### ESPN Hidden API Files (Added Feb 2026 - v17.3)
+| File | Purpose | Key Functions |
+|------|---------|---------------|
+| `alt_data_sources/espn_lineups.py` | ESPN Hidden API client (~600 LOC) | See functions below |
+| `alt_data_sources/__init__.py` | ESPN exports | `ESPN_AVAILABLE`, all ESPN functions |
+
+**ESPN Functions:**
+| Function | Purpose | Returns |
+|----------|---------|---------|
+| `get_espn_scoreboard()` | Today's games | Events list with IDs |
+| `get_espn_event_id()` | Find event by teams | ESPN event ID |
+| `get_officials_for_event()` | Referee assignments | Officials list (Pillar 16) |
+| `get_officials_for_game()` | Officials by team names | Officials data |
+| `get_espn_odds()` | Spread, ML, O/U | Odds dict (cross-validation) |
+| `get_espn_injuries()` | Inline injury data | Injuries list |
+| `get_espn_player_stats()` | Box scores | Player stats by team |
+| `get_espn_venue_info()` | Venue, weather, attendance | Venue dict |
+| `get_game_summary_enriched()` | All data in one call | Combined dict |
+| `get_all_games_enriched()` | Batch for all games | List of enriched games |
+
+**ESPN Endpoints (FREE - No Auth Required):**
+```
+Scoreboard:  https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard
+Summary:     https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/summary?event={id}
+Officials:   https://sports.core.api.espn.com/v2/sports/{sport}/leagues/{league}/events/{id}/competitions/{id}/officials
+Teams:       https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/teams/{abbrev}
+```
+
+**Sport/League Mapping:**
+```python
+SPORT_MAPPING = {
+    "NBA": {"sport": "basketball", "league": "nba"},
+    "NFL": {"sport": "football", "league": "nfl"},
+    "MLB": {"sport": "baseball", "league": "mlb"},
+    "NHL": {"sport": "hockey", "league": "nhl"},
+    "NCAAB": {"sport": "basketball", "league": "mens-college-basketball"},
+}
+```
+
+**ESPN Data Flow (v17.3):**
+```
+_best_bets_inner() parallel fetch:
+├── Props (Odds API)
+├── Games (Odds API)
+├── Injuries (Playbook)
+├── ESPN Scoreboard
+│   └── Build _espn_events_by_teams lookup
+│
+├── ESPN Officials (batch for all events)
+│   └── Build _officials_by_game lookup
+│
+└── ESPN Enriched (batch for all events)
+    ├── Odds → _espn_odds_by_game (cross-validation)
+    ├── Injuries → _espn_injuries_supplement (merge with Playbook)
+    └── Venue/Weather → _espn_venue_by_game (MLB/NFL outdoor)
+
+Scoring Integration:
+├── Research Engine: +0.25-0.5 boost when ESPN confirms spread/total
+├── Injuries: ESPN injuries merged into _injuries_by_team
+├── Weather: ESPN venue/weather as fallback for outdoor sports
+└── Officials: Pillar 16 adjustment from referee tendencies
+```
+
+**Reference:** https://scrapecreators.com/blog/espn-api-free-sports-data
 
 ### Dual-Use Functions (Endpoint + Internal) - CRITICAL
 | Function | Line | Endpoint | Internal Callers | Return Type |
@@ -3049,6 +3172,139 @@ NHL_ACCENT_MAP = {
 
 **Fixed in:** Commit (Feb 2026)
 
+### Lesson 17: ESPN Data Expansion for Cross-Validation (v17.3)
+**Problem:** We had ESPN officials working but weren't using the rich data available in ESPN's summary endpoint (odds, injuries, venue, weather).
+
+**Solution Implemented (v17.3):**
+1. Expanded `alt_data_sources/espn_lineups.py` with new extraction functions
+2. Batch fetch ESPN enriched data (odds, injuries, venue) for ALL games in parallel
+3. Use ESPN odds for cross-validation (+0.25-0.5 research boost when confirmed)
+4. Merge ESPN injuries with Playbook injuries
+5. Use ESPN venue/weather as fallback for outdoor sports (MLB, NFL)
+
+**New Functions Added:**
+```python
+get_espn_odds(sport, event_id)        # Spread, ML, O/U extraction
+get_espn_injuries(sport, event_id)    # Inline injury data
+get_espn_player_stats(sport, event_id) # Box scores for props
+get_espn_venue_info(sport, event_id)  # Venue, weather, attendance
+get_game_summary_enriched(...)        # All data in one call
+get_all_games_enriched(sport)         # Batch for all games
+```
+
+**Integration Points in live_data_router.py:**
+```
+Line 4333-4395: Batch fetch ESPN enriched data
+Line 4397-4408: Merge ESPN injuries with Playbook
+Line 3281-3312: ESPN odds cross-validation boost
+Line 4700-4737: ESPN venue/weather for outdoor sports
+```
+
+**Research Boost Logic:**
+```python
+# ESPN confirms our spread (diff <= 0.5) → +0.5
+# ESPN spread close (diff <= 1.0) → +0.25
+# ESPN confirms total (diff <= 1.0) → +0.5
+# ESPN total close (diff <= 2.0) → +0.25
+```
+
+**Prevention:**
+- When a free API offers rich data, USE ALL OF IT
+- Cross-validate primary data sources with secondary sources
+- Batch parallel fetches to avoid N+1 query problems
+- Always merge supplementary data, don't replace
+
+**Fixed in:** Commit `f10de5b` (Feb 2026)
+
+### Lesson 18: NCAAB Team Coverage Expansion (50 → 75 Teams)
+**Problem:** NCAAB defensive data only covered Top 50 teams, causing mid-major tournament teams (VCU, Dayton, Murray State, etc.) to get default values.
+
+**Solution Implemented:**
+1. Expanded `NCAAB_DEFENSE_VS_GUARDS/WINGS/BIGS` from 50 to 75 teams
+2. Added 25 mid-major tournament regulars (51-75)
+3. Expanded `NCAAB_PACE` with pace values for these teams
+4. Updated `DefensiveRankService.get_total_teams()` from 50 to 75
+
+**Teams Added (51-75):**
+```python
+VCU, Dayton, Saint Mary's, Nevada, New Mexico, UNLV, Drake, Murray State,
+Richmond, Davidson, Wichita State, FAU, UAB, Grand Canyon, Akron, Toledo,
+Boise State, Utah State, Colorado State, George Mason, Saint Louis,
+Loyola Chicago, Princeton, Yale, Liberty
+```
+
+**Prevention:**
+- When adding team data, include tournament-relevant mid-majors
+- Test with actual games to verify coverage
+- Update team count constants when expanding data
+
+**Fixed in:** Commit `46f81c6` (Feb 2026)
+
+### Lesson 19: MLB SPORT_MAPPING Bug
+**Problem:** MLB ESPN data wasn't being fetched - all MLB games showed empty ESPN enriched data.
+
+**Root Cause:** Typo in `SPORT_MAPPING` - `"mlb": "mlb"` instead of `"league": "mlb"`:
+```python
+# BUG (wrong key name):
+"MLB": {"sport": "baseball", "mlb": "mlb"}
+
+# FIX (correct key name):
+"MLB": {"sport": "baseball", "league": "mlb"}
+```
+
+**Prevention:**
+- Verify all dictionary keys are consistent across the mapping
+- Test ALL sports after adding/modifying sport mappings
+- Use constants for repeated key names when possible
+
+**Fixed in:** Commit `018d9ef` (Feb 2026)
+
+---
+
+## ✅ VERIFICATION CHECKLIST (ESPN)
+
+Run these after ANY change to ESPN integration:
+
+```bash
+# 1. Syntax check ESPN module
+python -m py_compile alt_data_sources/espn_lineups.py
+
+# 2. ESPN availability check
+curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.espn'
+# Should show: available: true, configured: true
+
+# 3. ESPN officials data
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug | {espn_events: .espn_events_mapped, officials: .officials_available}'
+# Should show counts > 0 (varies by game day)
+
+# 4. ESPN odds cross-validation
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0].research_reasons | map(select(contains("ESPN")))'
+# Should include "ESPN confirms spread" or "ESPN spread close" when available
+
+# 5. ESPN injuries merged
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug | {injuries_teams: .injuries_lookup_count, espn_injuries_teams: .espn_injuries_count}'
+
+# 6. ESPN venue/weather (MLB/NFL only)
+curl /live/best-bets/MLB?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {venue: .espn_venue, weather_source: .weather_source}'
+
+# 7. Test all sports ESPN integration
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  result=$(curl -s "/live/best-bets/$sport?debug=1" -H "X-API-Key: KEY")
+  espn_events=$(echo "$result" | jq -r '.debug.espn_events_mapped // 0')
+  echo "ESPN events: $espn_events"
+done
+
+# 8. Verify no ESPN errors in logs
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug.errors | map(select(contains("ESPN") or contains("espn")))'
+# Should be empty or null
+```
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ML & GLITCH)
@@ -3261,6 +3517,19 @@ curl -s "https://web-production-7b2a.up.railway.app/live/sharp/NBA" \
 33. **NEVER** put shared context calculations inside pick_type-specific blocks - context runs for ALL types
 34. **NEVER** assume injuries/data will match team names exactly - compare actual API responses to game data
 35. **NEVER** skip parallel fetching for critical data (props, games, injuries should fetch concurrently)
+
+## 🚫 NEVER DO THESE (ESPN Integration)
+
+36. **NEVER** hardcode sport/league mappings inline - use the `SPORT_MAPPING` dict in espn_lineups.py
+37. **NEVER** make ESPN calls synchronously in the scoring loop - use batch parallel fetches before scoring
+38. **NEVER** assume ESPN has data for all games - officials are assigned closer to game time, gracefully fallback
+39. **NEVER** replace primary data with ESPN data - ESPN is for SUPPLEMENT and CROSS-VALIDATION only
+40. **NEVER** skip the `league` key in SPORT_MAPPING (the MLB bug: `"mlb": "mlb"` instead of `"league": "mlb"`)
+41. **NEVER** forget to handle ESPN $ref links - officials endpoint returns URLs that need separate fetches
+42. **NEVER** skip team name normalization when matching ESPN data to Odds API data (case-insensitive + accent handling)
+43. **NEVER** assume ESPN venue data exists for indoor sports - only fetch venue/weather for MLB and NFL
+44. **NEVER** add ESPN boosts without logging them in research_reasons for debug visibility
+45. **NEVER** modify ESPN integration without testing ALL 5 sports (different endpoints, different data availability)
 
 ---
 
