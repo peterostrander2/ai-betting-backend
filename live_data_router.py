@@ -4476,6 +4476,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             logger.info("ESPN ODDS BATCH: success=%d, errors=%d, unavailable=%d",
                        len(_espn_odds_by_game), _odds_errors, _odds_unavailable)
 
+            # Store counts for debug output
+            nonlocal _espn_fetch_error
+            _espn_fetch_error = f"odds: success={len(_espn_odds_by_game)}, errors={_odds_errors}, unavailable={_odds_unavailable}"
+
             # Process injuries (merge into team-based lookup)
             for key, result in zip(keys, injury_results):
                 if isinstance(result, Exception):
