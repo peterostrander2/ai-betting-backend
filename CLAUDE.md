@@ -2433,6 +2433,11 @@ curl /live/best-bets/NHL -H "X-API-Key: KEY" | jq '.props.picks[].matchup'
 |------|---------|
 | `core/scoring_contract.py` | Single source of truth for weights, thresholds, gates |
 
+### Master Specification
+| File | Purpose |
+|------|---------|
+| `docs/JARVIS_SAVANT_MASTER_SPEC.md` | Full master spec + integration audit + missing API map |
+
 ### Security Files (Added Feb 2026)
 | File | Purpose | Key Functions |
 |------|---------|---------------|

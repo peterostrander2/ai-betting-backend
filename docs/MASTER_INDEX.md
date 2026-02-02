@@ -45,6 +45,7 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 **Docs that must match the contract (via validator):**
 - `SCORING_LOGIC.md`
 - `CLAUDE.md` (if an invariant changes)
+- `docs/JARVIS_SAVANT_MASTER_SPEC.md` (master spec + integration audit)
 
 ## Post-change gates (run after ANY backend change)
 
