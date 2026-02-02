@@ -4423,6 +4423,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _espn_odds_by_game = {}  # (home, away) -> odds dict
     _espn_injuries_supplement = {}  # team_name -> list of injuries (to merge with Playbook)
     _espn_venue_by_game = {}  # (home, away) -> venue dict with weather
+    _espn_fetch_error = None  # Track any fetch errors for debug output
 
     logger.info("ESPN ENRICHED FETCH: Checking conditions - ESPN_OFFICIALS_AVAILABLE=%s, events_count=%d",
                 ESPN_OFFICIALS_AVAILABLE, len(_espn_events_by_teams))
@@ -4495,10 +4496,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     if result and result.get("available"):
                         _espn_venue_by_game[key] = result
 
+        _espn_fetch_error = None
         try:
             await _fetch_espn_enriched_batch()
         except Exception as e:
-            logger.debug("ESPN enriched batch fetch failed: %s", e)
+            _espn_fetch_error = str(e)
+            logger.warning("ESPN enriched batch fetch failed: %s", e)
+    else:
+        _espn_fetch_error = f"Skipped: ESPN_OFFICIALS_AVAILABLE={ESPN_OFFICIALS_AVAILABLE}, events={len(_espn_events_by_teams)}"
 
     logger.info("ESPN ENRICHED: odds=%d, injuries=%d teams, venues=%d",
                 len(_espn_odds_by_game), len(_espn_injuries_supplement), len(_espn_venue_by_game))
@@ -5799,6 +5804,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "injuries_teams": len(_espn_injuries_supplement),
                 "venues_available": len(_espn_venue_by_game),
                 "events_keys": list(_espn_events_by_teams.keys())[:5] if len(_espn_events_by_teams) <= 5 else list(_espn_events_by_teams.keys())[:5] + [f"...and {len(_espn_events_by_teams) - 5} more"],
+                "fetch_error": _espn_fetch_error,
             },
         }
         # Don't cache debug responses
