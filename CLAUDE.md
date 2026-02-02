@@ -2500,6 +2500,63 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
 
 ---
 
+### INVARIANT 21: Dual-Use Functions Must Return Dicts (v17.2)
+
+**RULE:** Functions that are BOTH endpoint handlers AND called internally MUST return dicts, not JSONResponse.
+
+**Why:** FastAPI auto-serializes dicts to JSON for endpoint responses. When a function returns `JSONResponse`, internal callers cannot use `.get()` or other dict methods on the return value.
+
+**Affected Functions (live_data_router.py):**
+| Function | Line | Endpoint | Internal Callers |
+|----------|------|----------|------------------|
+| `get_sharp_money()` | 1758 | `/live/sharp/{sport}` | `_best_bets_inner()` line 2580 |
+| `get_splits()` | 1992 | `/live/splits/{sport}` | `_best_bets_inner()`, dashboard |
+| `get_lines()` | 2100+ | `/live/lines/{sport}` | dashboard |
+| `get_injuries()` | 2200+ | `/live/injuries/{sport}` | dashboard |
+
+**Pattern to Avoid:**
+```python
+@router.get("/endpoint")
+async def my_function():
+    result = {"data": [...]}
+    return JSONResponse(result)  # ❌ WRONG - breaks internal callers
+```
+
+**Correct Pattern:**
+```python
+@router.get("/endpoint")
+async def my_function():
+    result = {"data": [...]}
+    return result  # ✅ FastAPI auto-serializes for endpoints, internal callers get dict
+```
+
+**When to Use JSONResponse:**
+- Custom status codes: `return JSONResponse(content=data, status_code=201)`
+- Custom headers: `return JSONResponse(content=data, headers={"X-Custom": "value"})`
+- Custom media type: `return JSONResponse(content=data, media_type="application/xml")`
+
+**Verification:**
+```bash
+# Find all JSONResponse returns in endpoint handlers
+grep -n "return JSONResponse" live_data_router.py | head -20
+
+# Check if those functions are called internally
+# For each function, grep for calls outside the decorator
+```
+
+**Test All Sports After Changes:**
+```bash
+# After ANY change to dual-use functions, test ALL sports:
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "Testing $sport..."
+  curl -s "/live/best-bets/$sport" -H "X-API-Key: KEY" | jq '{sport: .sport, picks: (.game_picks.count + .props.count)}'
+done
+```
+
+**Fixed in:** Commit `d7279e9` (Feb 2026)
+
+---
+
 ## 📚 MASTER FILE INDEX (ML & GLITCH)
 
 ### Core ML Files
@@ -2562,6 +2619,40 @@ calculate_msrf_resonance(dates, game_date)
 get_msrf_confluence_boost() → (boost, metadata)
         ↓
 live_data_router.py:3567 → adds to confluence["boost"]
+```
+
+### Dual-Use Functions (Endpoint + Internal) - CRITICAL
+| Function | Line | Endpoint | Internal Callers | Return Type |
+|----------|------|----------|------------------|-------------|
+| `get_sharp_money()` | 1758 | `/live/sharp/{sport}` | `_best_bets_inner:2580` | dict ✅ |
+| `get_splits()` | 1992 | `/live/splits/{sport}` | dashboard | dict ✅ |
+| `get_lines()` | 2100+ | `/live/lines/{sport}` | dashboard | dict ✅ |
+| `get_injuries()` | 2200+ | `/live/injuries/{sport}` | dashboard | dict ✅ |
+
+**Rule:** ALL functions in this table MUST return dicts, NOT JSONResponse. FastAPI auto-serializes.
+
+### Key Debugging Locations
+| Location | Line | Purpose |
+|----------|------|---------|
+| `get_best_bets()` exception handler | 2536-2547 | Catches all best-bets crashes, logs traceback |
+| `_best_bets_inner()` | 2546+ | Main best-bets logic, 3000+ lines |
+| `calculate_pick_score()` | 3084+ | Nested scoring function, ~900 lines |
+| `calculate_jarvis_engine_score()` | 2622+ | Jarvis scoring, can return `jarvis_rs: None` |
+
+### Debugging Commands
+```bash
+# Get detailed error info from best-bets
+curl "/live/best-bets/NBA?debug=1" -H "X-API-Key: KEY" | jq '.detail'
+
+# Check if endpoint returns JSONResponse (should NOT for internal calls)
+# If you see "JSONResponse object has no attribute 'get'" - function returns wrong type
+
+# Test all 5 sports after ANY scoring change
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  curl -s "/live/best-bets/$sport" -H "X-API-Key: KEY" | \
+    jq '{sport: .sport, games: .game_picks.count, props: .props.count, error: .detail.code}'
+done
 ```
 
 ---
@@ -2672,6 +2763,126 @@ live_data_router.py:3567-3591 # MODIFIED - Integration point
 
 **Fixed in:** Commit `ce083ef` (Feb 2026)
 
+### Lesson 9: Dual-Use Functions (Endpoint + Internal) - CRITICAL
+**Problem:** `get_sharp_money()` was both an endpoint handler (`@router.get("/sharp/{sport}")`) AND called internally by `_best_bets_inner()`. The function returned `JSONResponse` objects, which worked for the endpoint but crashed internal callers expecting a dict.
+
+**Error Message:**
+```
+AttributeError: 'JSONResponse' object has no attribute 'get'
+```
+
+**Root Cause:** Function returned `JSONResponse(_sanitize_public(result))` for all paths. When called internally at line 2580, the code did `sharp_data.get("data", [])` which failed because `JSONResponse` has no `.get()` method.
+
+**The Pattern That Caused This:**
+```python
+@router.get("/sharp/{sport}")
+async def get_sharp_money(sport: str):
+    # ... fetch data ...
+    result = {"sport": sport, "data": [...]}
+    return JSONResponse(_sanitize_public(result))  # ❌ WRONG for dual-use
+```
+
+**The Fix:**
+```python
+@router.get("/sharp/{sport}")
+async def get_sharp_money(sport: str):
+    # ... fetch data ...
+    result = {"sport": sport, "data": [...]}
+    return result  # ✅ FastAPI auto-serializes dicts for endpoints
+```
+
+**Prevention Rules:**
+1. Functions used BOTH as endpoints AND internally MUST return dicts (not JSONResponse)
+2. FastAPI automatically serializes dict returns to JSON for endpoint responses
+3. Only use `JSONResponse()` when you need custom headers, status codes, or media types
+4. Before calling any `async def` function internally, check if it's also an endpoint handler
+5. Search for dual-use patterns: `grep -n "@router" *.py` then check if those functions are called elsewhere
+
+**Verification:**
+```bash
+# Find endpoint handlers
+grep -n "@router.get\|@router.post" live_data_router.py | head -20
+
+# Check if any are called internally (not just as endpoints)
+# Example: get_sharp_money is defined at line 1758
+grep -n "get_sharp_money(" live_data_router.py
+# If called anywhere other than the decorator line, it's dual-use
+```
+
+**Files Affected:**
+- `live_data_router.py:1758-1989` - `get_sharp_money()` fixed to return dict
+
+**Fixed in:** Commit `d7279e9` (Feb 2026)
+
+### Lesson 10: Undefined Variables in Nested Functions
+**Problem:** Multiple `NameError` and `TypeError` crashes in `calculate_pick_score()` due to undefined variables or None comparisons.
+
+**Bugs Found (Feb 2026 Debugging Session):**
+| Variable | Error | Line | Fix |
+|----------|-------|------|-----|
+| `_game_date_obj` | NameError | 3571 | Initialize to `None` before try block (line 3440) |
+| `jarvis_rs >= 7.5` | TypeError | 3527 | Add `jarvis_rs is not None and` check |
+| `esoteric_reasons` | NameError | various | Initialize as `[]` at function start |
+| `odds`, `candidate` | NameError | GLITCH section | Removed undefined variable usage |
+
+**Root Cause:** Nested function `calculate_pick_score()` inside `_best_bets_inner()` uses many variables. When code paths skip initialization (e.g., try block fails early), variables remain undefined.
+
+**Prevention Rules:**
+1. Initialize ALL variables at the START of the function, before any try blocks
+2. Variables used in except/finally blocks MUST be initialized before the try
+3. Before comparing numeric variables (e.g., `>= 7.5`), check for None
+4. Use `variable is not None and variable >= threshold` pattern
+5. When adding new variables to nested functions, grep for all usages and verify initialization
+
+**Pattern:**
+```python
+# ✅ CORRECT - Initialize before try block
+_game_date_obj = None  # Initialize here
+glitch_adjustment = 0.0
+try:
+    _game_date_obj = parse_date(...)  # May fail
+    # ... use _game_date_obj ...
+except Exception:
+    pass  # _game_date_obj is still None, not undefined
+
+# Later code can safely check:
+if _game_date_obj:  # Won't raise NameError
+    do_something(_game_date_obj)
+```
+
+**Fixed in:** Commits `f1b9dae`, `fd4f105`, `559e173`, `4b0a35e`, `0d66095` (Feb 2026)
+
+### Lesson 11: Production Debugging Without Logs Access
+**Problem:** `BEST_BETS_FAILED` error gave no details about the actual exception. Had to iterate through multiple deploy cycles to find bugs.
+
+**Solution Implemented:** Added detailed error info to response in debug mode:
+```python
+except Exception as e:
+    import traceback as _tb
+    _tb_str = _tb.format_exc()
+    logger.error("best-bets CRASH: %s\n%s", e, _tb_str)
+    detail = {"code": "BEST_BETS_FAILED", "message": "best-bets failed"}
+    if debug_mode:
+        detail["error_type"] = type(e).__name__
+        detail["error_message"] = str(e)
+        detail["traceback"] = _tb_str[-2000:]  # Last 2000 chars
+    raise HTTPException(status_code=500, detail=detail)
+```
+
+**Usage:**
+```bash
+# Get detailed error info
+curl "/live/best-bets/NBA?debug=1" -H "X-API-Key: KEY"
+# Returns: {"detail": {"code": "...", "error_type": "AttributeError", "error_message": "...", "traceback": "..."}}
+```
+
+**Prevention:**
+- ALL major endpoints should include error details in debug mode
+- Never swallow exceptions silently - always log with traceback
+- Use `?debug=1` query param to get verbose error info in production
+
+**Fixed in:** Commit `1cf5290` (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ML & GLITCH)
@@ -2777,6 +2988,61 @@ grep -c "ODDS_API_KEY\|PLAYBOOK_API_KEY" core/log_sanitizer.py
 
 ---
 
+## ✅ VERIFICATION CHECKLIST (Best-Bets & Scoring)
+
+**Run these after ANY change to best-bets, scoring, or dual-use functions:**
+
+```bash
+# 1. Syntax check
+python -m py_compile live_data_router.py
+
+# 2. Test ALL 5 sports (MANDATORY after scoring changes)
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== Testing $sport ==="
+  result=$(curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/$sport" \
+    -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4")
+
+  # Check for error
+  error=$(echo "$result" | jq -r '.detail.code // empty')
+  if [ -n "$error" ]; then
+    echo "❌ $sport FAILED: $error"
+    echo "$result" | jq '.detail'
+  else
+    games=$(echo "$result" | jq '.game_picks.count')
+    props=$(echo "$result" | jq '.props.count')
+    echo "✅ $sport OK: $games game picks, $props props"
+  fi
+done
+
+# 3. Check for JSONResponse returns in dual-use functions
+grep -n "return JSONResponse" live_data_router.py | grep -E "get_sharp|get_splits|get_lines|get_injuries"
+# Should return EMPTY (these functions must return dicts)
+
+# 4. Verify debug mode error details work
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/NBA?debug=1" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq 'has("detail") or has("sport")'
+# Should return true (either error detail or valid response)
+
+# 5. Check MSRF integration
+curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/NBA?debug=1" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | \
+  jq '.game_picks.picks[0] | {msrf_boost, msrf_source: .msrf_metadata.source}'
+# Should show msrf_boost (0.0 or higher) and msrf_source
+
+# 6. Verify no undefined variables in calculate_pick_score
+grep -n "_game_date_obj\|jarvis_rs\|esoteric_reasons" live_data_router.py | head -20
+# Verify these are initialized before use
+
+# 7. Check sharp endpoint still works (after dual-use fix)
+curl -s "https://web-production-7b2a.up.railway.app/live/sharp/NBA" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '{source: .source, count: .count}'
+# Should return source and count (not error)
+```
+
+**If ANY sport fails, DO NOT deploy other changes until fixed.**
+
+---
+
 ## 🚫 NEVER DO THESE (ML & GLITCH)
 
 1. **NEVER** add a new signal without wiring it into the scoring pipeline
@@ -2805,6 +3071,23 @@ grep -c "ODDS_API_KEY\|PLAYBOOK_API_KEY" core/log_sanitizer.py
 13. **NEVER** fall back to demo data on API failure (return empty instead)
 14. **NEVER** hardcode player names (LeBron, Mahomes) in production responses
 15. **NEVER** add new env var secrets without adding to `SENSITIVE_ENV_VARS` in log_sanitizer.py
+
+## 🚫 NEVER DO THESE (FastAPI & Function Patterns)
+
+21. **NEVER** return `JSONResponse()` from functions that are called internally - return dicts instead
+22. **NEVER** create dual-use functions (endpoint + internal) without verifying return type compatibility
+23. **NEVER** use `.get()` on a function return value without verifying it returns a dict (not JSONResponse)
+24. **NEVER** leave variables uninitialized before try blocks if they're used after the try block
+25. **NEVER** compare numeric variables to thresholds without None checks (use `x is not None and x >= 8.0`)
+26. **NEVER** swallow exceptions without logging the traceback
+27. **NEVER** return generic error messages in production - include error details in debug mode
+
+## 🚫 NEVER DO THESE (Nested Functions & Closures)
+
+28. **NEVER** assume closure variables are defined - verify they're assigned before the nested function
+29. **NEVER** use variables from outer scope without checking all code paths initialize them
+30. **NEVER** add new variables to nested functions without grepping for all usages
+31. **NEVER** modify scoring pipeline without testing all 5 sports (NBA, NHL, NFL, MLB, NCAAB)
 
 ---
 
