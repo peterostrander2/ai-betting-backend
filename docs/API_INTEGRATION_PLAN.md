@@ -35,21 +35,27 @@
 ```
 DAILY BUDGET: 166 searches
 
-GAME DAY TEAM SEARCHES (priority):
-├── NBA: 15 games × 2 teams = 30 searches
-├── NHL: 15 games × 2 teams = 30 searches
-├── MLB: 10 games × 2 teams = 20 searches (in season)
+1. BETTING INTELLIGENCE (highest priority):
+├── Sharp money chatter: ~20 searches/day
+├── Line movement discussion: ~15 searches/day
+├── Betting forum sentiment: ~10 searches/day
+└── Subtotal: ~45 searches/day
+
+2. GAME DAY TEAM SEARCHES:
+├── NBA: 10 games × 2 teams = 20 searches
+├── NHL: 10 games × 2 teams = 20 searches
+├── MLB: 8 games × 2 teams = 16 searches (in season)
 ├── NFL: ~4 games/day × 2 teams = 8 searches
-└── Subtotal: ~88 team searches/day
+└── Subtotal: ~64 team searches/day
 
-PLAYER SEARCHES (selective - top picks only):
-├── Only for props scoring >= 6.5
-├── ~30 player searches/day max
-└── Subtotal: 30 searches/day
+3. PLAYER SEARCHES (selective - top picks only):
+├── Only for props scoring >= 7.0
+├── ~25 player searches/day max
+└── Subtotal: 25 searches/day
 
-BUFFER: ~48 searches/day for retries/edge cases
+4. BUFFER: ~32 searches/day for retries/edge cases
 
-MONTHLY TOTAL: ~4,000 searches + 1,000 buffer = 5,000 ✓
+MONTHLY TOTAL: ~4,500 searches + 500 buffer = 5,000 ✓
 ```
 
 #### Caching Strategy (REQUIRED)
@@ -83,6 +89,205 @@ async def prefetch_game_intelligence(games_today: list):
             await get_team_serp_data(game.home_team)
             await get_team_serp_data(game.away_team)
 ```
+
+#### Betting Intelligence Searches (CRITICAL)
+
+**Purpose:** Complement Playbook API splits with social/search signals about betting activity. Detects sharp money chatter, RLM discussions, and public sentiment BEFORE lines move.
+
+##### Search Queries by Signal Type
+
+| Signal | Search Query Template | What It Finds |
+|--------|----------------------|---------------|
+| **Sharp Money Chatter** | `"{team} sharp money" OR "{team} wiseguy"` | Forum/article discussions of sharp action |
+| **RLM Detection** | `"{team} line movement" OR "{team} steam move"` | Reverse line movement chatter |
+| **Public Fade Signal** | `"{team} public betting" OR "{team} square money"` | Public betting sentiment (fade signal) |
+| **Injury Intel** | `"{player} injury" news` | Breaking injury news before official |
+| **Matchup Buzz** | `"{team1} vs {team2}" betting picks` | General betting sentiment for game |
+
+##### Implementation
+
+```python
+SERPAPI_KEY = os.getenv("SERPAPI_KEY")
+
+# Betting-specific search queries
+BETTING_QUERIES = {
+    "sharp_money": '"{team}" sharp money OR wiseguy OR steam',
+    "line_movement": '"{team}" line movement OR "RLM" OR "reverse line"',
+    "public_sentiment": '"{team}" public betting OR square money OR "public on"',
+    "injury_breaking": '"{player}" injury OR questionable OR doubtful',
+}
+
+async def get_betting_intelligence(team_name: str, opponent: str = None) -> dict:
+    """
+    Search for betting-related chatter about a team.
+    Returns signals that complement Playbook API splits data.
+    """
+    signals = {
+        "sharp_chatter_detected": False,
+        "rlm_discussion": False,
+        "public_heavy": False,
+        "betting_buzz_score": 0,
+        "sources": [],
+        "insights": []
+    }
+
+    async with httpx.AsyncClient() as client:
+        # 1. Sharp Money Chatter Search
+        sharp_query = BETTING_QUERIES["sharp_money"].format(team=team_name)
+        sharp_results = await client.get(
+            "https://serpapi.com/search",
+            params={
+                "q": sharp_query,
+                "api_key": SERPAPI_KEY,
+                "num": 10,
+                "tbm": "nws",  # News results
+                "tbs": "qdr:d"  # Last 24 hours
+            }
+        )
+        sharp_data = sharp_results.json()
+        news_results = sharp_data.get("news_results", [])
+
+        if len(news_results) >= 2:
+            signals["sharp_chatter_detected"] = True
+            signals["betting_buzz_score"] += 3
+            signals["insights"].append(f"Sharp money chatter: {len(news_results)} articles mentioning sharp action on {team_name}")
+            signals["sources"].extend([r.get("link") for r in news_results[:3]])
+
+        # 2. Line Movement Discussion
+        rlm_query = BETTING_QUERIES["line_movement"].format(team=team_name)
+        rlm_results = await client.get(
+            "https://serpapi.com/search",
+            params={
+                "q": rlm_query,
+                "api_key": SERPAPI_KEY,
+                "num": 10,
+                "tbs": "qdr:d"
+            }
+        )
+        rlm_data = rlm_results.json()
+        organic_results = rlm_data.get("organic_results", [])
+
+        # Check for RLM keywords in snippets
+        rlm_keywords = ["reverse", "moved", "steam", "sharp", "wiseguy"]
+        rlm_mentions = sum(1 for r in organic_results
+                          if any(kw in r.get("snippet", "").lower() for kw in rlm_keywords))
+
+        if rlm_mentions >= 2:
+            signals["rlm_discussion"] = True
+            signals["betting_buzz_score"] += 2
+            signals["insights"].append(f"RLM discussion detected: {rlm_mentions} sources discussing line movement")
+
+        # 3. Public Betting Sentiment
+        public_query = BETTING_QUERIES["public_sentiment"].format(team=team_name)
+        public_results = await client.get(
+            "https://serpapi.com/search",
+            params={
+                "q": public_query,
+                "api_key": SERPAPI_KEY,
+                "num": 10,
+                "tbs": "qdr:d"
+            }
+        )
+        public_data = public_results.json()
+        public_organic = public_data.get("organic_results", [])
+
+        # Check for heavy public indicators
+        public_keywords = ["public", "square", "heavy", "overwhelming", "90%", "85%", "80%"]
+        public_heavy_count = sum(1 for r in public_organic
+                                  if any(kw in r.get("snippet", "").lower() for kw in public_keywords))
+
+        if public_heavy_count >= 2:
+            signals["public_heavy"] = True
+            signals["betting_buzz_score"] += 1
+            signals["insights"].append(f"Heavy public action detected on {team_name} - potential fade")
+
+    # Calculate composite signal strength
+    signals["signal_strength"] = (
+        "STRONG" if signals["betting_buzz_score"] >= 4 else
+        "MODERATE" if signals["betting_buzz_score"] >= 2 else
+        "WEAK"
+    )
+
+    return signals
+
+
+async def get_sharp_confirmation(team_name: str, playbook_sharp_signal: str) -> dict:
+    """
+    Cross-validate Playbook API sharp signal with SerpAPI betting chatter.
+
+    Args:
+        team_name: Team to search
+        playbook_sharp_signal: "STRONG", "MODERATE", "MILD" from Playbook splits
+
+    Returns:
+        Confirmation signal and boost recommendation
+    """
+    serp_intel = await get_betting_intelligence(team_name)
+
+    confirmation = {
+        "playbook_signal": playbook_sharp_signal,
+        "serp_confirms": False,
+        "confidence_boost": 0,
+        "reason": ""
+    }
+
+    # Cross-validate: Playbook says sharp, does SerpAPI confirm?
+    if playbook_sharp_signal in ["STRONG", "MODERATE"]:
+        if serp_intel["sharp_chatter_detected"]:
+            confirmation["serp_confirms"] = True
+            confirmation["confidence_boost"] = 0.5 if playbook_sharp_signal == "STRONG" else 0.25
+            confirmation["reason"] = "SerpAPI confirms sharp chatter - high conviction"
+        elif serp_intel["rlm_discussion"]:
+            confirmation["serp_confirms"] = True
+            confirmation["confidence_boost"] = 0.25
+            confirmation["reason"] = "RLM discussion supports sharp signal"
+
+    # Fade signal: Public heavy but no sharp chatter
+    if serp_intel["public_heavy"] and not serp_intel["sharp_chatter_detected"]:
+        confirmation["fade_signal"] = True
+        confirmation["fade_reason"] = "Heavy public, no sharp confirmation - potential fade"
+
+    return confirmation
+```
+
+##### Integration with Research Engine
+
+```python
+# In calculate_pick_score(), enhance research_score with betting intelligence:
+
+async def enhance_research_with_serp(team_name: str, playbook_splits: dict) -> tuple:
+    """
+    Combine Playbook splits with SerpAPI betting intelligence.
+    Returns (boost, reasons) to add to research_score.
+    """
+    boost = 0
+    reasons = []
+
+    # Get Playbook sharp signal
+    playbook_sharp = playbook_splits.get("sharp_signal", "NONE")
+
+    # Cross-validate with SerpAPI
+    confirmation = await get_sharp_confirmation(team_name, playbook_sharp)
+
+    if confirmation["serp_confirms"]:
+        boost += confirmation["confidence_boost"]
+        reasons.append(f"🔍 SERP CONFIRMS: {confirmation['reason']}")
+
+    if confirmation.get("fade_signal"):
+        reasons.append(f"⚠️ FADE ALERT: {confirmation['fade_reason']}")
+
+    return boost, reasons
+```
+
+##### Signal Weights for Research Engine
+
+| Signal Combination | Research Boost | Confidence |
+|-------------------|----------------|------------|
+| Playbook STRONG + SerpAPI confirms | +0.5 | Very High |
+| Playbook MODERATE + SerpAPI confirms | +0.25 | High |
+| Playbook STRONG + No SerpAPI data | +0.0 | Medium (no change) |
+| SerpAPI sharp chatter + Playbook silent | +0.15 | Medium |
+| Heavy public + No sharp chatter | Fade signal | N/A |
 
 ### Twitter Free Tier - $0/month
 
