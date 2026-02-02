@@ -3133,47 +3133,56 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         _pace = 100.0     # default neutral pace
         _vacuum = 0.0     # default no vacuum
 
-        if pick_type == "PROP" and ML_INTEGRATION_AVAILABLE and market:
-            # Try LSTM-powered AI score for props
-
-            # v17.0: Get real context data for LSTM (Pillars 13-15)
-            if home_team and away_team and CONTEXT_LAYER_AVAILABLE:
-                try:
-                    # Determine opponent (opposite of player's team - assume player is on home team if not specified)
-                    # For props, we assume the player is on home team if player_team not provided
+        # v17.2: Get real context data for ALL pick types (Pillars 13-15)
+        # This runs for both PROP and GAME picks
+        if home_team and away_team and CONTEXT_LAYER_AVAILABLE:
+            try:
+                # Determine team context based on pick type
+                if pick_type == "PROP" and player_name:
+                    # For props, use player's team (assume home if not specified)
                     _player_team = home_team  # Default assumption
-                    opponent = away_team if _player_team == home_team else home_team
-
+                    opponent = away_team
                     # Map market to position for defense lookup
-                    position = _market_to_position(market, sport_upper)
+                    position = _market_to_position(market, sport_upper) if market else "Guard"
+                else:
+                    # For game picks, use home team perspective
+                    _player_team = home_team
+                    opponent = away_team
+                    position = "Guard"  # Default position for game picks
 
-                    # Pillar 13: Defensive Rank
-                    _def_rank = DefensiveRankService.get_rank(sport_upper, opponent, position)
+                # Pillar 13: Defensive Rank (lower = better defense)
+                _def_rank = DefensiveRankService.get_rank(sport_upper, opponent, position)
 
-                    # Pillar 14: Pace Vector (average of both teams)
-                    _pace = PaceVectorService.get_game_pace(sport_upper, home_team, away_team)
+                # Pillar 14: Pace Vector (average of both teams)
+                _pace = PaceVectorService.get_game_pace(sport_upper, home_team, away_team)
 
-                    # Pillar 15: Usage Vacuum from injuries
-                    # v17.2: Use _injuries_by_team to calculate vacuum for player's team
-                    _vacuum = 0.0
-                    if _injuries_by_team:
-                        # Get injuries for player's team (teammate injuries = usage opportunity)
-                        team_injuries = _injuries_by_team.get(_player_team, [])
-                        if team_injuries and CONTEXT_LAYER_AVAILABLE:
-                            try:
-                                _vacuum = UsageVacuumService.calculate_vacuum(sport_upper, team_injuries)
-                            except Exception as ve:
-                                logger.debug("Vacuum calculation failed: %s", ve)
+                # Pillar 15: Usage Vacuum from injuries
+                # v17.2: Use _injuries_by_team to calculate vacuum
+                if _injuries_by_team:
+                    # Get injuries for BOTH teams and sum vacuum
+                    home_injuries = _injuries_by_team.get(home_team, [])
+                    away_injuries = _injuries_by_team.get(away_team, [])
+                    all_injuries = home_injuries + away_injuries
+
+                    if all_injuries:
+                        try:
+                            _vacuum = UsageVacuumService.calculate_vacuum(sport_upper, all_injuries)
+                        except Exception as ve:
+                            logger.debug("Vacuum calculation failed: %s", ve)
+
                         # Fallback: count OUT players if service fails
-                        if _vacuum == 0.0 and team_injuries:
-                            out_count = sum(1 for inj in team_injuries if inj.get("status", "").upper() in ["OUT", "DOUBTFUL"])
+                        if _vacuum == 0.0:
+                            out_count = sum(1 for inj in all_injuries if inj.get("status", "").upper() in ["OUT", "DOUBTFUL"])
                             _vacuum = min(25.0, out_count * 5.0)  # Each OUT player = 5% vacuum, max 25%
 
-                    logger.debug("LSTM context: def_rank=%d, pace=%.1f, vacuum=%.1f (opponent=%s, pos=%s, injuries=%d)",
-                                 _def_rank, _pace, _vacuum, opponent, position, len(_injuries_by_team.get(_player_team, [])))
-                except Exception as e:
-                    logger.debug(f"Context lookup failed, using defaults: {e}")
+                logger.debug("CONTEXT[%s]: def_rank=%d, pace=%.1f, vacuum=%.1f (opponent=%s, home_inj=%d, away_inj=%d)",
+                             pick_type, _def_rank, _pace, _vacuum, opponent,
+                             len(_injuries_by_team.get(home_team, [])), len(_injuries_by_team.get(away_team, [])))
+            except Exception as e:
+                logger.debug(f"Context lookup failed, using defaults: {e}")
 
+        if pick_type == "PROP" and ML_INTEGRATION_AVAILABLE and market:
+            # Try LSTM-powered AI score for props
             try:
                 lstm_ai_score, lstm_metadata = get_lstm_ai_score(
                     sport=sport_upper,  # Use sport_upper from outer scope
