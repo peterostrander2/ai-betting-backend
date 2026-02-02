@@ -247,6 +247,28 @@ except ImportError:
     ML_INTEGRATION_AVAILABLE = False
     print("[WARNING] ml_integration module not available - using heuristic AI scores")
 
+# Import Context Layer Services for Pillars 13-17 (v17.0)
+try:
+    from context_layer import (
+        DefensiveRankService,
+        PaceVectorService,
+        UsageVacuumService,
+        OfficialsService,
+        ParkFactorService,
+    )
+    CONTEXT_LAYER_AVAILABLE = True
+except ImportError:
+    CONTEXT_LAYER_AVAILABLE = False
+    print("[WARNING] context_layer module not available - using default context values")
+
+# Import Ensemble Model for Game Picks (v17.0)
+try:
+    from ml_integration import get_ensemble_ai_score
+    ENSEMBLE_AVAILABLE = True
+except ImportError:
+    ENSEMBLE_AVAILABLE = False
+    print("[WARNING] ensemble model not available - skipping ensemble prediction")
+
 # Redis import with fallback
 try:
     import redis
@@ -2899,6 +2921,50 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         ai_score = min(8.0, base_ai + _ai_boost)
         return ai_score, ai_reasons
 
+    # v17.0: Helper function to map prop market to defensive position category
+    def _market_to_position(market: str, sport: str) -> str:
+        """Map prop market to defensive position category for context layer lookup."""
+        market_lower = market.lower() if market else ""
+
+        if sport == "NBA":
+            if "point" in market_lower or "assist" in market_lower:
+                return "Guard"
+            elif "rebound" in market_lower or "block" in market_lower:
+                return "Big"
+            else:
+                return "Wing"
+        elif sport == "NFL":
+            if "pass" in market_lower:
+                return "QB"
+            elif "rush" in market_lower:
+                return "RB"
+            elif "rec" in market_lower:
+                return "WR"
+            else:
+                return "WR"
+        elif sport == "NHL":
+            if "goal" in market_lower or "point" in market_lower:
+                return "Center"
+            elif "shot" in market_lower:
+                return "Winger"
+            elif "save" in market_lower:
+                return "Goalie"
+            else:
+                return "Center"
+        elif sport == "MLB":
+            if "strikeout" in market_lower or "pitch" in market_lower:
+                return "Pitcher"
+            else:
+                return "Batter"
+        elif sport == "NCAAB":
+            if "point" in market_lower or "assist" in market_lower:
+                return "Guard"
+            elif "rebound" in market_lower or "block" in market_lower:
+                return "Big"
+            else:
+                return "Wing"
+        return "Guard"  # default
+
     # Helper function to calculate scores with v15.0 4-engine architecture + Jason Sim
     # v16.1: Added market parameter for LSTM model routing
     def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market=""):
@@ -2939,8 +3005,42 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         # --- AI SCORE (Dynamic Model - 0-8 scale) ---
         # v16.1: Use LSTM for props if available, otherwise fallback to heuristics
+        # v17.0: Wire real context data from Pillars 13-15 (Defensive Rank, Pace, Vacuum)
+
+        # v17.0: Initialize context variables at function scope for return statement
+        _def_rank = 16    # default (middle of pack)
+        _pace = 100.0     # default neutral pace
+        _vacuum = 0.0     # default no vacuum
+
         if pick_type == "PROP" and ML_INTEGRATION_AVAILABLE and market:
             # Try LSTM-powered AI score for props
+
+            # v17.0: Get real context data for LSTM (Pillars 13-15)
+            if home_team and away_team and CONTEXT_LAYER_AVAILABLE:
+                try:
+                    # Determine opponent (opposite of player's team - assume player is on home team if not specified)
+                    # For props, we assume the player is on home team if player_team not provided
+                    _player_team = home_team  # Default assumption
+                    opponent = away_team if _player_team == home_team else home_team
+
+                    # Map market to position for defense lookup
+                    position = _market_to_position(market, sport_upper)
+
+                    # Pillar 13: Defensive Rank
+                    _def_rank = DefensiveRankService.get_rank(sport_upper, opponent, position)
+
+                    # Pillar 14: Pace Vector (average of both teams)
+                    _pace = PaceVectorService.get_game_pace(sport_upper, home_team, away_team)
+
+                    # Pillar 15: Usage Vacuum from injuries (if available from candidate)
+                    # Note: injuries would need to be passed in - use 0.0 as default
+                    _vacuum = 0.0  # Could be enhanced with injury data lookup
+
+                    logger.debug("LSTM context: def_rank=%d, pace=%.1f, vacuum=%.1f (opponent=%s, pos=%s)",
+                                 _def_rank, _pace, _vacuum, opponent, position)
+                except Exception as e:
+                    logger.debug(f"Context lookup failed, using defaults: {e}")
+
             try:
                 lstm_ai_score, lstm_metadata = get_lstm_ai_score(
                     sport=sport_upper,  # Use sport_upper from outer scope
@@ -2951,7 +3051,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     away_team=away_team,
                     player_team=None,  # Could be passed if available
                     player_stats=None,  # Could be enriched with player data
-                    game_data={"def_rank": 16, "pace": 100.0},  # Default game context
+                    game_data={"def_rank": _def_rank, "pace": _pace, "vacuum": _vacuum},
                     base_ai=base_ai
                 )
                 if lstm_metadata.get("source") == "lstm":
@@ -3258,6 +3358,25 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             else:
                 confluence = {"level": "DIVERGENT", "boost": 0, "alignment_pct": alignment_pct}
 
+        # ===== v17.0 HARMONIC CONVERGENCE CHECK =====
+        # "Golden Boost" when Math (Research) + Magic (Esoteric) both exceed 8.0
+        # This represents exceptional alignment between market intelligence and cosmic signals
+        HARMONIC_THRESHOLD = 8.0  # 80/100 on 10-point scale
+        HARMONIC_BOOST = 1.5      # +1.5 on 10-point scale (equivalent to +15 on 100-point)
+
+        harmonic_boost = 0.0
+        if research_score >= HARMONIC_THRESHOLD and esoteric_score >= HARMONIC_THRESHOLD:
+            harmonic_boost = HARMONIC_BOOST
+            confluence = {
+                "level": "HARMONIC_CONVERGENCE",
+                "boost": confluence.get("boost", 0) + harmonic_boost,
+                "alignment_pct": 100.0,
+                "reason": f"Math({research_score:.1f}) + Magic({esoteric_score:.1f}) >= {HARMONIC_THRESHOLD}"
+            }
+            research_reasons.append(f"HARMONIC CONVERGENCE: +{harmonic_boost} (Research + Esoteric both >= {HARMONIC_THRESHOLD})")
+            logger.info("HARMONIC_CONVERGENCE: Research=%.1f, Esoteric=%.1f, boost=+%.1f",
+                        research_score, esoteric_score, harmonic_boost)
+
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
 
@@ -3314,8 +3433,125 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         jason_sim_boost = jason_output.get("jason_sim_boost", 0.0)
         final_score = base_score + jason_sim_boost
 
+        # ===== v17.0 PILLAR 16: OFFICIALS ADJUSTMENT =====
+        # Referee/Umpire tendencies can impact totals, spreads, and props
+        officials_adjustment = 0.0
+        officials_reason = None
+
+        if sport_upper in ["NBA", "NFL", "MLB", "NHL", "NCAAB"] and CONTEXT_LAYER_AVAILABLE:
+            try:
+                # Get officials from candidate data (would need to be passed from outer scope)
+                # For now, we check if these are available in the pick context
+                lead_official = ""  # Would come from odds API or external data
+                official_2 = ""
+                official_3 = ""
+
+                # Only apply if we have official data (placeholder for future integration)
+                if lead_official:
+                    # Determine bet type for officials analysis
+                    if player_name:
+                        officials_bet_type = "props"
+                    elif "total" in game_str.lower() or total:
+                        officials_bet_type = "total"
+                    else:
+                        officials_bet_type = "spread"
+
+                    officials_obj = OfficialsService.get_adjustment(
+                        sport=sport_upper,
+                        lead_official=lead_official,
+                        official_2=official_2,
+                        official_3=official_3,
+                        bet_type=officials_bet_type,
+                        is_home=(pick_side == "Home") if pick_side else False,
+                        is_star=False  # Could enhance with star player detection
+                    )
+
+                    if officials_obj:
+                        officials_adjustment = officials_obj.get("value", 0.0)
+                        officials_reason = officials_obj.get("reason", "")
+                        research_reasons.append(f"Officials: {officials_reason} ({officials_adjustment:+.2f})")
+                        # Apply to research_score (officials = market intelligence)
+                        research_score = min(10.0, research_score + officials_adjustment)
+            except Exception as e:
+                logger.debug(f"Officials adjustment failed: {e}")
+
+        # ===== v17.0 PILLAR 17: PARK FACTORS (MLB ONLY) =====
+        # Stadium characteristics affect hitting/pitching performance
+        park_adjustment = 0.0
+        park_reason = None
+
+        if sport_upper == "MLB" and home_team and CONTEXT_LAYER_AVAILABLE:
+            try:
+                # Determine if batter stat (vs pitcher stat)
+                is_batter = True  # default
+                if market:
+                    market_lower = market.lower()
+                    is_batter = market_lower in [
+                        "player_hits", "batter_hits", "player_total_bases",
+                        "batter_total_bases", "player_home_runs", "batter_rbis",
+                        "player_runs", "batter_runs"
+                    ]
+                    if "strikeout" in market_lower or "pitch" in market_lower:
+                        is_batter = False
+
+                player_avg = prop_line if prop_line and prop_line > 0 else 3.5
+
+                park_obj = ParkFactorService.get_adjustment(
+                    home_team=home_team,
+                    player_avg=player_avg,
+                    is_batter=is_batter
+                )
+
+                if park_obj:
+                    park_adjustment = park_obj.get("value", 0.0)
+                    park_reason = park_obj.get("reason", "")
+                    # Add to research_reasons (environmental factor)
+                    research_reasons.append(f"Park: {park_reason} ({park_adjustment:+.2f})")
+                    # Apply park factor to esoteric (venue = environmental/cosmic factor)
+                    esoteric_score = min(10.0, max(0.0, esoteric_score + park_adjustment))
+            except Exception as e:
+                logger.debug(f"Park factor adjustment failed: {e}")
+
         # Check if Jason blocked this pick
         jason_blocked = jason_output.get("jason_blocked", False)
+
+        # ===== v17.0 ENSEMBLE MODEL FOR GAME PICKS =====
+        # Use trained ensemble model to predict hit probability for game picks
+        ensemble_metadata = None
+
+        if pick_type == "GAME" and ENSEMBLE_AVAILABLE and ML_INTEGRATION_AVAILABLE:
+            try:
+                ensemble_ai, ensemble_metadata = get_ensemble_ai_score(
+                    ai_score=ai_scaled,
+                    research_score=research_score,
+                    esoteric_score=esoteric_score,
+                    jarvis_score=jarvis_rs if jarvis_rs is not None else 4.5,
+                    line=float(spread) if spread else float(total) if total else 0.0,
+                    odds=-110,  # Default odds (could be passed from outer scope)
+                    confluence_boost=confluence_boost,
+                    jason_sim_boost=jason_sim_boost,
+                    titanium_triggered=False,  # Not yet calculated
+                    sport=sport_upper,
+                    pick_type="GAME",
+                    side=pick_side if pick_side else "Home",
+                    base_ai=ai_scaled
+                )
+
+                if ensemble_metadata and ensemble_metadata.get("source") == "ensemble":
+                    # Ensemble predicts hit probability - use to adjust confidence
+                    hit_prob = ensemble_metadata.get("hit_probability", 0.5)
+                    ensemble_confidence = ensemble_metadata.get("confidence", 0)
+                    ai_reasons.append(f"Ensemble hit prob: {hit_prob:.1%} (conf: {ensemble_confidence:.0f}%)")
+
+                    # Adjust final score based on ensemble prediction
+                    if hit_prob > 0.6:
+                        final_score = min(10.0, final_score + 0.5)
+                        ai_reasons.append(f"Ensemble boost: +0.5 (prob > 60%)")
+                    elif hit_prob < 0.4:
+                        final_score = max(0.0, final_score - 0.5)
+                        ai_reasons.append(f"Ensemble penalty: -0.5 (prob < 40%)")
+            except Exception as e:
+                logger.debug(f"Ensemble prediction unavailable: {e}")
 
         # --- v15.0: jarvis_rs already calculated by standalone function above ---
         # jarvis_rs, jarvis_active, jarvis_hits_count, jarvis_triggers_hit, jarvis_reasons
@@ -3560,7 +3796,21 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "lstm_adjustment": lstm_metadata.get("adjustment", 0.0) if lstm_metadata else 0.0,
             "lstm_confidence": lstm_metadata.get("confidence", 0.0) if lstm_metadata else 0.0,
             "lstm_model_key": lstm_metadata.get("model_key") if lstm_metadata else None,
-            "lstm_source": lstm_metadata.get("source", "heuristic") if lstm_metadata else "heuristic"
+            "lstm_source": lstm_metadata.get("source", "heuristic") if lstm_metadata else "heuristic",
+            # v17.0 Context Layer Pillars (13-17)
+            "context_layer": {
+                "def_rank": _def_rank,
+                "pace": _pace,
+                "vacuum": _vacuum,
+                "officials_adjustment": officials_adjustment,
+                "officials_reason": officials_reason,
+                "park_adjustment": park_adjustment,
+                "park_reason": park_reason,
+            },
+            # v17.0 Harmonic Convergence
+            "harmonic_boost": harmonic_boost,
+            # v17.0 Ensemble Model (for GAME picks)
+            "ensemble_metadata": ensemble_metadata
         }
 
     # ============================================
