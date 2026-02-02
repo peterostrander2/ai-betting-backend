@@ -9,6 +9,8 @@
 
 **Production:** https://web-production-7b2a.up.railway.app
 
+**Frontend Integration Guide:** See `docs/FRONTEND_INTEGRATION.md` for backend→frontend field mapping and pending frontend work.
+
 ---
 
 ## 🚨 MASTER SYSTEM INVARIANTS (NEVER VIOLATE) 🚨
