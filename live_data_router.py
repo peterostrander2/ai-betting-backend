@@ -3571,9 +3571,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         msrf_metadata = {"source": "not_run"}
         try:
             from signals.msrf_resonance import get_msrf_confluence_boost, MSRF_ENABLED
-            if MSRF_ENABLED:
+            if MSRF_ENABLED and _game_date_obj:
                 msrf_boost, msrf_metadata = get_msrf_confluence_boost(
-                    game_date=game_date,
+                    game_date=_game_date_obj,
                     player_name=player_name,
                     home_team=home_team,
                     away_team=away_team,
