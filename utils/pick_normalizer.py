@@ -360,7 +360,7 @@ def normalize_pick(pick: dict) -> dict:
         pick["start_time_et"] = start_time_display
         pick["start_time"] = start_time_display
 
-    if not start_time_display:
+    if not start_time_display or start_time_display == "TBD ET":
         start_time_display = "TBD ET"
         pick["start_time_et"] = start_time_display
         pick["start_time"] = start_time_display
