@@ -121,6 +121,19 @@ else
 fi
 echo ""
 
+# Post-change gates (Auth + Contract + Hard gates + Fail-soft + Freshness)
+echo -e "${YELLOW}Post-change gates: auth/contract/hard-gates/fail-soft/freshness...${NC}"
+if [ -f "$SCRIPT_DIR/verify_live_endpoints.sh" ]; then
+    bash "$SCRIPT_DIR/verify_live_endpoints.sh" || {
+        echo -e "${RED}ERROR: Post-change gates failed${NC}"
+        exit 1
+    }
+else
+    echo -e "${RED}ERROR: verify_live_endpoints.sh not found${NC}"
+    exit 1
+fi
+echo ""
+
 # Run sessions in order - fail on first failure
 SESSION_NAMES=(
     ""  # Index 0 unused

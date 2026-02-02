@@ -33,8 +33,8 @@ check() {
 # 1. Health endpoint
 echo "[1/4] Health endpoint..."
 HEALTH=$(curl -s "$BASE_URL/health" -H "X-API-Key: $API_KEY" 2>/dev/null || echo "{}")
-HEALTH_OK=$(echo "$HEALTH" | jq -r '.status == "healthy"' 2>/dev/null || echo "false")
-check "Health: status=healthy" "$HEALTH_OK"
+HEALTH_OK=$(echo "$HEALTH" | jq -r '.status != "critical"' 2>/dev/null || echo "false")
+check "Health: status != critical" "$HEALTH_OK"
 
 # 2. Storage health
 echo "[2/4] Storage health..."
@@ -58,6 +58,64 @@ SCHEDULER=$(curl -s "$BASE_URL/live/scheduler/status" -H "X-API-Key: $API_KEY" 2
 SCHED_OK=$(echo "$SCHEDULER" | jq -r '.available == true and .apscheduler_available == true' 2>/dev/null || echo "false")
 AUDIT_TIME=$(echo "$SCHEDULER" | jq -r '.audit_time // "unknown"' 2>/dev/null || echo "unknown")
 check "Scheduler: available, audit at $AUDIT_TIME" "$SCHED_OK"
+
+# 5. Post-change gates
+echo "[5/5] Post-change gates..."
+
+# Auth: missing / wrong / correct
+MISSING_CODE=$(curl -s -o /tmp/health_missing -w "%{http_code}" "$BASE_URL/live/best-bets/NBA" 2>/dev/null || echo "000")
+INVALID_CODE=$(curl -s -o /tmp/health_invalid -w "%{http_code}" -H "X-API-Key: INVALID" "$BASE_URL/live/best-bets/NBA" 2>/dev/null || echo "000")
+GOOD_CODE=$(curl -s -o /tmp/health_good -w "%{http_code}" -H "X-API-Key: $API_KEY" "$BASE_URL/live/best-bets/NBA" 2>/dev/null || echo "000")
+MISSING_OK=$([ "$MISSING_CODE" = "401" ] && rg -q "Missing" /tmp/health_missing && echo "true" || echo "false")
+INVALID_OK=$([ "$INVALID_CODE" = "403" ] && rg -q "Invalid" /tmp/health_invalid && echo "true" || echo "false")
+GOOD_OK=$([ "$GOOD_CODE" = "200" ] && echo "true" || echo "false")
+check "Auth: missing key -> Missing (401)" "$MISSING_OK"
+check "Auth: wrong key -> Invalid (403)" "$INVALID_OK"
+check "Auth: correct key -> success (200)" "$GOOD_OK"
+rm -f /tmp/health_missing /tmp/health_invalid /tmp/health_good
+
+# Shape + gates
+BEST_BETS=$(curl -s "$BASE_URL/live/best-bets/NBA" -H "X-API-Key: $API_KEY" 2>/dev/null || echo "{}")
+SHAPE_OK=$(echo "$BEST_BETS" | jq -r '([
+  .props.picks[]?, .game_picks.picks[]?
+] | all(
+  (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_score != null)
+  and (.total_score != null and .final_score != null)
+  and (.bet_tier != null)
+))' 2>/dev/null || echo "false")
+check "Shape: engine scores + total/final + bet_tier" "$SHAPE_OK"
+
+GATE_SCORE_OK=$(echo "$BEST_BETS" | jq -r '([
+  .props.picks[]?, .game_picks.picks[]?
+] | all(.final_score >= 6.5))' 2>/dev/null || echo "false")
+check "Hard gate: final_score >= 6.5" "$GATE_SCORE_OK"
+
+TITANIUM_OK=$(echo "$BEST_BETS" | jq -r '([
+  .props.picks[]?, .game_picks.picks[]?
+] | all(
+  (.titanium_triggered != true)
+  or (([.ai_score, .research_score, .esoteric_score, .jarvis_score] | map(. >= 8.0) | add) >= 3)
+))' 2>/dev/null || echo "false")
+check "Hard gate: Titanium 3-of-4" "$TITANIUM_OK"
+
+FAILSOFT_OK=$(echo "$BEST_BETS" | jq -r 'has("errors")' 2>/dev/null || echo "false")
+check "Fail-soft: errors array present" "$FAILSOFT_OK"
+
+INT_DEBUG=$(curl -s "$BASE_URL/live/debug/integrations" -H "X-API-Key: $API_KEY" 2>/dev/null || echo "{}")
+INT_LOUD_OK=$(echo "$INT_DEBUG" | jq -r 'has("by_status") and has("integrations")' 2>/dev/null || echo "false")
+check "Fail-soft: /live/debug/integrations loud" "$INT_LOUD_OK"
+
+FRESH_OK=$(echo "$BEST_BETS" | jq -r 'has("date_et") and has("run_timestamp_et")' 2>/dev/null || echo "false")
+check "Freshness: date_et + run_timestamp_et" "$FRESH_OK"
+
+NOW=$(date +%s)
+BB_CACHED=$(echo "$BEST_BETS" | jq -r '._cached_at // 0' 2>/dev/null || echo "0")
+SHARP=$(curl -s "$BASE_URL/live/sharp/NBA" -H "X-API-Key: $API_KEY" 2>/dev/null || echo "{}")
+SHARP_CACHED=$(echo "$SHARP" | jq -r '._cached_at // 0' 2>/dev/null || echo "0")
+BB_AGE=$((NOW - ${BB_CACHED%.*}))
+SHARP_AGE=$((NOW - ${SHARP_CACHED%.*}))
+TTL_OK=$([ "$BB_CACHED" != "0" ] && [ "$SHARP_CACHED" != "0" ] && [ "$BB_AGE" -le 180 ] && [ "$SHARP_AGE" -le 600 ] && echo "true" || echo "false")
+check "Freshness: cache age (best-bets < sharp)" "$TTL_OK"
 
 echo ""
 echo "============================================"

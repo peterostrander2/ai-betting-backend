@@ -233,9 +233,90 @@ check "Weather: integration status is VALIDATED or NOT_RELEVANT" \
 echo ""
 
 # =====================================================
-# CHECK 7: OPS Aliases (/ops/*)
+# CHECK 7: Post-change Gates (Auth/Contract/Hard Gates/Fail-soft/Freshness)
 # =====================================================
-echo "[7/8] Validating /ops/* alias routes..."
+echo "[7/9] Running post-change gates..."
+
+# Auth checks
+AUTH_MISSING_CODE=$(curl -s -o /tmp/prod_missing -w "%{http_code}" "$BASE_URL/live/best-bets/NBA" 2>/dev/null || echo "000")
+AUTH_INVALID_CODE=$(curl -s -o /tmp/prod_invalid -w "%{http_code}" -H "X-API-Key: INVALID" "$BASE_URL/live/best-bets/NBA" 2>/dev/null || echo "000")
+AUTH_GOOD_CODE=$(curl -s -o /tmp/prod_good -w "%{http_code}" -H "X-API-Key: $API_KEY" "$BASE_URL/live/best-bets/NBA" 2>/dev/null || echo "000")
+check "Auth: missing key -> Missing (401)" \
+    "$([ "$AUTH_MISSING_CODE" = "401" ] && rg -q "Missing" /tmp/prod_missing && echo true || echo false)" \
+    "code=$AUTH_MISSING_CODE" \
+    "401 Missing"
+check "Auth: wrong key -> Invalid (403)" \
+    "$([ "$AUTH_INVALID_CODE" = "403" ] && rg -q "Invalid" /tmp/prod_invalid && echo true || echo false)" \
+    "code=$AUTH_INVALID_CODE" \
+    "403 Invalid"
+check "Auth: correct key -> success (200)" \
+    "$([ "$AUTH_GOOD_CODE" = "200" ] && echo true || echo false)" \
+    "code=$AUTH_GOOD_CODE" \
+    "200"
+rm -f /tmp/prod_missing /tmp/prod_invalid /tmp/prod_good
+
+POST_BEST_BETS=$(curl -s "$BASE_URL/live/best-bets/NBA" -H "X-API-Key: $API_KEY")
+check "Shape: engine scores + total/final + bet_tier" \
+    "$(echo "$POST_BEST_BETS" | jq -r '([
+      .props.picks[]?, .game_picks.picks[]?
+    ] | all(
+      (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_score != null)
+      and (.total_score != null and .final_score != null)
+      and (.bet_tier != null)
+    ))' 2>/dev/null || echo false)" \
+    "shape_check" \
+    "required fields present"
+
+check "Hard gate: final_score >= 6.5" \
+    "$(echo "$POST_BEST_BETS" | jq -r '([
+      .props.picks[]?, .game_picks.picks[]?
+    ] | all(.final_score >= 6.5))' 2>/dev/null || echo false)" \
+    "final_score gate" \
+    ">= 6.5"
+
+check "Hard gate: Titanium 3-of-4" \
+    "$(echo "$POST_BEST_BETS" | jq -r '([
+      .props.picks[]?, .game_picks.picks[]?
+    ] | all(
+      (.titanium_triggered != true)
+      or (([.ai_score, .research_score, .esoteric_score, .jarvis_score] | map(. >= 8.0) | add) >= 3)
+    ))' 2>/dev/null || echo false)" \
+    "titanium gate" \
+    "3 of 4 >= 8.0"
+
+check "Fail-soft: errors array present" \
+    "$(echo "$POST_BEST_BETS" | jq -r 'has("errors")' 2>/dev/null || echo false)" \
+    "errors field" \
+    "present"
+
+POST_INT=$(curl -s "$BASE_URL/live/debug/integrations" -H "X-API-Key: $API_KEY")
+check "Fail-soft: /live/debug/integrations loud" \
+    "$(echo "$POST_INT" | jq -r 'has("by_status") and has("integrations")' 2>/dev/null || echo false)" \
+    "debug integrations" \
+    "by_status + integrations"
+
+check "Freshness: date_et + run_timestamp_et" \
+    "$(echo "$POST_BEST_BETS" | jq -r 'has("date_et") and has("run_timestamp_et")' 2>/dev/null || echo false)" \
+    "freshness fields" \
+    "present"
+
+NOW_TS=$(date +%s)
+POST_BB_CACHED=$(echo "$POST_BEST_BETS" | jq -r '._cached_at // 0' 2>/dev/null || echo 0)
+POST_SHARP=$(curl -s "$BASE_URL/live/sharp/NBA" -H "X-API-Key: $API_KEY")
+POST_SHARP_CACHED=$(echo "$POST_SHARP" | jq -r '._cached_at // 0' 2>/dev/null || echo 0)
+POST_BB_AGE=$((NOW_TS - ${POST_BB_CACHED%.*}))
+POST_SHARP_AGE=$((NOW_TS - ${POST_SHARP_CACHED%.*}))
+check "Freshness: cache age (best-bets < sharp)" \
+    "$([ "$POST_BB_CACHED" != "0" ] && [ "$POST_SHARP_CACHED" != "0" ] && [ "$POST_BB_AGE" -le 180 ] && [ "$POST_SHARP_AGE" -le 600 ] && echo true || echo false)" \
+    "best-bets=${POST_BB_AGE}s sharp=${POST_SHARP_AGE}s" \
+    "best-bets <= 180s, sharp <= 600s"
+
+echo ""
+
+# =====================================================
+# CHECK 8: OPS Aliases (/ops/*)
+# =====================================================
+echo "[8/9] Validating /ops/* alias routes..."
 
 # Check /ops/integrations works (requires admin auth)
 OPS_INTEGRATIONS=$(curl -s "$BASE_URL/ops/integrations" -H "X-Admin-Token: $API_KEY")
@@ -268,9 +349,9 @@ check "OPS: /ops/env-map returns no missing required vars" \
 echo ""
 
 # =====================================================
-# CHECK 8: Full Verification (/ops/verify)
+# CHECK 9: Full Verification (/ops/verify)
 # =====================================================
-echo "[8/8] Running comprehensive /ops/verify check..."
+echo "[9/9] Running comprehensive /ops/verify check..."
 
 OPS_VERIFY=$(curl -s "$BASE_URL/ops/verify")
 OPS_VERIFY_VERDICT=$(echo "$OPS_VERIFY" | jq -r '.verdict // "ERROR"')
