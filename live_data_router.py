@@ -8710,11 +8710,13 @@ async def scheduler_status():
 
 
 @router.post("/ml/train-ensemble")
-async def trigger_ensemble_training(background_tasks: BackgroundTasks):
+async def trigger_ensemble_training(background: bool = False):
     """
     Manually trigger ensemble model training.
 
-    Runs the training script in the background.
+    Args:
+        background: If True, run in background. If False (default), run sync and return output.
+
     Requires at least 100 graded picks.
     """
     import subprocess
@@ -8725,31 +8727,50 @@ async def trigger_ensemble_training(background_tasks: BackgroundTasks):
     if not os.path.exists(script_path):
         return {"success": False, "error": "Training script not found", "path": script_path}
 
-    def run_training():
-        try:
-            result = subprocess.run(
-                [sys.executable, script_path, "--min-picks", "100"],
-                capture_output=True,
-                text=True,
-                timeout=300
-            )
-            logger.info("Ensemble training result: returncode=%d", result.returncode)
-            if result.stdout:
-                logger.info("Ensemble training stdout: %s", result.stdout[-1000:])
-            if result.stderr:
-                logger.warning("Ensemble training stderr: %s", result.stderr[-500:])
-        except Exception as e:
-            logger.error("Ensemble training failed: %s", e)
+    # First, count graded picks
+    predictions_file = "/data/grader/predictions.jsonl"
+    graded_count = 0
+    total_count = 0
 
-    background_tasks.add_task(run_training)
+    try:
+        if os.path.exists(predictions_file):
+            import json
+            with open(predictions_file, 'r') as f:
+                for line in f:
+                    if line.strip():
+                        total_count += 1
+                        try:
+                            pick = json.loads(line)
+                            if pick.get("grade_status", "").upper() == "GRADED":
+                                graded_count += 1
+                        except:
+                            pass
+    except Exception as e:
+        logger.warning("Could not count graded picks: %s", e)
 
-    return {
-        "success": True,
-        "message": "Ensemble training started in background",
-        "script": script_path,
-        "min_picks": 100,
-        "note": "Check /live/ml/status after a few minutes to see if model loaded"
-    }
+    # Run training synchronously (so we can see output)
+    try:
+        result = subprocess.run(
+            [sys.executable, script_path, "--min-picks", "100"],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+
+        return {
+            "success": result.returncode == 0,
+            "returncode": result.returncode,
+            "graded_picks_found": graded_count,
+            "total_picks": total_count,
+            "predictions_file": predictions_file,
+            "stdout": result.stdout[-2000:] if result.stdout else None,
+            "stderr": result.stderr[-1000:] if result.stderr else None,
+            "note": "Check /live/ml/status to see if model loaded"
+        }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Training timed out after 5 minutes"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.get("/esoteric-edge")

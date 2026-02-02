@@ -3,7 +3,15 @@ Player Birth Data for Esoteric Calculations
 Real birth dates for biorhythm, numerology, and life path analysis.
 
 Data Sources: Wikipedia, Sports Reference, Team Rosters
-Last Updated: January 2026
+Last Updated: February 2026
+
+Coverage:
+- NBA: 109 players (stars + key role players across all 30 teams)
+- NFL: 73 players (QBs, RBs, WRs, TEs + 25 defensive stars)
+- MLB: 55 players (hitters, pitchers, catchers, middle infielders)
+- NHL: 56 players (superstars + 2nd/3rd line scorers, defensemen, goalies)
+- NCAAB: 14 top prospects
+- TOTAL: 307 players
 """
 
 from typing import Dict, Any
@@ -18,6 +26,8 @@ NBA_PLAYERS: Dict[str, Dict[str, Any]] = {
     "Anthony Davis": {"birth_date": "1993-03-11", "jersey": 3, "team": "Lakers"},
     "Austin Reaves": {"birth_date": "1998-05-29", "jersey": 15, "team": "Lakers"},
     "D'Angelo Russell": {"birth_date": "1996-02-23", "jersey": 1, "team": "Lakers"},
+    "Rui Hachimura": {"birth_date": "1998-02-08", "jersey": 28, "team": "Lakers"},
+    "Gabe Vincent": {"birth_date": "1996-06-14", "jersey": 7, "team": "Lakers"},
 
     # Warriors
     "Stephen Curry": {"birth_date": "1988-03-14", "jersey": 30, "team": "Warriors"},
@@ -30,12 +40,15 @@ NBA_PLAYERS: Dict[str, Dict[str, Any]] = {
     "Jaylen Brown": {"birth_date": "1996-10-24", "jersey": 7, "team": "Celtics"},
     "Derrick White": {"birth_date": "1994-07-02", "jersey": 9, "team": "Celtics"},
     "Kristaps Porzingis": {"birth_date": "1995-08-02", "jersey": 8, "team": "Celtics"},
+    "Al Horford": {"birth_date": "1986-06-03", "jersey": 42, "team": "Celtics"},
+    "Jrue Holiday": {"birth_date": "1990-06-12", "jersey": 4, "team": "Celtics"},
 
     # Bucks
     "Giannis Antetokounmpo": {"birth_date": "1994-12-06", "jersey": 34, "team": "Bucks"},
     "Damian Lillard": {"birth_date": "1990-07-15", "jersey": 0, "team": "Bucks"},
     "Khris Middleton": {"birth_date": "1991-08-12", "jersey": 22, "team": "Bucks"},
     "Brook Lopez": {"birth_date": "1988-04-01", "jersey": 11, "team": "Bucks"},
+    "Bobby Portis": {"birth_date": "1995-02-10", "jersey": 9, "team": "Bucks"},
 
     # 76ers
     "Joel Embiid": {"birth_date": "1994-03-16", "jersey": 21, "team": "76ers"},
@@ -57,21 +70,30 @@ NBA_PLAYERS: Dict[str, Dict[str, Any]] = {
     "Jamal Murray": {"birth_date": "1997-02-23", "jersey": 27, "team": "Nuggets"},
     "Michael Porter Jr.": {"birth_date": "1998-06-29", "jersey": 1, "team": "Nuggets"},
     "Aaron Gordon": {"birth_date": "1995-09-16", "jersey": 50, "team": "Nuggets"},
+    "Kentavious Caldwell-Pope": {"birth_date": "1993-02-18", "jersey": 5, "team": "Nuggets"},
+    "Reggie Jackson": {"birth_date": "1990-04-16", "jersey": 7, "team": "Nuggets"},
 
     # Heat
     "Jimmy Butler": {"birth_date": "1989-09-14", "jersey": 22, "team": "Heat"},
     "Bam Adebayo": {"birth_date": "1997-07-18", "jersey": 13, "team": "Heat"},
     "Tyler Herro": {"birth_date": "2000-01-20", "jersey": 14, "team": "Heat"},
+    "Terry Rozier": {"birth_date": "1994-03-17", "jersey": 2, "team": "Heat"},
+    "Duncan Robinson": {"birth_date": "1994-04-22", "jersey": 55, "team": "Heat"},
 
     # Knicks
     "Jalen Brunson": {"birth_date": "1996-08-31", "jersey": 11, "team": "Knicks"},
     "Julius Randle": {"birth_date": "1994-11-29", "jersey": 30, "team": "Knicks"},
     "RJ Barrett": {"birth_date": "2000-06-14", "jersey": 9, "team": "Knicks"},
+    "Josh Hart": {"birth_date": "1995-03-06", "jersey": 3, "team": "Knicks"},
+    "OG Anunoby": {"birth_date": "1997-07-17", "jersey": 8, "team": "Knicks"},
+    "Mitchell Robinson": {"birth_date": "1998-04-01", "jersey": 23, "team": "Knicks"},
 
     # Clippers
     "Kawhi Leonard": {"birth_date": "1991-06-29", "jersey": 2, "team": "Clippers"},
     "Paul George": {"birth_date": "1990-05-02", "jersey": 13, "team": "Clippers"},
     "James Harden": {"birth_date": "1989-08-26", "jersey": 1, "team": "Clippers"},
+    "Norman Powell": {"birth_date": "1993-05-25", "jersey": 24, "team": "Clippers"},
+    "Ivica Zubac": {"birth_date": "1997-03-18", "jersey": 40, "team": "Clippers"},
 
     # Nets
     "Mikal Bridges": {"birth_date": "1996-08-30", "jersey": 1, "team": "Nets"},
@@ -92,11 +114,14 @@ NBA_PLAYERS: Dict[str, Dict[str, Any]] = {
     "De'Aaron Fox": {"birth_date": "1997-12-20", "jersey": 5, "team": "Kings"},
     "Domantas Sabonis": {"birth_date": "1996-05-03", "jersey": 10, "team": "Kings"},
     "Keegan Murray": {"birth_date": "2000-08-19", "jersey": 13, "team": "Kings"},
+    "Malik Monk": {"birth_date": "1998-02-04", "jersey": 0, "team": "Kings"},
 
     # Timberwolves
     "Anthony Edwards": {"birth_date": "2001-08-05", "jersey": 5, "team": "Timberwolves"},
     "Karl-Anthony Towns": {"birth_date": "1995-11-15", "jersey": 32, "team": "Timberwolves"},
     "Rudy Gobert": {"birth_date": "1992-06-26", "jersey": 27, "team": "Timberwolves"},
+    "Donte DiVincenzo": {"birth_date": "1997-01-31", "jersey": 0, "team": "Timberwolves"},
+    "Mike Conley": {"birth_date": "1987-10-11", "jersey": 10, "team": "Timberwolves"},
 
     # Thunder
     "Shai Gilgeous-Alexander": {"birth_date": "1998-07-12", "jersey": 2, "team": "Thunder"},
@@ -227,6 +252,39 @@ NFL_PLAYERS: Dict[str, Dict[str, Any]] = {
     "Dallas Goedert": {"birth_date": "1995-01-03", "jersey": 88, "team": "Eagles", "position": "TE"},
     "Sam LaPorta": {"birth_date": "2000-03-11", "jersey": 87, "team": "Lions", "position": "TE"},
     "Evan Engram": {"birth_date": "1994-09-02", "jersey": 17, "team": "Jaguars", "position": "TE"},
+
+    # Defensive Players - Edge Rushers
+    "Micah Parsons": {"birth_date": "1999-05-26", "jersey": 11, "team": "Cowboys", "position": "LB"},
+    "T.J. Watt": {"birth_date": "1994-10-11", "jersey": 90, "team": "Steelers", "position": "LB"},
+    "Nick Bosa": {"birth_date": "1997-10-23", "jersey": 97, "team": "49ers", "position": "DE"},
+    "Myles Garrett": {"birth_date": "1995-12-29", "jersey": 95, "team": "Browns", "position": "DE"},
+    "Maxx Crosby": {"birth_date": "1997-08-22", "jersey": 98, "team": "Raiders", "position": "DE"},
+    "Chris Jones": {"birth_date": "1994-07-03", "jersey": 95, "team": "Chiefs", "position": "DT"},
+    "Cameron Jordan": {"birth_date": "1989-07-10", "jersey": 94, "team": "Saints", "position": "DE"},
+    "Khalil Mack": {"birth_date": "1991-02-22", "jersey": 52, "team": "Chargers", "position": "LB"},
+
+    # Defensive Players - Cornerbacks
+    "Patrick Surtain II": {"birth_date": "2000-04-14", "jersey": 2, "team": "Broncos", "position": "CB"},
+    "Sauce Gardner": {"birth_date": "2000-08-31", "jersey": 1, "team": "Jets", "position": "CB"},
+    "Jalen Ramsey": {"birth_date": "1994-10-24", "jersey": 5, "team": "Dolphins", "position": "CB"},
+    "Denzel Ward": {"birth_date": "1997-04-28", "jersey": 21, "team": "Browns", "position": "CB"},
+    "Marshon Lattimore": {"birth_date": "1996-05-20", "jersey": 23, "team": "Saints", "position": "CB"},
+    "Trevon Diggs": {"birth_date": "1997-09-20", "jersey": 7, "team": "Cowboys", "position": "CB"},
+    "Derek Stingley Jr.": {"birth_date": "2001-09-03", "jersey": 24, "team": "Texans", "position": "CB"},
+
+    # Defensive Players - Safeties
+    "Derwin James": {"birth_date": "1996-08-03", "jersey": 3, "team": "Chargers", "position": "S"},
+    "Jessie Bates": {"birth_date": "1997-02-26", "jersey": 30, "team": "Falcons", "position": "S"},
+    "Minkah Fitzpatrick": {"birth_date": "1996-11-17", "jersey": 39, "team": "Steelers", "position": "S"},
+    "Justin Simmons": {"birth_date": "1993-11-19", "jersey": 31, "team": "Broncos", "position": "S"},
+    "Antoine Winfield Jr.": {"birth_date": "1998-08-16", "jersey": 31, "team": "Buccaneers", "position": "S"},
+
+    # Defensive Players - Linebackers
+    "Fred Warner": {"birth_date": "1996-11-19", "jersey": 54, "team": "49ers", "position": "LB"},
+    "Roquan Smith": {"birth_date": "1997-04-08", "jersey": 0, "team": "Ravens", "position": "LB"},
+    "Lavonte David": {"birth_date": "1990-01-23", "jersey": 54, "team": "Buccaneers", "position": "LB"},
+    "Bobby Wagner": {"birth_date": "1990-06-27", "jersey": 45, "team": "Commanders", "position": "LB"},
+    "Tremaine Edmunds": {"birth_date": "1998-05-02", "jersey": 49, "team": "Bears", "position": "LB"},
 }
 
 # =============================================================================
@@ -280,6 +338,26 @@ MLB_PLAYERS: Dict[str, Dict[str, Any]] = {
     "Edwin Diaz": {"birth_date": "1994-03-22", "jersey": 39, "team": "Mets", "position": "RP"},
     "Emmanuel Clase": {"birth_date": "1998-03-18", "jersey": 48, "team": "Guardians", "position": "RP"},
     "Devin Williams": {"birth_date": "1994-09-21", "jersey": 38, "team": "Brewers", "position": "RP"},
+
+    # Catchers
+    "J.T. Realmuto": {"birth_date": "1991-03-18", "jersey": 10, "team": "Phillies", "position": "C"},
+    "Will Smith": {"birth_date": "1995-03-28", "jersey": 16, "team": "Dodgers", "position": "C"},
+    "Salvador Perez": {"birth_date": "1990-05-10", "jersey": 13, "team": "Royals", "position": "C"},
+    "Sean Murphy": {"birth_date": "1994-10-04", "jersey": 12, "team": "Braves", "position": "C"},
+    "William Contreras": {"birth_date": "1997-12-24", "jersey": 24, "team": "Brewers", "position": "C"},
+    "Cal Raleigh": {"birth_date": "1996-11-26", "jersey": 29, "team": "Mariners", "position": "C"},
+    "Jonah Heim": {"birth_date": "1995-06-27", "jersey": 28, "team": "Rangers", "position": "C"},
+    "Tyler Stephenson": {"birth_date": "1996-08-16", "jersey": 37, "team": "Reds", "position": "C"},
+
+    # Middle Infielders
+    "Xander Bogaerts": {"birth_date": "1992-10-01", "jersey": 2, "team": "Padres", "position": "SS"},
+    "Tommy Edman": {"birth_date": "1995-05-09", "jersey": 19, "team": "Cardinals", "position": "2B"},
+    "Andres Gimenez": {"birth_date": "1998-09-04", "jersey": 0, "team": "Guardians", "position": "2B"},
+    "Jorge Polanco": {"birth_date": "1993-07-05", "jersey": 11, "team": "Twins", "position": "2B"},
+    "Nico Hoerner": {"birth_date": "1997-05-13", "jersey": 2, "team": "Cubs", "position": "SS"},
+    "Carlos Correa": {"birth_date": "1994-09-22", "jersey": 4, "team": "Twins", "position": "SS"},
+    "Jeremy Pena": {"birth_date": "1997-09-22", "jersey": 3, "team": "Astros", "position": "SS"},
+    "CJ Abrams": {"birth_date": "2000-10-03", "jersey": 5, "team": "Nationals", "position": "SS"},
 }
 
 # =============================================================================
