@@ -3280,10 +3280,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             pillars_failed.append("Reverse Line Movement")
 
         # v17.3: ESPN Odds Cross-Validation (adds confidence when ESPN confirms)
+        # Uses fuzzy matching via _find_espn_data() to handle team name variations
         espn_odds_boost = 0.0
         if _espn_odds_by_game and home_team and away_team:
-            _espn_key = (home_team.lower(), away_team.lower())
-            _espn_odds = _espn_odds_by_game.get(_espn_key)
+            _espn_odds = _find_espn_data(_espn_odds_by_game, home_team, away_team)
             if _espn_odds and _espn_odds.get("available"):
                 # Check if ESPN spread/total aligns with our data
                 espn_spread = _espn_odds.get("spread")
@@ -3773,8 +3773,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 official_3 = ""
 
                 if home_team and away_team and _officials_by_game:
-                    game_key = (home_team.lower(), away_team.lower())
-                    officials_data = _officials_by_game.get(game_key)
+                    officials_data = _find_espn_data(_officials_by_game, home_team, away_team)
                     if officials_data and officials_data.get("available"):
                         lead_official = officials_data.get("lead_official", "")
                         official_2 = officials_data.get("official_2", "")
@@ -4316,6 +4315,58 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     logger.info("INJURIES LOOKUP: %d teams with injuries loaded", len(_injuries_by_team))
 
+    # v17.3: Team name normalization for ESPN cross-validation
+    # Handles differences like "LA Clippers" (ESPN) vs "Los Angeles Clippers" (Odds API)
+    TEAM_NAME_ALIASES = {
+        # NBA
+        "la clippers": "los angeles clippers",
+        "la lakers": "los angeles lakers",
+        # Common abbreviations
+        "ny knicks": "new york knicks",
+        "ny giants": "new york giants",
+        "ny jets": "new york jets",
+        "ny yankees": "new york yankees",
+        "ny mets": "new york mets",
+        "sf giants": "san francisco giants",
+        "sf 49ers": "san francisco 49ers",
+    }
+
+    def _normalize_team_name(name: str) -> str:
+        """Normalize team name to canonical form for matching."""
+        if not name:
+            return ""
+        name_lower = name.lower().strip()
+        # Check direct alias mapping
+        if name_lower in TEAM_NAME_ALIASES:
+            return TEAM_NAME_ALIASES[name_lower]
+        return name_lower
+
+    def _find_espn_data(lookup: dict, home: str, away: str):
+        """Try to find ESPN data using multiple key formats for fuzzy matching."""
+        if not lookup:
+            return None
+
+        # Normalize both team names
+        home_norm = _normalize_team_name(home)
+        away_norm = _normalize_team_name(away)
+
+        # Try direct match first
+        key = (home_norm, away_norm)
+        if key in lookup:
+            return lookup[key]
+
+        # Try finding by partial match (team name contained in key)
+        for (lk_home, lk_away), value in lookup.items():
+            # Check if both teams match (either direction for home/away)
+            home_match = (home_norm in lk_home or lk_home in home_norm or
+                         home_norm.split()[-1] == lk_home.split()[-1])  # Match last word (mascot)
+            away_match = (away_norm in lk_away or lk_away in away_norm or
+                         away_norm.split()[-1] == lk_away.split()[-1])  # Match last word (mascot)
+            if home_match and away_match:
+                return value
+
+        return None
+
     # v17.2: Build ESPN event lookup for officials (Pillar 16)
     # Maps (home_team_lower, away_team_lower) -> espn_event_id
     _espn_events_by_teams = {}
@@ -4339,7 +4390,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 else:
                     away_team = team_name
             if home_team and away_team:
-                _espn_events_by_teams[(home_team, away_team)] = event_id
+                # Store with normalized key
+                _espn_events_by_teams[(_normalize_team_name(home_team), _normalize_team_name(away_team))] = event_id
 
     logger.info("ESPN EVENTS LOOKUP: %d games mapped", len(_espn_events_by_teams))
 
@@ -4669,8 +4721,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
                 # v17.3: Supplement with ESPN venue/weather for outdoor sports
                 if sport_upper in ["MLB", "NFL"] and _espn_venue_by_game:
-                    _venue_key = (home_team.lower(), away_team.lower())
-                    _espn_venue = _espn_venue_by_game.get(_venue_key)
+                    _espn_venue = _find_espn_data(_espn_venue_by_game, home_team, away_team)
                     if _espn_venue and _espn_venue.get("available"):
                         # Add venue info to weather context
                         venue_info = _espn_venue.get("venue", {})
@@ -5723,6 +5774,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "cache_size": len(_weather_cache),
                 "picks_with_weather": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("weather_available", False)),
                 "picks_with_modifier": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("weather_modifier", 0) != 0),
+            },
+            # v17.3 ESPN Integration telemetry
+            "espn": {
+                "available": ESPN_OFFICIALS_AVAILABLE,
+                "events_mapped": len(_espn_events_by_teams),
+                "officials_available": len(_officials_by_game),
+                "odds_available": len(_espn_odds_by_game),
+                "injuries_teams": len(_espn_injuries_supplement),
+                "venues_available": len(_espn_venue_by_game),
+                "events_keys": list(_espn_events_by_teams.keys())[:5] if len(_espn_events_by_teams) <= 5 else list(_espn_events_by_teams.keys())[:5] + [f"...and {len(_espn_events_by_teams) - 5} more"],
             },
         }
         # Don't cache debug responses
