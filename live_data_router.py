@@ -3279,6 +3279,42 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             research_reasons.append(f"Line variance {line_variance:.1f}pts (minimal)")
             pillars_failed.append("Reverse Line Movement")
 
+        # v17.3: ESPN Odds Cross-Validation (adds confidence when ESPN confirms)
+        espn_odds_boost = 0.0
+        if _espn_odds_by_game and home_team and away_team:
+            _espn_key = (home_team.lower(), away_team.lower())
+            _espn_odds = _espn_odds_by_game.get(_espn_key)
+            if _espn_odds and _espn_odds.get("available"):
+                # Check if ESPN spread/total aligns with our data
+                espn_spread = _espn_odds.get("spread")
+                espn_total = _espn_odds.get("total")
+                primary_line = float(spread) if spread else (float(total) if total else None)
+
+                if primary_line is not None:
+                    # Compare ESPN line with our primary line
+                    if espn_spread and spread:
+                        try:
+                            diff = abs(float(espn_spread) - float(spread))
+                            if diff <= 0.5:
+                                espn_odds_boost = 0.5
+                                research_reasons.append(f"ESPN confirms spread (diff {diff:.1f})")
+                            elif diff <= 1.0:
+                                espn_odds_boost = 0.25
+                                research_reasons.append(f"ESPN spread close (diff {diff:.1f})")
+                        except (ValueError, TypeError):
+                            pass
+                    elif espn_total and total:
+                        try:
+                            diff = abs(float(espn_total) - float(total))
+                            if diff <= 1.0:
+                                espn_odds_boost = 0.5
+                                research_reasons.append(f"ESPN confirms total (diff {diff:.1f})")
+                            elif diff <= 2.0:
+                                espn_odds_boost = 0.25
+                                research_reasons.append(f"ESPN total close (diff {diff:.1f})")
+                        except (ValueError, TypeError):
+                            pass
+
         # Pillar 3: Public Betting Fade (0-2 pts) - fading heavy public action
         # v14.11: Use centralized public fade calculator (single-calculation policy)
         public_pct_val = sharp_signal.get("public_pct", 50)
@@ -3321,9 +3357,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 research_reasons.append("Splits data present (minimal divergence)")
 
         # Research score: Sum of pillars normalized to 0-10
-        # Max possible: 3 (sharp) + 3 (line) + 2 (public) + 3 (base) = 11 → capped at 10
-        research_score = min(10.0, base_research + sharp_boost + line_boost + public_boost)
-        research_reasons.append(f"Research: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + Base:{base_research})")
+        # Max possible: 3 (sharp) + 3 (line) + 2 (public) + 3 (base) + 0.5 (ESPN) = 11.5 → capped at 10
+        research_score = min(10.0, base_research + sharp_boost + line_boost + public_boost + espn_odds_boost)
+        research_reasons.append(f"Research: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + ESPN:{espn_odds_boost} + Base:{base_research})")
 
         # Pillar score for backwards compatibility (used in scoring_breakdown)
         pillar_score = sharp_boost + line_boost + public_boost
@@ -4331,6 +4367,89 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     logger.info("OFFICIALS LOOKUP: %d games with officials data", len(_officials_by_game))
 
+    # v17.3: Batch fetch ESPN enriched data (odds, injuries, venue) for all games
+    _espn_odds_by_game = {}  # (home, away) -> odds dict
+    _espn_injuries_supplement = {}  # team_name -> list of injuries (to merge with Playbook)
+    _espn_venue_by_game = {}  # (home, away) -> venue dict with weather
+
+    if ESPN_OFFICIALS_AVAILABLE and _espn_events_by_teams:
+        async def _fetch_espn_enriched_batch():
+            from alt_data_sources.espn_lineups import get_espn_odds, get_espn_injuries, get_espn_venue_info
+
+            # Fetch odds, injuries, venue in parallel for all events
+            odds_tasks = []
+            injury_tasks = []
+            venue_tasks = []
+            keys = list(_espn_events_by_teams.keys())
+            event_ids = [_espn_events_by_teams[k] for k in keys]
+
+            for event_id in event_ids:
+                odds_tasks.append(get_espn_odds(sport, event_id))
+                injury_tasks.append(get_espn_injuries(sport, event_id))
+                # Only fetch venue for outdoor sports (MLB, NFL)
+                if sport_upper in ["MLB", "NFL"]:
+                    venue_tasks.append(get_espn_venue_info(sport, event_id))
+                else:
+                    venue_tasks.append(asyncio.sleep(0))  # Placeholder
+
+            # Run all in parallel
+            all_tasks = odds_tasks + injury_tasks + venue_tasks
+            results = await asyncio.gather(*all_tasks, return_exceptions=True)
+
+            n = len(keys)
+            odds_results = results[:n]
+            injury_results = results[n:2*n]
+            venue_results = results[2*n:]
+
+            # Process odds
+            for key, result in zip(keys, odds_results):
+                if isinstance(result, Exception):
+                    continue
+                if result and result.get("available"):
+                    _espn_odds_by_game[key] = result
+
+            # Process injuries (merge into team-based lookup)
+            for key, result in zip(keys, injury_results):
+                if isinstance(result, Exception):
+                    continue
+                if result and result.get("available"):
+                    for inj in result.get("injuries", []):
+                        team = inj.get("team", "")
+                        if team:
+                            if team not in _espn_injuries_supplement:
+                                _espn_injuries_supplement[team] = []
+                            _espn_injuries_supplement[team].append(inj)
+
+            # Process venue/weather (outdoor sports only)
+            if sport_upper in ["MLB", "NFL"]:
+                for key, result in zip(keys, venue_results):
+                    if isinstance(result, Exception):
+                        continue
+                    if result and result.get("available"):
+                        _espn_venue_by_game[key] = result
+
+        try:
+            await _fetch_espn_enriched_batch()
+        except Exception as e:
+            logger.debug("ESPN enriched batch fetch failed: %s", e)
+
+    logger.info("ESPN ENRICHED: odds=%d, injuries=%d teams, venues=%d",
+                len(_espn_odds_by_game), len(_espn_injuries_supplement), len(_espn_venue_by_game))
+
+    # Merge ESPN injuries with Playbook injuries (_injuries_by_team)
+    for team, injuries in _espn_injuries_supplement.items():
+        if team not in _injuries_by_team:
+            _injuries_by_team[team] = []
+        # Add ESPN injuries that aren't already in the list
+        existing_players = {i.get("player", "").lower() for i in _injuries_by_team[team]}
+        for inj in injuries:
+            player = inj.get("player", "")
+            if player.lower() not in existing_players:
+                _injuries_by_team[team].append(inj)
+                existing_players.add(player.lower())
+
+    logger.info("INJURIES LOOKUP (merged): %d teams with injuries", len(_injuries_by_team))
+
     # ============================================
     # APPLY ET DAY GATE to both datasets
     # ============================================
@@ -4547,6 +4666,48 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         "weather_modifier": 0.0,
                         "weather_reasons": []
                     }
+
+                # v17.3: Supplement with ESPN venue/weather for outdoor sports
+                if sport_upper in ["MLB", "NFL"] and _espn_venue_by_game:
+                    _venue_key = (home_team.lower(), away_team.lower())
+                    _espn_venue = _espn_venue_by_game.get(_venue_key)
+                    if _espn_venue and _espn_venue.get("available"):
+                        # Add venue info to weather context
+                        venue_info = _espn_venue.get("venue", {})
+                        if not _game_weather.get("available"):
+                            # Use ESPN weather as fallback
+                            espn_weather = _espn_venue.get("weather", {})
+                            if espn_weather and espn_weather.get("temperature"):
+                                temp = espn_weather.get("temperature", 70)
+                                wind = espn_weather.get("wind_speed", 0)
+                                # Simple weather modifier based on conditions
+                                weather_mod = 0.0
+                                weather_reasons = []
+                                if temp and temp < 40:
+                                    weather_mod -= 0.5
+                                    weather_reasons.append(f"Cold temp ({temp}°F)")
+                                elif temp and temp > 90:
+                                    weather_mod -= 0.3
+                                    weather_reasons.append(f"Hot temp ({temp}°F)")
+                                if wind and wind > 15:
+                                    weather_mod -= 0.3
+                                    weather_reasons.append(f"High wind ({wind}mph)")
+                                _game_weather = {
+                                    "available": True,
+                                    "reason": "ESPN_VENUE",
+                                    "weather_modifier": weather_mod,
+                                    "weather_reasons": weather_reasons,
+                                    "source": "espn"
+                                }
+                        # Add venue details regardless
+                        _game_weather["espn_venue"] = {
+                            "name": venue_info.get("name", ""),
+                            "indoor": venue_info.get("indoor", True),
+                            "grass": venue_info.get("grass", False),
+                            "capacity": venue_info.get("capacity")
+                        }
+                        if _espn_venue.get("attendance"):
+                            _game_weather["espn_venue"]["attendance"] = _espn_venue.get("attendance")
 
                 best_odds_by_market = {}
                 for bm in game.get("bookmakers", []):
