@@ -194,9 +194,9 @@ async def health():
 
     # Redis cache
     try:
-        from live_data_router import _cache
-        if _cache:
-            cache_status = _cache.get_stats()
+        from live_data_router import api_cache
+        if api_cache:
+            cache_status = api_cache.stats()
             redis_ok = cache_status.get("redis_connected", False)
         else:
             cache_status = {"redis_connected": False}
@@ -335,9 +335,9 @@ async def public_status(request: Request):
 
     # 3. Redis check (from live_data_router cache)
     try:
-        from live_data_router import _cache
-        if _cache:
-            cache_status = _cache.get_stats()
+        from live_data_router import api_cache
+        if api_cache:
+            cache_status = api_cache.stats()
             checks["redis"] = cache_status.get("redis_connected", False)
         else:
             checks["redis"] = False
