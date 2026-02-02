@@ -3081,7 +3081,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     # Helper function to calculate scores with v15.0 4-engine architecture + Jason Sim
     # v16.1: Added market parameter for LSTM model routing
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market=""):
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market="", game_datetime=None):
         # =====================================================================
         # v15.0 FOUR-ENGINE ARCHITECTURE (Clean Separation)
         # =====================================================================
@@ -4336,6 +4336,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 sharp_signal = sharp_lookup.get(game_key, {})
                 commence_time = game.get("commence_time", "")
 
+                # Parse commence_time to datetime object for MSRF/GLITCH
+                _game_datetime = None
+                if commence_time:
+                    try:
+                        from datetime import datetime as _dt_parse
+                        _game_datetime = _dt_parse.fromisoformat(commence_time.replace("Z", "+00:00"))
+                    except Exception:
+                        pass
+
                 start_time_et = ""
                 if commence_time:
                     try:
@@ -4434,7 +4443,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 public_pct=sharp_signal.get("public_pct", sharp_signal.get("ticket_pct", 50)),
                                 pick_type=pick_type,
                                 pick_side=pick_side,
-                                prop_line=point if point else 0
+                                prop_line=point if point else 0,
+                                game_datetime=_game_datetime
                             )
 
                             # v16.0: Apply weather modifier to score (capped at ±1.0)
@@ -4551,6 +4561,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         commence_time = g.get("commence_time", "")
                         break
 
+            # Parse commence_time to datetime object for MSRF/GLITCH
+            _sharp_game_dt = None
+            if commence_time:
+                try:
+                    from datetime import datetime as _dt_parse
+                    _sharp_game_dt = _dt_parse.fromisoformat(commence_time.replace("Z", "+00:00"))
+                except Exception:
+                    pass
+
             score_data = calculate_pick_score(
                 game_str,
                 signal,
@@ -4563,7 +4582,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 public_pct=50,
                 pick_type="SHARP",
                 pick_side=signal.get("side", "HOME"),
-                prop_line=0
+                prop_line=0,
+                game_datetime=_sharp_game_dt
             )
 
             signals_fired = score_data.get("pillars_passed", []).copy()
@@ -4659,6 +4679,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             sharp_signal = sharp_lookup.get(game_key, {})
             commence_time = game.get("commence_time", "")
 
+            # Parse commence_time to datetime object for MSRF/GLITCH
+            _prop_game_datetime = None
+            if commence_time:
+                try:
+                    from datetime import datetime as _dt_parse
+                    _prop_game_datetime = _dt_parse.fromisoformat(commence_time.replace("Z", "+00:00"))
+                except Exception:
+                    pass
+
             _ctx = game_context.get(game_key, {})
             _game_spread = _ctx.get("spread", 0)
             _game_total = _ctx.get("total", 220)
@@ -4732,7 +4761,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     pick_type="PROP",
                     pick_side=side,
                     prop_line=line,
-                    market=market  # v16.1: Pass market for LSTM model routing
+                    market=market,  # v16.1: Pass market for LSTM model routing
+                    game_datetime=_prop_game_datetime
                 )
 
                 # v16.0: Apply weather modifier to props (capped at ±1.0)
