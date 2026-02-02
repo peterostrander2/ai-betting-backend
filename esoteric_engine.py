@@ -1011,10 +1011,12 @@ def get_glitch_aggregate(
     Calculate aggregate GLITCH Protocol score from all orphaned signals.
 
     Combines:
-    - Chrome Resonance (if birth_date provided)
-    - Void Moon (always)
-    - Hurst Exponent (if line_history provided)
-    - Kp-Index / Schumann (always)
+    - Chrome Resonance (if birth_date provided) - weight 0.25
+    - Void Moon (always) - weight 0.20
+    - Noosphere Velocity (if SerpAPI enabled) - weight 0.15
+    - Hurst Exponent (if line_history provided) - weight 0.25
+    - Kp-Index / Schumann (always) - weight 0.25
+    - Benford Anomaly (if value_for_benford provided) - weight 0.10
 
     Returns aggregated score and breakdown for esoteric engine integration.
     """
@@ -1119,6 +1121,22 @@ def get_glitch_aggregate(
         weighted_score += schumann_score * weight
         total_weight += weight
         reasons.append(f"SCHUMANN: {schumann['status']} ({schumann['current_hz']}Hz)")
+
+    # 5. Benford Anomaly (weight: 0.10) - detect statistical manipulation in lines
+    if value_for_benford and len(value_for_benford) >= 10:
+        try:
+            from signals.math_glitch import check_benford_anomaly
+            benford = check_benford_anomaly(value_for_benford)
+            results["benford"] = benford
+            weight = 0.10
+            benford_score = benford.get("score", 0.5)
+            weighted_score += benford_score * weight
+            total_weight += weight
+            if benford.get("triggered"):
+                triggered_signals.append(f"benford_anomaly_{benford.get('deviation', 0):.2f}")
+            reasons.append(f"BENFORD: {benford.get('reason', 'UNKNOWN')}")
+        except ImportError:
+            pass  # signals module not available
 
     # Normalize score if we have weights
     if total_weight > 0:

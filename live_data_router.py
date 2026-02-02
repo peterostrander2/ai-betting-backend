@@ -3339,12 +3339,28 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             if game_datetime:
                 _game_date_obj = game_datetime.date() if hasattr(game_datetime, 'date') else game_datetime
 
+            # Collect line values for Benford analysis (needs 10+ for statistical significance)
+            _line_values = []
+            if prop_line:
+                _line_values.append(prop_line)
+            if spread:
+                _line_values.append(abs(spread))
+            if total:
+                _line_values.append(total)
+            # Add odds if available (convert from American to decimal-ish for digit analysis)
+            if odds:
+                _line_values.append(abs(int(odds)))
+            # Get other lines from candidate if available
+            if candidate.get("other_lines"):
+                _line_values.extend([abs(l) for l in candidate.get("other_lines", []) if l])
+
             # Calculate GLITCH aggregate
             glitch_result = get_glitch_aggregate(
                 birth_date_str=_player_birth,
                 game_date=_game_date_obj,
                 game_time=game_datetime,
                 line_history=None,  # TODO: Pass line history when available
+                value_for_benford=_line_values if len(_line_values) >= 10 else None,
                 primary_value=prop_line if prop_line else spread
             )
 
