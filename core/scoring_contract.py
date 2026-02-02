@@ -5,11 +5,13 @@ All scoring logic MUST reference these constants (no duplicated literals).
 
 # Engine Weights (sum = 0.90; remaining headroom is reserved for post-base modifiers
 # such as confluence + Jason Sim + bounded context modifiers, as implemented).
+# v17.1: Added Context engine at 30% per spec, rebalanced others proportionally
 ENGINE_WEIGHTS = {
-    "ai": 0.25,
-    "research": 0.30,
-    "esoteric": 0.20,
-    "jarvis": 0.15,
+    "ai": 0.15,        # was 0.25 - 8 AI models
+    "research": 0.20,  # was 0.30 - Sharp money, splits, variance
+    "esoteric": 0.15,  # was 0.20 - Numerology, astro, fib, vortex
+    "jarvis": 0.10,    # was 0.15 - Gematria, sacred triggers
+    "context": 0.30,   # NEW - Pillars 13-15: Defensive Rank, Pace, Vacuum
 }
 
 # Output/visibility threshold (hard invariant)
@@ -25,18 +27,22 @@ TITANIUM_RULE = {
 }
 
 # Gold Star hard gates (hard invariant)
+# v17.1: Added context_score gate for 5-engine architecture
 GOLD_STAR_GATES = {
     "ai_score": 6.8,
     "research_score": 5.5,
     "jarvis_score": 6.5,
     "esoteric_score": 4.0,
+    "context_score": 4.0,  # NEW - Pillars 13-15 must contribute
 }
 
 # Confluence boost levels (must match production implementation)
+# v17.0: Added HARMONIC_CONVERGENCE for Math+Magic alignment
 CONFLUENCE_LEVELS = {
     "IMMORTAL": 10.0,
     "JARVIS_PERFECT": 7.0,
     "PERFECT": 5.0,
+    "HARMONIC_CONVERGENCE": 4.5,  # NEW - Research + Esoteric both >= 8.0
     "STRONG": 3.0,
     "MODERATE": 1.0,
     "DIVERGENT": 0.0,

@@ -3380,12 +3380,41 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
 
-        # --- v15.1 BASE SCORE FORMULA (4 Engines + AI) ---
-        # BASE = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15) + confluence_boost
-        # AI models now directly contribute 25% of the score
+        # --- v17.1 CONTEXT SCORE (Pillars 13-15) ---
+        # Calculate context_score (0-10) from defensive rank, pace, and vacuum
+        # This is now a 5th engine at 30% weight per spec
+
+        # Pillar 13: Defensive Rank (lower rank = worse defense = better for offense)
+        # Rank 1 = worst defense = best matchup = 10, Rank 32 = best defense = 0
+        _total_teams = 32 if sport_upper in ["NBA", "NFL", "NHL"] else 30 if sport_upper == "MLB" else 350
+        def_component = max(0, min(10, (_total_teams - _def_rank) / (_total_teams - 1) * 10))
+
+        # Pillar 14: Pace (higher pace = more scoring opportunities)
+        # Pace 90 = slow (0), Pace 110 = fast (10)
+        pace_component = max(0, min(10, (_pace - 90) / 20 * 10))
+
+        # Pillar 15: Vacuum (higher vacuum = more usage available from injuries)
+        # Vacuum 0 = no boost (5), Vacuum 25+ = max boost (10)
+        vacuum_component = max(0, min(10, 5 + (_vacuum / 5)))
+
+        # Weighted combination: Defense 50%, Pace 30%, Vacuum 20%
+        context_score = (def_component * 0.5) + (pace_component * 0.3) + (vacuum_component * 0.2)
+        context_score = round(max(0, min(10, context_score)), 2)
+
+        # --- v17.1 BASE SCORE FORMULA (5 Engines) ---
+        # BASE = (ai × 0.15) + (research × 0.20) + (esoteric × 0.15) + (jarvis × 0.10) + (context × 0.30) + confluence_boost
+        # Context pillars now contribute 30% as per spec
         # If jarvis_rs is None (inputs missing), use 0 for jarvis contribution
         jarvis_contribution = (jarvis_rs * ENGINE_WEIGHTS["jarvis"]) if jarvis_rs is not None else 0
-        base_score = (ai_scaled * ENGINE_WEIGHTS["ai"]) + (research_score * ENGINE_WEIGHTS["research"]) + (esoteric_score * ENGINE_WEIGHTS["esoteric"]) + jarvis_contribution + confluence_boost
+        context_contribution = context_score * ENGINE_WEIGHTS["context"]
+        base_score = (
+            (ai_scaled * ENGINE_WEIGHTS["ai"]) +
+            (research_score * ENGINE_WEIGHTS["research"]) +
+            (esoteric_score * ENGINE_WEIGHTS["esoteric"]) +
+            jarvis_contribution +
+            context_contribution +
+            confluence_boost
+        )
 
         # --- v11.08 JASON SIM CONFLUENCE (runs after base score, before tier assignment) ---
         # Jason simulates game outcomes and applies boost/downgrade based on win probability
@@ -3570,15 +3599,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 jarvis_score=jarvis_for_titanium
             )
         else:
-            # Fallback check without tiering module
+            # Fallback check without tiering module (v17.1: 5 engines now)
             engines_above_8 = sum([
                 ai_scaled >= 8.0,
                 research_score >= 8.0,
                 esoteric_score >= 8.0,
-                jarvis_for_titanium >= 8.0
+                jarvis_for_titanium >= 8.0,
+                context_score >= 8.0  # v17.1: Added context engine
             ])
             titanium_triggered = engines_above_8 >= 3
-            titanium_explanation = f"Titanium: {engines_above_8}/4 engines >= 8.0 (need 3)"
+            titanium_explanation = f"Titanium: {engines_above_8}/5 engines >= 8.0 (need 3)"
 
         # --- v11.08 BET TIER DETERMINATION (Single Source of Truth) ---
         if TIERING_AVAILABLE:
@@ -3601,20 +3631,21 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             else:
                 bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
 
-        # --- v15.3 GOLD_STAR HARD GATES ---
+        # --- v17.1 GOLD_STAR HARD GATES (5 engines) ---
         # GOLD_STAR requires ALL engine minimums. If any gate fails, downgrade to EDGE_LEAN.
         _gold_gates = {
             "ai_gte_6.8": ai_scaled >= GOLD_STAR_GATES["ai_score"],
             "research_gte_5.5": research_score >= GOLD_STAR_GATES["research_score"],
             "jarvis_gte_6.5": (jarvis_rs >= GOLD_STAR_GATES["jarvis_score"]) if jarvis_rs is not None else False,
             "esoteric_gte_4.0": esoteric_score >= GOLD_STAR_GATES["esoteric_score"],
+            "context_gte_4.0": context_score >= GOLD_STAR_GATES["context_score"],  # v17.1
         }
         _gold_gates_passed = all(_gold_gates.values())
         _gold_gates_failed = [k for k, v in _gold_gates.items() if not v]
 
         if bet_tier.get("tier") == "GOLD_STAR" and not _gold_gates_passed:
-            logger.info("GOLD_STAR downgrade: gates failed=%s (ai=%.1f R=%.1f J=%.1f E=%.1f)",
-                       _gold_gates_failed, ai_scaled, research_score, jarvis_rs, esoteric_score)
+            logger.info("GOLD_STAR downgrade: gates failed=%s (ai=%.1f R=%.1f J=%.1f E=%.1f C=%.1f)",
+                       _gold_gates_failed, ai_scaled, research_score, jarvis_rs, esoteric_score, context_score)
             bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY",
                         "badge": "EDGE LEAN", "gold_star_downgrade": True,
                         "gold_star_failed_gates": _gold_gates_failed}
@@ -3649,6 +3680,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 smash_reasons.append(f"Esoteric Engine: {round(esoteric_score, 2)}/10")
             if jarvis_rs is not None and jarvis_rs >= 8.0:
                 smash_reasons.append(f"Jarvis Engine: {round(jarvis_rs, 2)}/10")
+            if context_score >= 8.0:
+                smash_reasons.append(f"Context Engine: {round(context_score, 2)}/10")
 
         # Build penalties array from modifiers
         # v15.0: public_fade_mod removed (now only in Research as positive boost)
@@ -3700,6 +3733,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         tier_reason.append(f"  - Jarvis inputs missing (None)")
                 elif gate == "esoteric_gte_4.0":
                     tier_reason.append(f"  - Esoteric {esoteric_score:.1f} < 4.0")
+                elif gate == "context_gte_4.0":
+                    tier_reason.append(f"  - Context {context_score:.1f} < 4.0")
 
         return {
             "total_score": round(final_score, 2),
@@ -3712,23 +3747,35 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "tier_reason": tier_reason,  # v15.3 Transparency: why this tier was assigned
             "action": bet_tier.get("action", "SKIP"),
             "units": bet_tier.get("units", bet_tier.get("unit_size", 0.0)),
-            # v11.08 Engine scores (all 0-10 scale)
+            # v17.1 Engine scores (all 0-10 scale) - 5 engines now
             "ai_score": round(ai_scaled, 2),
             "research_score": round(research_score, 2),
             "esoteric_score": round(esoteric_score, 2),
             "jarvis_score": round(jarvis_rs, 2),  # Alias for jarvis_rs
+            "context_score": round(context_score, 2),  # v17.1: NEW 5th engine
             # Detailed breakdowns
             "scoring_breakdown": {
                 "research_score": round(research_score, 2),
                 "esoteric_score": round(esoteric_score, 2),
                 "ai_models": round(ai_score, 2),
                 "ai_score": round(ai_scaled, 2),
+                "context_score": round(context_score, 2),  # v17.1
                 "pillars": round(pillar_score, 2),
                 "confluence_boost": confluence_boost,
                 "alignment_pct": confluence.get("alignment_pct", 0),
                 "gold_star_gates": _gold_gates,
                 "gold_star_eligible": _gold_gates_passed,
                 "gold_star_failed": _gold_gates_failed
+            },
+            # v17.1 Context breakdown (Pillars 13-15)
+            "context_breakdown": {
+                "def_rank": _def_rank,
+                "def_component": round(def_component, 2),
+                "pace": _pace,
+                "pace_component": round(pace_component, 2),
+                "vacuum": _vacuum,
+                "vacuum_component": round(vacuum_component, 2),
+                "total": round(context_score, 2)
             },
             # v14.9 Research breakdown (clean engine separation)
             "research_breakdown": {
