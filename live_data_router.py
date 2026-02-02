@@ -1181,6 +1181,14 @@ class LiveContractRoute(APIRoute):
                 return response
 
             payload = _ensure_live_contract_payload(payload, response.status_code)
+
+            # Sanitize member-facing payloads (ET-only, strip telemetry/UTC)
+            # Never sanitize /live/debug/* endpoints
+            path = request.url.path
+            if PUBLIC_SANITIZER_AVAILABLE and not path.startswith("/live/debug"):
+                # Optional: keep api-health untouched
+                if path != "/live/api-health":
+                    payload = sanitize_public_payload(payload)
             status_code = response.status_code
             if status_code >= 500:
                 status_code = 200
