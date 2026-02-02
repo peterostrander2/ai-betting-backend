@@ -1,8 +1,225 @@
 # API Integration Plan - Maximize Existing APIs
 
-> **Status:** PLANNING ONLY - Do not implement without engineer verification
+> **Status:** APPROVED WITH GUARDRAILS - Shadow mode required before production
 > **Created:** February 2026
+> **Approved:** February 2026 (Senior Engineer)
 > **Purpose:** Maximize pick accuracy by fully utilizing APIs we already pay for
+
+---
+
+## 🚨 NON-NEGOTIABLE IMPLEMENTATION GUARDRAILS
+
+**These gates are REQUIRED before any SerpAPI signal can affect production picks.**
+
+### Gate 1: Shadow Mode First (HARD GATE)
+
+```python
+SERP_ENABLED = True
+SERP_SHADOW_MODE = True  # MUST start as True
+
+# Shadow mode behavior:
+# - SerpAPI runs, caches results
+# - Logs: signals_fired, searches_used, total_serp_boost
+# - Applies: 0 boost to all engines (no score impact)
+```
+
+**Exit Criteria (BOTH required):**
+- ≥500 graded picks with shadow signals logged
+- ≥14 days of shadow data collection
+- Basic report showing: signal frequency + win-rate deltas vs control
+
+### Gate 2: Quota + Budget Enforcement (HARD GATE)
+
+```python
+# Central counters - BOTH daily AND monthly
+_serp_usage = {
+    "date": None,
+    "daily_count": 0,
+    "monthly_count": 0,
+    "month": None
+}
+
+DAILY_LIMIT = 166      # 5000 / 30 days
+MONTHLY_LIMIT = 5000
+
+def check_serp_quota() -> tuple[bool, str]:
+    """Returns (allowed, status)"""
+    if _serp_usage["daily_count"] >= DAILY_LIMIT:
+        return False, "SKIPPED_DAILY_QUOTA"
+    if _serp_usage["monthly_count"] >= MONTHLY_LIMIT:
+        return False, "SKIPPED_MONTHLY_QUOTA"
+    return True, "OK"
+
+# When quota exceeded:
+# - Return deterministic status=SKIPPED_QUOTA
+# - Return all boosts = 0
+# - NO retries
+# - NO cascading failures
+```
+
+### Gate 3: Caching is MANDATORY (HARD GATE)
+
+```python
+SERP_CACHE_TTL = 3600  # 60 minutes minimum (up to 120)
+
+# Cache key format:
+cache_key = f"serp:{team}:{opponent}:{sport}:{date_et}"
+
+# Without caching = instant budget blowout
+# Cache hit rate target: >80%
+```
+
+### Gate 4: Replace, Don't Duplicate (HARD GATE)
+
+```python
+# BEFORE: detect_insider_leak() at line 3401
+# AFTER: Deprecated when SERP_ENABLED=True
+
+def detect_insider_leak(team: str) -> dict:
+    """DEPRECATED - Use SerpAPI Silent Spike instead."""
+    if os.getenv("SERP_ENABLED", "false").lower() == "true":
+        return {"status": "DEPRECATED", "signal": None}
+    # ... old logic only runs if Serp disabled
+```
+
+**Only ONE can fire - no conflicting signals.**
+
+### Gate 5: Fail-Soft + Debug-Loud (HARD GATE)
+
+```python
+async def get_serp_intelligence_safe(...) -> dict:
+    """Wrapper that guarantees no 500 errors."""
+    try:
+        return await get_complete_serp_intelligence(...)
+    except Exception as e:
+        logger.error(f"SerpAPI failed (fail-soft): {e}")
+        return {
+            "status": "SERP_FAILED",
+            "ai_boost": 0, "research_boost": 0,
+            "esoteric_boost": 0, "jarvis_boost": 0,
+            "context_boost": 0,
+            "error": str(e)
+        }
+
+# /debug/integrations MUST show:
+# - serp_status: "OK" | "QUOTA_EXCEEDED" | "FAILED" | "SHADOW_MODE"
+# - serp_last_success: timestamp
+# - serp_cache_hit_rate: percentage
+# - serp_quota_remaining: {"daily": N, "monthly": N}
+```
+
+### Gate 6: Boost Caps Enforced in Code (HARD GATE)
+
+```python
+# Caps enforced at APPLICATION point, not just docs
+
+MAX_BOOSTS = {
+    "ai": 0.8,
+    "research": 1.3,
+    "esoteric": 0.6,
+    "jarvis": 0.7,
+    "context": 0.9,
+    "total": 4.3
+}
+
+def apply_serp_boosts(serp_result: dict, scores: dict) -> dict:
+    """Apply boosts with hard caps."""
+    scores["ai"] += min(serp_result["ai_boost"], MAX_BOOSTS["ai"])
+    scores["research"] += min(serp_result["research_boost"], MAX_BOOSTS["research"])
+    scores["esoteric"] += min(serp_result["esoteric_boost"], MAX_BOOSTS["esoteric"])
+    scores["jarvis"] += min(serp_result["jarvis_boost"], MAX_BOOSTS["jarvis"])
+    scores["context"] += min(serp_result["context_boost"], MAX_BOOSTS["context"])
+
+    # Also cap total boost applied
+    total_boost = sum([...])
+    if total_boost > MAX_BOOSTS["total"]:
+        # Scale down proportionally
+        scale = MAX_BOOSTS["total"] / total_boost
+        # ... apply scaling
+
+    return scores
+```
+
+### Gate 7: Timeout + Skip-If-Slow (HARD GATE)
+
+```python
+SERP_TIMEOUT = 2.0  # seconds - strict limit
+
+async def get_serp_with_timeout(...) -> dict:
+    """SerpAPI call with strict timeout."""
+    try:
+        return await asyncio.wait_for(
+            get_complete_serp_intelligence(...),
+            timeout=SERP_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        logger.warning("SerpAPI timeout - skipping")
+        return {"status": "SKIPPED_TIMEOUT", **ZERO_BOOSTS}
+
+# Pipeline already has timeouts (_timed_out_components)
+# SerpAPI must be:
+# - Cache-first (check cache before API call)
+# - Skip-if-slow (don't block scoring)
+# - Behind existing timeout budget
+```
+
+---
+
+## ✅ Implementation Checklist (Ship When ALL Complete)
+
+| # | Requirement | Status |
+|---|-------------|--------|
+| 1 | `SERP_ENABLED=true`, `SERP_SHADOW_MODE=true` env vars | ⬜ |
+| 2 | Cache layer wired with 60-120min TTL | ⬜ |
+| 3 | Per-request timeout (2s) + fail-soft return | ⬜ |
+| 4 | Daily + monthly quota counters | ⬜ |
+| 5 | Deterministic `serp_status` in response metadata | ⬜ |
+| 6 | `detect_insider_leak()` deprecated/gated | ⬜ |
+| 7 | `/debug/integrations` shows Serp status, cache rate, quota | ⬜ |
+| 8 | Boost caps enforced in code | ⬜ |
+| 9 | Shadow mode report template ready | ⬜ |
+
+**If ANY checkbox is unchecked → DO NOT let SerpAPI affect scoring.**
+
+---
+
+## Shadow Mode Exit Report Template
+
+After 14 days + 500 picks, generate this report:
+
+```markdown
+## SerpAPI Shadow Mode Report
+
+### Collection Period
+- Start: YYYY-MM-DD
+- End: YYYY-MM-DD
+- Days: N
+- Graded Picks: N
+
+### Signal Frequency
+| Signal | Times Fired | % of Picks |
+|--------|-------------|------------|
+| SILENT_SPIKE | N | X% |
+| SHARP_CHATTER | N | X% |
+| ... | | |
+
+### Win Rate Comparison
+| Group | Win Rate | Sample Size |
+|-------|----------|-------------|
+| Control (no Serp) | X% | N |
+| Would-have-boosted | X% | N |
+| Delta | +/-X% | |
+
+### Budget Usage
+- Total searches: N / 5000
+- Daily average: N / 166
+- Cache hit rate: X%
+
+### Recommendation
+[ ] Ready for production (signals show positive delta)
+[ ] Extend shadow mode (insufficient data)
+[ ] Do not enable (signals show no/negative value)
+```
 
 ---
 
