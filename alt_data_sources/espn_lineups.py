@@ -445,6 +445,12 @@ async def get_espn_odds(sport: str, event_id: str) -> Dict[str, Any]:
     """
     details = await get_game_details(sport, event_id)
 
+    # Ensure details is a dict
+    if not isinstance(details, dict):
+        logger.warning("ESPN odds: details is not a dict, type=%s, value=%s",
+                     type(details).__name__, str(details)[:100])
+        return {"available": False, "reason": f"DETAILS_NOT_DICT: {type(details).__name__}"}
+
     if "error" in details:
         return {"available": False, "error": details["error"]}
 
