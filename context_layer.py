@@ -349,6 +349,66 @@ NCAAB_PACE = {
 # TEAM ALIASES (All Sports)
 # ============================================================
 
+# NCAAB team name to short name mapping (mascot stripping)
+# Maps "North Carolina Tar Heels" -> "North Carolina", etc.
+NCAAB_TEAM_MAPPING = {
+    # ACC
+    "North Carolina Tar Heels": "North Carolina", "Duke Blue Devils": "Duke",
+    "Virginia Cavaliers": "Virginia", "Syracuse Orange": "Syracuse",
+    "NC State Wolfpack": "NC State", "Wake Forest Demon Deacons": "Wake Forest",
+    "Clemson Tigers": "Clemson", "Louisville Cardinals": "Louisville",
+    "Pittsburgh Panthers": "Pittsburgh", "Notre Dame Fighting Irish": "Notre Dame",
+    "Florida State Seminoles": "Florida State", "Miami Hurricanes": "Miami",
+    "Boston College Eagles": "Boston College", "Georgia Tech Yellow Jackets": "Georgia Tech",
+    "Virginia Tech Hokies": "Virginia Tech", "California Golden Bears": "California",
+    "Stanford Cardinal": "Stanford", "SMU Mustangs": "SMU",
+
+    # SEC
+    "Kentucky Wildcats": "Kentucky", "Tennessee Volunteers": "Tennessee",
+    "Auburn Tigers": "Auburn", "Alabama Crimson Tide": "Alabama",
+    "Arkansas Razorbacks": "Arkansas", "Florida Gators": "Florida",
+    "Texas A&M Aggies": "Texas A&M", "LSU Tigers": "LSU",
+    "Mississippi State Bulldogs": "Mississippi State", "Ole Miss Rebels": "Ole Miss",
+    "Missouri Tigers": "Missouri", "South Carolina Gamecocks": "South Carolina",
+    "Vanderbilt Commodores": "Vanderbilt", "Georgia Bulldogs": "Georgia",
+    "Texas Longhorns": "Texas", "Oklahoma Sooners": "Oklahoma",
+
+    # Big Ten
+    "Purdue Boilermakers": "Purdue", "Michigan State Spartans": "Michigan State",
+    "Illinois Fighting Illini": "Illinois", "Michigan Wolverines": "Michigan",
+    "Indiana Hoosiers": "Indiana", "Ohio State Buckeyes": "Ohio State",
+    "Wisconsin Badgers": "Wisconsin", "Iowa Hawkeyes": "Iowa",
+    "Maryland Terrapins": "Maryland", "Minnesota Golden Gophers": "Minnesota",
+    "Nebraska Cornhuskers": "Nebraska", "Northwestern Wildcats": "Northwestern",
+    "Penn State Nittany Lions": "Penn State", "Rutgers Scarlet Knights": "Rutgers",
+    "UCLA Bruins": "UCLA", "USC Trojans": "USC", "Oregon Ducks": "Oregon",
+    "Washington Huskies": "Washington",
+
+    # Big 12
+    "Kansas Jayhawks": "Kansas", "Baylor Bears": "Baylor",
+    "Houston Cougars": "Houston", "Iowa State Cyclones": "Iowa State",
+    "Texas Tech Red Raiders": "Texas Tech", "TCU Horned Frogs": "TCU",
+    "BYU Cougars": "BYU", "Cincinnati Bearcats": "Cincinnati",
+    "UCF Knights": "UCF", "Kansas State Wildcats": "Kansas State",
+    "West Virginia Mountaineers": "West Virginia", "Oklahoma State Cowboys": "Oklahoma State",
+    "Arizona Wildcats": "Arizona", "Arizona State Sun Devils": "Arizona State",
+    "Colorado Buffaloes": "Colorado", "Utah Utes": "Utah",
+
+    # Big East
+    "UConn Huskies": "UConn", "Marquette Golden Eagles": "Marquette",
+    "Creighton Bluejays": "Creighton", "Villanova Wildcats": "Villanova",
+    "Xavier Musketeers": "Xavier", "Providence Friars": "Providence",
+    "St. John's Red Storm": "St. John's", "Seton Hall Pirates": "Seton Hall",
+    "Georgetown Hoyas": "Georgetown", "Butler Bulldogs": "Butler",
+    "DePaul Blue Demons": "DePaul",
+
+    # Other Power Programs
+    "Gonzaga Bulldogs": "Gonzaga", "San Diego State Aztecs": "San Diego State",
+    "Memphis Tigers": "Memphis", "Saint Mary's Gaels": "Saint Mary's",
+    "Nevada Wolf Pack": "Nevada", "New Mexico Lobos": "New Mexico",
+    "VCU Rams": "VCU", "Dayton Flyers": "Dayton",
+}
+
 TEAM_ALIASES = {
     # NBA
     "LAL": "Los Angeles Lakers", "LAC": "Los Angeles Clippers", "GSW": "Golden State Warriors",
@@ -402,8 +462,35 @@ TEAM_ALIASES = {
 }
 
 def standardize_team(team: str, sport: str = None) -> str:
-    """Convert team abbreviation to full name"""
-    return TEAM_ALIASES.get(team.upper(), team)
+    """Convert team name to standardized format for context layer lookup.
+
+    For NCAAB: Strips mascot suffixes ("North Carolina Tar Heels" -> "North Carolina")
+    For other sports: Handles abbreviations via TEAM_ALIASES
+    """
+    if not team:
+        return team
+
+    # Check NCAAB mascot mapping first (exact match)
+    if team in NCAAB_TEAM_MAPPING:
+        return NCAAB_TEAM_MAPPING[team]
+
+    # Check abbreviation aliases
+    if team.upper() in TEAM_ALIASES:
+        return TEAM_ALIASES[team.upper()]
+
+    # For NCAAB, try fuzzy matching by stripping common suffixes
+    if sport and sport.upper() == "NCAAB":
+        # Try to match by removing common mascot words
+        words = team.split()
+        if len(words) >= 2:
+            # Try progressively shorter prefixes
+            for i in range(len(words) - 1, 0, -1):
+                prefix = " ".join(words[:i])
+                # Check if this prefix exists in any NCAAB data
+                if prefix in NCAAB_PACE or prefix in NCAAB_DEFENSE_VS_GUARDS:
+                    return prefix
+
+    return team
 
 
 # ============================================================
