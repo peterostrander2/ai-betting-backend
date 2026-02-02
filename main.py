@@ -94,6 +94,17 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Enforce no-store headers on all /live endpoints (GET/HEAD included)
+@app.middleware("http")
+async def _live_no_store_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/live/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0, private"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        response.headers["Vary"] = "Origin, X-API-Key, Authorization"
+    return response
+
 # CORS - Allow all origins for development
 app.add_middleware(
     CORSMiddleware,
