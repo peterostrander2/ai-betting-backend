@@ -4424,9 +4424,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _espn_injuries_supplement = {}  # team_name -> list of injuries (to merge with Playbook)
     _espn_venue_by_game = {}  # (home, away) -> venue dict with weather
 
+    logger.info("ESPN ENRICHED FETCH: Checking conditions - ESPN_OFFICIALS_AVAILABLE=%s, events_count=%d",
+                ESPN_OFFICIALS_AVAILABLE, len(_espn_events_by_teams))
     if ESPN_OFFICIALS_AVAILABLE and _espn_events_by_teams:
         async def _fetch_espn_enriched_batch():
             from alt_data_sources.espn_lineups import get_espn_odds, get_espn_injuries, get_espn_venue_info
+            logger.info("ESPN ENRICHED FETCH: Inside batch function, sport=%s", sport)
 
             # Fetch odds, injuries, venue in parallel for all events
             odds_tasks = []
@@ -4434,6 +4437,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             venue_tasks = []
             keys = list(_espn_events_by_teams.keys())
             event_ids = [_espn_events_by_teams[k] for k in keys]
+            logger.info("ESPN ENRICHED FETCH: Processing %d events, IDs=%s", len(event_ids), event_ids[:3])
 
             for event_id in event_ids:
                 odds_tasks.append(get_espn_odds(sport, event_id))
@@ -4444,9 +4448,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 else:
                     venue_tasks.append(asyncio.sleep(0))  # Placeholder
 
+            logger.info("ESPN ENRICHED FETCH: Running gather with %d total tasks", len(odds_tasks) + len(injury_tasks) + len(venue_tasks))
             # Run all in parallel
             all_tasks = odds_tasks + injury_tasks + venue_tasks
             results = await asyncio.gather(*all_tasks, return_exceptions=True)
+            logger.info("ESPN ENRICHED FETCH: Gather complete, got %d results", len(results))
 
             n = len(keys)
             odds_results = results[:n]
