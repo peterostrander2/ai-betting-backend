@@ -12,15 +12,114 @@
 
 ### Quick Reference: All Untapped Signals
 
-| API | Signals We're Missing | Priority |
-|-----|----------------------|----------|
-| **NOAA** | Kp index, solar flares, geomagnetic storms, aurora alerts | HIGH |
-| **Astronomy** | Void Moon, planetary hours, Mercury retrograde, eclipse windows | HIGH |
-| **SerpAPI** | Search velocity, news volume, Silent Spike, trend momentum | CRITICAL |
-| **Twitter** | Sentiment score, phantom injuries, narrative momentum, insider chatter | CRITICAL |
-| **Weather** | Wind, temp, precipitation, humidity, ball flight factors | HIGH (outdoor) |
-| **FRED** | Consumer confidence, unemployment, inflation sentiment | MEDIUM |
-| **Finnhub** | Sportsbook stocks, market volatility (VIX), sector sentiment | MEDIUM |
+| API | Signals We're Missing | Priority | Budget |
+|-----|----------------------|----------|--------|
+| **SerpAPI** | Search velocity, news volume, Silent Spike, trend momentum | CRITICAL | $75/mo |
+| **NOAA** | Kp index, solar flares, geomagnetic storms, aurora alerts | HIGH | FREE |
+| **Astronomy** | Void Moon, planetary hours, Mercury retrograde, eclipse windows | HIGH | FREE |
+| **Weather** | Wind, temp, precipitation, humidity, ball flight factors | HIGH (outdoor) | FREE |
+| **Twitter** | Phantom injuries only (limited) | LOW | FREE |
+| **FRED** | Consumer confidence, unemployment, inflation sentiment | MEDIUM | FREE |
+| **Finnhub** | Sportsbook stocks, market volatility (VIX), sector sentiment | MEDIUM | FREE |
+
+---
+
+## API BUDGET: $75/month Total
+
+### SerpAPI Developer Plan - $75/month
+
+**Limit:** 5,000 searches/month (~166/day)
+
+#### Search Budget Allocation
+
+```
+DAILY BUDGET: 166 searches
+
+GAME DAY TEAM SEARCHES (priority):
+├── NBA: 15 games × 2 teams = 30 searches
+├── NHL: 15 games × 2 teams = 30 searches
+├── MLB: 10 games × 2 teams = 20 searches (in season)
+├── NFL: ~4 games/day × 2 teams = 8 searches
+└── Subtotal: ~88 team searches/day
+
+PLAYER SEARCHES (selective - top picks only):
+├── Only for props scoring >= 6.5
+├── ~30 player searches/day max
+└── Subtotal: 30 searches/day
+
+BUFFER: ~48 searches/day for retries/edge cases
+
+MONTHLY TOTAL: ~4,000 searches + 1,000 buffer = 5,000 ✓
+```
+
+#### Caching Strategy (REQUIRED)
+
+```python
+# Cache SerpAPI results for 60 minutes
+SERP_CACHE_TTL = 3600
+
+@cached(ttl=SERP_CACHE_TTL)
+async def get_team_serp_data(team_name: str):
+    """One API call = 4 signals (velocity, news, spike, queries)"""
+    ...
+
+# Only search players for high-value picks
+async def get_player_serp_if_needed(player: str, pick_score: float):
+    if pick_score >= 6.5 and player not in today_searched:
+        return await get_player_serp_data(player)
+    return None  # Skip low-value picks
+```
+
+#### Search Timing
+
+```python
+# Search 2-3 hours before game time, not continuously
+SEARCH_WINDOW_HOURS = 3
+
+async def prefetch_game_intelligence(games_today: list):
+    for game in games_today:
+        hours_until = (game.start_time - now()).total_seconds() / 3600
+        if 0 < hours_until <= SEARCH_WINDOW_HOURS:
+            await get_team_serp_data(game.home_team)
+            await get_team_serp_data(game.away_team)
+```
+
+### Twitter Free Tier - $0/month
+
+**Limit:** 1,500 tweets/month READ (~50/day) - VERY LIMITED
+
+#### Minimal Usage Strategy
+
+```python
+# Twitter free tier - extremely selective
+TWITTER_DAILY_BUDGET = 5  # Only 5 searches per day
+
+async def check_phantom_injury_if_critical(player: str, pick_score: float):
+    """Only check star players in high-value picks"""
+    global twitter_searches_today
+
+    # Only use Twitter for picks scoring 8.0+
+    if pick_score >= 8.0 and twitter_searches_today < TWITTER_DAILY_BUDGET:
+        twitter_searches_today += 1
+        return await search_injury_tweets(player)
+
+    return None  # Skip - rely on SerpAPI news instead
+```
+
+**Twitter Usage:** Phantom injury detection ONLY for top 5 picks/day
+
+### Budget Summary
+
+| API | Tier | Cost | Monthly Limit | Daily Limit |
+|-----|------|------|---------------|-------------|
+| SerpAPI | Developer | $75 | 5,000 searches | ~166 |
+| Twitter | Free | $0 | 1,500 tweets | ~50 |
+| NOAA | Free | $0 | Unlimited | Unlimited |
+| Astronomy | Free | $0 | Varies | ~1000 |
+| Weather | Free | $0 | 1000/day | 1000 |
+| FRED | Free | $0 | Unlimited | Unlimited |
+| Finnhub | Free | $0 | 60/min | ~86,400 |
+| **TOTAL** | | **$75/mo** | | |
 
 ---
 
@@ -636,162 +735,152 @@ The **Silent Spike** is our most valuable untapped signal:
 
 ---
 
-### 7. Twitter API - MAXIMUM UTILIZATION (CRITICAL)
+### 7. Twitter API - FREE TIER MINIMAL USAGE
 
-**Status:** Configured but underutilized
+**Status:** Configured - MINIMAL USE (budget constraint)
 **Env Var:** `TWITTER_BEARER`
+**Budget:** FREE tier only - 1,500 tweets/month (~50/day)
 
-#### ALL Available Signals (Currently Using: 0%)
+#### Budget-Constrained Strategy
+
+**DAILY LIMIT:** ~5 searches/day (50 tweets ÷ 10 tweets/search)
+**ELIGIBILITY:** Only picks with base_score >= 8.0 (Titanium candidates)
+**PURPOSE:** Phantom Injury detection ONLY (highest-value signal)
+
+#### Selection Priority (When to Use Twitter)
+
+| Priority | Condition | Action |
+|----------|-----------|--------|
+| 1 | Player prop with score >= 8.5 | Search player injury chatter |
+| 2 | Game pick with score >= 8.0 | Search key player injury chatter |
+| 3 | Titanium candidate | Validate with beat writer check |
+| 4 | All other picks | SKIP Twitter (save quota) |
+
+#### Single High-Value Signal (Phantom Injury Only)
 
 | Signal | Description | Use Case | Impact |
 |--------|-------------|----------|--------|
-| **Team Sentiment** | Positive/negative ratio | Fade extreme sentiment | +8 pts |
 | **Phantom Injury** | Injury chatter without official report | Early warning | +10 pts |
-| **Beat Writer Intel** | Verified reporter tweets | Lineup/strategy leaks | +12 pts |
-| **Betting Sentiment** | "Lock", "fade", "hammer" mentions | Contrarian signal | +6 pts |
-| **Volume Spike** | Tweet count anomaly | Something happening | +5 pts |
-| **Insider Chatter** | Low-follower accounts with info | Sharp information | +8 pts |
 
-#### Implementation - ALL 6 Signals
+**Note:** Other signals (sentiment, volume, beat writers) are available but NOT implemented due to free tier limits. Focus exclusively on phantom injury detection for maximum ROI.
+
+#### Implementation - Minimal Version (Free Tier)
 
 ```python
 TWITTER_BEARER = os.getenv("TWITTER_BEARER")
 
-async def get_full_twitter_intelligence(team_name: str, sport: str, player_name: str = None) -> dict:
-    """Extract ALL signals from Twitter API."""
+# Track daily usage to stay within free tier limits
+_twitter_daily_usage = {"date": None, "count": 0}
+TWITTER_DAILY_LIMIT = 5  # Max searches per day on free tier
 
+def _check_twitter_budget() -> bool:
+    """Check if we have Twitter API budget remaining today."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _twitter_daily_usage["date"] != today:
+        _twitter_daily_usage["date"] = today
+        _twitter_daily_usage["count"] = 0
+    return _twitter_daily_usage["count"] < TWITTER_DAILY_LIMIT
+
+def _use_twitter_budget():
+    """Record a Twitter API usage."""
+    _twitter_daily_usage["count"] += 1
+
+async def get_phantom_injury_signal(player_name: str, base_score: float) -> dict:
+    """
+    Minimal Twitter integration - PHANTOM INJURY ONLY.
+
+    Only called for high-confidence picks (base_score >= 8.0) to conserve
+    the free tier limit of ~50 tweets/day.
+
+    Args:
+        player_name: Player to search for injury chatter
+        base_score: Pick's base score (must be >= 8.0 to trigger)
+
+    Returns:
+        dict with phantom_injury signal or skip reason
+    """
+
+    # Gate 1: Only use Twitter for Titanium-level picks
+    if base_score < 8.0:
+        return {
+            "twitter_used": False,
+            "skip_reason": "Score below 8.0 threshold",
+            "phantom_injury": False
+        }
+
+    # Gate 2: Check daily budget
+    if not _check_twitter_budget():
+        return {
+            "twitter_used": False,
+            "skip_reason": "Daily Twitter quota exhausted",
+            "phantom_injury": False
+        }
+
+    # Gate 3: Must have player name
+    if not player_name:
+        return {
+            "twitter_used": False,
+            "skip_reason": "No player name provided",
+            "phantom_injury": False
+        }
+
+    # Make the API call - PHANTOM INJURY ONLY
     headers = {"Authorization": f"Bearer {TWITTER_BEARER}"}
-    signals = {}
 
-    async with httpx.AsyncClient() as client:
-        # 1. Team Sentiment (last 100 tweets)
-        team_query = f"{team_name} {sport} -is:retweet lang:en"
-        team_tweets = await client.get(
-            "https://api.twitter.com/2/tweets/search/recent",
-            headers=headers,
-            params={"query": team_query, "max_results": 100, "tweet.fields": "public_metrics,author_id"}
-        )
-        tweets = team_tweets.json().get("data", [])
-
-        signals["tweet_volume"] = len(tweets)
-
-        # Sentiment analysis
-        positive_words = ["win", "winning", "lock", "hammer", "fire", "goat", "amazing", "dominant"]
-        negative_words = ["lose", "losing", "fade", "trash", "bad", "terrible", "overrated", "bust"]
-        betting_words = ["lock", "fade", "hammer", "bet", "parlay", "pick", "play"]
-
-        tweet_text = " ".join([t.get("text", "").lower() for t in tweets])
-
-        pos_count = sum(tweet_text.count(w) for w in positive_words)
-        neg_count = sum(tweet_text.count(w) for w in negative_words)
-        bet_count = sum(tweet_text.count(w) for w in betting_words)
-
-        total_sentiment = pos_count + neg_count
-        if total_sentiment > 0:
-            signals["sentiment_ratio"] = pos_count / total_sentiment
-            signals["sentiment"] = "BULLISH" if signals["sentiment_ratio"] > 0.65 else \
-                                   "BEARISH" if signals["sentiment_ratio"] < 0.35 else "NEUTRAL"
-        else:
-            signals["sentiment_ratio"] = 0.5
-            signals["sentiment"] = "NEUTRAL"
-
-        signals["betting_chatter"] = bet_count
-        signals["extreme_sentiment"] = signals["sentiment_ratio"] > 0.8 or signals["sentiment_ratio"] < 0.2
-
-        # 2. Phantom Injury Detection
-        if player_name:
+    try:
+        async with httpx.AsyncClient() as client:
             injury_query = f"{player_name} (injury OR hurt OR questionable OR doubtful OR out) -is:retweet"
             injury_tweets = await client.get(
                 "https://api.twitter.com/2/tweets/search/recent",
                 headers=headers,
-                params={"query": injury_query, "max_results": 50}
+                params={"query": injury_query, "max_results": 10}  # Minimal fetch
             )
+
+            _use_twitter_budget()  # Record usage
+
             injury_data = injury_tweets.json().get("data", [])
+            tweet_count = len(injury_data)
 
-            signals["injury_tweet_count"] = len(injury_data)
-            signals["phantom_injury"] = len(injury_data) > 10  # Elevated chatter
+            # Phantom injury = elevated chatter (5+ tweets on minimal fetch)
+            phantom_detected = tweet_count >= 5
 
-            if signals["phantom_injury"]:
-                signals["phantom_injury_insight"] = f"Elevated injury chatter ({len(injury_data)} tweets) for {player_name}"
-
-        # 3. Beat Writer Intel (verified accounts)
-        beat_query = f"{team_name} -is:retweet"
-        beat_tweets = await client.get(
-            "https://api.twitter.com/2/tweets/search/recent",
-            headers=headers,
-            params={
-                "query": beat_query,
-                "max_results": 50,
-                "tweet.fields": "author_id,public_metrics",
-                "expansions": "author_id",
-                "user.fields": "verified,public_metrics"
+            return {
+                "twitter_used": True,
+                "phantom_injury": phantom_detected,
+                "injury_tweet_count": tweet_count,
+                "signal_strength": "HIGH" if tweet_count >= 8 else "MODERATE" if tweet_count >= 5 else "LOW",
+                "insight": f"Phantom injury detected: {tweet_count} injury tweets for {player_name}" if phantom_detected else None,
+                "daily_usage": f"{_twitter_daily_usage['count']}/{TWITTER_DAILY_LIMIT}"
             }
-        )
-        beat_data = beat_tweets.json()
 
-        users = {u["id"]: u for u in beat_data.get("includes", {}).get("users", [])}
-        verified_tweets = []
-        for tweet in beat_data.get("data", []):
-            author = users.get(tweet.get("author_id"), {})
-            if author.get("verified") or author.get("public_metrics", {}).get("followers_count", 0) > 50000:
-                verified_tweets.append({
-                    "text": tweet.get("text"),
-                    "author_followers": author.get("public_metrics", {}).get("followers_count", 0)
-                })
-
-        signals["verified_tweets"] = verified_tweets[:5]
-        signals["beat_writer_volume"] = len(verified_tweets)
-
-        # 4. Betting Public Sentiment (contrarian signal)
-        lock_count = tweet_text.count("lock")
-        fade_count = tweet_text.count("fade")
-
-        if lock_count > fade_count * 2:
-            signals["public_lean"] = "HEAVY_LOCK"
-            signals["contrarian_signal"] = "FADE"  # Fade the public lock
-        elif fade_count > lock_count * 2:
-            signals["public_lean"] = "HEAVY_FADE"
-            signals["contrarian_signal"] = "BACK"  # Back what public is fading
-        else:
-            signals["public_lean"] = "MIXED"
-            signals["contrarian_signal"] = None
-
-        # 5. Volume Spike Detection
-        # Compare to expected baseline (~20-50 tweets per team per day)
-        expected_volume = 35
-        signals["volume_spike"] = signals["tweet_volume"] > expected_volume * 2
-        signals["volume_ratio"] = signals["tweet_volume"] / expected_volume
-
-    # Calculate composite Twitter score
-    twitter_score = 0
-    reasons = []
-
-    if signals.get("phantom_injury"):
-        twitter_score += 10
-        reasons.append(signals["phantom_injury_insight"])
-
-    if signals.get("extreme_sentiment"):
-        twitter_score += 8
-        direction = "FADE" if signals["sentiment"] == "BULLISH" else "BACK"
-        reasons.append(f"Extreme {signals['sentiment']} sentiment - {direction} this team")
-
-    if signals.get("contrarian_signal"):
-        twitter_score += 6
-        reasons.append(f"Public heavily {signals['public_lean']} - contrarian play: {signals['contrarian_signal']}")
-
-    if signals.get("volume_spike"):
-        twitter_score += 5
-        reasons.append(f"Tweet volume spike ({signals['volume_ratio']:.1f}x normal)")
-
-    if signals["beat_writer_volume"] > 3:
-        twitter_score += 4
-        reasons.append(f"Beat writer activity elevated ({signals['beat_writer_volume']} verified tweets)")
-
-    signals["twitter_score"] = twitter_score
-    signals["twitter_reasons"] = reasons
-
-    return signals
+    except Exception as e:
+        return {
+            "twitter_used": False,
+            "error": str(e),
+            "phantom_injury": False
+        }
 ```
+
+#### Integration Point
+
+```python
+# In calculate_pick_score(), ONLY for high-value picks:
+if base_score >= 8.0 and player_name:
+    twitter_result = await get_phantom_injury_signal(player_name, base_score)
+    if twitter_result.get("phantom_injury"):
+        # Add +10 pts to esoteric score for phantom injury detection
+        esoteric_raw += 1.0  # +10% of 10-point scale
+        esoteric_reasons.append(f"🐦 PHANTOM INJURY: {twitter_result['insight']}")
+```
+
+#### Budget Summary
+
+| Metric | Free Tier Limit | Our Usage |
+|--------|-----------------|-----------|
+| Tweets/month | 1,500 | ~150 (5/day × 30 days) |
+| Searches/day | ~50 | 5 max |
+| Signal focus | N/A | Phantom Injury only |
+| Score threshold | N/A | >= 8.0 only |
 
 ---
 
