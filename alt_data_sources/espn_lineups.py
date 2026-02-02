@@ -472,6 +472,15 @@ async def get_espn_odds(sport: str, event_id: str) -> Dict[str, Any]:
                          type(primary_odds).__name__, str(primary_odds)[:100])
             return {"available": False, "reason": f"UNEXPECTED_FORMAT: {type(primary_odds).__name__}"}
 
+        # Safely extract provider name (ESPN sometimes returns string instead of dict)
+        provider_data = primary_odds.get("provider", {})
+        if isinstance(provider_data, dict):
+            provider_name = provider_data.get("name", "ESPN")
+        elif isinstance(provider_data, str):
+            provider_name = provider_data
+        else:
+            provider_name = "ESPN"
+
         result = {
             "available": True,
             "source": "espn_summary",
@@ -483,7 +492,7 @@ async def get_espn_odds(sport: str, event_id: str) -> Dict[str, Any]:
             "under_odds": None,
             "home_ml": None,
             "away_ml": None,
-            "provider": primary_odds.get("provider", {}).get("name", "ESPN"),
+            "provider": provider_name,
         }
 
         # Extract spread
@@ -497,22 +506,30 @@ async def get_espn_odds(sport: str, event_id: str) -> Dict[str, Any]:
             result["over_odds"] = primary_odds.get("overOdds")
             result["under_odds"] = primary_odds.get("underOdds")
 
-        # Extract moneylines
+        # Extract moneylines (safely handle non-dict values)
         if "homeTeamOdds" in primary_odds:
             home_odds = primary_odds.get("homeTeamOdds", {})
-            result["home_ml"] = home_odds.get("moneyLine")
+            if isinstance(home_odds, dict):
+                result["home_ml"] = home_odds.get("moneyLine")
         if "awayTeamOdds" in primary_odds:
             away_odds = primary_odds.get("awayTeamOdds", {})
-            result["away_ml"] = away_odds.get("moneyLine")
+            if isinstance(away_odds, dict):
+                result["away_ml"] = away_odds.get("moneyLine")
 
-        # Also check for detailed odds array
+        # Also check for detailed odds array (safely handle non-dict items)
         for odds_item in odds_data:
-            if odds_item.get("details"):
-                for detail in odds_item.get("details", []):
-                    if detail.get("type") == "spread" and not result["spread"]:
-                        result["spread"] = detail.get("value")
-                    elif detail.get("type") == "total" and not result["total"]:
-                        result["total"] = detail.get("value")
+            if not isinstance(odds_item, dict):
+                continue
+            details_list = odds_item.get("details", [])
+            if not isinstance(details_list, list):
+                continue
+            for detail in details_list:
+                if not isinstance(detail, dict):
+                    continue
+                if detail.get("type") == "spread" and not result["spread"]:
+                    result["spread"] = detail.get("value")
+                elif detail.get("type") == "total" and not result["total"]:
+                    result["total"] = detail.get("value")
 
         return result
 
