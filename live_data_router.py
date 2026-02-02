@@ -3112,6 +3112,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # The four engines are combined for final score
 
         research_reasons = []
+        esoteric_reasons = []
         pillars_passed = []
         pillars_failed = []
         ai_reasons = []
