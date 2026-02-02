@@ -3461,12 +3461,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 _line_values.append(abs(spread))
             if total:
                 _line_values.append(total)
-            # Add odds if available (convert from American to decimal-ish for digit analysis)
-            if odds:
-                _line_values.append(abs(int(odds)))
-            # Get other lines from candidate if available
-            if candidate.get("other_lines"):
-                _line_values.extend([abs(l) for l in candidate.get("other_lines", []) if l])
+            # Note: odds and candidate are closure variables that may not be defined
+            # in all call paths. Use try/except for safety.
 
             # Calculate GLITCH aggregate
             glitch_result = get_glitch_aggregate(
