@@ -50,6 +50,22 @@ else
     exit 1
 fi
 
+# Audit drift scan (payload + scoring drift checks)
+if [ -f "$SCRIPT_DIR/audit_drift_scan.sh" ]; then
+    if [ ! -x "$SCRIPT_DIR/audit_drift_scan.sh" ]; then
+        chmod +x "$SCRIPT_DIR/audit_drift_scan.sh"
+    fi
+    echo -e "${YELLOW}Pre-flight: Audit drift scan...${NC}"
+    "$SCRIPT_DIR/audit_drift_scan.sh" || {
+        echo -e "${RED}ERROR: Audit drift scan failed${NC}"
+        exit 1
+    }
+    echo ""
+else
+    echo -e "${RED}ERROR: audit_drift_scan.sh not found${NC}"
+    exit 1
+fi
+
 # Option A unit tests (fail-fast)
 echo -e "${YELLOW}Pre-flight: Option A unit tests...${NC}"
 python3 -m pytest -q tests/test_option_a_scoring_guard.py tests/test_scoring_single_source.py || {

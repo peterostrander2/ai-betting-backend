@@ -15,6 +15,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+if [ "${SKIP_NETWORK:-0}" = "1" ]; then
+    echo "SKIP_NETWORK=1 set; skipping network-dependent checks."
+    exit 0
+fi
+
 echo "================================================"
 echo "PRODUCTION SANITY CHECK - Master Prompt Invariants"
 echo "================================================"
@@ -77,6 +82,21 @@ check "Storage: predictions.jsonl exists" \
     "true"
 
 echo ""
+
+# =====================================================
+# CHECK 1.5: Learning Sanity Check (local/offline)
+# =====================================================
+if [ -f "$SCRIPT_DIR/learning_sanity_check.sh" ]; then
+    if [ ! -x "$SCRIPT_DIR/learning_sanity_check.sh" ]; then
+        chmod +x "$SCRIPT_DIR/learning_sanity_check.sh"
+    fi
+    echo "[1.5/8] Validating learning storage paths..."
+    ALLOW_EMPTY="${ALLOW_EMPTY:-0}" bash "$SCRIPT_DIR/learning_sanity_check.sh" || {
+        echo -e "${RED}ERROR: learning_sanity_check failed${NC}"
+        exit 1
+    }
+    echo ""
+fi
 
 # =====================================================
 # CHECK 2: Best-Bets Endpoint (/live/best-bets/nba)

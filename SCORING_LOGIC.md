@@ -48,9 +48,17 @@ SCORING_CONTRACT_JSON -->
 
 ## Formula (v18.0 Option A - 4 Base Engines + Context Modifier)
 BASE_4 = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.20) + (Jarvis × 0.20)
-FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment
 
 Boosts are additive (NOT engines). Each boost must be present in payloads with status + reasons.
+Ensemble adjustment is applied post-base for game picks when the ensemble model is available
+(+0.5 if hit_prob > 0.60, -0.5 if hit_prob < 0.40, else 0.0). It is currently surfaced via `ai_reasons`.
+
+### Live In-Game Adjustment (Phase 9)
+- `live_adjustment` is a **bounded modifier** applied to **research_score** (not a new engine).
+- Source: `alt_data_sources/live_signals.py` combined momentum + line movement.
+- Cap: ±0.50 (`MAX_COMBINED_LIVE_BOOST`).
+- Must be surfaced in payloads with reasons when applied.
 
 ### Boost Field Contract (Required in Pick Payloads)
 Each pick must expose these fields at top level:

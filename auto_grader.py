@@ -40,6 +40,7 @@ INTERPRETING BIAS RESULTS:
 import json
 import os
 import logging
+import fcntl
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict, field
@@ -216,14 +217,27 @@ class AutoGrader:
             return
 
         try:
+            try:
+                from core.scoring_contract import MIN_FINAL_SCORE
+            except Exception:
+                MIN_FINAL_SCORE = 6.5
+
             # Load all predictions from grader_store
             raw_predictions = grader_store_load_predictions()
             count = 0
+            seen_ids = set()
 
             for pick in raw_predictions:
                 sport = pick.get("sport", "").upper()
                 if sport not in self.SUPPORTED_SPORTS:
                     continue
+                score = pick.get("final_score", 0.0)
+                if isinstance(score, (int, float)) and score < MIN_FINAL_SCORE:
+                    continue
+                pick_id = pick.get("pick_id", "")
+                if not pick_id or pick_id in seen_ids:
+                    continue
+                seen_ids.add(pick_id)
 
                 # Convert grader_store pick to PredictionRecord
                 record = self._convert_pick_to_record(pick)
@@ -335,8 +349,18 @@ class AutoGrader:
             for stat, config in stat_weights.items():
                 weights_data[sport][stat] = asdict(config)
 
-        with open(weights_file, 'w') as f:
-            json.dump(weights_data, f, indent=2)
+        lock_file = weights_file + ".lock"
+        tmp_file = weights_file + ".tmp"
+        with open(lock_file, 'w') as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                with open(tmp_file, 'w') as f:
+                    json.dump(weights_data, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_file, weights_file)
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         logger.info("Saved weights to %s", weights_file)
     
     # ============================================

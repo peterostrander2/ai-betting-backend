@@ -1019,6 +1019,62 @@ def _validate_contract_sync():
 # Run sync check at module load
 _validate_contract_sync()
 
+# Non-integration runtime env vars (documented for audit drift scans)
+RUNTIME_ENV_VARS = [
+    "ADMIN_API_KEY",
+    "ADMIN_TOKEN",
+    "ALLOW_EMPTY",
+    "API_AUTH_ENABLED",
+    "API_AUTH_KEY",
+    "API_BASE",
+    "API_KEY",
+    "ARTIFACTS_DIR",
+    "BACKEND_DIR",
+    "BASE_URL",
+    "CUDA_VISIBLE_DEVICES",
+    "DEBUG_MODE",
+    "ENABLE_DEMO",
+    "ESOTERIC_STORAGE_PATH",
+    "EXPO_PUBLIC_ASTRONOMY_API_ID",
+    "EXPO_PUBLIC_ASTRONOMY_API_SECRET",
+    "EXPO_PUBLIC_NOAA_BASE_URL",
+    "EXPO_PUBLIC_ODDS_API_KEY",
+    "EXPO_PUBLIC_PLAYBOOK_API_KEY",
+    "FRONTEND_DIR",
+    "GRADER_DATA_DIR",
+    "GRADER_MOUNT_ROOT",
+    "GEMATRIA_INTEL_ENABLED",
+    "HIVE_MIND_ENABLED",
+    "LAST_USED",
+    "MARKET_SIGNALS_ENABLED",
+    "MATH_GLITCH_ENABLED",
+    "MSRF_ENABLED",
+    "NOAA_ENABLED",
+    "ODDS_API_BASE",
+    "PLAYBOOK_API_BASE",
+    "PHASE9_LIVE_SIGNALS_ENABLED",
+    "PHASE9_STREAMING_ENABLED",
+    "PHYSICS_ENABLED",
+    "PORT",
+    "PROPS_REQUIRED_SPORTS",
+    "PYTEST_CURRENT_TEST",
+    "PYTEST_MOUNT_ROOT",
+    "RAILWAY_GIT_COMMIT_SHA",
+    "REFS_ENABLED",
+    "REQUIRE_PROPS",
+    "ROOT_DIR",
+    "SKIP_NETWORK",
+    "SKIP_PYTEST",
+    "SPORTS",
+    "STADIUM_ENABLED",
+    "TESTING",
+    "TF_CPP_MIN_LOG_LEVEL",
+    "TRAVEL_ENABLED",
+    "TWITTER_BEARER_TOKEN",
+    "VAR",
+    "XLA_FLAGS",
+]
+
 
 # =============================================================================
 # EXPORTS
@@ -1044,6 +1100,7 @@ __all__ = [
     "get_all_integrations_status",
     "get_integrations_summary",
     "get_health_check_loud",
+    "RUNTIME_ENV_VARS",
 
     # Startup
     "validate_required_on_startup",

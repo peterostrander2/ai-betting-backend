@@ -139,7 +139,9 @@ def get_predictions_file() -> str:
 
 def get_weights_file() -> str:
     """Get weights.json path."""
-    return os.path.join(get_store_dir(), "weights.json")
+    mount_root = get_mount_root()
+    # Keep weights in a separate low-frequency directory to avoid contention
+    return os.path.join(mount_root, "grader_data", "weights.json")
 
 
 def get_audit_dir() -> str:
