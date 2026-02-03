@@ -13,6 +13,26 @@
 
 ---
 
+## Session Management
+
+**To prevent Claude Code context limit errors:**
+
+1. Checkpoint commit every 30-60 minutes:
+```bash
+   ./scripts/checkpoint_commit.sh
+```
+
+2. Use `/compact` in Claude Code when you see:
+   - "Conversation compacted" messages
+   - Slower responses
+   - Large repeated file reads
+
+3. Split large refactors across multiple sessions
+
+See `docs/SESSION_HYGIENE.md` for complete guide.
+
+---
+
 ## 🚨 MASTER SYSTEM INVARIANTS (NEVER VIOLATE) 🚨
 
 **READ THIS FIRST BEFORE TOUCHING ANYTHING**
@@ -147,8 +167,12 @@ CONTEXT_MODIFIER_CAP = 0.35  # Context is a bounded modifier, NOT an engine
 **Scoring Formula (EXACT):**
 ```python
 BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
-FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
 ```
+
+**Boosts are additive (NOT engines):**
+- `msrf_boost` and `serp_boost` must remain separate (do NOT fold into confluence).
+- Each boost must be present in payloads with status + reasons (even when 0.0 / unavailable).
 
 **Engine Separation Rules:**
 1. **Research Engine** - ALL market signals ONLY (sharp, splits, variance, public fade)
@@ -1104,8 +1128,8 @@ Check Cache (5-10 min TTL)
    - Drops: Events for tomorrow/yesterday
          ↓
 3. SCORE: 4 base engines + Jason Sim 2.0
-   - AI (25%) + Research (30%) + Esoteric (20%) + Jarvis (15%)
-   - Confluence boost + Jason Sim boost
+   - AI (25%) + Research (35%) + Esoteric (20%) + Jarvis (20%)
+   - Confluence boost + MSRF/SERP (if enabled) + Jason Sim boost
    - Tier assignment (TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN)
          ↓
 4. FILTER: Score threshold (>= 6.5)
@@ -1282,17 +1306,18 @@ curl /live/best-bets/NBA?debug=1 | jq '.debug.date_window_et'
 **Formula:**
 ```
 BASE_4 = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.20) + (Jarvis × 0.20)
-FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
 ```
 
 **Engines:**
 1. **AI (25%)** - 8 AI models with dynamic calibration
-2. **Research (30%)** - Sharp money, line variance, public fade
+2. **Research (35%)** - Sharp money, line variance, public fade
 3. **Esoteric (20%)** - Numerology, astro, fib, vortex, daily edge
-4. **Jarvis (15%)** - Gematria triggers, mid-spread goldilocks
+4. **Jarvis (20%)** - Gematria triggers, mid-spread goldilocks
 
 **Post-Pick:**
 5. **Jason Sim 2.0** - Confluence boost (can be negative)
+6. **MSRF / SERP** - Optional additive boosts (must never be weighted engines)
 
 **Output Filters:**
 1. Score >= 6.5 (MANDATORY)
@@ -2019,7 +2044,7 @@ If you add ANY new endpoint or function that processes Odds API events, you MUST
 
 ### Scoring Formula
 ```
-FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
        + msrf_boost + serp_boost (if enabled)
 ```
 
@@ -5489,7 +5514,7 @@ Use this to prove (not assume) the backend is fully healthy end-to-end and Optio
 Inspect 1 prod pick and verify:
 - BASE_4 uses AI/Research/Esoteric/Jarvis only.
 - Context appears as bounded modifier (cap) with explicit reasons.
-- FINAL ~= BASE_4 + context_modifier + confluence_boost + jason_sim_boost (within rounding).
+- FINAL ~= BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost (within rounding).
 **Pass condition:** hand-calc one pick and it matches response fields.
 
 ### 5) Hard guard against context weighting regression
