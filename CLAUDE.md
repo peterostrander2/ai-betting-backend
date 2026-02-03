@@ -354,17 +354,19 @@ top_picks = no_contradictions[:max_picks]
     "final_score",          # Pick score (≥ 6.5)
     "tier",                 # TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN
 
-    # All 4 engine scores
+    # All 5 engine scores
     "ai_score",
     "research_score",
     "esoteric_score",
     "jarvis_score",
+    "context_score",
 
-    # All 4 engine reasons
+    # All 5 engine reasons
     "ai_reasons",
     "research_reasons",
     "esoteric_reasons",
     "jarvis_reasons",
+    "context_breakdown",
 ]
 ```
 
@@ -373,6 +375,33 @@ top_picks = no_contradictions[:max_picks]
 **Write Path:** `grader_store.persist_pick()` called from `/live/best-bets/{sport}`
 
 **Read Path:** AutoGrader reads from same file via `grader_store.load_predictions()`
+
+---
+
+### Autograder Verification (REQUIRED)
+
+Run after any change to storage, grading, or best-bets output:
+
+```bash
+# 1) Storage + grader status
+curl /internal/storage/health
+curl /live/grader/status -H "X-API-Key: KEY"
+
+# 2) Dry-run (no state changes)
+curl -X POST /live/grader/dry-run -H "X-API-Key: KEY" \
+  -d '{"date":"YYYY-MM-DD","mode":"pre"}'
+
+# 3) End-to-end check (pre/post)
+./scripts/verify_autograder_e2e.sh --mode pre
+./scripts/verify_autograder_e2e.sh --mode post
+```
+
+**Expected:**
+- `available=true`
+- `predictions_logged > 0`
+- `storage_path` inside `/data`
+- Dry-run shows `pre_mode_pass=true` and `failed=0`
+- E2E script reports PASS
 
 ---
 

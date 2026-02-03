@@ -204,6 +204,16 @@ This is also wired into `scripts/ci_sanity_check.sh` as a **non-blocking** step.
 - `auto_grader.py`
 - `grader_store.py`
 
+**Verification (required after any grader change):**
+```bash
+# Storage + grader health
+curl -s https://web-production-7b2a.up.railway.app/internal/storage/health
+curl -s https://web-production-7b2a.up.railway.app/live/grader/status -H "X-API-Key: KEY"
+
+# Dry-run (does NOT modify state)
+curl -s -X POST https://web-production-7b2a.up.railway.app/live/grader/dry-run -H "X-API-Key: KEY"
+```
+
 **CI enforcement:**
 - Session 8 must pass
 

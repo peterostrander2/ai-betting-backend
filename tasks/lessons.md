@@ -78,9 +78,11 @@ Before ANY storage/autograder/scheduler change:
 
 1. Read CLAUDE.md Storage Configuration section
 2. Verify production health with `/internal/storage/health`
-3. Check that `RAILWAY_VOLUME_MOUNT_PATH` is used everywhere
-4. Run `scripts/prod_sanity_check.sh`
-5. Verify `filter_date` matches `et_date` in debug output
+3. Verify grader status with `/live/grader/status`
+4. Check that `RAILWAY_VOLUME_MOUNT_PATH` is used everywhere
+5. Run `scripts/prod_sanity_check.sh`
+6. Verify `filter_date` matches `et_date` in debug output
+7. Run `scripts/verify_autograder_e2e.sh --mode pre`
 
 ---
 
