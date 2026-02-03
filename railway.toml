@@ -1,0 +1,20 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python main.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+# Persistent volume mount for pick logs, grader data, and graded picks
+# This ensures data survives deploys and restarts
+# IMPORTANT: Railway volume must be created in project settings first
+# Mount path: /app/data
+# - /app/data/pick_logs -> ./pick_logs
+# - /app/data/grader_data -> ./grader_data
+# - /app/data/graded_picks -> ./graded_picks
+# - /app/data/audit_logs -> ./audit_logs
+[[deploy.volumeMounts]]
+mountPath = "/data"

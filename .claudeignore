@@ -1,0 +1,17 @@
+# Exclude from Claude Code context
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# Legacy/large files
+legacy/
+tests/
+docs/
+*.log
+data/
+.env
+.git/
