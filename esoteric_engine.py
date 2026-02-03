@@ -679,6 +679,98 @@ def calculate_fibonacci_retracement(current_line: float, season_high: float, sea
 
 
 # =============================================================================
+# 11. VORTEX ENERGY (Tesla 3-6-9 Resonance)
+# =============================================================================
+
+def calculate_vortex_energy(value: float, context: str = "general") -> Dict[str, Any]:
+    """
+    Calculate vortex energy using Tesla's 3-6-9 sacred geometry.
+
+    Tesla believed 3, 6, and 9 were keys to the universe.
+    When a value's digital root is 3, 6, or 9, it has inherent harmonic resonance.
+
+    Vortex patterns:
+    - Digital root 3/6/9: Tesla alignment (strong)
+    - Contains 369/396/639/693/936/963: Perfect vortex (very strong)
+    - Phi ratio (1.618) alignment: Golden vortex (moderate)
+
+    Args:
+        value: The numeric value to analyze (spread, total, prop line)
+        context: "spread", "total", "prop", or "general"
+
+    Returns:
+        Dict with vortex_score (0-10), digital_root, tesla_aligned, triggered
+    """
+    if value is None or value == 0:
+        return {
+            "vortex_score": 5.0,
+            "digital_root": 0,
+            "is_tesla_aligned": False,
+            "is_perfect_vortex": False,
+            "is_golden_vortex": False,
+            "triggered": False,
+            "signal": "NO_VALUE",
+            "confidence": 0.0,
+        }
+
+    # Calculate digital root (reduce to single digit)
+    abs_val = abs(value)
+    str_val = str(abs_val).replace(".", "").replace("-", "")
+
+    digit_sum = sum(int(d) for d in str_val if d.isdigit())
+    while digit_sum > 9:
+        digit_sum = sum(int(d) for d in str(digit_sum))
+    digital_root = digit_sum
+
+    # Check Tesla alignment (3, 6, 9)
+    is_tesla = digital_root in [3, 6, 9]
+
+    # Check for perfect vortex patterns (contains 369 sequence)
+    vortex_patterns = ["369", "396", "639", "693", "936", "963"]
+    str_check = str(int(abs_val * 10))  # Include one decimal
+    is_perfect_vortex = any(p in str_check for p in vortex_patterns)
+
+    # Check golden ratio alignment (within 5% of phi multiples)
+    PHI = 1.618033988749
+    phi_multiples = [PHI, PHI * 2, PHI * 3, PHI * 10, PHI * 100]
+    is_golden = any(abs(abs_val - pm) / pm < 0.05 for pm in phi_multiples if pm > 0)
+
+    # Calculate vortex score (0-10)
+    vortex_score = 5.0  # Baseline
+
+    if is_perfect_vortex:
+        vortex_score = 9.0  # Very strong
+    elif is_tesla and is_golden:
+        vortex_score = 8.5  # Strong combination
+    elif is_tesla:
+        vortex_score = 7.5  # Tesla alignment
+    elif is_golden:
+        vortex_score = 6.5  # Golden ratio
+    elif digital_root in [1, 4, 7]:  # Secondary harmony
+        vortex_score = 5.5
+
+    # Context-specific adjustments
+    if context == "spread" and abs_val in [3, 6, 9, 3.5, 6.5, 9.5]:
+        vortex_score += 0.5  # Key spread numbers
+    elif context == "total" and digital_root == 9:
+        vortex_score += 0.3  # 9 is completion energy for totals
+
+    triggered = vortex_score >= 7.0
+
+    return {
+        "value": value,
+        "digital_root": digital_root,
+        "is_tesla_aligned": is_tesla,
+        "is_perfect_vortex": is_perfect_vortex,
+        "is_golden_vortex": is_golden,
+        "vortex_score": min(10.0, round(vortex_score, 2)),
+        "triggered": triggered,
+        "signal": "PERFECT_VORTEX" if is_perfect_vortex else "TESLA_ALIGNED" if is_tesla else "GOLDEN_RATIO" if is_golden else "NEUTRAL",
+        "confidence": 0.9 if is_perfect_vortex else 0.7 if is_tesla else 0.5 if is_golden else 0.3,
+    }
+
+
+# =============================================================================
 # PLANETARY HOURS (Bonus)
 # =============================================================================
 

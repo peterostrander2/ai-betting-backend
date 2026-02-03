@@ -244,6 +244,241 @@ class DailyEnergy(Base):
 
 
 # ============================================================================
+# LINE HISTORY MODELS (v17.6 - For Hurst Exponent & Fibonacci)
+# ============================================================================
+
+class LineSnapshot(Base):
+    """
+    Line snapshots captured periodically for Hurst Exponent analysis.
+    Hurst Exponent requires 20+ sequential line values to calculate market regime.
+    """
+    __tablename__ = "line_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(String(100), nullable=False, index=True)
+    sport = Column(String(20), nullable=False, index=True)
+    home_team = Column(String(100))
+    away_team = Column(String(100))
+    book = Column(String(50))
+
+    # Line data
+    spread = Column(Float, nullable=True)
+    spread_odds = Column(Integer, nullable=True)
+    total = Column(Float, nullable=True)
+    total_odds = Column(Integer, nullable=True)
+
+    # Context
+    public_pct = Column(Float, nullable=True)
+    money_pct = Column(Float, nullable=True)
+
+    captured_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    game_start_time = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index('ix_lines_event_time', 'event_id', 'captured_at'),
+        Index('ix_lines_sport_time', 'sport', 'captured_at'),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "sport": self.sport,
+            "home_team": self.home_team,
+            "away_team": self.away_team,
+            "book": self.book,
+            "spread": self.spread,
+            "spread_odds": self.spread_odds,
+            "total": self.total,
+            "total_odds": self.total_odds,
+            "public_pct": self.public_pct,
+            "money_pct": self.money_pct,
+            "captured_at": self.captured_at.isoformat() if self.captured_at else None,
+            "game_start_time": self.game_start_time.isoformat() if self.game_start_time else None
+        }
+
+
+class SeasonExtreme(Base):
+    """
+    Season extremes for Fibonacci Retracement analysis.
+    Fibonacci needs season_high and season_low to calculate retracement levels.
+    """
+    __tablename__ = "season_extremes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sport = Column(String(20), nullable=False, index=True)
+    season = Column(String(20), nullable=False)  # "2025-26"
+    stat_type = Column(String(50), nullable=False)  # "points", "spread", "total", etc.
+    subject_id = Column(String(100), nullable=True)  # player_id or team_id
+    subject_name = Column(String(100), nullable=True)
+
+    season_high = Column(Float, nullable=True)
+    season_low = Column(Float, nullable=True)
+    current_value = Column(Float, nullable=True)
+
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('ix_extremes_sport_season', 'sport', 'season', 'stat_type', 'subject_id', unique=True),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "sport": self.sport,
+            "season": self.season,
+            "stat_type": self.stat_type,
+            "subject_id": self.subject_id,
+            "subject_name": self.subject_name,
+            "season_high": self.season_high,
+            "season_low": self.season_low,
+            "current_value": self.current_value,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None
+        }
+
+
+# ============================================================================
+# LINE HISTORY HELPER FUNCTIONS (v17.6)
+# ============================================================================
+
+def save_line_snapshot(db: Session, event_id: str, sport: str, home_team: str, away_team: str,
+                      spread: float = None, total: float = None, book: str = None,
+                      spread_odds: int = None, total_odds: int = None,
+                      public_pct: float = None, money_pct: float = None,
+                      game_start_time: datetime = None) -> Optional[LineSnapshot]:
+    """Save a line snapshot for Hurst Exponent analysis."""
+    if not db:
+        return None
+
+    try:
+        record = LineSnapshot(
+            event_id=event_id,
+            sport=sport.upper(),
+            home_team=home_team,
+            away_team=away_team,
+            book=book,
+            spread=spread,
+            spread_odds=spread_odds,
+            total=total,
+            total_odds=total_odds,
+            public_pct=public_pct,
+            money_pct=money_pct,
+            game_start_time=game_start_time
+        )
+        db.add(record)
+        db.flush()
+        return record
+    except Exception as e:
+        logger.error("Failed to save line snapshot: %s", e)
+        return None
+
+
+def get_line_history(db: Session, event_id: str, limit: int = 30) -> list:
+    """
+    Get line history for an event (for Hurst Exponent).
+    Returns list of spread/total values in chronological order.
+    """
+    if not db:
+        return []
+
+    records = db.query(LineSnapshot).filter(
+        LineSnapshot.event_id == event_id
+    ).order_by(LineSnapshot.captured_at.asc()).limit(limit).all()
+
+    return [r.to_dict() for r in records]
+
+
+def get_line_history_values(db: Session, event_id: str, value_type: str = "spread", limit: int = 30) -> list:
+    """
+    Get raw numeric values for Hurst Exponent calculation.
+
+    Args:
+        event_id: Event ID to query
+        value_type: "spread" or "total"
+        limit: Max records to return
+
+    Returns:
+        List of floats (spread or total values) in chronological order
+    """
+    if not db:
+        return []
+
+    records = db.query(LineSnapshot).filter(
+        LineSnapshot.event_id == event_id
+    ).order_by(LineSnapshot.captured_at.asc()).limit(limit).all()
+
+    if value_type == "spread":
+        return [r.spread for r in records if r.spread is not None]
+    elif value_type == "total":
+        return [r.total for r in records if r.total is not None]
+    return []
+
+
+def update_season_extreme(db: Session, sport: str, season: str, stat_type: str,
+                         subject_id: str = None, subject_name: str = None,
+                         current_value: float = None) -> Optional[SeasonExtreme]:
+    """
+    Update season high/low for Fibonacci Retracement.
+    Automatically tracks high and low based on current_value.
+    """
+    if not db or current_value is None:
+        return None
+
+    try:
+        # Find existing record
+        record = db.query(SeasonExtreme).filter(
+            SeasonExtreme.sport == sport.upper(),
+            SeasonExtreme.season == season,
+            SeasonExtreme.stat_type == stat_type,
+            SeasonExtreme.subject_id == subject_id
+        ).first()
+
+        if record:
+            # Update current value
+            record.current_value = current_value
+            # Update high/low if necessary
+            if record.season_high is None or current_value > record.season_high:
+                record.season_high = current_value
+            if record.season_low is None or current_value < record.season_low:
+                record.season_low = current_value
+        else:
+            # Create new record
+            record = SeasonExtreme(
+                sport=sport.upper(),
+                season=season,
+                stat_type=stat_type,
+                subject_id=subject_id,
+                subject_name=subject_name,
+                current_value=current_value,
+                season_high=current_value,
+                season_low=current_value
+            )
+            db.add(record)
+
+        db.flush()
+        return record
+    except Exception as e:
+        logger.error("Failed to update season extreme: %s", e)
+        return None
+
+
+def get_season_extreme(db: Session, sport: str, season: str, stat_type: str,
+                      subject_id: str = None) -> Optional[Dict[str, Any]]:
+    """Get season high/low for Fibonacci Retracement."""
+    if not db:
+        return None
+
+    record = db.query(SeasonExtreme).filter(
+        SeasonExtreme.sport == sport.upper(),
+        SeasonExtreme.season == season,
+        SeasonExtreme.stat_type == stat_type,
+        SeasonExtreme.subject_id == subject_id
+    ).first()
+
+    if record:
+        return record.to_dict()
+    return None
+
+
+# ============================================================================
 # DATABASE HELPER FUNCTIONS
 # ============================================================================
 

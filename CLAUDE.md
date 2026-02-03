@@ -2198,6 +2198,8 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.props.picks[0].lstm_
 | 5 | Kp-Index | 0.25 | NOAA Space Weather API | Geomagnetic storm (Kp ≥ 5) |
 | 6 | Benford Anomaly | 0.10 | Line value distribution | Chi-squared deviation ≥ 0.25 |
 
+**v17.6 Benford Requirement:** Multi-book aggregation provides 10+ values (was dormant with only 3 values before).
+
 **Key Files:**
 ```
 esoteric_engine.py
@@ -2795,30 +2797,124 @@ done
 - This can push `daily_edge_score` from HIGH to MEDIUM or MEDIUM to LOW
 - Traditional astrological wisdom: avoid initiating new bets during VOC periods
 
-**Esoteric Engine Signal Status (9/10 active):**
+### Phase 3 - Vortex Math, Benford Activation & Line History (v17.6 - Feb 2026)
+| File | Function | Purpose | Integration Line |
+|------|----------|---------|------------------|
+| `esoteric_engine.py` | `calculate_vortex_energy()` | Tesla 3-6-9 resonance | `live_data_router.py:3688-3710` |
+| `live_data_router.py` | `_extract_benford_values_from_game()` | Multi-book line aggregation | Lines 3152-3205 |
+| `database.py` | `LineSnapshot`, `SeasonExtreme` | Line history storage | Database models |
+| `daily_scheduler.py` | `_run_line_snapshot_capture()` | 30-min line snapshots | Scheduler job |
+| `daily_scheduler.py` | `_run_update_season_extremes()` | Daily 5 AM extremes | Scheduler job |
+
+**Vortex Math Implementation:**
+```python
+# Tesla 3-6-9 sacred geometry analysis
+calculate_vortex_energy(value, context="spread"|"total"|"prop"|"general")
+# Returns:
+{
+    "vortex_score": 5.0-9.0,      # Baseline 5.0
+    "digital_root": int,          # Single digit reduction
+    "is_tesla_aligned": bool,     # Digital root is 3, 6, or 9
+    "is_perfect_vortex": bool,    # Contains 369/396/639/693/936/963
+    "is_golden_vortex": bool,     # Within 5% of phi multiples
+    "triggered": bool,            # Score >= 7.0
+    "signal": str,                # PERFECT_VORTEX|TESLA_ALIGNED|GOLDEN_RATIO|NEUTRAL
+}
+```
+
+**Vortex Boost Logic:**
+| Condition | Boost | Signal |
+|-----------|-------|--------|
+| Perfect vortex (369 sequence) | +0.3 | `PERFECT_VORTEX` |
+| Tesla aligned (root=3,6,9) | +0.2 | `TESLA_ALIGNED` |
+| Golden ratio (phi aligned) | +0.1 | `GOLDEN_RATIO` |
+| Neutral | +0.0 | `NEUTRAL` |
+
+**Benford Anomaly Fix (v17.6):**
+- **Problem:** Only 3 values (prop_line, spread, total) - always < 10, Benford never ran
+- **Solution:** `_extract_benford_values_from_game()` extracts from multi-book data:
+  - Direct values: prop_line, spread, total (3 values)
+  - Multi-book spreads: `game.bookmakers[].markets[spreads].outcomes[].point` (5-10 values)
+  - Multi-book totals: `game.bookmakers[].markets[totals].outcomes[].point` (5-10 values)
+  - **Result:** 10-25 unique values for Benford analysis
+- **Pass `game_bookmakers` parameter** to `calculate_pick_score()` at all 3 call sites
+
+**Line History Schema (v17.6):**
+```sql
+-- Table 1: Line snapshots for Hurst Exponent (needs 20+ sequential values)
+CREATE TABLE line_snapshots (
+    id SERIAL PRIMARY KEY,
+    event_id VARCHAR(100) NOT NULL,
+    sport VARCHAR(20) NOT NULL,
+    home_team VARCHAR(100),
+    away_team VARCHAR(100),
+    book VARCHAR(50),
+    spread DECIMAL(5,2),
+    spread_odds INTEGER,
+    total DECIMAL(6,2),
+    total_odds INTEGER,
+    public_pct DECIMAL(5,2),
+    money_pct DECIMAL(5,2),
+    captured_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    game_start_time TIMESTAMP WITH TIME ZONE
+);
+
+-- Table 2: Season extremes for Fibonacci Retracement
+CREATE TABLE season_extremes (
+    id SERIAL PRIMARY KEY,
+    sport VARCHAR(20) NOT NULL,
+    season VARCHAR(20) NOT NULL,
+    stat_type VARCHAR(50) NOT NULL,
+    subject_id VARCHAR(100),
+    subject_name VARCHAR(100),
+    season_high DECIMAL(8,2),
+    season_low DECIMAL(8,2),
+    current_value DECIMAL(8,2),
+    updated_at TIMESTAMP WITH TIME ZONE
+);
+```
+
+**Line History Scheduler Jobs:**
+| Job | Schedule | Purpose |
+|-----|----------|---------|
+| `_run_line_snapshot_capture()` | Every 30 minutes | Capture spread/total from Odds API |
+| `_run_update_season_extremes()` | Daily 5 AM ET | Calculate season high/low |
+
+**Line History Helper Functions (database.py):**
+```python
+save_line_snapshot(db, event_id, sport, ...)     # Save snapshot
+get_line_history(db, event_id, limit=30)          # Get history dicts
+get_line_history_values(db, event_id, "spread")   # Raw floats for Hurst
+update_season_extreme(db, sport, season, ...)     # Update high/low
+get_season_extreme(db, sport, season, stat_type)  # Get extremes for Fib
+```
+
+**Esoteric Engine Signal Status (10/10 active as of v17.6):**
 | Signal | Status | Notes |
 |--------|--------|-------|
 | Numerology | ✅ ACTIVE | `calculate_generic_numerology()` |
 | Astro | ✅ ACTIVE | Vedic astrology |
 | Fibonacci | ✅ ACTIVE | `calculate_fibonacci_alignment()` |
-| Vortex | ✅ ACTIVE | Tesla 3-6-9 |
+| Vortex | ✅ ACTIVE (v17.6) | Tesla 3-6-9 via `calculate_vortex_energy()` |
 | Daily Edge | ✅ ACTIVE + VOC (v17.5) | Daily energy score with VOC penalty |
 | GLITCH (6 signals) | ✅ ACTIVE | `get_glitch_aggregate()` |
 | Biorhythms | ✅ ACTIVE (v17.5) | Props only, player birth cycles |
 | Gann Square | ✅ ACTIVE (v17.5) | Games only, sacred geometry |
 | Founder's Echo | ✅ ACTIVE (v17.5) | Games only, team gematria |
-| Hurst Exponent | ⚠️ STUBBED | Needs line history data |
-| Benford Anomaly | ⚠️ STUBBED | Needs 10+ line values |
+| Hurst Exponent | ✅ SCHEMA READY (v17.6) | Line history tables created, scheduler jobs active |
+| Benford Anomaly | ✅ ACTIVATED (v17.6) | Multi-book aggregation now provides 10+ values |
 
 ### GLITCH Protocol Files
 | File | Purpose | Key Functions |
 |------|---------|---------------|
-| `esoteric_engine.py` | GLITCH aggregator + Phase 1 signals | `get_glitch_aggregate()`, `calculate_chrome_resonance()`, `calculate_biorhythms()`, `analyze_spread_gann()`, `check_founders_echo()` |
+| `esoteric_engine.py` | GLITCH aggregator + Phase 1-3 signals | `get_glitch_aggregate()`, `calculate_chrome_resonance()`, `calculate_biorhythms()`, `analyze_spread_gann()`, `check_founders_echo()`, `calculate_vortex_energy()` |
 | `alt_data_sources/noaa.py` | Kp-Index client | `fetch_kp_index_live()`, `get_kp_betting_signal()` |
 | `alt_data_sources/serpapi.py` | Noosphere client | `get_noosphere_data()`, `get_team_buzz()` |
 | `signals/math_glitch.py` | Benford analysis | `check_benford_anomaly()` |
 | `signals/physics.py` | Hurst exponent | `calculate_hurst_exponent()` |
 | `signals/hive_mind.py` | Void moon | `get_void_moon()` |
+| `database.py` | Line history schema (v17.6) | `LineSnapshot`, `SeasonExtreme`, `save_line_snapshot()`, `get_line_history_values()` |
+| `daily_scheduler.py` | Line history capture (v17.6) | `_run_line_snapshot_capture()`, `_run_update_season_extremes()` |
 
 ### Context Layer Files
 | File | Purpose | Key Classes |
@@ -3557,7 +3653,7 @@ curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
 
 **Integration Point:** `live_data_router.py:3605-3710` (after GLITCH, before esoteric_score clamp)
 
-**Esoteric Engine Status:** Now 8/10 signals active (vs 5/10 before)
+**Esoteric Engine Status:** Was 8/10 signals active after Phase 1 (now 10/10 after v17.6)
 
 **Verification:**
 ```bash
@@ -3568,6 +3664,118 @@ curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
 ```
 
 **Fixed in:** Commits `2bfa25e`, `9e01390` (Feb 2026)
+
+### Lesson 24: Benford Multi-Book Aggregation Fix (v17.6)
+**Problem:** Benford's Law anomaly detection NEVER triggered because it requires 10+ values for statistical significance, but only 3 values were passed (prop_line, spread, total).
+
+**Root Cause:** Original implementation only collected the primary line values:
+```python
+# BAD - Only 3 values, Benford always skips
+_line_values = []
+if prop_line: _line_values.append(prop_line)      # 1 value
+if spread: _line_values.append(abs(spread))       # 2 values
+if total: _line_values.append(total)              # 3 values
+# len(_line_values) < 10, so Benford NEVER runs
+```
+
+**Solution:** Extract multi-book lines from `game.bookmakers[]` array (Odds API returns 5-10 sportsbooks):
+```python
+# GOOD - 10-25 values from multiple books
+def _extract_benford_values_from_game(game: dict, prop_line, spread, total) -> list:
+    values = []
+    if prop_line: values.append(prop_line)
+    if spread: values.append(abs(spread))
+    if total: values.append(total)
+
+    for bm in game.get("bookmakers", []):
+        for market in bm.get("markets", []):
+            if market.get("key") == "spreads":
+                for outcome in market.get("outcomes", []):
+                    point = outcome.get("point")
+                    if point is not None:
+                        values.append(abs(point))
+            elif market.get("key") == "totals":
+                for outcome in market.get("outcomes", []):
+                    point = outcome.get("point")
+                    if point is not None and point > 0:
+                        values.append(point)
+    return list(dict.fromkeys(values))  # Deduplicate
+```
+
+**Key Insight:** The Odds API data was already available but not being utilized. Multi-book data provides 10-25 unique line values across sportsbooks.
+
+**Integration Pattern:**
+1. Add `game_bookmakers=None` parameter to `calculate_pick_score()` function signature
+2. Pass `game_bookmakers=candidate.get("bookmakers", [])` from all 3 call sites
+3. Use helper to extract values: `_extract_benford_values_from_game({"bookmakers": game_bookmakers}, ...)`
+4. Pass to GLITCH: `value_for_benford=_line_values if len(_line_values) >= 10 else None`
+
+**Files Modified:**
+- `live_data_router.py:3150-3165` - Added `_extract_benford_values_from_game()` helper
+- `live_data_router.py:3210` - Updated function signature with `game_bookmakers` param
+- `live_data_router.py:3590-3610` - Updated Benford value collection
+- `live_data_router.py:5149, 5290, 5472` - Updated all 3 call sites
+
+**Verification:**
+```bash
+# Check Benford now receives 10+ values
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '.game_picks.picks[0].glitch_breakdown.benford | {values_count, triggered, distribution}'
+# values_count should be 10-25
+```
+
+**Fixed in:** v17.6 (Feb 2026)
+
+### Lesson 25: Function Parameter Threading Pattern (v17.6)
+**Problem:** When adding new data to a scoring function called from multiple locations, ALL call sites must be updated or the data will be `None`.
+
+**Root Cause:** `calculate_pick_score()` is called from 3 different places:
+1. Game picks loop (~line 5149)
+2. Props loop (~line 5290)
+3. Sharp money loop (~line 5472)
+
+Adding `game_bookmakers=None` to the function signature without updating all call sites means 2 out of 3 calls would pass `None`.
+
+**Solution Pattern:**
+1. **Grep for all call sites FIRST:** `grep -n "calculate_pick_score(" live_data_router.py`
+2. **Count call sites:** Expect 3+ (definition + calls)
+3. **Update ALL call sites** with the new parameter
+4. **Verify no calls are missing:** Re-run grep after changes
+
+**Example Fix:**
+```python
+# Call site 1 (game picks) - line 5149
+pick_score_result = calculate_pick_score(
+    ...,
+    game_bookmakers=candidate.get("bookmakers", [])  # NEW
+)
+
+# Call site 2 (props) - line 5290
+pick_score_result = calculate_pick_score(
+    ...,
+    game_bookmakers=candidate.get("bookmakers", [])  # NEW
+)
+
+# Call site 3 (sharp money) - line 5472
+pick_score_result = calculate_pick_score(
+    ...,
+    game_bookmakers=candidate.get("bookmakers", [])  # NEW
+)
+```
+
+**Invariant:** When adding parameters to multi-call-site functions, update ALL call sites in the same commit.
+
+**Verification:**
+```bash
+# Verify all call sites pass the parameter
+grep -n "calculate_pick_score(" live_data_router.py | wc -l
+# Should be 4 (1 definition + 3 calls)
+
+grep -n "game_bookmakers=" live_data_router.py | wc -l
+# Should be 4 (matching all call sites)
+```
+
+**Fixed in:** v17.6 (Feb 2026)
 
 ---
 
@@ -3957,6 +4165,99 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 63. **NEVER** assume all teams will trigger Founder's Echo - only ~7/119 teams resonate on any given day
 64. **NEVER** activate dormant signals without testing on production data via curl verification commands
 65. **NEVER** modify esoteric scoring without running the verification checklist (checks 9-13 in ML & GLITCH section)
+
+## 🚫 NEVER DO THESE (v17.6 - Vortex & Benford)
+
+66. **NEVER** add parameters to `calculate_pick_score()` without updating ALL 3 call sites (game_picks, props, sharp_money)
+67. **NEVER** assume Benford will run with <10 values - it requires 10+ for statistical significance
+68. **NEVER** pass only direct values (prop_line, spread, total) to Benford - use multi-book aggregation
+69. **NEVER** forget to extract from `game.bookmakers[]` when multi-book data is needed
+70. **NEVER** add Vortex/Tesla signals without checking for 0/None values first (division by zero risk)
+71. **NEVER** modify line history tables without considering the scheduler job dependencies
+72. **NEVER** run `_run_line_snapshot_capture()` without checking Odds API quota first
+73. **NEVER** assume line history exists for new events - check for NULL/empty returns
+
+---
+
+## ✅ VERIFICATION CHECKLIST (v17.6 - Vortex, Benford, Line History)
+
+Run these after ANY change to Vortex, Benford, or Line History features:
+
+```bash
+# 1. Syntax check all modified files
+python -m py_compile esoteric_engine.py live_data_router.py database.py daily_scheduler.py
+
+# 2. Test Vortex function directly (Tesla 3-6-9 resonance)
+python3 -c "
+from esoteric_engine import calculate_vortex_energy
+print('3.5 spread:', calculate_vortex_energy(3.5, 'spread'))
+print('369 value:', calculate_vortex_energy(369, 'general'))
+print('246.5 total:', calculate_vortex_energy(246.5, 'total'))
+print('9.5 (Tesla):', calculate_vortex_energy(9.5, 'spread'))
+"
+# Should show: is_tesla_aligned=True for values with digital root 3, 6, or 9
+
+# 3. Verify Benford now receives 10+ values
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '.game_picks.picks[0].glitch_breakdown.benford | {values_count, triggered, distribution}'
+# values_count should be 10-25 (not 3)
+
+# 4. Check Vortex in esoteric_reasons
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '[.game_picks.picks[].esoteric_reasons] | flatten | map(select(startswith("Vortex")))'
+# Should show: "Vortex: TESLA_ALIGNED (root=3)" or similar
+
+# 5. Verify all 3 call sites pass game_bookmakers
+grep -n "calculate_pick_score(" live_data_router.py | wc -l
+# Should be 4 (1 definition + 3 calls)
+grep -n "game_bookmakers=" live_data_router.py | wc -l
+# Should be 4 (matching all call sites)
+
+# 6. Test multi-book extraction function
+python3 -c "
+import sys
+sys.path.insert(0, '.')
+from live_data_router import _extract_benford_values_from_game
+game = {
+    'bookmakers': [
+        {'markets': [{'key': 'spreads', 'outcomes': [{'point': 3.5}, {'point': -3.5}]},
+                     {'key': 'totals', 'outcomes': [{'point': 220.5}, {'point': 220.5}]}]},
+        {'markets': [{'key': 'spreads', 'outcomes': [{'point': 3}, {'point': -3}]},
+                     {'key': 'totals', 'outcomes': [{'point': 221}, {'point': 221}]}]}
+    ]
+}
+values = _extract_benford_values_from_game(game, 25.5, 3.5, 220.5)
+print(f'Extracted {len(values)} values: {values}')
+assert len(values) >= 5, f'Expected 5+ values, got {len(values)}'
+print('✓ Multi-book extraction working')
+"
+
+# 7. Test all 5 sports for Vortex/Benford
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  curl -s "/live/best-bets/$sport?debug=1" -H "X-API-Key: KEY" | \
+    jq '{
+      picks: (.game_picks.count + .props.count),
+      has_vortex: ([.game_picks.picks[].esoteric_reasons] | flatten | map(select(startswith("Vortex"))) | length > 0),
+      benford_values: .game_picks.picks[0].glitch_breakdown.benford.values_count
+    }'
+done
+
+# 8. Check database tables exist (for line history)
+python3 -c "
+from database import LineSnapshot, SeasonExtreme, engine
+from sqlalchemy import inspect
+inspector = inspect(engine)
+tables = inspector.get_table_names()
+print('line_snapshots exists:', 'line_snapshots' in tables)
+print('season_extremes exists:', 'season_extremes' in tables)
+"
+
+# 9. Esoteric Engine Signal Status (should be 10/10)
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '[.game_picks.picks[].esoteric_reasons, .props.picks[].esoteric_reasons] | flatten | unique | length'
+# Should show 10+ unique signal types
+```
 
 ---
 

@@ -3149,9 +3149,64 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 return "Wing"
         return "Guard"  # default
 
+    # Helper function to extract multi-book line values for Benford analysis
+    # v17.6: Benford Anomaly needs 10+ values to be statistically significant
+    def _extract_benford_values_from_game(game: dict, prop_line: float = None, spread: float = None, total: float = None) -> list:
+        """
+        Extract all available line values for Benford analysis.
+        Aggregates lines from multiple sportsbooks to get 10+ values.
+
+        Sources:
+        - Direct values: prop_line, spread, total (3 values)
+        - Multi-book spreads: game.bookmakers[].markets[spreads].outcomes[].point (5-10 values)
+        - Multi-book totals: game.bookmakers[].markets[totals].outcomes[].point (5-10 values)
+
+        Returns: List of 10-25 numeric values for Benford analysis
+        """
+        values = []
+
+        # Add direct values
+        if prop_line and prop_line > 0:
+            values.append(prop_line)
+        if spread:
+            values.append(abs(spread))
+        if total and total > 0:
+            values.append(total)
+
+        # Extract from bookmakers array
+        if game and isinstance(game, dict):
+            for bm in game.get("bookmakers", []):
+                for market in bm.get("markets", []):
+                    market_key = market.get("key", "")
+
+                    # Extract spread values
+                    if market_key == "spreads":
+                        for outcome in market.get("outcomes", []):
+                            point = outcome.get("point")
+                            if point is not None:
+                                values.append(abs(point))
+
+                    # Extract total values
+                    elif market_key == "totals":
+                        for outcome in market.get("outcomes", []):
+                            point = outcome.get("point")
+                            if point is not None and point > 0:
+                                values.append(point)
+
+        # Deduplicate while preserving order (for statistical validity)
+        seen = set()
+        unique_values = []
+        for v in values:
+            if v not in seen:
+                seen.add(v)
+                unique_values.append(v)
+
+        return unique_values
+
     # Helper function to calculate scores with v15.0 4-engine architecture + Jason Sim
     # v16.1: Added market parameter for LSTM model routing
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market="", game_datetime=None):
+    # v17.6: Added game_bookmakers parameter for Benford analysis
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market="", game_datetime=None, game_bookmakers=None):
         # =====================================================================
         # v15.0 FOUR-ENGINE ARCHITECTURE (Clean Separation)
         # =====================================================================
@@ -3588,22 +3643,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 _game_date_obj = game_datetime.date() if hasattr(game_datetime, 'date') else game_datetime
 
             # Collect line values for Benford analysis (needs 10+ for statistical significance)
-            _line_values = []
-            if prop_line:
-                _line_values.append(prop_line)
-            if spread:
-                _line_values.append(abs(spread))
-            if total:
-                _line_values.append(total)
-            # Note: odds and candidate are closure variables that may not be defined
-            # in all call paths. Use try/except for safety.
+            # v17.6: Now extracts from multi-book data to get 10+ values
+            _line_values = _extract_benford_values_from_game(
+                game={"bookmakers": game_bookmakers} if game_bookmakers else {},
+                prop_line=prop_line,
+                spread=spread,
+                total=total
+            )
 
             # Calculate GLITCH aggregate
             glitch_result = get_glitch_aggregate(
                 birth_date_str=_player_birth,
                 game_date=_game_date_obj,
                 game_time=game_datetime,
-                line_history=None,  # TODO: Pass line history when available
+                line_history=None,  # TODO: Pass line history when schema implemented
                 value_for_benford=_line_values if len(_line_values) >= 10 else None,
                 primary_value=prop_line if prop_line else spread
             )
@@ -3633,6 +3686,29 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         # Apply GLITCH adjustment to esoteric_raw
         esoteric_raw += glitch_adjustment
+
+        # ===== v17.6: VORTEX ENERGY (Tesla 3-6-9) =====
+        vortex_boost = 0.0
+        try:
+            from esoteric_engine import calculate_vortex_energy
+
+            # Determine primary value for vortex analysis
+            _vortex_value = prop_line if prop_line else total if total else abs(spread) if spread else None
+            _vortex_context = "prop" if prop_line else "total" if total else "spread"
+
+            if _vortex_value:
+                vortex_result = calculate_vortex_energy(_vortex_value, context=_vortex_context)
+                if vortex_result.get("triggered"):
+                    _vortex_boost = 0.3 if vortex_result.get("is_perfect_vortex") else 0.2 if vortex_result.get("is_tesla_aligned") else 0.1
+                    vortex_boost = _vortex_boost
+                    esoteric_reasons.append(f"Vortex: {vortex_result['signal']} (root={vortex_result['digital_root']})")
+                    logger.debug("VORTEX[%s]: value=%.1f, signal=%s, root=%d, boost=%.2f",
+                                game_str[:30], _vortex_value, vortex_result['signal'], vortex_result['digital_root'], _vortex_boost)
+        except Exception as e:
+            logger.debug("Vortex calculation skipped: %s", e)
+
+        # Apply Vortex boost
+        esoteric_raw += vortex_boost
 
         # ===== PHASE 1: DORMANT ESOTERIC SIGNAL ACTIVATION (v17.5) =====
         # Wiring three previously dormant signals from esoteric_engine.py:
@@ -5083,7 +5159,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 pick_type=pick_type,
                                 pick_side=pick_side,
                                 prop_line=point if point else 0,
-                                game_datetime=_game_datetime
+                                game_datetime=_game_datetime,
+                                game_bookmakers=game.get("bookmakers", [])  # v17.6: Multi-book for Benford
                             )
 
                             # v16.0: Apply weather modifier to score (capped at ±1.0)
@@ -5192,13 +5269,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             away_team = signal.get("away_team", "")
             game_str = f"{home_team}{away_team}"
 
-            # Look up commence_time from raw_games for start_time_et
+            # Look up commence_time and bookmakers from raw_games for start_time_et and Benford
             commence_time = ""
+            _sharp_bookmakers = []
             signal_game_id = signal.get("game_id", "")
             if signal_game_id and raw_games:
                 for g in raw_games:
                     if g.get("id") == signal_game_id:
                         commence_time = g.get("commence_time", "")
+                        _sharp_bookmakers = g.get("bookmakers", [])  # v17.6
                         break
 
             # Parse commence_time to datetime object for MSRF/GLITCH
@@ -5223,7 +5302,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 pick_type="SHARP",
                 pick_side=signal.get("side", "HOME"),
                 prop_line=0,
-                game_datetime=_sharp_game_dt
+                game_datetime=_sharp_game_dt,
+                game_bookmakers=_sharp_bookmakers  # v17.6: Multi-book for Benford
             )
 
             signals_fired = score_data.get("pillars_passed", []).copy()
@@ -5403,7 +5483,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     pick_side=side,
                     prop_line=line,
                     market=market,  # v16.1: Pass market for LSTM model routing
-                    game_datetime=_prop_game_datetime
+                    game_datetime=_prop_game_datetime,
+                    game_bookmakers=game.get("bookmakers", [])  # v17.6: Multi-book for Benford
                 )
 
                 # v16.0: Apply weather modifier to props (capped at ±1.0)

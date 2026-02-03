@@ -474,6 +474,30 @@ class DailyScheduler:
             )
             logger.info("Ensemble retraining enabled: runs daily at 6:45 AM ET")
 
+        # v17.6: Line snapshot capture (every 30 minutes on game days)
+        # Captures spread/total values across books for Hurst Exponent analysis
+        try:
+            from database import DB_ENABLED
+            if DB_ENABLED:
+                self.scheduler.add_job(
+                    self._run_line_snapshot_capture,
+                    IntervalTrigger(minutes=30),
+                    id="line_snapshot_capture",
+                    name="Line Snapshot Capture"
+                )
+                logger.info("Line snapshot capture enabled: runs every 30 minutes")
+
+                # v17.6: Update season extremes daily at 5 AM ET
+                self.scheduler.add_job(
+                    self._run_update_season_extremes,
+                    CronTrigger(hour=5, minute=0, timezone="America/New_York"),
+                    id="update_season_extremes",
+                    name="Update Season Extremes"
+                )
+                logger.info("Season extremes update enabled: runs daily at 5 AM ET")
+        except ImportError:
+            logger.warning("Database not available - line history capture disabled")
+
         self.scheduler.start()
         logger.info("APScheduler started with daily audit at 6 AM")
 
@@ -584,6 +608,235 @@ class DailyScheduler:
             logger.error("Ensemble retrain timed out after 5 minutes")
         except Exception as e:
             logger.error("Ensemble retrain failed: %s", e)
+
+    def _run_line_snapshot_capture(self):
+        """
+        v17.6: Capture line snapshots for Hurst Exponent analysis.
+
+        Fetches current lines from Odds API and stores in line_snapshots table.
+        Runs every 30 minutes during game days.
+        """
+        logger.info("📈 Starting line snapshot capture...")
+        try:
+            from database import get_db, save_line_snapshot, DB_ENABLED
+            if not DB_ENABLED:
+                logger.warning("Database not enabled - skipping line snapshot capture")
+                return
+
+            from data_dir import SUPPORTED_SPORTS
+            import httpx
+
+            # Get games from Odds API for each sport
+            ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
+            if not ODDS_API_KEY:
+                logger.warning("ODDS_API_KEY not set - skipping line snapshot capture")
+                return
+
+            ODDS_SPORT_KEYS = {
+                "NBA": "basketball_nba",
+                "NFL": "americanfootball_nfl",
+                "MLB": "baseball_mlb",
+                "NHL": "icehockey_nhl",
+                "NCAAB": "basketball_ncaab"
+            }
+
+            snapshots_saved = 0
+            with get_db() as db:
+                if not db:
+                    return
+
+                for sport in SUPPORTED_SPORTS:
+                    sport_key = ODDS_SPORT_KEYS.get(sport.upper())
+                    if not sport_key:
+                        continue
+
+                    try:
+                        url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
+                        response = httpx.get(url, params={
+                            "apiKey": ODDS_API_KEY,
+                            "regions": "us",
+                            "markets": "spreads,totals",
+                            "oddsFormat": "american"
+                        }, timeout=30.0)
+
+                        if response.status_code != 200:
+                            logger.warning("Odds API error for %s: %d", sport, response.status_code)
+                            continue
+
+                        games = response.json()
+
+                        for game in games:
+                            event_id = game.get("id", "")
+                            home_team = game.get("home_team", "")
+                            away_team = game.get("away_team", "")
+                            commence_time = game.get("commence_time")
+
+                            # Parse game start time
+                            game_start = None
+                            if commence_time:
+                                try:
+                                    from datetime import datetime as dt
+                                    game_start = dt.fromisoformat(commence_time.replace("Z", "+00:00"))
+                                except:
+                                    pass
+
+                            # Extract lines from first bookmaker (consensus)
+                            for bm in game.get("bookmakers", [])[:3]:  # Top 3 books
+                                book_name = bm.get("key", "unknown")
+                                spread = None
+                                spread_odds = None
+                                total = None
+                                total_odds = None
+
+                                for market in bm.get("markets", []):
+                                    if market.get("key") == "spreads":
+                                        for outcome in market.get("outcomes", []):
+                                            if outcome.get("name") == home_team:
+                                                spread = outcome.get("point")
+                                                spread_odds = outcome.get("price")
+                                                break
+                                    elif market.get("key") == "totals":
+                                        for outcome in market.get("outcomes", []):
+                                            if outcome.get("name") == "Over":
+                                                total = outcome.get("point")
+                                                total_odds = outcome.get("price")
+                                                break
+
+                                if spread is not None or total is not None:
+                                    save_line_snapshot(
+                                        db=db,
+                                        event_id=event_id,
+                                        sport=sport.upper(),
+                                        home_team=home_team,
+                                        away_team=away_team,
+                                        spread=spread,
+                                        total=total,
+                                        book=book_name,
+                                        spread_odds=spread_odds,
+                                        total_odds=total_odds,
+                                        game_start_time=game_start
+                                    )
+                                    snapshots_saved += 1
+
+                    except Exception as e:
+                        logger.error("Line snapshot capture failed for %s: %s", sport, e)
+
+            logger.info("📈 Line snapshot capture complete: %d snapshots saved", snapshots_saved)
+
+        except ImportError as e:
+            logger.warning("Line snapshot capture unavailable: %s", e)
+        except Exception as e:
+            logger.error("Line snapshot capture failed: %s", e)
+
+    def _run_update_season_extremes(self):
+        """
+        v17.6: Update season extremes for Fibonacci Retracement.
+
+        Calculates season high/low from historical line_snapshots data.
+        Runs daily at 5 AM ET.
+        """
+        logger.info("📊 Updating season extremes...")
+        try:
+            from database import get_db, SeasonExtreme, LineSnapshot, DB_ENABLED
+            if not DB_ENABLED:
+                logger.warning("Database not enabled - skipping season extremes update")
+                return
+
+            from sqlalchemy import func
+            import pytz
+            ET = pytz.timezone("America/New_York")
+            now_et = datetime.now(ET)
+
+            # Determine current season
+            if now_et.month >= 9:
+                season = f"{now_et.year}-{str(now_et.year + 1)[2:]}"
+            else:
+                season = f"{now_et.year - 1}-{str(now_et.year)[2:]}"
+
+            with get_db() as db:
+                if not db:
+                    return
+
+                from data_dir import SUPPORTED_SPORTS
+                updates = 0
+
+                for sport in SUPPORTED_SPORTS:
+                    # Get min/max spreads and totals from line_snapshots
+                    try:
+                        # Aggregate spread extremes
+                        spread_stats = db.query(
+                            func.min(LineSnapshot.spread).label("min_spread"),
+                            func.max(LineSnapshot.spread).label("max_spread"),
+                            func.avg(LineSnapshot.spread).label("avg_spread")
+                        ).filter(
+                            LineSnapshot.sport == sport.upper(),
+                            LineSnapshot.spread.isnot(None)
+                        ).first()
+
+                        if spread_stats and spread_stats.min_spread is not None:
+                            # Update or create season extreme for spread
+                            existing = db.query(SeasonExtreme).filter(
+                                SeasonExtreme.sport == sport.upper(),
+                                SeasonExtreme.season == season,
+                                SeasonExtreme.stat_type == "spread"
+                            ).first()
+
+                            if existing:
+                                existing.season_low = spread_stats.min_spread
+                                existing.season_high = spread_stats.max_spread
+                                existing.current_value = spread_stats.avg_spread
+                            else:
+                                db.add(SeasonExtreme(
+                                    sport=sport.upper(),
+                                    season=season,
+                                    stat_type="spread",
+                                    season_low=spread_stats.min_spread,
+                                    season_high=spread_stats.max_spread,
+                                    current_value=spread_stats.avg_spread
+                                ))
+                            updates += 1
+
+                        # Aggregate total extremes
+                        total_stats = db.query(
+                            func.min(LineSnapshot.total).label("min_total"),
+                            func.max(LineSnapshot.total).label("max_total"),
+                            func.avg(LineSnapshot.total).label("avg_total")
+                        ).filter(
+                            LineSnapshot.sport == sport.upper(),
+                            LineSnapshot.total.isnot(None)
+                        ).first()
+
+                        if total_stats and total_stats.min_total is not None:
+                            existing = db.query(SeasonExtreme).filter(
+                                SeasonExtreme.sport == sport.upper(),
+                                SeasonExtreme.season == season,
+                                SeasonExtreme.stat_type == "total"
+                            ).first()
+
+                            if existing:
+                                existing.season_low = total_stats.min_total
+                                existing.season_high = total_stats.max_total
+                                existing.current_value = total_stats.avg_total
+                            else:
+                                db.add(SeasonExtreme(
+                                    sport=sport.upper(),
+                                    season=season,
+                                    stat_type="total",
+                                    season_low=total_stats.min_total,
+                                    season_high=total_stats.max_total,
+                                    current_value=total_stats.avg_total
+                                ))
+                            updates += 1
+
+                    except Exception as e:
+                        logger.error("Season extremes update failed for %s: %s", sport, e)
+
+            logger.info("📊 Season extremes update complete: %d records updated", updates)
+
+        except ImportError as e:
+            logger.warning("Season extremes update unavailable: %s", e)
+        except Exception as e:
+            logger.error("Season extremes update failed: %s", e)
 
     def _start_simple_scheduler(self):
         """Fallback simple scheduler using threading."""
