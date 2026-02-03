@@ -5562,8 +5562,36 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # APPLY ET DAY GATE to both datasets
     # ============================================
     _s = time.time()
+
+    # --- Build commence_time lookup from games data (for backfilling props) ---
+    _games_time_lookup = {}
+    if game_odds_resp and hasattr(game_odds_resp, 'status_code') and game_odds_resp.status_code == 200:
+        _raw_games_for_lookup = game_odds_resp.json()
+        for _g in _raw_games_for_lookup:
+            _ht = _g.get("home_team", "").lower()
+            _at = _g.get("away_team", "").lower()
+            _ct = _g.get("commence_time")
+            if _ht and _at and _ct:
+                _games_time_lookup[(_at, _ht)] = _ct
+                _games_time_lookup[(_ht, _at)] = _ct  # Both orderings
+        logger.info("PROPS TIME BACKFILL: Built lookup from %d games", len(_raw_games_for_lookup))
+
     # --- Props ET filter ---
     raw_prop_games = props_data.get("data", []) if isinstance(props_data, dict) else []
+
+    # Backfill commence_time for props from games data
+    _props_backfilled = 0
+    for _pg in raw_prop_games:
+        if not _pg.get("commence_time"):
+            _ph = _pg.get("home_team", "").lower()
+            _pa = _pg.get("away_team", "").lower()
+            _found_time = _games_time_lookup.get((_pa, _ph)) or _games_time_lookup.get((_ph, _pa))
+            if _found_time:
+                _pg["commence_time"] = _found_time
+                _props_backfilled += 1
+    if _props_backfilled:
+        logger.info("PROPS TIME BACKFILL: Filled %d/%d props with commence_time from games", _props_backfilled, len(raw_prop_games))
+
     _dropped_out_of_window_props = 0
     _dropped_missing_time_props = 0
     if TIME_ET_AVAILABLE and raw_prop_games:
@@ -5588,7 +5616,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _dropped_missing_time_games = 0
     ghost_game_count = 0
     if game_odds_resp and hasattr(game_odds_resp, 'status_code') and game_odds_resp.status_code == 200:
-        raw_games = game_odds_resp.json()
+        # Reuse already-parsed games data if available (from props backfill above)
+        raw_games = _raw_games_for_lookup if _games_time_lookup else game_odds_resp.json()
         _date_window_et_debug["events_before_games"] = len(raw_games)
         if TIME_ET_AVAILABLE:
             raw_games, _dropped_games_window, _dropped_games_missing = filter_events_et(raw_games, date_str)
