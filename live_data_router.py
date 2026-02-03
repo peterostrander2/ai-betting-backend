@@ -2488,7 +2488,7 @@ async def get_props(sport: str):
                             "game_id": event_data.get("id"),
                             "home_team": event_data.get("home_team"),
                             "away_team": event_data.get("away_team"),
-                            "commence_time": event_data.get("commence_time"),
+                            "commence_time": event.get("commence_time"),  # From events list, not event_data
                             "props": []
                         }
 
@@ -4928,6 +4928,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "context_modifier": round(context_modifier, 3),  # v18.0: bounded modifier
             "context_score": round(context_score, 2),  # backward-compat (raw score)
             "context_reasons": context_reasons,
+            "live_adjustment": round(live_boost, 2),
+            "live_reasons": live_reasons,
             "base_4_score": round(base_score, 2),
             # Detailed breakdowns
             "scoring_breakdown": {
@@ -4941,6 +4943,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "confluence_boost": confluence_boost,
                 "msrf_boost": msrf_boost,
                 "serp_boost": serp_boost_total,
+                "live_adjustment": round(live_boost, 2),
                 "alignment_pct": confluence.get("alignment_pct", 0),
                 "gold_star_gates": _gold_gates,
                 "gold_star_eligible": _gold_gates_passed,
