@@ -97,9 +97,9 @@ log_pending() {
 }
 
 # Build auth header if API_KEY is set
-AUTH_HEADER=""
+AUTH_HEADER_ARGS=()
 if [ -n "$API_KEY" ]; then
-    AUTH_HEADER="-H X-API-Key:${API_KEY}"
+    AUTH_HEADER_ARGS=(-H "X-API-Key:${API_KEY}")
 fi
 
 # Track overall status
@@ -119,7 +119,18 @@ log ""
 # =============================================================================
 log "Step 1: Checking API health..."
 
-HEALTH=$(curl -sf "${API_BASE}/health" 2>/dev/null || echo '{"status":"error"}')
+# Try /health (preferred). If it fails, fallback to /live/health. Retry for DNS flakes.
+HEALTH=""
+for attempt in 1 2 3; do
+    HEALTH=$(curl -sf "${AUTH_HEADER_ARGS[@]}" "${API_BASE}/health" 2>/dev/null || true)
+    if [ -z "$HEALTH" ]; then
+        HEALTH=$(curl -sf "${AUTH_HEADER_ARGS[@]}" "${API_BASE}/live/health" 2>/dev/null || true)
+    fi
+    if [ -n "$HEALTH" ]; then
+        break
+    fi
+    sleep "$attempt"
+done
 if echo "$HEALTH" | grep -q '"status":"healthy"'; then
     log_pass "API is healthy"
 else
@@ -135,7 +146,7 @@ log ""
 log "Step 2: Verifying best-bets endpoints for all 5 sports..."
 
 for SPORT in "${SPORTS[@]}"; do
-    RESP=$(curl -sf $AUTH_HEADER "${API_BASE}/live/best-bets/${SPORT}" 2>/dev/null || echo '{"error":true}')
+    RESP=$(curl -sf "${AUTH_HEADER_ARGS[@]}" "${API_BASE}/live/best-bets/${SPORT}" 2>/dev/null || echo '{"error":true}')
 
     if echo "$RESP" | grep -q '"error"'; then
         log_fail "/live/best-bets/${SPORT} returned error"
@@ -159,7 +170,7 @@ log "Total picks saved: ${PICKS_SAVED}"
 log ""
 log "Step 3: Checking grader and scheduler status..."
 
-GRADER_STATUS=$(curl -sf $AUTH_HEADER "${API_BASE}/live/grader/status" 2>/dev/null || echo '{"available":false}')
+GRADER_STATUS=$(curl -sf "${AUTH_HEADER_ARGS[@]}" "${API_BASE}/live/grader/status" 2>/dev/null || echo '{"available":false}')
 if echo "$GRADER_STATUS" | grep -q '"available":true'; then
     log_pass "Grader is available"
 else
@@ -167,7 +178,7 @@ else
     OVERALL_STATUS="FAIL"
 fi
 
-SCHEDULER_STATUS=$(curl -sf $AUTH_HEADER "${API_BASE}/live/scheduler/status" 2>/dev/null || echo '{"available":false}')
+SCHEDULER_STATUS=$(curl -sf "${AUTH_HEADER_ARGS[@]}" "${API_BASE}/live/scheduler/status" 2>/dev/null || echo '{"available":false}')
 if echo "$SCHEDULER_STATUS" | grep -q '"available":true'; then
     log_pass "Scheduler is available"
 else
@@ -180,7 +191,7 @@ fi
 log ""
 log "Step 4: Testing queue selector..."
 
-QUEUE=$(curl -sf $AUTH_HEADER "${API_BASE}/live/grader/queue?date=${DATE}" 2>/dev/null || echo '{"error":true}')
+QUEUE=$(curl -sf "${AUTH_HEADER_ARGS[@]}" "${API_BASE}/live/grader/queue?date=${DATE}" 2>/dev/null || echo '{"error":true}')
 
 if echo "$QUEUE" | grep -q '"error"'; then
     log_fail "Queue selector endpoint failed"
@@ -205,7 +216,7 @@ log ""
 log "Step 5: Running dry-run validation (mode=${MODE})..."
 log "        This proves all picks can be graded tomorrow."
 
-DRY_RUN=$(curl -sf -X POST $AUTH_HEADER \
+DRY_RUN=$(curl -sf -X POST "${AUTH_HEADER_ARGS[@]}" \
     -H "Content-Type: application/json" \
     -d "{\"date\":\"${DATE}\",\"mode\":\"${MODE}\",\"sports\":[\"NBA\",\"NFL\",\"MLB\",\"NHL\",\"NCAAB\"]}" \
     "${API_BASE}/live/grader/dry-run" 2>/dev/null || echo '{"overall_status":"ERROR"}')
