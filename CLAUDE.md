@@ -4568,6 +4568,98 @@ curl /live/grader/bias/NBA?days_back=7 -H "X-API-Key: KEY" | jq '.pick_type_brea
 
 **Fixed in:** v19.1 (Feb 2026)
 
+### Lesson 29: Timezone-Aware vs Naive Datetime Comparisons (v18.2)
+**Problem:** Phase 8 lunar phase calculation crashed with `TypeError: can't subtract offset-naive and offset-aware datetimes` because the reference date was created without a timezone.
+
+**Root Cause:**
+```python
+# WRONG - ref_date is naive (no timezone)
+ref_date = datetime(2000, 1, 6, 18, 14, 0)  # Reference new moon
+days_since = (game_datetime - ref_date).days  # CRASH! Can't mix aware/naive
+```
+
+**Solution:**
+```python
+# CORRECT - Both datetimes are timezone-aware
+from zoneinfo import ZoneInfo
+
+ref_date = datetime(2000, 1, 6, 18, 14, 0, tzinfo=ZoneInfo("UTC"))
+game_datetime = datetime.now(ZoneInfo("America/New_York"))
+days_since = (game_datetime - ref_date).days  # Works!
+```
+
+**Prevention:**
+- When doing datetime arithmetic, BOTH datetimes must be timezone-aware
+- Use `ZoneInfo("UTC")` for reference dates
+- Use `ZoneInfo("America/New_York")` for game times
+- The NEVER DO rule 88 enforces this
+
+**Fixed in:** v18.2 (Feb 2026) - `calculate_lunar_phase_intensity()` line 1422-1426
+
+### Lesson 30: Environment Variable OR Logic (v18.2)
+**Problem:** SERP API integration failed because the env var check used AND logic when it should have used OR. Both `SERPAPI_KEY` and `SERP_API_KEY` are valid alternatives, but the code required BOTH to be set.
+
+**Root Cause:**
+```python
+# WRONG - Requires BOTH keys to be set
+if SERPAPI_KEY and SERP_API_KEY:
+    # Only runs if both exist
+
+# Also WRONG - all() requires ALL to be truthy
+if all([os.getenv("SERPAPI_KEY"), os.getenv("SERP_API_KEY")]):
+    # Only runs if both exist
+```
+
+**Solution:**
+```python
+# CORRECT - Either key works
+if any([os.getenv("SERPAPI_KEY"), os.getenv("SERP_API_KEY")]):
+    key = os.getenv("SERPAPI_KEY") or os.getenv("SERP_API_KEY")
+    # Runs if at least one exists
+```
+
+**Prevention:**
+- Use `any()` for ALTERNATIVE env vars (either one works)
+- Use `all()` for REQUIRED env vars (all must be set)
+- Document which pattern is intended
+- The NEVER DO rule 96 enforces this
+
+**Fixed in:** v18.2 (Feb 2026)
+
+### Lesson 31: Variable Initialization Before Conditional Use (v18.2)
+**Problem:** Production crashed with `NameError: name 'weather_data' is not defined` because the variable was only assigned inside a conditional block but used outside it.
+
+**Root Cause:**
+```python
+# WRONG - weather_data only defined if condition is True
+if outdoor_sport:
+    weather_data = fetch_weather()
+
+# Later in code...
+if weather_data:  # NameError if outdoor_sport was False!
+    apply_weather_boost()
+```
+
+**Solution:**
+```python
+# CORRECT - weather_data always defined
+weather_data = None  # Initialize first
+
+if outdoor_sport:
+    weather_data = fetch_weather()
+
+# Later in code...
+if weather_data:  # Safe - weather_data is always defined
+    apply_weather_boost()
+```
+
+**Prevention:**
+- Any variable used after a conditional block MUST be initialized before that block
+- Initialize to `None`, `[]`, `{}`, or appropriate default
+- The NEVER DO rule 90 enforces this
+
+**Fixed in:** v18.2 (Feb 2026) - `weather_data = None` initialization at line 3345
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -5366,6 +5458,88 @@ curl /ops/env-map -H "X-Admin-Key: ADMIN_KEY" | \
 - `weather_data` MUST be initialized to `None` before conditional use
 - Phase 8 boost added to `esoteric_raw`, not directly to final score
 - All 5 signals aggregated via `get_phase8_esoteric_signals()`
+
+---
+
+## Production Proof Checklist (Option A + Integrations)
+
+Use this to prove (not assume) the backend is fully healthy end-to-end and Option A is enforced in production.
+
+### 1) Prove Railway is running the intended commit
+**Goal:** runtime build metadata matches the intended git commit.
+- In Railway: Service -> Deployments -> confirm deployed commit SHA (expected: `87e70cc`).
+- Hit a prod metadata endpoint (build_sha / deploy_version if exposed).
+**Pass condition:** prod metadata matches the intended commit, and build_sha changes when you redeploy.
+
+### 2) Integration truth test (not "it didn't crash")
+**Goal:** each required integration is configured and exercised.
+- Call `/live/debug/integrations`.
+- Verify, per integration: `configured=true`, connectivity OK, and `last_success` moves after best-bets.
+**Pass condition:** every required integration shows green and timestamps move with real calls.
+
+### 3) Force an end-to-end best-bets run
+**Goal:** prove full scoring pipeline executed (not partial/timeouts).
+- Call best-bets for each sport supported.
+- Verify: `stack_complete=true`, `_timed_out_components` empty, `errors` empty.
+- Ensure breakdown fields exist: ai/research/esoteric/jarvis + `context_modifier` + boosts.
+**Pass condition:** no critical timeouts on a normal run.
+
+### 4) Prove Option A is enforced in production
+**Goal:** confirm final score formula is Option A (context is modifier only).
+Inspect 1 prod pick and verify:
+- BASE_4 uses AI/Research/Esoteric/Jarvis only.
+- Context appears as bounded modifier (cap) with explicit reasons.
+- FINAL ~= BASE_4 + context_modifier + confluence_boost + jason_sim_boost (within rounding).
+**Pass condition:** hand-calc one pick and it matches response fields.
+
+### 5) Hard guard against context weighting regression
+**Goal:** CI fails if 5-engine weighting returns.
+- Add invariant test that fails if any of these appear in scoring paths:
+  - `BASE_5`
+  - `ENGINE_WEIGHTS["context"]`
+  - `context * weight` logic inside final score calc
+- Add CI drift scan (rg/grep) for forbidden tokens in scoring modules.
+**Pass condition:** PR cannot merge if context is reintroduced as a weighted engine.
+
+### 6) Diversity + concentration protection active in prod
+**Goal:** ensure diversity filters engage and prevent repeats.
+- Confirm telemetry counters exist and move when filter drops items:
+  - `diversity_player_limited`
+  - `diversity_game_limited`
+  - `diversity_total_dropped`
+**Pass condition:** filter engages when needed and never outputs duplicates beyond policy.
+
+### 7) Caching + TTL behavior under load
+**Goal:** avoid stale data and protect paid APIs.
+- Call same endpoint twice quickly:
+  - first call slower
+  - second call faster with cache metadata where applicable
+- Verify TTLs match intended policy (best-bets vs normal endpoints).
+**Pass condition:** caching matches design.
+
+### 8) Failure-mode smoke test
+**Goal:** graceful degradation with deterministic error codes.
+- In staging: disable one integration (revoke key or block network).
+- Ensure best-bets returns fail-soft (no 500) and debug endpoint shows fail-loud.
+**Pass condition:** no 500s, stable error codes, debug shows the exact failure.
+
+### 9) Codex tasks (patch + review only)
+1. Diff audit: confirm scoring formula is identical across:
+   - scoring contract / pipeline
+   - live router
+   - any legacy helpers
+2. Guardrails PR:
+   - CI drift scan for forbidden patterns (BASE_5 / context weighting)
+   - unit test that computes final_score and asserts Option A structure
+3. Production sanity script:
+   - calls best-bets for each sport
+   - calls debug integrations
+   - asserts: stack_complete true, no timeouts, no duplicates, no 500s
+
+**Shortest path (do first):**
+1) `/live/debug/integrations` all green + timestamps move
+2) best-bets has `_timed_out_components = []` and `stack_complete = true`
+3) manual recompute of one pick’s final_score matches formula
 
 ---
 
