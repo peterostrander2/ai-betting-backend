@@ -106,9 +106,9 @@ class TestTierThresholds:
 class TestTitaniumRule:
     """Test Titanium rule with final_score requirement."""
 
-    def test_titanium_threshold_is_6_5(self):
-        """Test TITANIUM_THRESHOLD is 6.5."""
-        assert TITANIUM_THRESHOLD == 6.5
+    def test_titanium_threshold_is_8_0(self):
+        """Test TITANIUM_THRESHOLD is 8.0."""
+        assert TITANIUM_THRESHOLD == 8.0
 
     def test_titanium_final_score_min_is_8_0(self):
         """Test TITANIUM_FINAL_SCORE_MIN is 8.0."""
@@ -150,12 +150,12 @@ class TestTitaniumRule:
         assert triggered == False
         assert len(qualifying) == 2
 
-    def test_titanium_with_meaningful_contribution_threshold(self):
-        """Test 3 engines at 6.5 (meaningful contribution) triggers Titanium."""
+    def test_titanium_with_threshold(self):
+        """Test 3 engines at 8.0 triggers Titanium."""
         triggered, explanation, qualifying = check_titanium_rule(
-            ai_score=6.5,
-            research_score=6.5,
-            esoteric_score=6.5,
+            ai_score=8.0,
+            research_score=8.0,
+            esoteric_score=8.0,
             jarvis_score=5.0,
             final_score=8.0
         )

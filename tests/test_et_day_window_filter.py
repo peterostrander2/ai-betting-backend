@@ -177,7 +177,7 @@ class TestAssertETBounds:
 
         assert result["valid"] is True
         assert len(result["errors"]) == 0
-        assert result["checks"]["start_is_0001"] is True
+        assert result["checks"]["start_is_midnight"] is True
         assert result["checks"]["end_is_midnight"] is True
         assert result["checks"]["spans_to_next_day"] is True
 
@@ -185,14 +185,14 @@ class TestAssertETBounds:
         """Start time not at 00:00:00 should fail validation"""
         from datetime import time
         day = now_et().date()
-        # Wrong start time: 00:00:00 instead of 00:00:00
-        bad_start = datetime.combine(day, time(0, 0, 0), tzinfo=ET)
+        # Wrong start time: 00:01:00 instead of 00:00:00
+        bad_start = datetime.combine(day, time(0, 1, 0), tzinfo=ET)
         end = datetime.combine(day + timedelta(days=1), time(0, 0, 0), tzinfo=ET)
 
         result = assert_et_bounds(bad_start, end)
 
         assert result["valid"] is False
-        assert result["checks"]["start_is_0001"] is False
+        assert result["checks"]["start_is_midnight"] is False
 
 
 class TestFilterEventsET:
@@ -440,8 +440,8 @@ class TestCanonicalBoundaryEdgeCases:
         today = start.date().isoformat()
 
         events = [
-            # EXCLUDE: Before canonical start
-            {"id": "too_early", "commence_time": start.replace(hour=0, minute=0, second=30).isoformat()},
+            # EXCLUDE: Before canonical start (previous day)
+            {"id": "too_early", "commence_time": (start - timedelta(seconds=30)).isoformat()},
             # INCLUDE: Exactly at canonical start
             {"id": "first_valid", "commence_time": start.isoformat()},
             # INCLUDE: Last valid second

@@ -20,6 +20,9 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
+# Skip if numpy isn't available in this environment
+pytest.importorskip("numpy")
+
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

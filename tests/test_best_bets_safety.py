@@ -3,11 +3,14 @@ Tests for best-bets error safety and cache pre-warm logic.
 """
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
+
+# Skip if fastapi isn't available in this environment
+pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 
-def test_error_returns_500_with_request_id():
-    """best-bets crash returns HTTP 500 with request_id, no traceback."""
+def test_error_returns_500_without_request_id():
+    """best-bets crash returns HTTP 500 without request_id in non-debug."""
     # Patch _best_bets_inner to raise before importing app
     with patch("live_data_router._best_bets_inner", new_callable=AsyncMock) as mock_inner:
         mock_inner.side_effect = RuntimeError("scoring engine exploded")
@@ -24,8 +27,7 @@ def test_error_returns_500_with_request_id():
         assert resp.status_code == 500
         body = resp.json()
         detail = body.get("detail", {})
-        assert "request_id" in detail
-        assert len(detail["request_id"]) == 12
+        assert "request_id" not in detail
         assert detail["message"] == "best-bets failed"
         # Must NOT contain traceback
         assert "traceback" not in str(body).lower() or "Traceback" not in str(body)

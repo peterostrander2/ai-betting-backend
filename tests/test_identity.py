@@ -10,6 +10,9 @@ Tests cover:
 """
 
 import pytest
+
+# Skip if pytest-asyncio isn't available in this environment
+pytest.importorskip("pytest_asyncio")
 import asyncio
 from identity.name_normalizer import (
     normalize_player_name,

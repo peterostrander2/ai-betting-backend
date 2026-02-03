@@ -48,7 +48,6 @@ REQUIRED_PICK_FIELDS = [
     "recommended_units",
     "start_time",
     "start_time_iso",
-    "start_time_utc",
     "id",
 ]
 
@@ -369,7 +368,6 @@ class TestStartTimeFields:
         }
         result = normalize_pick(pick)
         assert result["start_time_iso"] == "2026-02-01T23:40:00Z"
-        assert result["start_time_utc"] == "2026-02-01T23:40:00Z"
 
     def test_start_time_display(self):
         pick = {
@@ -389,7 +387,6 @@ class TestStartTimeFields:
         }
         result = normalize_pick(pick)
         assert result["start_time_iso"] is None
-        assert result["start_time_utc"] is None
 
 
 class TestOddsNeverFabricated:

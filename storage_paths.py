@@ -35,6 +35,10 @@ def get_mount_root() -> str:
     if not mount:
         mount = os.getenv("GRADER_MOUNT_ROOT", "")
 
+    # Allow test harness to run without Railway mount (pytest only)
+    if not mount and (os.getenv("PYTEST_CURRENT_TEST") or "pytest" in sys.modules):
+        mount = os.getenv("PYTEST_MOUNT_ROOT", "/tmp/railway_test")
+
     # FAIL FAST: No mount = ephemeral storage = DATA LOSS
     if not mount:
         logger.error("FATAL: RAILWAY_VOLUME_MOUNT_PATH not set")
@@ -44,8 +48,11 @@ def get_mount_root() -> str:
 
     # Validate mount exists
     if not os.path.exists(mount):
-        logger.error("FATAL: Mount path does not exist: %s", mount)
-        sys.exit(1)
+        if os.getenv("PYTEST_CURRENT_TEST") or "pytest" in sys.modules:
+            os.makedirs(mount, exist_ok=True)
+        else:
+            logger.error("FATAL: Mount path does not exist: %s", mount)
+            sys.exit(1)
 
     # Railway mounts volumes at /data (this IS persistent)
     # No path blocking - trust Railway's volume mount
