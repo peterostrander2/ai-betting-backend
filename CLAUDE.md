@@ -96,7 +96,7 @@ curl https://web-production-7b2a.up.railway.app/internal/storage/health
 **RULE:** ALL picks MUST be for games in today's ET window ONLY
 
 **CANONICAL ET SLATE WINDOW:**
-- Start: 00:01:00 ET (12:01 AM) - inclusive
+- Start: 00:00:00 ET (midnight) - inclusive
 - End: 00:00:00 ET next day (midnight) - exclusive
 - Interval: [start, end)
 
@@ -1134,11 +1134,11 @@ pick_result = persist_pick(pick_data)
 
 **Functions:**
 - `now_et()` - Get current time in ET
-- `et_day_bounds(date_str)` - Get ET day bounds [00:01:00 ET, 00:00:00 next day ET)
+- `et_day_bounds(date_str)` - Get ET day bounds [00:00:00 ET, 00:00:00 next day ET)
 - `is_in_et_day(event_time, date_str)` - Boolean check
 - `filter_events_et(events, date_str)` - Filter to ET day, returns (kept, dropped_window, dropped_missing)
 
-**CANONICAL WINDOW:** [00:01:00 ET, 00:00:00 ET next day) - half-open interval
+**CANONICAL WINDOW:** [00:00:00 ET, 00:00:00 ET next day) - half-open interval
 
 **Timezone:** America/New_York (explicit via zoneinfo)
 
@@ -1555,10 +1555,10 @@ GRADER_DATA_DIR=/data
 
 ### FIX 4: ET Today-Only Window (CANONICAL)
 
-**RULE**: Daily slate window is [00:01:00 ET, 00:00:00 ET next day) - half-open interval
+**RULE**: Daily slate window is [00:00:00 ET, 00:00:00 ET next day) - half-open interval
 
 **CANONICAL ET SLATE WINDOW:**
-- Start: 00:01:00 ET (12:01 AM) - inclusive
+- Start: 00:00:00 ET (midnight) - inclusive
 - End: 00:00:00 ET next day (midnight) - exclusive
 - Events at exactly 00:00:00 (midnight) belong to PREVIOUS day
 
@@ -1567,7 +1567,7 @@ GRADER_DATA_DIR=/data
 **Returns**:
 ```python
 (start_et, end_et, et_date)
-# start = 2026-01-28 00:01:00 ET  (12:01 AM)
+# start = 2026-01-28 00:00:00 ET  (midnight)
 # end = 2026-01-28 23:59:00 ET    (11:59 PM)
 # et_date = "2026-01-28"
 ```
@@ -1835,7 +1835,7 @@ BASE_URL=http://localhost:8000 ./scripts/smoke_test.sh
 
 ### Rules
 1. **Props AND game picks** must both pass through `filter_events_et()` before iteration
-2. The day boundary is **[00:01:00 ET, 00:00:00 ET next day)** — start at 12:01 AM, end exclusive
+2. The day boundary is **[00:00:00 ET, 00:00:00 ET next day)** — start at midnight, end exclusive
 3. `filter_events_et(events, date_str)` returns `(kept, dropped_window, dropped_missing)` — always log the drop counts
 4. `date_str` (YYYY-MM-DD) must be threaded through the full call chain: endpoint → `get_best_bets(date=)` → `_best_bets_inner(date_str=)` → `filter_events_et(events, date_str)`
 5. Debug output must include `dropped_out_of_window_props`, `dropped_out_of_window_games`, `dropped_missing_time_props`, `dropped_missing_time_games`
@@ -3783,6 +3783,64 @@ grep -n "game_bookmakers=" live_data_router.py | wc -l
 ```
 
 **Fixed in:** v17.6 (Feb 2026)
+
+### Lesson 26: Officials Tendency Integration Pattern (v17.8)
+**Problem:** Pillar 16 (Officials) had ESPN data source wired but always returned 0.0 adjustment because there was no interpretation layer - no data about what referee names MEAN for betting.
+
+**Root Cause:** ESPN provides referee names, but without tendency data, we couldn't calculate adjustments:
+```python
+# ESPN provided: {"lead_official": "Scott Foster", ...}
+# But OfficialsService returned: (0.0, [])
+# Because there was no tendency database
+```
+
+**Solution (v17.8):**
+1. Create `officials_data.py` with referee tendency database
+2. Add `get_officials_adjustment()` method to `OfficialsService`
+3. Wire tendency-based adjustments in `live_data_router.py`
+
+**Key Files:**
+```
+officials_data.py                   # Referee tendency database
+├── NBA_REFEREES (25 refs)          # Scott Foster, Tony Brothers, etc.
+├── NFL_REFEREES (17 crews)         # Carl Cheffers, Brad Allen, etc.
+├── NHL_REFEREES (15 refs)          # Wes McCauley, Chris Rooney, etc.
+├── get_referee_tendency()          # Lookup function
+└── calculate_officials_adjustment()# Adjustment calculation
+
+context_layer.py
+└── OfficialsService.get_officials_adjustment()  # Uses officials_data module
+
+live_data_router.py (lines 4055-4106)
+└── Pillar 16 section                # Wires tendency-based adjustments
+```
+
+**Adjustment Logic:**
+| Condition | Boost | Example |
+|-----------|-------|---------|
+| Over tendency > 52% + Over pick | +0.1 to +0.3 | Scott Foster (54%) |
+| Over tendency < 48% + Under pick | +0.1 to +0.3 | Marc Davis (47%) |
+| Home bias > 1.5% + Home pick | +0.1 to +0.2 | Kane Fitzgerald (+2%) |
+| Home bias < -1.5% + Away pick | +0.1 to +0.2 | Bill Kennedy (-2%) |
+
+**Invariant:** External data (names, IDs) is useless without an interpretation layer that converts it to betting-relevant signals. When adding a new data source, also add the lookup/tendency database.
+
+**Verification:**
+```bash
+# Check officials adjustments in picks
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[].research_reasons] | flatten | map(select(startswith("Officials")))'
+
+# Test officials_data module
+python3 -c "
+from officials_data import get_referee_tendency, calculate_officials_adjustment
+print('Scott Foster:', get_referee_tendency('NBA', 'Scott Foster'))
+adj, reason = calculate_officials_adjustment('NBA', 'Scott Foster', 'TOTAL', 'Over')
+print(f'Adjustment: {adj:+.2f} ({reason})')
+"
+```
+
+**Fixed in:** v17.8 (Feb 2026)
 
 ---
 

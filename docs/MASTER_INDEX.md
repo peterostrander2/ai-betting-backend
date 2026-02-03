@@ -110,7 +110,7 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 - `core/time_et.py`
 
 **Hard invariant (must remain true everywhere):**
-- **ET day bounds = [00:01:00 ET, 00:00:00 ET next day)** (start at 12:01 AM, end exclusive)
+- **ET day bounds = [00:00:00 ET, 00:00:00 ET next day)** (midnight start, end exclusive)
 - ET window must be applied **before** fetch + scoring (games AND props)
 
 **Docs that describe the invariant:**
@@ -220,12 +220,57 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 
 ---
 
+### I) Officials / Pillar 16 / Referee Tendency (v17.8)
+**Examples:** "officials adjustment always 0", "referee not found", "wrong tendency data".
+
+**Canonical sources (edit here only):**
+- `officials_data.py` - Referee tendency database (25 NBA, 17 NFL, 15 NHL refs)
+- `context_layer.py:OfficialsService.get_officials_adjustment()` - Adjustment calculation
+
+**Related files:**
+- `live_data_router.py` (lines 4055-4106) - Pillar 16 integration
+- `alt_data_sources/espn_lineups.py` - ESPN Hidden API for referee assignments
+
+**Hard invariants:**
+- Officials adjustments ONLY for NBA, NFL, NHL (not MLB, NCAAB)
+- Adjustment range: -0.5 to +0.5 on research_score
+- Over tendency > 52% boosts Over picks; < 48% boosts Under
+- Home bias > 1.5% boosts home team picks
+- ESPN assigns refs 1-3 hours before games (data may be unavailable earlier)
+
+**Verification:**
+```bash
+# Check officials adjustments in picks
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[].research_reasons] | flatten | map(select(startswith("Officials")))'
+
+# Test officials_data module
+python3 -c "from officials_data import get_database_stats; print(get_database_stats())"
+```
+
+**Tests:**
+- Test with known refs (Scott Foster, Carl Cheffers, Wes McCauley)
+- Test with unknown refs (should return 0.0, [])
+
+**Docs:**
+- `CLAUDE.md` (Invariant 16 - 17 Pillars)
+- `docs/LESSONS.md` (Lesson 8 - External Data Without Interpretation Layer)
+
+**Never do:**
+- Add officials adjustments for MLB/NCAAB (insufficient data)
+- Return adjustment without a reason string
+- Assume ESPN always has referee data (fails gracefully)
+- Hardcode referee names in live_data_router.py (use officials_data.py)
+
+---
+
 ## Canonical Sources of Truth — Quick Table
 
 | Topic | Canonical File(s) | What It Defines |
 |---|---|---|
 | Scoring contract | `core/scoring_contract.py` | Weights, thresholds, gates, boost levels (v17.1: 5-engine) |
-| Context layer | `context_layer.py` | DefensiveRank, Pace, Vacuum services (Pillars 13-15) |
+| Context layer | `context_layer.py` | DefensiveRank, Pace, Vacuum, Officials services (Pillars 13-16) |
+| **Officials data (v17.8)** | `officials_data.py` | Referee tendency database (25 NBA, 17 NFL, 15 NHL refs) |
 | ML integration | `ml_integration.py` | LSTM, Ensemble models with real context data |
 | Integrations mapping | `integration_registry.py` + `docs/AUDIT_MAP.md` | Env vars → modules/endpoints + validation |
 | ET window | `core/time_et.py` | ET bounds + timezone correctness |
@@ -272,6 +317,7 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 | Any session spec changes | `scripts/ci_sanity_check.sh` + spot check scripts | CI must fail on regression |
 | Pick output fields/format | `utils/pick_normalizer.py` + `docs/PICK_CONTRACT_V1.md` | Maintain frontend contract |
 | Pillar additions (13-17) | `context_layer.py`, `live_data_router.py`, docs | All 17 pillars must be documented |
+| Officials data (Pillar 16) | `officials_data.py`, `context_layer.py`, `live_data_router.py` | Referee tendency database + adjustment logic (v17.8) |
 | Public payload ET-only rules | `utils/public_payload_sanitizer.py` + `CLAUDE.md` | No UTC/telemetry leaks; ET display only |
 | Live caching headers | `main.py` middleware + `live_data_router.py` | Ensure no-store headers on GET/HEAD |
 
@@ -324,6 +370,7 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 
 - `docs/MASTER_INDEX.md` — this file (routing + policy)
 - `CLAUDE.md` — invariants + operational rules
+- `docs/LESSONS.md` — mistakes made and how to avoid repeating them
 - `SCORING_LOGIC.md` — scoring details + contract representation
 - `PROJECT_MAP.md` — file/module responsibilities
 - `COMMIT_CHECKLIST.md` — code+docs commit discipline
