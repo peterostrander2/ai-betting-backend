@@ -4040,6 +4040,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         phase8_boost = 0.0
         phase8_reasons = []
         phase8_error = None  # For debugging
+        phase8_full_result = None  # Full result for debugging
         try:
             from esoteric_engine import get_phase8_esoteric_signals
 
@@ -4087,6 +4088,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
             phase8_boost = phase8_result.get("phase8_boost", 0.0)
             phase8_reasons = phase8_result.get("reasons", [])
+            phase8_full_result = phase8_result  # Capture for debug
 
             if phase8_boost != 0.0:
                 esoteric_raw += phase8_boost
@@ -4877,6 +4879,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "phase8_boost": phase8_boost,
             "phase8_reasons": phase8_reasons,
             "phase8_error": phase8_error,
+            "phase8_debug": {
+                "pick_type_passed": pick_type,
+                "pick_side_passed": pick_side,
+                "full_result": phase8_full_result,
+            },
             # v17.4 SERP Intelligence
             "serp_intel": serp_intel,
             "serp_boost": serp_boost_total,
