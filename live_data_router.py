@@ -3643,8 +3643,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         # --- 2. GANN SQUARE (Games Only) ---
         # Sacred geometry: checks if spread/total hit resonant angles (45°, 90°, 180°, 360°)
+        # Note: pick_type is "SPREAD", "MONEYLINE", "TOTAL" for games, "PROP" for props
         gann_boost = 0.0
-        if pick_type == "GAME" and spread and total:
+        _is_game_pick = pick_type in ("GAME", "SPREAD", "MONEYLINE", "TOTAL", "SHARP")
+        if _is_game_pick and spread and total:
             try:
                 from esoteric_engine import analyze_spread_gann
                 _gann_result = analyze_spread_gann(abs(spread), total)
@@ -3674,8 +3676,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         # --- 3. FOUNDER'S ECHO (Games Only) ---
         # Team founding year gematria resonance with game date
+        # Note: pick_type is "SPREAD", "MONEYLINE", "TOTAL" for games, "PROP" for props
         founders_boost = 0.0
-        if pick_type == "GAME" and (home_team or away_team):
+        if _is_game_pick and (home_team or away_team):
             try:
                 from esoteric_engine import check_founders_echo
                 _founders_target_date = _game_date_obj if _game_date_obj else None
