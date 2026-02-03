@@ -862,3 +862,81 @@ def get_venue_for_weather(team: str, sport: str) -> Dict[str, Any]:
         "altitude_ft": venue.get("altitude_ft", 0),
         "roof_type": venue.get("roof_type", "UNKNOWN"),
     }
+
+
+# ============================================================================
+# SURFACE IMPACT FOR SCORING (v20.0 Phase 9)
+# ============================================================================
+
+def calculate_surface_impact_for_scoring(
+    sport: str,
+    home_team: str,
+    pick_type: str,
+    market: str = ""
+) -> Tuple[float, str]:
+    """
+    Calculate surface impact adjustment for scoring pipeline (v20.0 Phase 9).
+
+    Args:
+        sport: Sport code (NFL, MLB)
+        home_team: Home team name (for venue lookup)
+        pick_type: Pick type (PROP, SPREAD, TOTAL, etc.)
+        market: Market type for props (player_passing_yards, etc.)
+
+    Returns:
+        Tuple of (adjustment: float, reason: str)
+
+    Surface impacts:
+    - NFL TURF: Favors passing (+0.10 for pass props)
+    - NFL GRASS: Slightly favors rushing (+0.05 for rush props)
+    - MLB TURF: Ball travels faster, favors hits (+0.05)
+    - MLB GRASS: Standard conditions (no adjustment)
+    """
+    sport_upper = sport.upper() if sport else ""
+
+    # Only NFL and MLB have meaningful surface impacts
+    if sport_upper not in ("NFL", "MLB"):
+        return (0.0, "")
+
+    # Get venue info for home team
+    venue = get_venue_by_team(home_team, sport_upper)
+    if not venue:
+        return (0.0, "")
+
+    surface = venue.get("surface", "UNKNOWN").upper()
+    if surface == "UNKNOWN":
+        return (0.0, "")
+
+    market_lower = market.lower() if market else ""
+    pick_type_upper = pick_type.upper() if pick_type else ""
+
+    # NFL Surface Impact
+    if sport_upper == "NFL":
+        if surface == "TURF":
+            # Turf favors passing - ball travels faster, better footing
+            if pick_type_upper == "PROP":
+                if any(x in market_lower for x in ["passing", "reception", "receiving", "catch"]):
+                    return (0.10, f"Turf surface favors passing (+0.10)")
+                elif any(x in market_lower for x in ["rushing", "rush", "carries"]):
+                    return (-0.05, f"Turf surface less favorable for rushing (-0.05)")
+            # Game picks - turf slightly favors higher scoring
+            elif pick_type_upper in ("TOTAL", "SPREAD", "MONEYLINE", "GAME"):
+                return (0.05, f"Turf surface tends to increase scoring (+0.05)")
+        elif surface == "GRASS":
+            # Grass favors rushing slightly
+            if pick_type_upper == "PROP":
+                if any(x in market_lower for x in ["rushing", "rush", "carries"]):
+                    return (0.05, f"Grass surface slightly favors rushing (+0.05)")
+
+    # MLB Surface Impact
+    elif sport_upper == "MLB":
+        if surface == "TURF":
+            # Turf in MLB - ball bounces faster, more hits
+            if pick_type_upper == "PROP":
+                if any(x in market_lower for x in ["hits", "total_bases", "singles"]):
+                    return (0.08, f"Turf surface favors hits (+0.08)")
+            # Game totals - turf can increase scoring
+            elif pick_type_upper == "TOTAL":
+                return (0.05, f"Turf surface may increase scoring (+0.05)")
+
+    return (0.0, "")

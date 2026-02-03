@@ -2398,6 +2398,234 @@ class StadiumAltitudeService:
 
 
 # ============================================================
+# PLAYER MATCHUP SERVICE (v20.0 Phase 9)
+# ============================================================
+
+class PlayerMatchupService:
+    """
+    Prop market matchup scoring based on opponent defensive quality (v20.0 Phase 9).
+
+    Adjusts prop scores based on how well the opponent defends the player's position.
+    Uses DefensiveRankService data to calculate matchup advantage/disadvantage.
+
+    Adjustment Range: -0.15 to +0.15
+    """
+
+    # Thresholds for adjustment
+    TOP_DEFENSE_THRESHOLD = 5      # Top 5 = elite defense, penalize
+    BOTTOM_DEFENSE_THRESHOLD = 26  # Bottom 5 = weak defense, boost
+
+    # Adjustment magnitudes
+    FAVORABLE_BOOST = 0.15     # Facing weak defense
+    UNFAVORABLE_PENALTY = -0.15  # Facing elite defense
+    MODERATE_BOOST = 0.08      # Facing below-average defense
+    MODERATE_PENALTY = -0.08   # Facing above-average defense
+
+    @classmethod
+    def get_matchup_adjustment(
+        cls,
+        sport: str,
+        player_position: str,
+        opponent_team: str,
+        prop_type: str = ""
+    ) -> Tuple[float, str]:
+        """
+        Calculate prop score adjustment based on opponent defensive quality.
+
+        Args:
+            sport: Sport code (NBA, NFL, NHL, MLB, NCAAB)
+            player_position: Player position (guard, qb, center, etc.)
+            opponent_team: Team name the player is facing
+            prop_type: Type of prop (points, assists, passing_yards, etc.)
+
+        Returns:
+            Tuple of (adjustment: float, reason: str)
+            - Positive adjustment = favorable matchup (weak defense)
+            - Negative adjustment = unfavorable matchup (strong defense)
+        """
+        if not sport or not player_position or not opponent_team:
+            return (0.0, "")
+
+        # Get defensive rank from DefensiveRankService
+        rank = DefensiveRankService.get_rank(sport, opponent_team, player_position)
+        total_teams = DefensiveRankService.get_total_teams(sport)
+
+        # Default rank (15) means no data - no adjustment
+        if rank == 15 and total_teams == 30:
+            # Check if this is truly a middle rank or just default
+            rankings = DefensiveRankService.get_rankings_for_position(sport, player_position)
+            standardized = standardize_team(opponent_team, sport)
+            if standardized not in rankings:
+                return (0.0, "")
+
+        # Normalize bottom defense threshold based on league size
+        bottom_threshold = total_teams - 5  # Bottom 5 teams
+
+        # Calculate adjustment based on rank
+        if rank <= cls.TOP_DEFENSE_THRESHOLD:
+            # Elite defense - penalize the prop
+            return (
+                cls.UNFAVORABLE_PENALTY,
+                f"Matchup: vs #{rank} defense (tough)"
+            )
+        elif rank >= bottom_threshold:
+            # Weak defense - boost the prop
+            return (
+                cls.FAVORABLE_BOOST,
+                f"Matchup: vs #{rank} defense (favorable)"
+            )
+        elif rank <= 10:
+            # Above average defense - moderate penalty
+            return (
+                cls.MODERATE_PENALTY,
+                f"Matchup: vs #{rank} defense (solid)"
+            )
+        elif rank >= (total_teams - 10):
+            # Below average defense - moderate boost
+            return (
+                cls.MODERATE_BOOST,
+                f"Matchup: vs #{rank} defense (soft)"
+            )
+
+        # Middle of the pack - no significant adjustment
+        return (0.0, "")
+
+    @classmethod
+    def get_prop_type_position(cls, sport: str, prop_type: str) -> str:
+        """
+        Map prop type to player position for defensive ranking lookup.
+
+        Args:
+            sport: Sport code
+            prop_type: Prop market type (points, assists, passing_yards, etc.)
+
+        Returns:
+            Position string for DefensiveRankService lookup
+        """
+        sport_upper = sport.upper() if sport else ""
+        prop_lower = prop_type.lower() if prop_type else ""
+
+        # NBA prop type to position mapping
+        if sport_upper == "NBA":
+            if any(x in prop_lower for x in ("point", "pts")):
+                return "Guard"  # Guards typically score more
+            elif any(x in prop_lower for x in ("assist", "ast")):
+                return "Guard"
+            elif any(x in prop_lower for x in ("rebound", "reb")):
+                return "Big"
+            elif any(x in prop_lower for x in ("steal", "stl")):
+                return "Guard"
+            elif any(x in prop_lower for x in ("block", "blk")):
+                return "Big"
+            elif any(x in prop_lower for x in ("three", "3pt")):
+                return "Wing"
+
+        # NFL prop type to position mapping
+        elif sport_upper == "NFL":
+            if any(x in prop_lower for x in ("pass", "throw", "td pass")):
+                return "QB"
+            elif any(x in prop_lower for x in ("rush", "carry", "run")):
+                return "RB"
+            elif any(x in prop_lower for x in ("receiv", "catch", "target", "yard")):
+                if "wr" in prop_lower:
+                    return "WR"
+                elif "te" in prop_lower:
+                    return "TE"
+                return "WR"  # Default receiving to WR
+
+        # NHL prop type to position mapping
+        elif sport_upper == "NHL":
+            if any(x in prop_lower for x in ("goal", "point", "assist")):
+                return "Center"
+            elif any(x in prop_lower for x in ("shot", "sog")):
+                return "Winger"
+            elif any(x in prop_lower for x in ("save", "ga")):
+                return "Defenseman"  # Goalie props
+
+        # NCAAB - same as NBA
+        elif sport_upper == "NCAAB":
+            if any(x in prop_lower for x in ("point", "pts")):
+                return "Guard"
+            elif any(x in prop_lower for x in ("rebound", "reb")):
+                return "Big"
+            elif any(x in prop_lower for x in ("assist", "ast")):
+                return "Guard"
+
+        return ""  # Unknown mapping
+
+    @classmethod
+    def calculate_full_matchup(
+        cls,
+        sport: str,
+        player_position: str,
+        opponent_team: str,
+        prop_type: str,
+        player_name: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Calculate complete matchup analysis for a prop bet.
+
+        Returns full analysis including adjustment, rank details, and confidence.
+        """
+        result = {
+            "adjustment": 0.0,
+            "reason": "",
+            "rank": None,
+            "total_teams": None,
+            "matchup_quality": "NEUTRAL",
+            "confidence": "LOW",
+            "player_name": player_name,
+            "opponent_team": opponent_team
+        }
+
+        if not sport or not opponent_team:
+            return result
+
+        # Determine position from prop type if not provided
+        position = player_position
+        if not position and prop_type:
+            position = cls.get_prop_type_position(sport, prop_type)
+
+        if not position:
+            return result
+
+        # Get rank data
+        rank = DefensiveRankService.get_rank(sport, opponent_team, position)
+        total_teams = DefensiveRankService.get_total_teams(sport)
+
+        result["rank"] = rank
+        result["total_teams"] = total_teams
+
+        # Get adjustment
+        adjustment, reason = cls.get_matchup_adjustment(
+            sport, position, opponent_team, prop_type
+        )
+
+        result["adjustment"] = adjustment
+        result["reason"] = reason
+
+        # Categorize matchup quality
+        bottom_threshold = total_teams - 5
+        if rank <= cls.TOP_DEFENSE_THRESHOLD:
+            result["matchup_quality"] = "TOUGH"
+            result["confidence"] = "HIGH"
+        elif rank >= bottom_threshold:
+            result["matchup_quality"] = "FAVORABLE"
+            result["confidence"] = "HIGH"
+        elif rank <= 10:
+            result["matchup_quality"] = "SOLID"
+            result["confidence"] = "MEDIUM"
+        elif rank >= (total_teams - 10):
+            result["matchup_quality"] = "SOFT"
+            result["confidence"] = "MEDIUM"
+        else:
+            result["matchup_quality"] = "NEUTRAL"
+            result["confidence"] = "LOW"
+
+        return result
+
+
+# ============================================================
 # QUICK TEST
 # ============================================================
 

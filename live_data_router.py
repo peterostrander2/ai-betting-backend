@@ -4102,6 +4102,133 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         except Exception as e:
             logger.warning("Phase 8 signals calculation failed: %s", e)
 
+        # ===== WEATHER IMPACT (v20.0 Phase 9) =====
+        # Weather only affects outdoor sports (NFL, MLB, NCAAF)
+        # Indoor sports (NBA, NHL, NCAAB) and dome stadiums are skipped
+        weather_adj = 0.0
+        weather_reasons = []
+        _is_game_pick = pick_type in ("GAME", "SPREAD", "MONEYLINE", "TOTAL", "SHARP")
+        if _is_game_pick and sport_upper in ("NFL", "MLB", "NCAAF"):
+            try:
+                from alt_data_sources.weather import get_weather_context_sync
+                # Get venue from candidate if available
+                _weather_venue = candidate.get("venue", "") if isinstance(candidate, dict) else ""
+                weather_ctx = get_weather_context_sync(sport_upper, home_team, _weather_venue)
+                if weather_ctx.get("status") == "VALIDATED":
+                    weather_adj = weather_ctx.get("score_modifier", 0.0)
+                    if weather_adj != 0.0:
+                        _weather_raw = weather_ctx.get("raw", {})
+                        _temp = _weather_raw.get("temp_f", "?")
+                        _wind = _weather_raw.get("wind_mph", "?")
+                        _precip = _weather_raw.get("precip_in", 0)
+                        weather_reasons.append(f"Weather: {weather_adj:+.2f} ({_temp}°F, {_wind}mph wind)")
+                        if _precip > 0.1:
+                            weather_reasons.append(f"Precipitation: {_precip}in")
+                        research_reasons.extend(weather_reasons)
+                        # Apply weather penalty to research score (weather only penalizes, max -0.35)
+                        research_score = max(0.0, min(10.0, research_score + weather_adj))
+                        logger.debug("WEATHER[%s @ %s]: temp=%.1f, wind=%.1f, precip=%.2f, adj=%.2f",
+                                    away_team or "?", home_team or "?", _temp if isinstance(_temp, float) else 0,
+                                    _wind if isinstance(_wind, float) else 0, _precip, weather_adj)
+                elif weather_ctx.get("status") == "NOT_RELEVANT":
+                    logger.debug("WEATHER[%s]: %s", home_team or "?", weather_ctx.get("reason", "skipped"))
+            except Exception as e:
+                logger.debug("Weather adjustment failed: %s", e)
+
+        # ===== SURFACE IMPACT (v20.0 Phase 9) =====
+        # Surface type (grass vs turf) affects performance for NFL/MLB
+        surface_adj = 0.0
+        surface_reason = ""
+        if _is_game_pick and sport_upper in ("NFL", "MLB"):
+            try:
+                from alt_data_sources.stadium import calculate_surface_impact_for_scoring
+                _market_type = candidate.get("market", "") if isinstance(candidate, dict) else ""
+                surface_adj, surface_reason = calculate_surface_impact_for_scoring(
+                    sport=sport_upper,
+                    home_team=home_team,
+                    pick_type=pick_type,
+                    market=_market_type
+                )
+                if surface_adj != 0.0 and surface_reason:
+                    esoteric_reasons.append(surface_reason)
+                    esoteric_raw += surface_adj
+                    logger.debug("SURFACE[%s]: %s, adj=%.2f", home_team or "?", surface_reason, surface_adj)
+            except ImportError:
+                logger.debug("Surface impact module not available")
+            except Exception as e:
+                logger.debug("Surface impact failed: %s", e)
+
+        # ===== PLAYER MATCHUP SCORING (v20.0 Phase 9) =====
+        # For props: adjust based on opponent defensive quality vs player position
+        matchup_adj = 0.0
+        matchup_reason = ""
+        if pick_type == "PROP" and player_name and away_team:
+            try:
+                from context_layer import PlayerMatchupService
+                # Determine position from prop type
+                _prop_market = candidate.get("market", "") if isinstance(candidate, dict) else ""
+                _player_pos = PlayerMatchupService.get_prop_type_position(sport_upper, _prop_market)
+                if _player_pos:
+                    matchup_adj, matchup_reason = PlayerMatchupService.get_matchup_adjustment(
+                        sport=sport_upper,
+                        player_position=_player_pos,
+                        opponent_team=away_team,  # Player's opponent
+                        prop_type=_prop_market
+                    )
+                    if matchup_adj != 0.0 and matchup_reason:
+                        context_reasons.append(matchup_reason)
+                        # Apply to context score (affects overall via context engine weight)
+                        context_score = max(0.0, min(10.0, context_score + matchup_adj))
+                        logger.debug("MATCHUP[%s vs %s]: pos=%s, adj=%.2f", player_name, away_team, _player_pos, matchup_adj)
+            except ImportError:
+                logger.debug("PlayerMatchupService not available")
+            except Exception as e:
+                logger.debug("Matchup scoring failed: %s", e)
+
+        # ===== LIVE IN-GAME SIGNALS (v20.0 Phase 9) =====
+        # Only applies to LIVE games - score momentum and line movement detection
+        live_boost = 0.0
+        live_reasons = []
+        _game_status = candidate.get("game_status", "") if isinstance(candidate, dict) else ""
+        if _game_status == "LIVE" and _is_game_pick:
+            try:
+                from alt_data_sources.live_signals import (
+                    get_combined_live_signals, is_live_signals_enabled
+                )
+                if is_live_signals_enabled():
+                    _home_score = candidate.get("home_score", 0) if isinstance(candidate, dict) else 0
+                    _away_score = candidate.get("away_score", 0) if isinstance(candidate, dict) else 0
+                    _period = candidate.get("period", 1) if isinstance(candidate, dict) else 1
+                    _current_line = candidate.get("line", 0) if isinstance(candidate, dict) else 0
+                    _event_id = candidate.get("event_id", "") if isinstance(candidate, dict) else ""
+                    _is_home_pick = pick_side and home_team and pick_side.lower() in home_team.lower()
+
+                    live_signals = get_combined_live_signals(
+                        event_id=_event_id,
+                        home_score=_home_score,
+                        away_score=_away_score,
+                        period=_period,
+                        sport=sport_upper,
+                        pick_side=pick_side or "",
+                        is_home_pick=_is_home_pick,
+                        current_line=_current_line,
+                        db_session=None  # Would need db session for line history
+                    )
+
+                    if live_signals.get("available"):
+                        live_boost = live_signals.get("total_boost", 0.0)
+                        live_reasons = live_signals.get("reasons", [])
+                        if live_boost != 0.0:
+                            research_reasons.extend(live_reasons)
+                            # Apply live boost to research score (capped at ±0.50)
+                            research_score = max(0.0, min(10.0, research_score + live_boost))
+                            logger.info("LIVE_SIGNALS[%s]: boost=%.2f, signals=%s",
+                                       _event_id[:8] if _event_id else "?", live_boost, live_signals.get("signals", []))
+            except ImportError:
+                logger.debug("Live signals module not available")
+            except Exception as e:
+                logger.debug("Live signals failed: %s", e)
+
         # Clamp to 0-10
         esoteric_score = max(0, min(10, esoteric_raw))
         logger.debug("Esoteric[%s]: mag=%.1f num=%.2f astro=%.2f fib=%.2f vortex=%.2f daily=%.2f trap=%.2f → raw=%.2f",
