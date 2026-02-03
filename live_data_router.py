@@ -6823,6 +6823,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "status": games_status,
             "picks": top_game_picks
         },
+        "meta": {},  # FIX: Required by best-bets response contract
         "esoteric": {
             "daily_energy": daily_energy,
             "astro_status": astro_status,
