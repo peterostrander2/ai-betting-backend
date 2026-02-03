@@ -4403,3 +4403,39 @@ grep -n "function_name" live_data_router.py
 - Line: XXXX
 - How it affects score: [describe]
 ```
+
+---
+
+## 🧠 DAILY LEARNING LOOP (AUTOGRADER → LESSON)
+
+**Invariant:** The system must grade picks daily at **6:00 AM ET**, adjust weights/retrain when thresholds are hit, and write a **daily lesson** for the community dashboard.
+
+### What runs automatically
+- **Daily audit job (6 AM ET):** grades, audits bias, adjusts weights, triggers retrain.
+- **Daily lesson writer:** generates a short lesson summary from audit results.
+
+### Files + outputs (source of truth)
+- Scheduler + audit flow: `daily_scheduler.py`
+- Audit logs: `/data/grader_data/audit_logs/audit_YYYY-MM-DD.json`
+- Daily lesson (single day): `/data/grader_data/audit_logs/lesson_YYYY-MM-DD.json`
+- Daily lessons log (append-only): `/data/grader_data/audit_logs/lessons.jsonl`
+
+### API endpoint
+- `GET /live/grader/daily-lesson`
+- `GET /live/grader/daily-lesson/latest`
+- `GET /live/grader/daily-lesson?days_back=1`
+
+### Verification (post-deploy gate)
+```bash
+# Verify scheduler + audit readiness
+API_BASE=https://web-production-7b2a.up.railway.app \
+API_KEY=YOUR_KEY \
+bash scripts/verify_autograder_e2e.sh --mode pre
+
+# Check today’s lesson (may 404 before 6AM ET)
+curl -s "$API_BASE/live/grader/daily-lesson" -H "X-API-Key: $API_KEY"
+```
+
+### Failure policy
+- If lesson file missing before 6 AM ET: return **404** (expected).
+- After 6 AM ET: lesson should exist for the day.

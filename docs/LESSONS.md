@@ -443,6 +443,22 @@ bash scripts/daily_sanity_report.sh
 
 ---
 
+## 13. Daily Lesson Must Be Written
+
+### The Mistake
+Autograder ran daily but did not guarantee a human-facing learning summary.
+
+### The Fix
+Write a daily lesson at 6 AM ET (after audit):
+- `/data/grader_data/audit_logs/lesson_YYYY-MM-DD.json`
+- `/data/grader_data/audit_logs/lessons.jsonl`
+- Endpoint: `GET /live/grader/daily-lesson`
+
+### Rule
+> **INVARIANT**: Every automated learning step must produce a daily lesson artifact and expose it via a member-safe endpoint.
+
+---
+
 ## Adding New Lessons
 
 When you encounter a bug or issue, add it here:

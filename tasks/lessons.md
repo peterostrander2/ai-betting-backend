@@ -198,6 +198,25 @@ curl -s "https://web-production-7b2a.up.railway.app/health" | jq '.deploy_versio
 
 ---
 
+### 5. Daily Learning Loop Must Produce a Lesson (Feb 2026)
+
+**What happened:**
+- Autograder was running daily, but there was no guaranteed “learning summary” persisted for the community UI.
+
+**Impact:** The system learned internally, but the community couldn’t see daily progress.
+
+**Fix:**
+- Added a daily lesson writer triggered by the 6 AM ET audit job.
+- Persisted lessons to `/data/grader_data/audit_logs/lesson_YYYY-MM-DD.json` and `lessons.jsonl`.
+- Added API endpoint: `GET /live/grader/daily-lesson`.
+
+**Lesson:**
+- The learning loop is only complete if it **produces a human-facing artifact** every day.
+
+**Rule:** Every automated learning step must write a daily summary to persistent storage and expose it via a member-safe endpoint.
+
+---
+
 ## Template: Adding New Lessons
 
 ```markdown

@@ -411,6 +411,16 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 
 ---
 
+## Daily Learning Loop
+
+- **Autograder audit (6 AM ET)** writes:
+  - `/data/grader_data/audit_logs/audit_YYYY-MM-DD.json`
+  - `/data/grader_data/audit_logs/lesson_YYYY-MM-DD.json`
+  - `/data/grader_data/audit_logs/lessons.jsonl`
+- **Lesson endpoint** (member UI): `GET /live/grader/daily-lesson`
+
+---
+
 ## Golden Command Sequence
 
 Before any push:
