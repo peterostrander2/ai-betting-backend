@@ -31,6 +31,7 @@ from collections import defaultdict
 from datetime import datetime
 import database
 from daily_scheduler import scheduler_router, init_scheduler, get_scheduler
+from trap_router import trap_router
 from auto_grader import get_grader
 from data_dir import ensure_dirs, DATA_DIR
 from metrics import get_metrics_response, get_metrics_status, PROMETHEUS_AVAILABLE
@@ -139,6 +140,7 @@ def alert_status():
 # Include routers
 app.include_router(live_router)
 app.include_router(scheduler_router)
+app.include_router(trap_router)  # v19.0: Trap Learning Loop
 
 # Root endpoint
 @app.get("/")

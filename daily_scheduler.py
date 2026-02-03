@@ -615,6 +615,18 @@ class DailyScheduler:
         except ImportError:
             logger.warning("Database not available - line history capture disabled")
 
+        # v19.0: Post-game trap evaluation (daily at 6:15 AM ET, after grading)
+        try:
+            self.scheduler.add_job(
+                self._run_trap_evaluation,
+                CronTrigger(hour=6, minute=15, timezone="America/New_York"),
+                id="trap_evaluation",
+                name="Post-Game Trap Evaluation"
+            )
+            logger.info("Trap evaluation enabled: runs daily at 6:15 AM ET (after grading)")
+        except Exception as e:
+            logger.warning("Failed to schedule trap evaluation: %s", e)
+
         self.scheduler.start()
         logger.info("APScheduler started with daily audit at 6 AM")
 
@@ -1032,6 +1044,196 @@ class DailyScheduler:
             logger.warning("Officials tracker not available: %s", e)
         except Exception as e:
             logger.error("Officials tendency update failed: %s", e)
+
+    def _run_trap_evaluation(self):
+        """
+        v19.0: Post-game trap evaluation.
+
+        Evaluates pre-game traps against yesterday's game results.
+        Runs daily at 6:15 AM ET (after grading completes at 6 AM).
+        Applies weight adjustments when trap conditions are met.
+        """
+        logger.info("🪤 Starting post-game trap evaluation...")
+        try:
+            from trap_learning_loop import get_trap_loop, enrich_game_result
+
+            trap_loop = get_trap_loop()
+            active_traps = trap_loop.get_active_traps()
+
+            if not active_traps:
+                logger.info("🪤 No active traps to evaluate")
+                return
+
+            # Get yesterday's game results
+            yesterday_results = self._fetch_yesterday_results()
+
+            if not yesterday_results:
+                logger.warning("🪤 No game results available for trap evaluation")
+                return
+
+            total_evaluations = 0
+            triggered = 0
+            applied = 0
+
+            for trap in active_traps:
+                # Get games for this trap's sport
+                sport_results = yesterday_results.get(trap.sport, [])
+                if trap.sport == "ALL":
+                    # Combine all sports
+                    sport_results = []
+                    for games in yesterday_results.values():
+                        sport_results.extend(games)
+
+                for game in sport_results:
+                    # Skip if trap is team-specific and team not in game
+                    if trap.team:
+                        game_teams = [game.get("home_team", ""), game.get("away_team", "")]
+                        if trap.team not in game_teams:
+                            continue
+
+                    # Enrich game result with calculated fields
+                    enriched_game = enrich_game_result(game)
+
+                    # Evaluate trap
+                    evaluation = trap_loop.evaluate_trap(trap, enriched_game)
+                    total_evaluations += 1
+
+                    if evaluation.condition_met:
+                        triggered += 1
+                        if evaluation.action_taken == "APPLIED":
+                            applied += 1
+                            logger.info("🪤 TRAP FIRED: %s | %s vs %s | adjustment=%s",
+                                       trap.name,
+                                       game.get("away_team", "?"),
+                                       game.get("home_team", "?"),
+                                       evaluation.adjustment_applied)
+
+            logger.info("🪤 Trap evaluation complete: %d evaluations, %d triggered, %d adjustments applied",
+                       total_evaluations, triggered, applied)
+
+        except ImportError as e:
+            logger.warning("Trap learning loop not available: %s", e)
+        except Exception as e:
+            logger.error("Trap evaluation failed: %s", e)
+
+    def _fetch_yesterday_results(self) -> dict:
+        """
+        Fetch yesterday's game results for trap evaluation.
+
+        Returns dict mapping sport -> list of game results.
+        Each game result contains: home_team, away_team, home_score, away_score,
+        result, margin, spread_result, over_under_result, etc.
+        """
+        from datetime import datetime, timedelta
+        from core.time_et import now_et
+
+        yesterday = (now_et() - timedelta(days=1)).strftime("%Y-%m-%d")
+        results = {}
+
+        try:
+            # Try to get results from graded predictions
+            from grader_store import load_predictions
+
+            predictions = load_predictions(date_et=yesterday)
+
+            # Group by sport and extract game-level results
+            for pred in predictions:
+                sport = pred.get("sport", "").upper()
+                if sport not in results:
+                    results[sport] = []
+
+                # Build game result from graded prediction
+                game_result = {
+                    "event_id": pred.get("event_id"),
+                    "game_date": yesterday,
+                    "home_team": pred.get("home_team"),
+                    "away_team": pred.get("away_team"),
+                    "sport": sport,
+                    # From grading
+                    "result": pred.get("result"),  # WIN/LOSS
+                    "actual_value": pred.get("actual_value"),
+                    # Engine scores at bet time
+                    "ai_score_was": pred.get("ai_score"),
+                    "research_score_was": pred.get("research_score"),
+                    "esoteric_score_was": pred.get("esoteric_score"),
+                    "jarvis_score_was": pred.get("jarvis_score"),
+                    "final_score_was": pred.get("final_score"),
+                }
+
+                # Dedupe by event_id
+                existing_ids = [g.get("event_id") for g in results[sport]]
+                if game_result["event_id"] not in existing_ids:
+                    results[sport].append(game_result)
+
+        except Exception as e:
+            logger.warning("Could not load predictions for trap evaluation: %s", e)
+
+        # Try to get actual scores from ESPN/BallDontLie
+        try:
+            from alt_data_sources.espn_lineups import get_espn_scoreboard, SPORT_MAPPING
+
+            for sport, mapping in SPORT_MAPPING.items():
+                try:
+                    scoreboard = get_espn_scoreboard(mapping["sport"], mapping["league"])
+                    events = scoreboard.get("events", [])
+
+                    for event in events:
+                        # Check if game is final
+                        status = event.get("status", {}).get("type", {}).get("state", "")
+                        if status != "post":
+                            continue
+
+                        competition = event.get("competitions", [{}])[0]
+                        competitors = competition.get("competitors", [])
+
+                        if len(competitors) < 2:
+                            continue
+
+                        home = next((c for c in competitors if c.get("homeAway") == "home"), {})
+                        away = next((c for c in competitors if c.get("homeAway") == "away"), {})
+
+                        home_score = int(home.get("score", 0))
+                        away_score = int(away.get("score", 0))
+                        home_team = home.get("team", {}).get("displayName", "")
+                        away_team = away.get("team", {}).get("displayName", "")
+
+                        game_result = {
+                            "event_id": event.get("id"),
+                            "game_date": yesterday,
+                            "home_team": home_team,
+                            "away_team": away_team,
+                            "home_score": home_score,
+                            "away_score": away_score,
+                            "total_points": home_score + away_score,
+                            "sport": sport,
+                        }
+
+                        # Calculate result and margin
+                        if home_score > away_score:
+                            game_result["result"] = "win"  # Home win
+                            game_result["margin"] = home_score - away_score
+                        elif away_score > home_score:
+                            game_result["result"] = "loss"  # Home loss
+                            game_result["margin"] = away_score - home_score
+                        else:
+                            game_result["result"] = "push"
+                            game_result["margin"] = 0
+
+                        if sport not in results:
+                            results[sport] = []
+
+                        # Dedupe
+                        existing_ids = [g.get("event_id") for g in results[sport]]
+                        if game_result["event_id"] not in existing_ids:
+                            results[sport].append(game_result)
+
+                except Exception as e:
+                    logger.debug("Could not get ESPN results for %s: %s", sport, e)
+
+        except ImportError:
+            logger.debug("ESPN integration not available for trap evaluation")
+
+        return results
 
     def _start_simple_scheduler(self):
         """Fallback simple scheduler using threading."""
