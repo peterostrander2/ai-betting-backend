@@ -48,3 +48,6 @@ pytz>=2023.3
 ephem>=4.1.0
 
 apscheduler>=3.10.0
+
+# Real-time streaming (v20.0 Phase 9)
+sse-starlette>=1.6.5
