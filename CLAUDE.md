@@ -2732,9 +2732,9 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.noaa, .serpapi'
 
 ---
 
-### INVARIANT 16: 17-Pillar Scoring System (v17.8 - ALL PILLARS ACTIVE)
+### INVARIANT 16: 18-Pillar Scoring System (v20.0 - ALL PILLARS ACTIVE)
 
-**RULE:** All 17 pillars must contribute to scoring. No pillar may be orphaned.
+**RULE:** All 18 pillars must contribute to scoring. No pillar may be orphaned.
 
 **Pillar Map:**
 | # | Pillar | Engine | Weight | Implementation | Status |
@@ -2749,8 +2749,9 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.noaa, .serpapi'
 | 15 | Usage Vacuum | Context | 20% | `UsageVacuumService` + injuries | ✅ Real values |
 | 16 | Officials | Research | Adjustment | `OfficialsService` + `officials_data.py` | ✅ ACTIVE (v17.8) |
 | 17 | Park Factors | Esoteric | MLB only | `ParkFactorService` | ✅ |
+| 18 | Live Context | Multiple | Adjustment | `alt_data_sources/live_signals.py` | ✅ ACTIVE (v20.0) |
 
-**v17.8 Completion Status (Feb 2026):**
+**v20.0 Completion Status (Feb 2026):**
 - ✅ **Pillars 13-15 now use REAL DATA** (not hardcoded defaults)
 - ✅ **Injuries fetched in parallel** with props and game odds
 - ✅ **Context calculation runs for ALL pick types** (PROP, GAME, SHARP)
@@ -2759,6 +2760,11 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.noaa, .serpapi'
   - 17 NFL referee crews with flag_rate, over_tendency
   - 15 NHL referees with penalty_rate, over_tendency
   - Adjustment range: -0.5 to +0.5 on research score
+- ✅ **Pillar 18 (Live Context)** - ACTIVE with score momentum + line movement (v20.0)
+  - Score momentum: Blowout/comeback detection (±0.25)
+  - Live line movement: Sharp action detection (±0.30)
+  - Combined cap: ±0.50
+  - Only applies when game_status == "LIVE"
 
 **Data Flow (v17.8):**
 ```
@@ -6953,6 +6959,72 @@ curl -s "/live/grader/daily-lesson/latest" -H "X-API-Key: KEY" | \
 | `factor_bias` | 5+ categories | Empty or null |
 | `weight_adjustments` | Non-null with deltas | null |
 | `applied` | true | false or missing |
+
+## 🚫 NEVER DO THESE (v20.0 - Phase 9 Full Spectrum)
+
+98. **NEVER** add weather boost to indoor sports (NBA, NHL, NCAAB) - weather only for NFL, MLB, NCAAF
+99. **NEVER** apply live signals to pre-game picks - only when game_status == "LIVE" or "MISSED_START"
+100. **NEVER** exceed -0.35 for weather modifier - capped in weather.py module
+101. **NEVER** exceed ±0.50 for combined live signals - MAX_COMBINED_LIVE_BOOST enforced
+102. **NEVER** make SSE/WebSocket calls synchronous - blocks event loop, use async
+103. **NEVER** skip dome detection for NFL weather - indoor stadiums return NOT_RELEVANT
+104. **NEVER** apply surface impact to indoor sports - only NFL/MLB outdoor venues
+105. **NEVER** break existing altitude integration (live_data_router.py ~line 4026-4037)
+106. **NEVER** use SSE polling intervals < 15 seconds - API quota protection
+107. **NEVER** stream full pick objects over SSE - bandwidth; use slim_pick format
+108. **NEVER** flip TRAVEL_ENABLED without explicit user approval
+109. **NEVER** add new pillars without updating CLAUDE.md pillar table and docs/MASTER_INDEX.md
+
+---
+
+## ✅ VERIFICATION CHECKLIST (v20.0 - Phase 9 Full Spectrum)
+
+Run these after ANY change to Phase 9 features (streaming, live signals, weather, travel):
+
+```bash
+# 1. Syntax check Phase 9 modules
+python -m py_compile streaming_router.py alt_data_sources/live_signals.py alt_data_sources/weather.py alt_data_sources/travel.py
+
+# 2. Verify streaming status
+curl /live/stream/status -H "X-API-Key: KEY"
+# When enabled: status: "ACTIVE", sse_available: true
+
+# 3. Check live signals in debug output (during live games)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[] | select(.game_status == "LIVE") | {live_boost, live_reasons}]'
+
+# 4. Check weather adjustments (NFL/MLB only)
+curl /live/best-bets/NFL?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {weather_adj, research_reasons}'
+# Should show weather adjustment for outdoor games (NOT dome games)
+
+# 5. Check travel adjustments
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0].context_reasons | map(select(contains("Travel")))'
+# Should show "Travel: XXXXmi + X-day rest" when applicable
+
+# 6. Test SSE stream (requires enabled flag)
+curl -N /live/stream/games/NBA -H "X-API-Key: KEY" | head -20
+# Should return SSE events if streaming enabled
+
+# 7. Test all sports for Phase 9 integration
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  curl -s "/live/best-bets/$sport?debug=1" -H "X-API-Key: KEY" | \
+    jq '{sport, games: .game_picks.count, props: .props.count, error: .detail}'
+done
+
+# 8. Verify feature flags
+curl /live/stream/status -H "X-API-Key: KEY" | jq '{streaming: .enabled, sse: .sse_available}'
+```
+
+**Critical Invariants (ALWAYS verify these):**
+- Weather ONLY for outdoor sports (NFL, MLB, NCAAF)
+- Live signals ONLY for game_status == "LIVE" or "MISSED_START"
+- Weather cap: -0.35 max
+- Live signals cap: ±0.50 combined
+- SSE minimum interval: 15 seconds
+- All 5 sports must pass regression test
 
 ---
 

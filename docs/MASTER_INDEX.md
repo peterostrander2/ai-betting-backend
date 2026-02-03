@@ -532,6 +532,82 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 
 ---
 
+### K) Phase 9 Full Spectrum / Streaming / Live Signals / Weather / Travel (v20.0)
+**Examples:** "streaming not working", "live signals not triggering", "weather adjustment missing", "travel fatigue not applied".
+
+**Canonical sources (edit here only):**
+- `streaming_router.py` - SSE endpoints for real-time data streaming
+- `alt_data_sources/live_signals.py` - Score momentum and line movement detection
+- `alt_data_sources/weather.py` - Weather integration for outdoor sports
+- `alt_data_sources/travel.py` - Travel fatigue calculations
+
+**Related files:**
+- `live_data_router.py` (lines 4180-4220) - Live signals integration into scoring
+- `main.py` - Streaming router registration
+
+**Hard invariants:**
+- Streaming requires `PHASE9_STREAMING_ENABLED=true` env var
+- Live signals require `PHASE9_LIVE_SIGNALS_ENABLED=true` env var
+- Weather applies ONLY to outdoor sports (NFL, MLB, NCAAF) - NOT NBA, NHL, NCAAB
+- Weather adjustments capped at -0.35 (never positive)
+- Live signals combined boost capped at ±0.50
+- SSE refresh intervals: minimum 15s, maximum 120s, default 30s
+- Polling fallback endpoints available for clients without SSE support
+
+**Pillar 18: Live Context (v20.0):**
+| Signal | Engine | Boost Range | Condition |
+|--------|--------|-------------|-----------|
+| Score momentum | Context | ±0.25 | game_status == LIVE |
+| Live line movement | Research | ±0.30 | 1.5+ point move |
+| Period pace trend | Esoteric | ±0.20 | Scoring variance |
+
+**Streaming Endpoints:**
+- `GET /live/stream/status` - Check if streaming is enabled/available
+- `GET /live/stream/games/{sport}` - SSE stream of live game updates
+- `GET /live/stream/lines/{sport}` - SSE stream of line movements
+- `GET /live/stream/picks/{sport}` - SSE stream of high-confidence picks
+- `GET /live/stream/poll/games/{sport}` - Polling fallback for live games
+- `GET /live/stream/poll/lines/{sport}` - Polling fallback for line movements
+
+**Verification:**
+```bash
+# Check streaming status
+curl /live/stream/status -H "X-API-Key: KEY"
+# Should show: status: "ACTIVE" when enabled
+
+# Check live signals in debug output
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[] | select(.game_status == "LIVE") | {live_boost, live_reasons}]'
+
+# Check weather adjustments (NFL/MLB only)
+curl /live/best-bets/NFL?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {weather_adj, research_reasons}'
+
+# Check travel adjustments
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0].context_reasons | map(select(contains("Travel")))'
+```
+
+**Feature Flags:**
+- `PHASE9_STREAMING_ENABLED` - Enable real-time streaming (default: false)
+- `PHASE9_LIVE_SIGNALS_ENABLED` - Enable live in-game signals (default: false)
+- `TRAVEL_ENABLED` - Enable travel/fatigue adjustments (default: true)
+- `PHASE9_WEATHER_ENABLED` - Weather integration (default: true)
+
+**Never do:**
+- Apply weather boost to indoor sports (NBA, NHL, NCAAB)
+- Apply live signals to pre-game picks (game_status != "LIVE")
+- Exceed weather modifier cap of -0.35
+- Exceed live signals combined cap of ±0.50
+- Use SSE polling intervals < 15 seconds (API quota)
+- Stream full pick objects over SSE (bandwidth)
+- Skip dome detection for NFL weather
+
+**Docs:**
+- `CLAUDE.md` (Pillar 18: Live Context, NEVER DO THESE rules 98-109)
+
+---
+
 ## Golden Command Sequence
 
 Before any push:
