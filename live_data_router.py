@@ -3342,6 +3342,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         pillars_failed = []
         ai_reasons = []
         lstm_metadata = None
+        weather_data = None
 
         # --- AI SCORE (Dynamic Model - 0-8 scale) ---
         # v16.1: Use LSTM for props if available, otherwise fallback to heuristics
