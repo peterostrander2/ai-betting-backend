@@ -4095,10 +4095,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 logger.debug("Phase8[%s]: boost=%.2f, signals=%s",
                             game_str[:30], phase8_boost, phase8_result.get("triggered_signals", []))
 
-        except ImportError:
-            logger.debug("Phase 8 signals module not available")
+        except ImportError as ie:
+            logger.warning("Phase 8 signals module not available: %s", ie)
         except Exception as e:
-            logger.debug("Phase 8 signals calculation failed: %s", e)
+            import traceback
+            logger.warning("Phase 8 signals calculation failed: %s\n%s", e, traceback.format_exc())
 
         # Clamp to 0-10
         esoteric_score = max(0, min(10, esoteric_raw))
