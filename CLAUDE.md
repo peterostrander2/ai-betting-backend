@@ -2896,19 +2896,20 @@ update_season_extreme(db, sport, season, ...)     # Update high/low
 get_season_extreme(db, sport, season, stat_type)  # Get extremes for Fib
 ```
 
-**Esoteric Engine Signal Status (10/10 active as of v17.6):**
+**Esoteric Engine Signal Status (12/12 active as of v17.7):**
 | Signal | Status | Notes |
 |--------|--------|-------|
 | Numerology | ✅ ACTIVE | `calculate_generic_numerology()` |
 | Astro | ✅ ACTIVE | Vedic astrology |
-| Fibonacci | ✅ ACTIVE | `calculate_fibonacci_alignment()` |
+| Fibonacci Alignment | ✅ ACTIVE | `calculate_fibonacci_alignment()` - checks if line IS Fib number |
+| Fibonacci Retracement | ✅ WIRED (v17.7) | `calculate_fibonacci_retracement()` - season range position |
 | Vortex | ✅ ACTIVE (v17.6) | Tesla 3-6-9 via `calculate_vortex_energy()` |
 | Daily Edge | ✅ ACTIVE + VOC (v17.5) | Daily energy score with VOC penalty |
 | GLITCH (6 signals) | ✅ ACTIVE | `get_glitch_aggregate()` |
 | Biorhythms | ✅ ACTIVE (v17.5) | Props only, player birth cycles |
 | Gann Square | ✅ ACTIVE (v17.5) | Games only, sacred geometry |
 | Founder's Echo | ✅ ACTIVE (v17.5) | Games only, team gematria |
-| Hurst Exponent | ✅ SCHEMA READY (v17.6) | Line history tables created, scheduler jobs active |
+| Hurst Exponent | ✅ WIRED (v17.7) | Line history passed to GLITCH (needs 10+ snapshots) |
 | Benford Anomaly | ✅ ACTIVATED (v17.6) | Multi-book aggregation now provides 10+ values |
 
 ### GLITCH Protocol Files

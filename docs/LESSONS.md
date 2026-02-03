@@ -348,6 +348,42 @@ When adding `game_bookmakers` parameter to `calculate_pick_score()`, only 1 of 3
 9. **Return Types**: Dual-use functions must return dicts, not JSONResponse
 10. **pick_type**: Game picks use "SPREAD"/"MONEYLINE"/"TOTAL", not "GAME"
 11. **Call Sites**: Update ALL call sites when adding function parameters
+12. **Database Sessions**: Always use `with get_db() as db:` and check `DATABASE_AVAILABLE and DB_ENABLED`
+
+---
+
+## 12. Database Session Context Manager (v17.7)
+
+### The Mistake
+Database connections left open, causing connection pool exhaustion or errors when DB is unavailable.
+
+### The Fix
+Always use context manager AND check availability flags BEFORE attempting DB operations:
+
+```python
+# CORRECT - Full safety pattern
+_line_history = None
+try:
+    _event_id = candidate.get("id") if isinstance(candidate, dict) else None
+    if _event_id and DATABASE_AVAILABLE and DB_ENABLED:
+        with get_db() as db:
+            if db:
+                _line_history = get_line_history_values(
+                    db,
+                    event_id=_event_id,
+                    value_type="spread",
+                    limit=30
+                )
+except Exception as e:
+    logger.debug("Database operation skipped: %s", e)
+
+# WRONG - No context manager, no availability check
+db = get_db()
+result = get_line_history_values(db, event_id, "spread", 30)  # Connection never closed!
+```
+
+### Rule
+> **INVARIANT**: Always check `DATABASE_AVAILABLE and DB_ENABLED` before any DB operation, use `with get_db() as db:` context manager, and wrap in try/except.
 
 ---
 
