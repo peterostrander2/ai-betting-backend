@@ -81,7 +81,7 @@ curl https://web-production-7b2a.up.railway.app/internal/storage/health
 ```python
 {
     "titanium_triggered": bool,
-    "titanium_count": int,  # 0-4
+    "titanium_count": int,  # 0-5
     "titanium_qualified_engines": List[str],  # ["ai", "research", ...]
     "titanium_threshold": 8.0
 }
@@ -91,7 +91,7 @@ curl https://web-production-7b2a.up.railway.app/internal/storage/health
 
 ---
 
-### INVARIANT 3: EST Today-Only Gating (MANDATORY)
+### INVARIANT 3: ET Today-Only Gating (MANDATORY)
 
 **RULE:** ALL picks MUST be for games in today's ET window ONLY
 
@@ -104,7 +104,8 @@ curl https://web-production-7b2a.up.railway.app/internal/storage/health
 ```python
 from core.time_et import now_et, et_day_bounds
 
-start_et, end_et, et_date = et_day_bounds()  # "2026-01-29"
+start_et, end_et, start_utc, end_utc = et_day_bounds()  # ET window + UTC bounds
+et_date = start_et.date().isoformat()  # "2026-01-29"
 ```
 
 **MANDATORY Application Points:**
@@ -480,7 +481,7 @@ These checks catch the exact regressions that previously slipped through.
 
 3) **Hard gates**
    - no picks with `final_score < 6.5` ever returned
-   - Titanium triggers only when ≥3/4 engines ≥8.0
+   - Titanium triggers only when ≥3/5 engines ≥8.0
 
 4) **Fail-soft**
    - integration failures still return 200 with `errors` populated
@@ -510,7 +511,7 @@ These checks catch the exact regressions that previously slipped through.
 2. ✅ Verify production health BEFORE making assumptions
 3. ✅ Run verification checklist BEFORE committing
 4. ✅ Check that RAILWAY_VOLUME_MOUNT_PATH is used everywhere
-5. ✅ Ensure all 4 engines + Jason Sim run on every pick
+5. ✅ Ensure all 5 engines + Jason Sim run on every pick
 6. ✅ Filter to >= 6.5 BEFORE returning to frontend
 7. ✅ Apply contradiction gate to prevent opposite sides
 8. ✅ Include ALL required fields for autograder
@@ -540,6 +541,23 @@ This script validates ALL master prompt invariants in production. Run before eve
 BASE_URL=https://your-deployment.app ./scripts/prod_sanity_check.sh
 ```
 
+### Daily Sanity Report (Best Bets Health)
+
+Use this for quick daily verification (non-blocking, informational):
+
+```bash
+API_KEY=your_key \
+API_BASE=https://web-production-7b2a.up.railway.app \
+SPORTS="NBA NFL NHL MLB" \
+bash scripts/daily_sanity_report.sh
+```
+
+Checks:
+- `/health` status + build identifiers
+- `/live/best-bets/{sport}` counts + top pick sample
+- ET-only payload (no UTC/telemetry keys)
+- Cache headers on best-bets endpoints
+
 ### What It Checks (17 Total)
 
 **1. Storage Persistence (4 checks)**
@@ -554,7 +572,7 @@ BASE_URL=https://your-deployment.app ./scripts/prod_sanity_check.sh
 - ✅ ET filter applied to props (events_before == events_after)
 - ✅ ET filter applied to games (events_before == events_after)
 
-**3. Titanium 3-of-4 Rule (1 check)**
+**3. Titanium 3-of-5 Rule (1 check)**
 - ✅ No picks with `titanium_triggered=true` and < 3 engines >= 8.0
 - Validates every pick in response
 
@@ -586,8 +604,8 @@ PRODUCTION SANITY CHECK - Master Prompt Invariants
 ✓ Best-bets: ET filter applied to props (events_before == events_after)
 ✓ Best-bets: ET filter applied to games (events_before == events_after)
 
-[3/5] Validating Titanium 3-of-4 rule...
-✓ Titanium: 3-of-4 rule enforced (no picks with titanium=true and < 3 engines >= 8.0)
+[3/5] Validating Titanium 3-of-5 rule...
+✓ Titanium: 3-of-5 rule enforced (no picks with titanium=true and < 3 engines >= 8.0)
 
 [4/5] Validating grader status...
 ✓ Grader: available = true
@@ -738,7 +756,7 @@ Every pick returned from `/live/best-bets/{sport}` includes these fields:
 **NEVER:**
 - ❌ Recalculate `final_score` from engine scores (backend formula is complex)
 - ❌ Recompute `tier` from `final_score` (GOLD_STAR has hard gates beyond score)
-- ❌ Determine `titanium_triggered` from engine scores (uses 3/4 >= 8.0 rule + final_score >= 8.0)
+- ❌ Determine `titanium_triggered` from engine scores (uses 3/5 >= 8.0 rule + final_score >= 8.0)
 - ❌ Convert `start_time_et` to another timezone (already in ET, display as-is)
 - ❌ Compute `game_status` from timestamps (backend knows actual game state)
 - ❌ Show picks with `final_score < 6.5` (API will never return them, but validate anyway)
@@ -783,7 +801,7 @@ function PickCard({ pick }: { pick: Pick }) {
 
       {/* Titanium transparency */}
       {pick.titanium_triggered && (
-        <div>{pick.titanium_count}/4 engines hit Titanium threshold</div>
+        <div>{pick.titanium_count}/5 engines hit Titanium threshold</div>
       )}
 
       {pick.is_live_bet_candidate && (
@@ -832,7 +850,7 @@ function validatePick(pick: Pick): boolean {
   ].filter(s => s >= 8.0).length;
 
   if (pick.titanium_triggered && enginesAbove8 < 3) {
-    console.error(`Invalid Titanium: only ${enginesAbove8}/4 engines >= 8.0`);
+    console.error(`Invalid Titanium: only ${enginesAbove8}/5 engines >= 8.0`);
     return false;
   }
 
@@ -1020,7 +1038,7 @@ Check Cache (5-10 min TTL)
    - Games: filter_events_et(raw_games, date_str)        [line 3051]
    - Drops: Events for tomorrow/yesterday
          ↓
-3. SCORE: 4 engines + Jason Sim 2.0
+3. SCORE: 5 engines + Jason Sim 2.0
    - AI (25%) + Research (30%) + Esoteric (20%) + Jarvis (15%)
    - Confluence boost + Jason Sim boost
    - Tier assignment (TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN)
@@ -1107,7 +1125,7 @@ if TIME_ET_AVAILABLE:
 **Lines 3075-3410: Score each filtered event**
 ```python
 for prop in prop_games:  # ONLY today's events (filtered)
-    # Run through 4 engines + Jason Sim
+    # Run through 5 engines + Jason Sim
     score_result = calculate_pick_score(
         candidate=prop,
         ai_score=...,
@@ -1188,7 +1206,7 @@ curl /live/best-bets/NBA?debug=1 | jq '.debug.date_window_et'
 4. **If cache miss:**
    - Fetch from Odds API (~2-3 seconds)
    - Filter to TODAY only (ET timezone)
-   - Score through 4 engines (~2-3 seconds)
+   - Score through 5 engines (~2-3 seconds)
    - Filter to >= 6.5, apply contradiction gate
    - Persist to storage
    - Cache response
@@ -1214,7 +1232,7 @@ FINAL = BASE + confluence_boost + jason_sim_boost
 **Output Filters:**
 1. Score >= 6.5 (MANDATORY)
 2. Contradiction gate (no opposite sides)
-3. Titanium 3/4 rule (>= 3 engines >= 8.0)
+3. Titanium 3/5 rule (>= 3 engines >= 8.0)
 
 ### Persistence (AutoGrader Integration)
 
@@ -1473,17 +1491,17 @@ grep -n "RAILWAY_VOLUME_MOUNT_PATH" storage_paths.py data_dir.py
 
 ---
 
-### FIX 2: Titanium 3-of-4 Rule (MANDATORY)
+### FIX 2: Titanium 3-of-5 Rule (MANDATORY)
 
-**RULE**: `titanium=true` ONLY when >= 3 of 4 engines >= 8.0
+**RULE**: `titanium=true` ONLY when >= 3 of 5 engines >= 8.0
 
 **Never**:
-- 1/4 engines → titanium MUST be false
-- 2/4 engines → titanium MUST be false
+- 1/5 engines → titanium MUST be false
+- 2/5 engines → titanium MUST be false
 
 **Always**:
-- 3/4 engines → titanium MUST be true
-- 4/4 engines → titanium MUST be true
+- 3/5 engines → titanium MUST be true
+- 4/5 engines → titanium MUST be true
 
 **Implementation**: Use `core/titanium.py` → `compute_titanium_flag(ai, research, esoteric, jarvis)`
 
@@ -1501,19 +1519,19 @@ diagnostics = {
 }
 ```
 
-**Example** (1/4 - MUST BE FALSE):
+**Example** (1/5 - MUST BE FALSE):
 ```python
 titanium, diag = compute_titanium_flag(8.5, 6.0, 5.0, 4.0)
 # titanium=False
-# reason: "Only 1/4 engines >= 8.0 (need 3+)"
+# reason: "Only 1/5 engines >= 8.0 (need 3+)"
 ```
 
-**Example** (3/4 - MUST BE TRUE):
+**Example** (3/5 - MUST BE TRUE):
 ```python
 titanium, diag = compute_titanium_flag(8.5, 8.2, 8.1, 7.0)
 # titanium=True
 # engines: ['ai', 'research', 'esoteric']
-# reason: "3/4 engines >= 8.0 (TITANIUM)"
+# reason: "3/5 engines >= 8.0 (TITANIUM)"
 ```
 
 **Tests**: `tests/test_titanium_fix.py` (7 tests)

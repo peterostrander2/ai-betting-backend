@@ -61,8 +61,8 @@
 - Apply filter BEFORE scoring, not after
 
 ### Titanium Rule
-- `titanium_triggered=true` ONLY when >= 3 of 4 engines >= 8.0
-- 1/4 or 2/4 is ALWAYS false, even if scores are high
+- `titanium_triggered=true` ONLY when >= 3 of 5 engines >= 8.0
+- 1/5 or 2/5 is ALWAYS false, even if scores are high
 - Use `core/titanium.py` as single source of truth
 
 ### Response Contracts
@@ -138,11 +138,12 @@ Watch for these patterns that have caused production issues:
 ## Lesson: Post-change gates (run after ANY backend change)
 1) Auth (missing/invalid/correct key)
 2) Shape contract (engine scores, total/final, bet_tier)
-3) Hard gates (final_score >= 6.5, Titanium 3-of-4)
+3) Hard gates (final_score >= 6.5, Titanium 3-of-5)
 4) Fail-soft (200 + errors, debug integrations loud)
 5) Freshness (date_et/run_timestamp_et + cache TTL)
 6) No UTC/telemetry leaks (startTime*, generated_at, *_utc, *_iso)
 7) Cache headers present on /live (GET/HEAD)
+8) Optional daily report (non-blocking): `scripts/daily_sanity_report.sh`
 - Test context integration end-to-end before production
 
 **Verification:**

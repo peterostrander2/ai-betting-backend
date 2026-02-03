@@ -387,6 +387,62 @@ result = get_line_history_values(db, event_id, "spread", 30)  # Connection never
 
 ---
 
+## 13. Variable Name Typos in Large Dict Returns (v17.8)
+
+### The Mistake
+Production crashed with `NameError: name 'officials_reason' is not defined` because the return dict used `officials_reason` (singular) but the variable was defined as `officials_reasons` (plural).
+
+### The Evidence
+```python
+# Variable defined (line 4154):
+officials_reasons = []
+
+# Later usage (line 4577) - TYPO:
+"officials_reason": officials_reason,  # ❌ Should be officials_reasons
+```
+
+### The Fix
+Always match exact variable names. When adding to large return dicts, copy-paste the variable name.
+
+```python
+# CORRECT
+officials_reasons = []
+# ... logic ...
+return {
+    "officials_reasons": officials_reasons,  # ✅ Exact match
+}
+```
+
+### Rule
+> **INVARIANT**: When returning variables in dicts, copy-paste variable names. Never type them from memory. Run syntax check (`python -m py_compile`) before every push.
+
+### Checklist for Dict Returns
+- [ ] Variable name in dict key matches definition exactly
+- [ ] Run `python -m py_compile <file>` before committing
+- [ ] Grep for variable name to verify it's defined: `grep -n "variable_name =" file.py`
+
+---
+
+## 12. Daily Sanity Report (Best Bets Health)
+
+### The Mistake
+Relying on ad hoc or skipped manual checks after deploys.
+
+### The Fix
+Use the daily sanity report to verify production health + best-bets output quickly:
+
+```bash
+API_KEY=your_key \
+API_BASE=https://web-production-7b2a.up.railway.app \
+SPORTS="NBA NFL NHL MLB" \
+bash scripts/daily_sanity_report.sh
+```
+
+### Rule
+> **INVARIANT**: After any deploy that touches scoring, time windows, or contracts, run the daily sanity report at least once.
+
+---
+
 ## Adding New Lessons
 
 When you encounter a bug or issue, add it here:

@@ -82,7 +82,7 @@ This is also wired into `scripts/ci_sanity_check.sh` as a **non-blocking** step.
 
 3) **Hard gates**
    - no picks with `final_score < 6.5` ever returned
-   - Titanium triggers only when ≥3/4 engines ≥8.0
+   - Titanium triggers only when ≥3/5 engines ≥8.0
 
 4) **Fail-soft**
    - integration failures still return 200 with `errors` populated
