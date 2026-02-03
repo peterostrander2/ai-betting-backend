@@ -17,6 +17,10 @@
 # Run production sanity check
 ./scripts/prod_sanity_check.sh
 
+# Option A guardrails
+./scripts/option_a_drift_scan.sh
+python3 -m pytest -q tests/test_option_a_scoring_guard.py
+
 # Verify critical invariants with curls
 curl https://web-production-7b2a.up.railway.app/live/debug/time \
   -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.et_window'

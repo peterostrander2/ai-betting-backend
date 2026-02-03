@@ -14,10 +14,10 @@ v18.0 Option A (4-Engine Base + Context Modifier):
 
     CONTEXT_MOD (bounded): optional modifier in [-0.35, +0.35]
 
-    FINAL = BASE_4 + CONTEXT_MOD + confluence_boost + jason_sim_boost
+    FINAL = BASE_4 + CONTEXT_MOD + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 import logging
 
 # Import invariants for engine weights
@@ -40,6 +40,38 @@ except ImportError:
     COMMUNITY_MIN_SCORE = 6.5
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# OPTION A HELPERS (SINGLE SOURCE OF FINAL SCORE MATH)
+# =============================================================================
+
+def clamp_context_modifier(value: float, cap: Optional[float] = None) -> float:
+    """Clamp context modifier to ±CONTEXT_MODIFIER_CAP."""
+    if cap is None:
+        try:
+            from core.scoring_contract import CONTEXT_MODIFIER_CAP
+            cap = CONTEXT_MODIFIER_CAP
+        except Exception:
+            cap = 0.35
+    return max(-cap, min(cap, value))
+
+
+def compute_final_score_option_a(
+    base_score: float,
+    context_modifier: float,
+    confluence_boost: float,
+    msrf_boost: float,
+    jason_sim_boost: float,
+    serp_boost: float,
+    cap: Optional[float] = None,
+) -> Tuple[float, float]:
+    """
+    Option A final score formula:
+    FINAL = BASE_4 + CONTEXT_MOD + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+    """
+    context_modifier = clamp_context_modifier(context_modifier, cap=cap)
+    final_score = base_score + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+    return final_score, context_modifier
 
 # =============================================================================
 # PUBLIC API - SINGLE SCORING FUNCTION
@@ -276,20 +308,30 @@ def score_candidate(
     # FINAL SCORE (with optional context modifier)
     # =========================================================================
     context_modifier = 0.0
+    msrf_boost = 0.0
+    serp_boost = 0.0
     if isinstance(context, dict):
         try:
             context_modifier = float(context.get("context_modifier", 0.0))
         except Exception:
             context_modifier = 0.0
-    # Bound modifier
-    try:
-        from core.scoring_contract import CONTEXT_MODIFIER_CAP
-        _cap = CONTEXT_MODIFIER_CAP
-    except Exception:
-        _cap = 0.35
-    context_modifier = max(-_cap, min(_cap, context_modifier))
+        try:
+            msrf_boost = float(context.get("msrf_boost", 0.0))
+        except Exception:
+            msrf_boost = 0.0
+        try:
+            serp_boost = float(context.get("serp_boost", 0.0))
+        except Exception:
+            serp_boost = 0.0
 
-    final_score = base_score + context_modifier + confluence_boost + jason_sim_boost
+    final_score, context_modifier = compute_final_score_option_a(
+        base_score=base_score,
+        context_modifier=context_modifier,
+        confluence_boost=confluence_boost,
+        msrf_boost=msrf_boost,
+        jason_sim_boost=jason_sim_boost,
+        serp_boost=serp_boost,
+    )
 
     # =========================================================================
     # TIER ASSIGNMENT
@@ -355,6 +397,8 @@ def score_candidate(
         "confluence_boost": round(confluence_boost, 2),
         "confluence_label": confluence_label,
         "jason_sim_boost": round(jason_sim_boost, 2),
+        "msrf_boost": round(msrf_boost, 2),
+        "serp_boost": round(serp_boost, 2),
         "final_score": round(final_score, 2),
 
         # Tier
@@ -396,10 +440,16 @@ def score_candidate(
                 "boost": round(confluence_boost, 2),
                 "label": confluence_label,
             },
+            "msrf": {
+                "boost": round(msrf_boost, 2),
+            },
             "jason_sim": {
                 "available": jason_sim_available,
                 "boost": round(jason_sim_boost, 2),
-            }
+            },
+            "serp": {
+                "boost": round(serp_boost, 2),
+            },
         }
     }
 

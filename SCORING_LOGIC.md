@@ -25,6 +25,12 @@
   },
   "gold_star_threshold": 7.5,
   "min_final_score": 6.5,
+  "boost_caps": {
+    "confluence_boost_cap": 10.0,
+    "msrf_boost_cap": 1.0,
+    "serp_boost_cap_total": 4.3,
+    "jason_sim_boost_cap": 1.5
+  },
   "titanium_rule": {
     "min_engines_ge_threshold": 3,
     "threshold": 8.0
@@ -41,7 +47,9 @@ SCORING_CONTRACT_JSON -->
 
 ## Formula (v18.0 Option A - 4 Base Engines + Context Modifier)
 BASE_4 = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.20) + (Jarvis × 0.20)
-FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+
+Boosts are additive (NOT engines). Each boost must be present in payloads with status + reasons.
 
 Minimum output: 6.5
 
@@ -202,6 +210,18 @@ context_modifier = clamp(context_modifier, -CONTEXT_MODIFIER_CAP, +CONTEXT_MODIF
 | DIVERGENT | +0 | below 60% |
 
 Alignment = 1 - |research - esoteric| / 10
+
+## MSRF Boost (v17.2)
+- Adds a separate boost (0.0 / 0.25 / 0.5 / 1.0)
+- Must NOT be folded into confluence_boost
+
+## SERP Boost (v17.4)
+- Adds a separate boost (total capped by SERP_TOTAL_CAP in guardrails)
+- Must NOT be folded into confluence_boost
+
+## Jason Sim Boost (v11.08)
+- Adds a separate boost/downgrade based on simulation
+- Must remain separate and observable
 
 ### Harmonic Convergence (v17.0 "Golden Boost")
 When both Research (Math/Market signals) AND Esoteric (Magic/Cosmic signals) score ≥8.0:

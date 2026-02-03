@@ -249,7 +249,7 @@ echo ""
 # =====================================================
 # CHECK 7: Post-change Gates (Auth/Contract/Hard Gates/Fail-soft/Freshness)
 # =====================================================
-echo "[7/9] Running post-change gates..."
+echo "[7/11] Running post-change gates..."
 
 # Auth checks
 AUTH_MISSING_CODE=$(curl -s -o /tmp/prod_missing -w "%{http_code}" "$BASE_URL/live/best-bets/NBA" 2>/dev/null || echo "000")
@@ -274,9 +274,10 @@ check "Shape: engine scores + total/final + bet_tier" \
     "$(echo "$POST_BEST_BETS" | jq -r '([
       .props.picks[]?, .game_picks.picks[]?
     ] | all(
-      (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_score != null)
+      (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_modifier != null)
       and (.total_score != null and .final_score != null)
       and (.bet_tier != null)
+      and (.confluence_boost != null and .msrf_boost != null and .jason_sim_boost != null and .serp_boost != null)
     ))' 2>/dev/null || echo false)" \
     "shape_check" \
     "required fields present"
@@ -326,9 +327,156 @@ check "No UTC/Telemetry Leaks: _cached_at and _elapsed_s stripped from public re
 echo ""
 
 # =====================================================
-# CHECK 8: OPS Aliases (/ops/*)
+# CHECK 8: End-to-End Best-Bets (All Sports)
 # =====================================================
-echo "[8/9] Validating /ops/* alias routes..."
+echo "[8/11] Validating best-bets end-to-end for all sports..."
+
+SPORTS="${SPORTS:-NBA NHL NFL MLB NCAAB}"
+for SPORT in $SPORTS; do
+    SPORT_LOWER=$(echo "$SPORT" | tr '[:upper:]' '[:lower:]')
+    BB_URL="$BASE_URL/live/best-bets/$SPORT_LOWER?debug=1&max_props=10&max_games=10"
+    BB_TMP="/tmp/prod_best_bets_${SPORT_LOWER}.json"
+
+    BB_CODE=$(curl -s -o "$BB_TMP" -w "%{http_code}" -H "X-API-Key: $API_KEY" "$BB_URL" 2>/dev/null || echo "000")
+    check "Best-bets $SPORT: HTTP 200" \
+        "$([ "$BB_CODE" = "200" ] && echo true || echo false)" \
+        "code=$BB_CODE" \
+        "200"
+
+    # Stack completeness (no partial stack picks returned)
+    STACK_OK=$(jq -r '([.props.picks[]?, .game_picks.picks[]?] | all(.stack_complete == true))' "$BB_TMP" 2>/dev/null || echo false)
+    check "Best-bets $SPORT: stack_complete true for all picks" \
+        "$STACK_OK" \
+        "stack_complete=$STACK_OK" \
+        "true"
+
+    # Timed-out components should be empty
+    TIMED_OUT_OK=$(jq -r '(.debug.timed_out_components // []) | length == 0' "$BB_TMP" 2>/dev/null || echo false)
+    check "Best-bets $SPORT: no timed_out_components" \
+        "$TIMED_OUT_OK" \
+        "timed_out_components=$TIMED_OUT_OK" \
+        "empty"
+
+    # Option A formula sanity check (single pick, tolerant of rounding)
+    FORMULA_OK=$(jq -r '
+      def pick: (.props.picks[0] // .game_picks.picks[0] // null);
+      if pick == null then "true" else
+        (pick.base_score // 0) as $base
+        | (pick.context_modifier // 0) as $ctx
+        | (pick.confluence_boost // 0) as $conf
+        | (pick.msrf_boost // 0) as $msrf
+        | (pick.jason_sim_boost // 0) as $jason
+        | (pick.serp_boost // 0) as $serp
+        | (pick.final_score // 0) as $final
+        | ((($base + $ctx + $conf + $msrf + $jason + $serp) - $final) | abs) <= 0.05
+      end
+    ' "$BB_TMP" 2>/dev/null || echo false)
+    check "Best-bets $SPORT: Option A formula matches pick math" \
+        "$FORMULA_OK" \
+        "formula_match=$FORMULA_OK" \
+        "true"
+
+    # Deterministic errors: if errors exist, require code/status and no request_id leakage
+    ERR_LEN=$(jq -r '.errors | length // 0' "$BB_TMP" 2>/dev/null || echo 0)
+    if [ "$ERR_LEN" -gt 0 ]; then
+        ERR_HAS_CODE_OR_STATUS=$(jq -r '(.errors | all((.code? != null) or (.status? != null)))' "$BB_TMP" 2>/dev/null || echo false)
+        ERR_NO_REQUEST_ID=$(jq -r '(.errors | map(keys) | flatten | map(select(test("request_id|requestId|trace_id|traceId"))) | length) == 0' "$BB_TMP" 2>/dev/null || echo false)
+        check "Best-bets $SPORT: errors include code/status" \
+            "$ERR_HAS_CODE_OR_STATUS" \
+            "errors_with_code_or_status=$ERR_HAS_CODE_OR_STATUS" \
+            "true"
+        check "Best-bets $SPORT: no request_id leakage in errors" \
+            "$ERR_NO_REQUEST_ID" \
+            "request_id_leak=$ERR_NO_REQUEST_ID" \
+            "true"
+    fi
+
+    # Diversity telemetry counters present in debug payload
+    DIVERSITY_OK=$(jq -r '(.debug.diversity_player_limited != null and .debug.diversity_game_limited != null and .debug.diversity_total_dropped != null)' "$BB_TMP" 2>/dev/null || echo false)
+    check "Best-bets $SPORT: diversity counters present" \
+        "$DIVERSITY_OK" \
+        "diversity_counters=$DIVERSITY_OK" \
+        "true"
+
+    # Duplicate props policy: max 1 per player, max 3 per game
+    MAX_PER_PLAYER=$(jq -r '[.props.picks[]? | (.player_name // .player // .selection // "UNKNOWN")] | sort | group_by(.) | map(length) | max // 0' "$BB_TMP" 2>/dev/null || echo 0)
+    MAX_PER_GAME=$(jq -r '[.props.picks[]? | (.event_id // .game_id // (.matchup // ""))] | sort | group_by(.) | map(length) | max // 0' "$BB_TMP" 2>/dev/null || echo 0)
+    check "Best-bets $SPORT: max 1 prop per player" \
+        "$(awk -v m="$MAX_PER_PLAYER" 'BEGIN {print (m <= 1) ? "true" : "false"}')" \
+        "max_per_player=$MAX_PER_PLAYER" \
+        "<= 1"
+    check "Best-bets $SPORT: max 3 props per game" \
+        "$(awk -v m="$MAX_PER_GAME" 'BEGIN {print (m <= 3) ? "true" : "false"}')" \
+        "max_per_game=$MAX_PER_GAME" \
+        "<= 3"
+done
+
+echo ""
+
+# =====================================================
+# CHECK 9: Integration Truth Test (/live/debug/integrations)
+# =====================================================
+echo "[9/11] Validating integration truth test..."
+
+INTEGRATIONS_RESPONSE=$(curl -s "$BASE_URL/live/debug/integrations" -H "X-API-Key: $API_KEY")
+INTEGRATIONS_STATUS=$(echo "$INTEGRATIONS_RESPONSE" | jq -r '.overall_status // "UNKNOWN"')
+INTEGRATIONS_REQUIRED=(
+    odds_api
+    playbook_api
+    balldontlie
+    weather_api
+    railway_storage
+    database
+    redis
+    whop_api
+    serpapi
+    twitter_api
+    fred_api
+    finnhub_api
+)
+INTEGRATIONS_EXPECTED_USED=(
+    odds_api
+    playbook_api
+    weather_api
+    serpapi
+    twitter_api
+    fred_api
+    finnhub_api
+)
+
+check "Integrations: overall_status not CRITICAL" \
+    "$([ "$INTEGRATIONS_STATUS" != "CRITICAL" ] && echo true || echo false)" \
+    "$INTEGRATIONS_STATUS" \
+    "HEALTHY or DEGRADED"
+
+for INTEGRATION in "${INTEGRATIONS_REQUIRED[@]}"; do
+    CONFIGURED=$(echo "$INTEGRATIONS_RESPONSE" | jq -r ".integrations.${INTEGRATION}.is_configured // false")
+    REACHABLE=$(echo "$INTEGRATIONS_RESPONSE" | jq -r ".integrations.${INTEGRATION}.is_reachable // null")
+    check "Integration $INTEGRATION: configured" \
+        "$([ "$CONFIGURED" = "true" ] && echo true || echo false)" \
+        "configured=$CONFIGURED" \
+        "true"
+    # Reachable may be null if not tested; fail only on explicit false
+    check "Integration $INTEGRATION: not unreachable" \
+        "$([ "$REACHABLE" != "false" ] && echo true || echo false)" \
+        "reachable=$REACHABLE" \
+        "not false"
+done
+
+for INTEGRATION in "${INTEGRATIONS_EXPECTED_USED[@]}"; do
+    LAST_USED=$(echo "$INTEGRATIONS_RESPONSE" | jq -r ".integrations.${INTEGRATION}.last_used_at // \"\"")
+    check "Integration $INTEGRATION: last_used_at present" \
+        "$([ -n "$LAST_USED" ] && echo true || echo false)" \
+        "last_used_at=${LAST_USED:-EMPTY}" \
+        "non-empty"
+done
+
+echo ""
+
+# =====================================================
+# CHECK 10: OPS Aliases (/ops/*)
+# =====================================================
+echo "[10/11] Validating /ops/* alias routes..."
 
 # Check /ops/integrations works (requires admin auth)
 OPS_INTEGRATIONS=$(curl -s "$BASE_URL/ops/integrations" -H "X-Admin-Token: $API_KEY")
@@ -361,9 +509,9 @@ check "OPS: /ops/env-map returns no missing required vars" \
 echo ""
 
 # =====================================================
-# CHECK 9: Full Verification (/ops/verify)
+# CHECK 11: Full Verification (/ops/verify)
 # =====================================================
-echo "[9/9] Running comprehensive /ops/verify check..."
+echo "[11/11] Running comprehensive /ops/verify check..."
 
 OPS_VERIFY=$(curl -s "$BASE_URL/ops/verify")
 OPS_VERIFY_VERDICT=$(echo "$OPS_VERIFY" | jq -r '.verdict // "ERROR"')

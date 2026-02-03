@@ -138,7 +138,8 @@ except ImportError:
     logger.warning("tiering module not available - using legacy tier logic")
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
-from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD
+from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL
+from core.scoring_pipeline import compute_final_score_option_a
 from core.telemetry import apply_used_integrations_debug
 
 # Import Time ET - SINGLE SOURCE OF TRUTH for ET timezone
@@ -3316,7 +3317,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # Helper function to calculate scores with v15.0 4-engine architecture + Jason Sim
     # v16.1: Added market parameter for LSTM model routing
     # v17.6: Added game_bookmakers parameter for Benford analysis
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market="", game_datetime=None, game_bookmakers=None, book_count: int = 0, market_book_count: int = 0):
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market="", game_datetime=None, game_bookmakers=None, book_count: int = 0, market_book_count: int = 0, event_id: str | None = None):
         # =====================================================================
         # v15.0 FOUR-ENGINE ARCHITECTURE (Clean Separation)
         # =====================================================================
@@ -3794,7 +3795,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # Fetch line history for Hurst Exponent calculation in GLITCH
             _line_history = None
             try:
-                _event_id = candidate.get("id") if isinstance(candidate, dict) else None
+                _event_id = event_id
                 if _event_id and DATABASE_AVAILABLE and DB_ENABLED:
                     with get_db() as db:
                         if db:
@@ -4294,9 +4295,17 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # Adds confluence boost when game date aligns with mathematically significant projections
         msrf_boost = 0.0
         msrf_metadata = {"source": "not_run"}
+        msrf_status = "NOT_RELEVANT"
+        msrf_reasons = []
         try:
             from signals.msrf_resonance import get_msrf_confluence_boost, MSRF_ENABLED
-            if MSRF_ENABLED and _game_date_obj:
+            if not MSRF_ENABLED:
+                msrf_status = "NOT_RELEVANT"
+                msrf_reasons.append("MSRF disabled")
+            elif not _game_date_obj:
+                msrf_status = "NOT_RELEVANT"
+                msrf_reasons.append("MSRF missing game_date")
+            else:
                 msrf_boost, msrf_metadata = get_msrf_confluence_boost(
                     game_date=_game_date_obj,
                     player_name=player_name,
@@ -4304,17 +4313,23 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     away_team=away_team,
                     sport=sport_upper
                 )
+                msrf_boost = max(-MSRF_BOOST_CAP, min(MSRF_BOOST_CAP, msrf_boost))
+                msrf_status = "OK" if msrf_boost > 0 else "NOT_RELEVANT"
+                if msrf_metadata.get("level"):
+                    msrf_reasons.append(f"MSRF: {msrf_metadata.get('level')} ({msrf_boost:+.2f})")
                 if msrf_boost > 0:
-                    confluence["boost"] = confluence.get("boost", 0) + msrf_boost
-                    confluence["msrf_level"] = msrf_metadata.get("level", "UNKNOWN")
                     esoteric_reasons.append(f"MSRF: {msrf_metadata.get('level', 'RESONANCE')} (+{msrf_boost:.2f})")
                     logger.info("MSRF[%s vs %s]: %s, boost=+%.2f, points=%.1f",
                                 home_team or "?", away_team or "?",
                                 msrf_metadata.get("level", "?"),
                                 msrf_boost, msrf_metadata.get("points", 0))
         except ImportError:
+            msrf_status = "UNAVAILABLE"
+            msrf_reasons.append("MSRF module not available")
             logger.debug("MSRF module not available")
         except Exception as e:
+            msrf_status = "ERROR"
+            msrf_reasons.append(f"MSRF error: {e}")
             logger.warning("MSRF calculation failed: %s", e)
 
         # ===== v17.4 SERP BETTING INTELLIGENCE =====
@@ -4323,6 +4338,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         serp_intel = None
         serp_boost_total = 0.0
         serp_reasons = []
+        serp_signals = []
+        serp_status = "UNAVAILABLE"
 
         if SERP_INTEL_AVAILABLE and is_serp_available():
             try:
@@ -4346,17 +4363,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     )
 
                 if serp_intel and serp_intel.get("available"):
+                    serp_status = "OK"
                     # Apply SERP boosts to engine scores (already capped and shadow-mode applied)
                     serp_boosts = serp_intel.get("boosts", {})
-
-                    # Add to confluence boost (SERP signals augment base confluence)
                     serp_boost_total = sum(serp_boosts.values())
-                    if serp_boost_total > 0:
-                        confluence["boost"] = confluence.get("boost", 0) + serp_boost_total
-                        confluence["serp_boost"] = serp_boost_total
+                    if serp_boost_total > SERP_BOOST_CAP_TOTAL:
+                        serp_boost_total = SERP_BOOST_CAP_TOTAL
 
                     # Log triggered signals
-                    for sig in serp_intel.get("signals", []):
+                    serp_signals = serp_intel.get("signals", [])
+                    for sig in serp_signals:
                         if sig.get("triggered"):
                             serp_reasons.append(f"SERP[{sig['engine']}]: {sig.get('reason', 'signal triggered')}")
 
@@ -4373,7 +4389,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                         serp_intel["boosts_raw"].get("context", 0))
             except Exception as e:
                 logger.debug("SERP intelligence failed: %s", e)
+                serp_status = "ERROR"
                 serp_intel = {"available": False, "error": str(e)}
+        elif SERP_INTEL_AVAILABLE:
+            serp_status = "UNAVAILABLE"
+            serp_reasons.append("SERP quota unavailable or disabled")
+        else:
+            serp_status = "UNAVAILABLE"
+            serp_reasons.append("SERP module not available")
 
         # ===== v17.9 GEMATRIA TWITTER INTELLIGENCE =====
         # Community consensus signals from gematria Twitter accounts
@@ -4421,6 +4444,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
+        confluence_reasons = []
+        if confluence.get("reason"):
+            confluence_reasons.append(str(confluence.get("reason")))
+        confluence_reasons.append(f"Confluence {confluence_level} (+{confluence_boost:.2f})")
+        if harmonic_boost > 0:
+            confluence_reasons.append(f"Harmonic Convergence (+{harmonic_boost:.2f})")
 
         # --- v18.0 CONTEXT SCORE (Pillars 13-15) ---
         # Calculate context_score (0-10) from defensive rank, pace, and vacuum
@@ -4537,9 +4566,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "base_score": base_score
             }
 
-        # FINAL = BASE_4 + CONTEXT_MOD + CONFLUENCE + JASON
+        # FINAL = BASE_4 + CONTEXT_MOD + CONFLUENCE + MSRF + JASON + SERP
         jason_sim_boost = jason_output.get("jason_sim_boost", 0.0)
-        final_score = base_score + context_modifier + confluence_boost + jason_sim_boost
+        final_score, context_modifier = compute_final_score_option_a(
+            base_score=base_score,
+            context_modifier=context_modifier,
+            confluence_boost=confluence_boost,
+            msrf_boost=msrf_boost,
+            jason_sim_boost=jason_sim_boost,
+            serp_boost=serp_boost_total,
+        )
 
         # ===== v17.8 PILLAR 16: OFFICIALS TENDENCY INTEGRATION =====
         # Referee/Umpire tendencies impact totals, spreads, and props
@@ -4873,6 +4909,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "confidence": confidence,
             "confidence_score": confidence_score,
             "confluence_level": confluence_level,
+            "confluence_reasons": confluence_reasons,
+            "confluence_boost": confluence_boost,
             "bet_tier": bet_tier,
             "tier": bet_tier.get("tier", "PASS"),
             "tier_reason": tier_reason,  # v15.3 Transparency: why this tier was assigned
@@ -4885,6 +4923,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "jarvis_score": round(jarvis_rs, 2) if jarvis_rs is not None else None,  # Alias for jarvis_rs
             "context_modifier": round(context_modifier, 3),  # v18.0: bounded modifier
             "context_score": round(context_score, 2),  # backward-compat (raw score)
+            "context_reasons": context_reasons,
+            "base_4_score": round(base_score, 2),
             # Detailed breakdowns
             "scoring_breakdown": {
                 "research_score": round(research_score, 2),
@@ -4895,6 +4935,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "context_score": round(context_score, 2),  # backward-compat
                 "pillars": round(pillar_score, 2),
                 "confluence_boost": confluence_boost,
+                "msrf_boost": msrf_boost,
+                "serp_boost": serp_boost_total,
                 "alignment_pct": confluence.get("alignment_pct", 0),
                 "gold_star_gates": _gold_gates,
                 "gold_star_eligible": _gold_gates_passed,
@@ -4954,6 +4996,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # v11.08 JASON SIM CONFLUENCE fields (MUST always exist)
             "jason_ran": jason_output.get("jason_ran", False),
             "jason_sim_boost": round(jason_sim_boost, 2),
+            "jason_status": (
+                "UNAVAILABLE" if not JASON_SIM_AVAILABLE else
+                "BLOCKED" if jason_blocked else
+                "OK" if jason_output.get("jason_ran", False) else
+                "ERROR"
+            ),
             "jason_blocked": jason_blocked,
             "jason_win_pct_home": jason_output.get("jason_win_pct_home", 50.0),
             "jason_win_pct_away": jason_output.get("jason_win_pct_away", 50.0),
@@ -4965,7 +5013,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "projected_pace": jason_output.get("projected_pace", "NEUTRAL"),
             "variance_flag": jason_output.get("variance_flag", "MED"),  # Keep for backwards compat
             "injury_state": jason_output.get("injury_state", "UNKNOWN"),  # Keep for backwards compat
-            "confluence_reasons": jason_output.get("confluence_reasons", []),
+            "jason_reasons": jason_output.get("confluence_reasons", []),
             "base_score": round(base_score, 2),  # Score before Jason boost
             # v11.08 Stack/Penalty fields
             "penalties": penalties,
@@ -4996,6 +5044,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "harmonic_boost": harmonic_boost,
             # v17.2 MSRF Resonance
             "msrf_boost": msrf_boost,
+            "msrf_status": msrf_status,
+            "msrf_reasons": msrf_reasons,
             "msrf_metadata": msrf_metadata,
             # v18.2 Phase 8 Esoteric Signals
             "phase8_boost": phase8_boost,
@@ -5004,7 +5054,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # v17.4 SERP Intelligence
             "serp_intel": serp_intel,
             "serp_boost": serp_boost_total,
+            "serp_status": serp_status,
             "serp_reasons": serp_reasons,
+            "serp_signals": serp_signals,
             "serp_shadow_mode": SERP_SHADOW_MODE if SERP_INTEL_AVAILABLE else True,
             # v17.9 Gematria Twitter Intelligence
             "gematria_boost": gematria_boost,
@@ -5834,7 +5886,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 game_datetime=_game_datetime,
                                 game_bookmakers=game_bookmakers,  # v17.6: Multi-book for Benford
                                 book_count=game_book_count,
-                                market_book_count=market_book_count
+                                market_book_count=market_book_count,
+                                event_id=game.get("id")
                             )
 
                             # v16.0: Apply weather modifier to score (capped at ±1.0)
@@ -5982,7 +6035,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 pick_side=signal.get("side", "HOME"),
                 prop_line=0,
                 game_datetime=_sharp_game_dt,
-                game_bookmakers=_sharp_bookmakers  # v17.6: Multi-book for Benford
+                game_bookmakers=_sharp_bookmakers,  # v17.6: Multi-book for Benford
+                event_id=signal_game_id
             )
 
             signals_fired = score_data.get("pillars_passed", []).copy()
@@ -6182,7 +6236,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     game_datetime=_prop_game_datetime,
                     game_bookmakers=game.get("bookmakers", []),  # v17.6: Multi-book for Benford
                     book_count=_prop_book_count,
-                    market_book_count=market_book_count
+                    market_book_count=market_book_count,
+                    event_id=game.get("id")
                 )
 
                 # Lineup confirmation guard (props only)
@@ -7333,9 +7388,6 @@ async def debug_pick_breakdown(sport: str):
 
         confluence_boost = confluence.get("boost", 0)
 
-        # --- FINAL SCORE ---
-        final_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence_boost
-
         # --- JARVIS RS (0-10 scale) ---
         jarvis_rs = scale_jarvis_score_to_10(jarvis_score, max_jarvis=2.0) if TIERING_AVAILABLE else jarvis_score * 5
         jarvis_active = len(jarvis_triggers_hit) > 0
@@ -7343,6 +7395,24 @@ async def debug_pick_breakdown(sport: str):
 
         # --- AI SCALED (0-10) ---
         ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
+
+        # --- FINAL SCORE (Option A - 4 base engines + additive boosts) ---
+        context_modifier = 0.0
+        jason_sim_boost = 0.0
+        base_score = (
+            (ai_scaled * ENGINE_WEIGHTS["ai"]) +
+            (research_score * ENGINE_WEIGHTS["research"]) +
+            (esoteric_score * ENGINE_WEIGHTS["esoteric"]) +
+            (jarvis_rs * ENGINE_WEIGHTS["jarvis"])
+        )
+        final_score, context_modifier = compute_final_score_option_a(
+            base_score=base_score,
+            context_modifier=context_modifier,
+            confluence_boost=confluence_boost,
+            msrf_boost=0.0,
+            jason_sim_boost=jason_sim_boost,
+            serp_boost=0.0,
+        )
 
         # --- TITANIUM CHECK ---
         try:
@@ -11249,8 +11319,25 @@ async def get_confluence_analysis(
         jarvis_triggered=jarvis_triggered
     )
 
-    # v10.1: Calculate final score and bet tier
-    final_score = (research_score * 0.67) + (esoteric_score * 0.33) + confluence.get("boost", 0)
+    # v10.1: Calculate final score and bet tier (Option A weights)
+    ai_score = 0.0  # No AI engine inputs in this legacy endpoint
+    jarvis_score_10 = min(10.0, jarvis_score * 2.5)
+    base_score = (
+        (ai_score * ENGINE_WEIGHTS["ai"]) +
+        (research_score * ENGINE_WEIGHTS["research"]) +
+        (esoteric_score * ENGINE_WEIGHTS["esoteric"]) +
+        (jarvis_score_10 * ENGINE_WEIGHTS["jarvis"])
+    )
+    context_modifier = 0.0
+    jason_sim_boost = 0.0
+    final_score, context_modifier = compute_final_score_option_a(
+        base_score=base_score,
+        context_modifier=context_modifier,
+        confluence_boost=confluence.get("boost", 0),
+        msrf_boost=0.0,
+        jason_sim_boost=jason_sim_boost,
+        serp_boost=0.0,
+    )
     bet_tier = jarvis.determine_bet_tier(final_score, confluence)
 
     return {
@@ -11279,7 +11366,7 @@ async def get_confluence_analysis(
             "research_score": round(research_score, 2),
             "esoteric_score": round(esoteric_score, 2),
             "final_score": round(final_score, 2),
-            "formula": "FINAL = (research × 0.67) + (esoteric × 0.33) + confluence_boost"
+            "formula": "FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost (+ msrf/serp if enabled)"
         },
         "confluence": confluence,
         "bet_tier": bet_tier,

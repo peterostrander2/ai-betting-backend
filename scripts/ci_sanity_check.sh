@@ -34,6 +34,30 @@ echo "Date: $(date)"
 echo "========================================================"
 echo ""
 
+# Option A drift scan (fail-fast, no network required)
+if [ -f "$SCRIPT_DIR/option_a_drift_scan.sh" ]; then
+    if [ ! -x "$SCRIPT_DIR/option_a_drift_scan.sh" ]; then
+        chmod +x "$SCRIPT_DIR/option_a_drift_scan.sh"
+    fi
+    echo -e "${YELLOW}Pre-flight: Option A drift scan...${NC}"
+    "$SCRIPT_DIR/option_a_drift_scan.sh" || {
+        echo -e "${RED}ERROR: Option A drift scan failed${NC}"
+        exit 1
+    }
+    echo ""
+else
+    echo -e "${RED}ERROR: option_a_drift_scan.sh not found${NC}"
+    exit 1
+fi
+
+# Option A unit tests (fail-fast)
+echo -e "${YELLOW}Pre-flight: Option A unit tests...${NC}"
+python3 -m pytest -q tests/test_option_a_scoring_guard.py tests/test_scoring_single_source.py || {
+    echo -e "${RED}ERROR: Option A unit tests failed${NC}"
+    exit 1
+}
+echo ""
+
 # Track results
 declare -a SESSION_RESULTS
 TOTAL_SESSIONS=10

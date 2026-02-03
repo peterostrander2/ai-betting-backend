@@ -5,7 +5,7 @@ Option A:
 - BASE_4 weighted engines only: ai, research, esoteric, jarvis
 - Context is NOT an engine weight
 - Context is a bounded modifier via CONTEXT_MODIFIER_CAP
-- FINAL = base_score + context_modifier + confluence_boost + jason_sim_boost
+- FINAL = base_score + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
 
 This test is intentionally "dumb and strict":
 - It checks the contract file for the exact engine keys.
@@ -117,8 +117,125 @@ def test_option_a_final_score_formula_present() -> None:
         for tok in required_tokens:
             assert tok in text, f"{os.path.relpath(path, REPO_ROOT)} missing token: {tok}"
 
-        # Extra strict: ensure there is at least one line that looks like the Option A final addition.
-        assert re.search(
-            r"final_score\s*=\s*base_score\s*\+\s*context_modifier\s*\+\s*confluence_boost\s*\+\s*jason_sim_boost",
-            text,
-        ), f"{os.path.relpath(path, REPO_ROOT)} does not contain the Option A final_score formula"
+        # Require the shared helper to be used (single source of final score math).
+        assert "compute_final_score_option_a" in text, (
+            f"{os.path.relpath(path, REPO_ROOT)} must use compute_final_score_option_a for final score math"
+        )
+
+
+def test_option_a_sample_formula_with_context_cap_and_additive_boosts() -> None:
+    """
+    Ensure Option A math is consistent:
+    - BASE_4 uses only the 4 engines and their weights.
+    - context_modifier is capped to CONTEXT_MODIFIER_CAP.
+    - boosts (confluence, MSRF, SERP, Jason) are additive and NOT engines.
+    """
+    from core.scoring_contract import ENGINE_WEIGHTS, CONTEXT_MODIFIER_CAP
+
+    ai = 8.0
+    research = 7.0
+    esoteric = 6.0
+    jarvis = 5.0
+
+    base_score = (
+        ai * ENGINE_WEIGHTS["ai"]
+        + research * ENGINE_WEIGHTS["research"]
+        + esoteric * ENGINE_WEIGHTS["esoteric"]
+        + jarvis * ENGINE_WEIGHTS["jarvis"]
+    )
+
+    # Context is a bounded modifier, not a weighted engine.
+    raw_context_modifier = 0.6
+    context_modifier = max(-CONTEXT_MODIFIER_CAP, min(CONTEXT_MODIFIER_CAP, raw_context_modifier))
+
+    confluence_boost = 1.0
+    msrf_boost = 0.4
+    serp_boost = 0.2
+    jason_sim_boost = -0.3
+
+    expected_final = base_score + context_modifier + confluence_boost + msrf_boost + serp_boost + jason_sim_boost
+
+    # Sanity checks on cap and additive boosts
+    assert context_modifier == CONTEXT_MODIFIER_CAP, "Context modifier must be capped to CONTEXT_MODIFIER_CAP"
+    assert round(expected_final, 4) == round(
+        base_score + context_modifier + (confluence_boost + msrf_boost + serp_boost) + jason_sim_boost,
+        4,
+    )
+
+
+def test_context_modifier_clamped() -> None:
+    """Context modifier must be clamped to ±CONTEXT_MODIFIER_CAP."""
+    from core.scoring_pipeline import clamp_context_modifier
+    from core.scoring_contract import CONTEXT_MODIFIER_CAP
+
+    assert clamp_context_modifier(0.9) == CONTEXT_MODIFIER_CAP
+    assert clamp_context_modifier(-0.9) == -CONTEXT_MODIFIER_CAP
+
+
+def test_msrf_and_serp_not_folded_into_confluence() -> None:
+    """
+    Guard: MSRF and SERP must NOT be folded into confluence_boost.
+    They must remain separate additive boosts in the final score formula.
+    """
+    path = os.path.join(REPO_ROOT, "live_data_router.py")
+    text = _read(path)
+
+    assert not re.search(
+        r'confluence\["boost"\]\s*=\s*confluence\.get\("boost",\s*0\)\s*\+\s*msrf_boost',
+        text,
+    ), "MSRF must not be added into confluence_boost"
+
+    assert not re.search(
+        r'confluence\["boost"\]\s*=\s*confluence\.get\("boost",\s*0\)\s*\+\s*serp_boost_total',
+        text,
+    ), "SERP must not be added into confluence_boost"
+
+
+def test_payload_boost_fields_present_in_router() -> None:
+    """
+    Guard: best-bets payload must include separate boost fields and base/context fields.
+    This is a code-level presence check to prevent silent removals.
+    """
+    path = os.path.join(REPO_ROOT, "live_data_router.py")
+    text = _read(path)
+
+    required_fields = [
+        "base_score",
+        "base_4_score",
+        "context_modifier",
+        "context_breakdown",
+        "context_reasons",
+        "confluence_boost",
+        "confluence_reasons",
+        "msrf_boost",
+        "msrf_status",
+        "jason_sim_boost",
+        "jason_status",
+        "serp_boost",
+        "serp_status",
+    ]
+    for field in required_fields:
+        assert field in text, f"live_data_router.py missing required payload field: {field}"
+
+
+def test_scoring_contract_matches_scoring_logic_doc() -> None:
+    """
+    Guard: SCORING_LOGIC.md contract block must match core/scoring_contract.py.
+    """
+    contract = _read(CONTRACT_PATH)
+    doc_path = os.path.join(REPO_ROOT, "SCORING_LOGIC.md")
+    doc = _read(doc_path)
+
+    # Extract JSON contract block from SCORING_LOGIC.md
+    m = re.search(r"SCORING_CONTRACT_JSON\s*\n(\{[\s\S]*?\})\s*\nSCORING_CONTRACT_JSON", doc)
+    assert m, "Missing SCORING_CONTRACT_JSON block in SCORING_LOGIC.md"
+
+    # Extract ENGINE_WEIGHTS dict from contract file
+    m2 = re.search(r"ENGINE_WEIGHTS\s*=\s*\{([\s\S]*?)\}\s*", contract)
+    assert m2, "Could not locate ENGINE_WEIGHTS in core/scoring_contract.py"
+    weights_text = m2.group(1)
+    weights = dict(re.findall(r'"(ai|research|esoteric|jarvis)"\\s*:\\s*([0-9.]+)', weights_text))
+
+    # Ensure the doc block contains matching weights
+    for k, v in weights.items():
+        assert f'"{k}": {v}' in m.group(1), f"SCORING_LOGIC.md contract missing {k}: {v}"

@@ -134,15 +134,16 @@ PICK_STORAGE_SUBPATH = "pick_logs"
 # ENGINE WEIGHTS (SCORING FORMULA)
 # =============================================================================
 
-# BASE_SCORE = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15) + confluence_boost
-# Note: Weights sum to 0.90; remaining 0.10 comes from variable confluence_boost
-ENGINE_WEIGHT_AI = 0.25
-ENGINE_WEIGHT_RESEARCH = 0.30
-ENGINE_WEIGHT_ESOTERIC = 0.20
-ENGINE_WEIGHT_JARVIS = 0.15
+# BASE_SCORE = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
+# Note: Weights sum to 1.00; post-base boosts are additive (context modifier, confluence, Jason, etc.)
+from core.scoring_contract import ENGINE_WEIGHTS
+ENGINE_WEIGHT_AI = ENGINE_WEIGHTS["ai"]
+ENGINE_WEIGHT_RESEARCH = ENGINE_WEIGHTS["research"]
+ENGINE_WEIGHT_ESOTERIC = ENGINE_WEIGHTS["esoteric"]
+ENGINE_WEIGHT_JARVIS = ENGINE_WEIGHTS["jarvis"]
 
-# Verify weights sum to 0.90 (confluence is added separately)
-assert abs((ENGINE_WEIGHT_AI + ENGINE_WEIGHT_RESEARCH + ENGINE_WEIGHT_ESOTERIC + ENGINE_WEIGHT_JARVIS) - 0.90) < 0.01
+# Verify weights sum to 1.00 (boosts are additive)
+assert abs((ENGINE_WEIGHT_AI + ENGINE_WEIGHT_RESEARCH + ENGINE_WEIGHT_ESOTERIC + ENGINE_WEIGHT_JARVIS) - 1.00) < 0.01
 
 
 # =============================================================================

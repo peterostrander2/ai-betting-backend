@@ -46,6 +46,13 @@ from dataclasses import dataclass, asdict, field
 from collections import defaultdict
 import numpy as np
 
+# v19.1: Import grader_store as SINGLE SOURCE OF TRUTH for predictions
+try:
+    from grader_store import load_predictions as grader_store_load_predictions
+    GRADER_STORE_AVAILABLE = True
+except ImportError:
+    GRADER_STORE_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # ============================================
@@ -178,8 +185,8 @@ class AutoGrader:
                     self.weights[sport][stat].pace = 0.18  # Pace matters in hockey
     
     def _load_state(self):
-        """Load persisted weights and prediction history."""
-        # Load weights
+        """Load persisted weights and prediction history from grader_store."""
+        # Load weights (still from weights.json - learned weights persist here)
         weights_file = os.path.join(self.storage_path, "weights.json")
         if os.path.exists(weights_file):
             try:
@@ -190,27 +197,136 @@ class AutoGrader:
                             for stat, w in stat_weights.items():
                                 if stat in self.weights[sport]:
                                     self.weights[sport][stat] = WeightConfig(**w)
-                print(f"✅ Loaded weights from {weights_file}")
+                logger.info("Loaded weights from %s", weights_file)
             except Exception as e:
-                print(f"⚠️ Could not load weights: {e}")
-        
-        # Load predictions history
-        predictions_file = os.path.join(self.storage_path, "predictions.json")
-        if os.path.exists(predictions_file):
-            try:
-                with open(predictions_file, 'r') as f:
-                    data = json.load(f)
-                    for sport, records in data.items():
-                        for record_dict in records:
-                            self.predictions[sport].append(PredictionRecord(**record_dict))
-                print(f"✅ Loaded {sum(len(p) for p in self.predictions.values())} predictions from {predictions_file}")
-            except Exception as e:
-                print(f"⚠️ Could not load predictions: {e}")
+                logger.warning("Could not load weights: %s", e)
+
+        # v19.1: Load predictions from grader_store (SINGLE SOURCE OF TRUTH)
+        self._load_predictions_from_grader_store()
+
+    def _load_predictions_from_grader_store(self):
+        """
+        Load predictions from grader_store and convert to PredictionRecord format.
+
+        v19.1: grader_store is the SINGLE SOURCE OF TRUTH for picks.
+        This replaces the legacy predictions.json loading.
+        """
+        if not GRADER_STORE_AVAILABLE:
+            logger.warning("grader_store not available, predictions will be empty")
+            return
+
+        try:
+            # Load all predictions from grader_store
+            raw_predictions = grader_store_load_predictions()
+            count = 0
+
+            for pick in raw_predictions:
+                sport = pick.get("sport", "").upper()
+                if sport not in self.SUPPORTED_SPORTS:
+                    continue
+
+                # Convert grader_store pick to PredictionRecord
+                record = self._convert_pick_to_record(pick)
+                if record:
+                    self.predictions[sport].append(record)
+                    count += 1
+
+            logger.info("Loaded %d predictions from grader_store", count)
+        except Exception as e:
+            logger.exception("Failed to load from grader_store: %s", e)
+
+    def _convert_pick_to_record(self, pick: Dict) -> Optional[PredictionRecord]:
+        """
+        Convert a grader_store pick dict to PredictionRecord.
+
+        Maps grader_store fields to PredictionRecord fields for learning.
+        """
+        try:
+            # Determine player_name/stat_type based on pick type
+            pick_type = pick.get("pick_type", pick.get("market", "")).upper()
+
+            if pick_type == "PROP":
+                player_name = pick.get("player_name", pick.get("description", "Unknown"))
+                stat_type = pick.get("stat_type", pick.get("prop_type", "unknown"))
+            else:
+                # For game picks (spread, total, moneyline), use matchup
+                player_name = pick.get("matchup", f"{pick.get('away_team', '')} @ {pick.get('home_team', '')}")
+                stat_type = pick_type.lower() if pick_type else "game"
+
+            # Extract predicted value (final_score is our prediction confidence)
+            predicted_value = pick.get("final_score", 0.0)
+
+            # Extract actual result if graded
+            actual_value = None
+            hit = None
+            error = None
+
+            grade_status = pick.get("grade_status", "PENDING")
+            if grade_status == "GRADED":
+                result = pick.get("result", "").upper()
+                hit = result == "WIN"
+                actual_value = pick.get("actual_value", 0.0)
+                # Error = prediction confidence - outcome (1 for win, 0 for loss)
+                error = predicted_value - (10.0 if hit else 0.0)
+
+            # Extract signal contributions
+            context_layer = pick.get("context_layer", {})
+            esoteric_contrib = pick.get("esoteric_contributions", {})
+            glitch_sigs = pick.get("glitch_signals", {})
+
+            # Handle nested glitch_signals (may have sub-dicts like void_moon: {is_void: true})
+            flat_glitch = {}
+            for key, val in glitch_sigs.items():
+                if isinstance(val, dict):
+                    # Extract a numeric value from the dict
+                    flat_glitch[key] = val.get("score", val.get("boost", val.get("confidence", 0.0)))
+                else:
+                    flat_glitch[key] = float(val) if val else 0.0
+
+            # Get timestamp from pick
+            timestamp = pick.get("persisted_at", pick.get("created_at", datetime.now().isoformat()))
+
+            return PredictionRecord(
+                prediction_id=pick.get("pick_id", pick.get("id", "")),
+                sport=pick.get("sport", "").upper(),
+                player_name=player_name,
+                stat_type=stat_type,
+                predicted_value=predicted_value,
+                actual_value=actual_value,
+                line=pick.get("line", None),
+                timestamp=timestamp,
+                pick_type=pick_type,
+                # Context layer signals
+                defense_adjustment=context_layer.get("def_rank_adjustment", context_layer.get("defense", 0.0)),
+                pace_adjustment=context_layer.get("pace_adjustment", context_layer.get("pace", 0.0)),
+                vacuum_adjustment=context_layer.get("vacuum_adjustment", context_layer.get("vacuum", 0.0)),
+                lstm_adjustment=context_layer.get("lstm_adjustment", 0.0),
+                officials_adjustment=context_layer.get("officials_adjustment", 0.0),
+                # Research signals
+                sharp_money_adjustment=pick.get("research_breakdown", {}).get("sharp_money", 0.0),
+                public_fade_adjustment=pick.get("research_breakdown", {}).get("public_fade", 0.0),
+                line_variance_adjustment=pick.get("research_breakdown", {}).get("line_variance", 0.0),
+                # GLITCH signals
+                glitch_signals=flat_glitch,
+                # Esoteric contributions
+                esoteric_contributions=esoteric_contrib,
+                # Outcome
+                hit=hit,
+                error=error
+            )
+        except Exception as e:
+            logger.warning("Failed to convert pick %s: %s", pick.get("pick_id", "unknown"), e)
+            return None
     
     def _save_state(self):
-        """Persist weights and predictions to disk."""
+        """
+        Persist weights to disk.
+
+        v19.1: Predictions are now saved via grader_store (single source of truth).
+        This method ONLY saves learned weights.
+        """
         os.makedirs(self.storage_path, exist_ok=True)
-        
+
         # Save weights
         weights_file = os.path.join(self.storage_path, "weights.json")
         weights_data = {}
@@ -218,20 +334,10 @@ class AutoGrader:
             weights_data[sport] = {}
             for stat, config in stat_weights.items():
                 weights_data[sport][stat] = asdict(config)
-        
+
         with open(weights_file, 'w') as f:
             json.dump(weights_data, f, indent=2)
-        print(f"✅ Saved weights to {weights_file}")
-        
-        # Save predictions
-        predictions_file = os.path.join(self.storage_path, "predictions.json")
-        predictions_data = {}
-        for sport, records in self.predictions.items():
-            predictions_data[sport] = [asdict(r) for r in records]
-        
-        with open(predictions_file, 'w') as f:
-            json.dump(predictions_data, f, indent=2)
-        print(f"✅ Saved {sum(len(p) for p in self.predictions.values())} predictions to {predictions_file}")
+        logger.info("Saved weights to %s", weights_file)
     
     # ============================================
     # PREDICTION LOGGING
@@ -250,7 +356,14 @@ class AutoGrader:
         esoteric_contributions: Optional[Dict[str, float]] = None
     ) -> str:
         """
-        Log a prediction for later grading.
+        Log a prediction to in-memory store for bias calculations.
+
+        v19.1 NOTE: This method updates the in-memory predictions dict ONLY.
+        Actual pick persistence is handled by grader_store.persist_pick() in
+        live_data_router.py. This method is used for:
+        - Test scenarios
+        - Manual prediction logging during development
+        - Populating in-memory dict for bias calculation (loaded from grader_store on startup)
 
         Args:
             sport: Sport code (NBA, NFL, etc.)
@@ -296,22 +409,12 @@ class AutoGrader:
         )
         
         self.predictions[sport].append(record)
-        
-        # Auto-save predictions to disk (persist for tomorrow's audit)
-        self._save_predictions()
-        
+
+        # v19.1: Predictions are persisted via grader_store from live_data_router.py
+        # This method only updates the in-memory dict for bias calculations
+        # Do NOT call _save_predictions() - grader_store is single source of truth
+
         return prediction_id
-    
-    def _save_predictions(self):
-        """Save predictions only (lightweight save for each log)."""
-        os.makedirs(self.storage_path, exist_ok=True)
-        predictions_file = os.path.join(self.storage_path, "predictions.json")
-        predictions_data = {}
-        for sport, records in self.predictions.items():
-            predictions_data[sport] = [asdict(r) for r in records]
-        
-        with open(predictions_file, 'w') as f:
-            json.dump(predictions_data, f, indent=2)
     
     def grade_prediction(
         self,
@@ -335,10 +438,10 @@ class AutoGrader:
                         predicted_over = record.predicted_value > record.line
                         actual_over = actual_value > record.line
                         record.hit = predicted_over == actual_over
-                    
-                    # Save graded prediction to disk
-                    self._save_predictions()
-                    
+
+                    # v19.1: Grading updates go to grader_store via mark_graded()
+                    # Update in-memory only here - grader_store handles persistence
+
                     return {
                         "prediction_id": prediction_id,
                         "predicted": record.predicted_value,

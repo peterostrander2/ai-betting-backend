@@ -74,9 +74,9 @@ class TestScoringComponents:
             )
 
             assert ENGINE_WEIGHT_AI == 0.25
-            assert ENGINE_WEIGHT_RESEARCH == 0.30
+            assert ENGINE_WEIGHT_RESEARCH == 0.35
             assert ENGINE_WEIGHT_ESOTERIC == 0.20
-            assert ENGINE_WEIGHT_JARVIS == 0.15
+            assert ENGINE_WEIGHT_JARVIS == 0.20
 
         except ImportError:
             # Not yet refactored
@@ -108,7 +108,7 @@ class TestJasonSimIntegration:
         # 3. Add to final_score separately
 
         # After refactoring, scoring pipeline should show:
-        # base_score = (ai * 0.25) + (research * 0.30) + (esoteric * 0.20) + (jarvis * 0.15)
+        # base_score = (ai * 0.25) + (research * 0.35) + (esoteric * 0.20) + (jarvis * 0.20)
         # final_score = base_score + confluence_boost + jason_sim_boost
 
         # For now, just verify Jason Sim logic exists
@@ -141,7 +141,7 @@ class TestFinalScoreFormula:
         jason_sim_boost = 0.5
 
         # Expected calculation
-        base_score = (ai_score * 0.25) + (research_score * 0.30) + (esoteric_score * 0.20) + (jarvis_score * 0.15)
+        base_score = (ai_score * 0.25) + (research_score * 0.35) + (esoteric_score * 0.20) + (jarvis_score * 0.20)
         expected_final = base_score + confluence_boost + jason_sim_boost
 
         # After refactoring, can call scoring pipeline:
@@ -149,16 +149,16 @@ class TestFinalScoreFormula:
         # assert result.final_score == expected_final
 
         # For now, verify formula manually
-        # 8.0*0.25 + 7.0*0.30 + 6.0*0.20 + 5.0*0.15 = 2.0 + 2.1 + 1.2 + 0.75 = 6.05
-        assert base_score == 6.05, f"Base score should be 6.05, got {base_score}"
-        assert expected_final == 8.55, f"Final score should be 8.55, got {expected_final}"
+        # 8.0*0.25 + 7.0*0.35 + 6.0*0.20 + 5.0*0.20 = 2.0 + 2.45 + 1.2 + 1.0 = 6.65
+        assert round(base_score, 2) == 6.65, f"Base score should be 6.65, got {base_score}"
+        assert round(expected_final, 2) == 9.15, f"Final score should be 9.15, got {expected_final}"
 
     def test_jarvis_none_handled_correctly(self):
         """When jarvis_rs=None, contribution should be 0"""
         # After refactoring, scoring pipeline should handle this
 
         jarvis_rs = None
-        jarvis_contribution = (jarvis_rs * 0.15) if jarvis_rs is not None else 0
+        jarvis_contribution = (jarvis_rs * 0.20) if jarvis_rs is not None else 0
 
         assert jarvis_contribution == 0, "jarvis_rs=None should contribute 0"
 

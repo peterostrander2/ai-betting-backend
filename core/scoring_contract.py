@@ -3,7 +3,7 @@ Scoring Contract - Single Source of Truth
 All scoring logic MUST reference these constants (no duplicated literals).
 """
 
-# Engine Weights (sum = 0.90; remaining headroom is reserved for post-base modifiers
+# Engine Weights (sum = 1.00; post-base modifiers remain additive
 # such as confluence + Jason Sim + bounded context modifiers, as implemented).
 # v18.0: Option A — 4-engine base weights. Context is a bounded modifier layer.
 ENGINE_WEIGHTS = {
@@ -15,6 +15,7 @@ ENGINE_WEIGHTS = {
 
 # Context modifier cap (applied as bounded boost, NOT a weighted engine)
 CONTEXT_MODIFIER_CAP = 0.35
+
 
 # Output/visibility threshold (hard invariant)
 MIN_FINAL_SCORE = 6.5
@@ -52,6 +53,13 @@ CONFLUENCE_LEVELS = {
 # v17.3: Harmonic Convergence threshold (lowered from 8.0 for better trigger rate)
 HARMONIC_CONVERGENCE_THRESHOLD = 7.5
 
+# Post-base boost caps (documented, bounded)
+# Note: These are caps for the individual boost components (not engines).
+CONFLUENCE_BOOST_CAP = max(CONFLUENCE_LEVELS.values())
+MSRF_BOOST_CAP = 1.0  # MSRF boosts are 0.0, 0.25, 0.5, 1.0
+SERP_BOOST_CAP_TOTAL = 4.3  # Must match core/serp_guardrails.py SERP_TOTAL_CAP
+JASON_SIM_BOOST_CAP = 1.5  # Max absolute Jason boost/downgrade
+
 # Status enums used in outputs (must be deterministic)
 WEATHER_STATUS = ["APPLIED", "NOT_RELEVANT", "UNAVAILABLE", "ERROR"]
 
@@ -65,4 +73,10 @@ SCORING_CONTRACT = {
     "confluence_levels": CONFLUENCE_LEVELS,
     "weather_status_enum": WEATHER_STATUS,
     "harmonic_convergence_threshold": HARMONIC_CONVERGENCE_THRESHOLD,  # v17.3
+    "boost_caps": {
+        "confluence_boost_cap": CONFLUENCE_BOOST_CAP,
+        "msrf_boost_cap": MSRF_BOOST_CAP,
+        "serp_boost_cap_total": SERP_BOOST_CAP_TOTAL,
+        "jason_sim_boost_cap": JASON_SIM_BOOST_CAP,
+    },
 }
