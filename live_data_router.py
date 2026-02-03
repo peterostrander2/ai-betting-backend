@@ -3085,6 +3085,45 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         return result
 
+    def _lineup_risk_guard(commence_time_iso: str, injury_status: str) -> Dict[str, Any]:
+        """
+        Lightweight lineup confirmation guard.
+        If close to start and player is QUESTIONABLE/GTD, apply a small penalty.
+        """
+        if not commence_time_iso:
+            return {"confirmed": False, "status": "UNKNOWN", "minutes_to_start": None, "penalty": 0.0, "reason": "No commence_time"}
+
+        try:
+            _dt = datetime.fromisoformat(commence_time_iso.replace("Z", "+00:00"))
+            if _ET:
+                now_local = datetime.now(_ET)
+                game_local = _dt.astimezone(_ET)
+            else:
+                now_local = datetime.now(timezone.utc)
+                game_local = _dt.astimezone(timezone.utc)
+            minutes_to_start = int((game_local - now_local).total_seconds() / 60)
+        except Exception:
+            return {"confirmed": False, "status": "UNKNOWN", "minutes_to_start": None, "penalty": 0.0, "reason": "Commence_time parse error"}
+
+        status = (injury_status or "UNKNOWN").upper()
+        risky = {"QUESTIONABLE", "GTD", "GAME_TIME_DECISION", "DOUBTFUL", "PROBABLE"}
+        if minutes_to_start <= 90 and status in risky:
+            return {
+                "confirmed": False,
+                "status": status,
+                "minutes_to_start": minutes_to_start,
+                "penalty": -0.5,
+                "reason": "Lineup unconfirmed close to lock"
+            }
+
+        return {
+            "confirmed": True,
+            "status": status,
+            "minutes_to_start": minutes_to_start,
+            "penalty": 0.0,
+            "reason": "Lineup ok"
+        }
+
     # v16.1: Helper function for heuristic AI score calculation (fallback when LSTM unavailable)
     def _calculate_heuristic_ai_score(base_ai, sharp_signal, spread, player_name):
         """Calculate AI score using heuristic rules (pre-LSTM method)."""
@@ -5708,6 +5747,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     market_book_count=market_book_count
                 )
 
+                # Lineup confirmation guard (props only)
+                lineup_guard = _lineup_risk_guard(commence_time, injury_status)
+                if lineup_guard.get("penalty", 0.0) != 0.0:
+                    _p = lineup_guard["penalty"]
+                    _old_score = score_data.get("total_score", 0)
+                    _old_final = score_data.get("final_score", _old_score)
+                    score_data["total_score"] = round(_old_score + _p, 2)
+                    score_data["final_score"] = round(_old_final + _p, 2)
+                    score_data.setdefault("penalties", []).append({
+                        "name": "Lineup Risk",
+                        "magnitude": _p,
+                        "reason": lineup_guard.get("reason", "Lineup unconfirmed")
+                    })
+
                 # v16.0: Apply weather modifier to props (capped at ±1.0)
                 _prop_weather_mod = _prop_game_weather.get("weather_modifier", 0.0) if _prop_game_weather else 0.0
                 _prop_weather_reasons = _prop_game_weather.get("weather_reasons", []) if _prop_game_weather else []
@@ -5836,6 +5889,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "recommendation": f"{side.upper()} {line}",
                     "injury_status": resolved_injury_status,
                     "injury_checked": True,  # v14.9: Injury was checked via identity resolver
+                    "lineup_status": lineup_guard,
                     "best_book": book_name,
                     "best_book_link": book_link,
                     "book_count": _prop_book_count,
