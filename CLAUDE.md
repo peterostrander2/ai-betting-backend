@@ -126,18 +126,18 @@ curl /live/best-bets/NBA?debug=1 | jq '.debug.date_window_et.filter_date'  # MUS
 
 ---
 
-### INVARIANT 4: 4-Engine + Context modifier Scoring (v17.1 - NO DOUBLE COUNTING)
+### INVARIANT 4: 4-Engine + Context Modifier Scoring (Option A - NO DOUBLE COUNTING)
 
 **RULE:** Every pick MUST run through ALL 4 base engines + Jason Sim 2.0
 
-**Engine Weights (v17.1):**
+**Engine Weights (Option A):**
 ```python
-AI_WEIGHT = 0.15        # 15% - 8 AI models
-RESEARCH_WEIGHT = 0.20  # 20% - Sharp/splits/variance/public fade
-ESOTERIC_WEIGHT = 0.15  # 15% - Numerology/astro/fib/vortex/daily
-JARVIS_WEIGHT = 0.10    # 10% - Gematria/triggers/mid-spread
-CONTEXT_WEIGHT = 0.30   # 30% - Defensive Rank/Pace/Vacuum (Pillars 13-15)
-# Total: 0.90 (remaining 0.10 from variable confluence_boost)
+AI_WEIGHT = 0.25        # 25% - 8 AI models
+RESEARCH_WEIGHT = 0.35  # 35% - Sharp/splits/variance/public fade
+ESOTERIC_WEIGHT = 0.20  # 20% - Numerology/astro/fib/vortex/daily
+JARVIS_WEIGHT = 0.20    # 20% - Gematria/triggers/mid-spread
+CONTEXT_MODIFIER_CAP = 0.35  # Context is a bounded modifier, NOT an engine
+# Total base weight: 1.00 (context is additive modifier, not weighted engine)
 ```
 
 **Scoring Formula (EXACT):**
@@ -156,11 +156,11 @@ FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
    - Park Factors (Pillar 17) applied here for MLB
 3. **Jarvis Engine** - Standalone gematria + sacred triggers + Jarvis-specific logic
    - MUST always return meaningful output with 7 required fields (see below)
-4. **Context Engine** (v17.1) - Pillars 13-15 aggregated
+4. **Context Modifier Layer** (Option A) - Pillars 13-15 aggregated
    - Defensive Rank (50%): Opponent's defensive strength vs position
    - Pace (30%): Game pace vector from team data
    - Vacuum (20%): Usage vacuum from injuries
-   - LSTM model receives real context data (not hardcoded)
+   - Output is a bounded modifier: `context_modifier ∈ [-0.35, +0.35]`
 5. **Jason Sim 2.0** - Post-pick confluence layer (NO ODDS)
    - Spread/ML: Boost if pick-side win% ≥61%, block if ≤52% and base < 7.2
    - Totals: Reduce confidence if variance HIGH
@@ -173,7 +173,8 @@ FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
     "research_score": float,     # 0-10
     "esoteric_score": float,     # 0-10
     "jarvis_score": float,       # 0-10
-    "context_score": float,      # 0-10 (backward-compat; context modifier is authoritative)
+    "context_modifier": float,   # bounded modifier (authoritative)
+    "context_score": float,      # backward-compat only (do not use for weighting)
     "base_score": float,         # Weighted sum before boosts
     "confluence_boost": float,   # STRONG (+3), MODERATE (+1), DIVERGENT (+0), HARMONIC_CONVERGENCE (+4.5)
     "jason_sim_boost": float,    # Can be negative
@@ -184,7 +185,7 @@ FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
     "research_reasons": List[str],
     "esoteric_reasons": List[str],
     "jarvis_reasons": List[str],
-    "context_reasons": List[str],  # v17.1
+    "context_reasons": List[str],
     "jason_sim_reasons": List[str],
 
     # Jarvis 7-field contract (see Invariant 5)
@@ -259,7 +260,7 @@ no_contradictions = apply_contradiction_gate(filtered)
 top_picks = no_contradictions[:max_picks]
 ```
 
-**GOLD_STAR Hard Gates (v17.1):**
+**GOLD_STAR Hard Gates (Option A):**
 - If tier == "GOLD_STAR", MUST pass ALL gates:
   - `ai_score >= 6.8`
   - `research_score >= 5.5`
@@ -586,6 +587,31 @@ Checks:
 - ET-only payload (no UTC/telemetry keys)
 - Cache headers on best-bets endpoints
 
+### Option A Handoff Summary (scoring + telemetry)
+
+**Scoring (Option A):**
+- Base engines: AI (0.25), Research (0.35), Esoteric (0.20), Jarvis (0.20)
+- Context is **NOT** an engine: bounded modifier `context_modifier ∈ [-0.35, +0.35]`
+- Final: `BASE_4 + context_modifier + confluence + jason + msrf + serp (if enabled)`
+
+**Titanium / Gold Star:**
+- Titanium strict **3-of-4** (AI/Research/Esoteric/Jarvis). Context excluded.
+- Gold Star gates evaluate **only** 4 engines. Context excluded.
+
+**Telemetry rules:**
+- `last_used_at` is global and updated **only on successful client calls**
+- `used_integrations` is **request-scoped** and **debug-only** (`?debug=1`)
+- No request_id in non-debug payloads
+
+**Post-deploy smoke checklist (no secrets):**
+```bash
+BASE_URL="https://your-deployment.app" API_KEY="YOUR_KEY" \
+  bash scripts/verify_live_endpoints.sh
+
+BASE_URL="https://your-deployment.app" API_KEY="YOUR_KEY" \
+  bash scripts/post_deploy_check.sh
+```
+
 ### What It Checks (17 Total)
 
 **1. Storage Persistence (4 checks)**
@@ -844,9 +870,9 @@ function BadPickCard({ pick }: { pick: Pick }) {
   // ❌ NEVER do this
   const finalScore = (
     pick.ai_score * 0.25 +
-    pick.research_score * 0.30 +
+    pick.research_score * 0.35 +
     pick.esoteric_score * 0.20 +
-    pick.jarvis_rs * 0.15
+    pick.jarvis_rs * 0.20
   );
 
   // ❌ NEVER do this
@@ -1952,12 +1978,12 @@ If you add ANY new endpoint or function that processes Odds API events, you MUST
 
 ---
 
-## Signal Architecture (4-Engine + Context modifier v17.1)
+## Signal Architecture (Option A: 4-Engine + Context Modifier)
 
 ### Scoring Formula
 ```
 FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
-       + confluence_boost + jason_sim_boost (post-pick)
+       + msrf_boost + serp_boost (if enabled)
 ```
 
 All engines score 0-10. Min output threshold: **6.5** (picks below this are filtered out).
@@ -1988,7 +2014,7 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 - Bounded modifier cap: ±0.35 (see `CONTEXT_MODIFIER_CAP`)
 - Services: DefensiveRankService, PaceVectorService, UsageVacuumService
 
-### Confluence (v17.1 — with STRONG eligibility gate + HARMONIC_CONVERGENCE)
+### Confluence (Option A — STRONG gate + HARMONIC_CONVERGENCE)
 - Alignment = `1 - abs(research - esoteric) / 10`
 - **HARMONIC_CONVERGENCE (+4.5)**: Research ≥ 8.0 AND Esoteric ≥ 8.0 ("Golden Boost" when Math+Magic align)
 - **STRONG (+3)**: alignment ≥ 80% **AND** at least one active signal (`jarvis_active`, `research_sharp_present`, or `jason_sim_boost != 0`). If alignment ≥70% but no active signal, downgrades to MODERATE.
@@ -2000,7 +2026,7 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 
 **HARMONIC_CONVERGENCE**: When both Research (market signals) and Esoteric (cosmic signals) score ≥8.0, it represents exceptional alignment between analytical and intuitive sources. This adds +1.5 scaled boost (equivalent to +15 on 100-point).
 
-### CRITICAL: GOLD_STAR Hard Gates (v17.1)
+### CRITICAL: GOLD_STAR Hard Gates (Option A)
 
 **GOLD_STAR tier requires ALL of these engine minimums. If any fails, downgrade to EDGE_LEAN.**
 

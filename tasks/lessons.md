@@ -160,9 +160,8 @@ Watch for these patterns that have caused production issues:
 curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/NBA?debug=1" \
   -H "X-API-Key: KEY" | jq '.props.picks[0].lstm_metadata.features_used'
 
-# Verify 5-engine weights in /health
+# Verify deploy version (Option A is documented in CLAUDE.md + SCORING_LOGIC.md)
 curl -s "https://web-production-7b2a.up.railway.app/health" | jq '.deploy_version'
-# Should show: "17.1"
 ```
 
 ---

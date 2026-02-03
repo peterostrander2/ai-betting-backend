@@ -93,6 +93,21 @@ This is also wired into `scripts/ci_sanity_check.sh` as a **non-blocking** step.
    - response includes `date_et` and `run_timestamp_et`
    - cache TTL matches expectations (best-bets shorter than others)
 
+## Post-deploy smoke checklist (debug telemetry)
+
+```bash
+BASE_URL="https://your-deployment.app" API_KEY="YOUR_KEY" \
+  bash scripts/verify_live_endpoints.sh
+
+BASE_URL="https://your-deployment.app" API_KEY="YOUR_KEY" \
+  bash scripts/post_deploy_check.sh
+```
+
+Expected:
+- `/live/best-bets/NBA?debug=1` includes `used_integrations`
+- `/live/best-bets/NBA` omits `used_integrations`
+- `/live/debug/integrations` shows `last_used_at` after a best-bets hit
+
 **Never do:**
 - Add/modify scoring literals directly in `live_data_router.py` / `tiering.py` / `core/titanium.py`
 - Duplicate thresholds anywhere outside the contract
