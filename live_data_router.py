@@ -4039,8 +4039,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # ===== PHASE 8 (v18.2) NEW ESOTERIC SIGNALS =====
         phase8_boost = 0.0
         phase8_reasons = []
-        phase8_error = None  # For debugging
-        phase8_full_result = None  # Full result for debugging
+        phase8_full_result = None
         try:
             from esoteric_engine import get_phase8_esoteric_signals
 
@@ -4099,12 +4098,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             game_str[:30], phase8_boost, phase8_result.get("triggered_signals", []))
 
         except ImportError as ie:
-            phase8_error = f"ImportError: {ie}"
             logger.warning("Phase 8 signals module not available: %s", ie)
         except Exception as e:
-            import traceback
-            phase8_error = f"{type(e).__name__}: {e}"
-            logger.warning("Phase 8 signals calculation failed: %s\n%s", e, traceback.format_exc())
+            logger.warning("Phase 8 signals calculation failed: %s", e)
 
         # Clamp to 0-10
         esoteric_score = max(0, min(10, esoteric_raw))
@@ -4878,12 +4874,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # v18.2 Phase 8 Esoteric Signals
             "phase8_boost": phase8_boost,
             "phase8_reasons": phase8_reasons,
-            "phase8_error": phase8_error,
-            "phase8_debug": {
-                "pick_type_passed": pick_type,
-                "pick_side_passed": pick_side,
-                "full_result": phase8_full_result,
-            },
+            "phase8_breakdown": phase8_full_result.get("breakdown") if phase8_full_result else None,
             # v17.4 SERP Intelligence
             "serp_intel": serp_intel,
             "serp_boost": serp_boost_total,
