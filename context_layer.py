@@ -2254,6 +2254,61 @@ class OfficialsService:
 
 
 # ============================================================
+# STADIUM ALTITUDE SERVICE (v17.9)
+# ============================================================
+
+class StadiumAltitudeService:
+    """
+    Altitude impact on game scoring (v17.9)
+
+    High-altitude venues affect player performance:
+    - Denver (5280ft): Significant impact on all sports
+    - Utah (4226ft): Moderate impact
+    - Mexico City (7350ft): Major impact for international games
+    """
+
+    HIGH_ALTITUDE = {
+        "broncos": 5280, "nuggets": 5280, "rockies": 5200, "avalanche": 5280,
+        "jazz": 4226, "utah": 4226, "real salt lake": 4226,
+        "colorado": 5430, "air force": 6621, "wyoming": 7220,
+        "new mexico": 5312, "byu": 4551, "utah state": 4528,
+        "mexico city": 7350, "azteca": 7350,
+    }
+
+    @classmethod
+    def get_altitude_adjustment(cls, sport: str, home_team: str, pick_type: str, pick_side: str) -> Tuple[float, List[str]]:
+        """Returns (adjustment, reasons) tuple for altitude impact."""
+        if not home_team:
+            return (0.0, [])
+
+        home_lower = home_team.lower().strip()
+        altitude = next((alt for k, alt in cls.HIGH_ALTITUDE.items() if k in home_lower), 0)
+
+        if altitude < 4000:
+            return (0.0, [])
+
+        sport_upper = sport.upper() if sport else ""
+        pick_type_upper = pick_type.upper() if pick_type else ""
+        pick_side_lower = pick_side.lower() if pick_side else ""
+
+        if sport_upper == "MLB" and altitude >= 5000:
+            if pick_type_upper == "TOTAL":
+                if "over" in pick_side_lower:
+                    return (0.5, [f"Coors Field {altitude}ft favors OVER (+0.5)"])
+                elif "under" in pick_side_lower:
+                    return (-0.3, [f"Coors Field {altitude}ft penalizes UNDER (-0.3)"])
+            return (0.2, [f"Altitude {altitude}ft boosts offense (+0.2)"])
+
+        if sport_upper in ("NFL", "NCAAF") and altitude >= 5000:
+            return (0.25, [f"Mile High {altitude}ft visitor fatigue (+0.25)"])
+
+        if sport_upper in ("NBA", "NHL") and altitude >= 4000:
+            return (0.15, [f"Altitude {altitude}ft moderate effect (+0.15)"])
+
+        return (0.15, [f"Altitude {altitude}ft moderate effect (+0.15)"])
+
+
+# ============================================================
 # QUICK TEST
 # ============================================================
 

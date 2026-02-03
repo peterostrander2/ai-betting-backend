@@ -1,0 +1,240 @@
+# v17.9 Weather, Altitude & Travel Fatigue Integration Patch
+# ==========================================================
+#
+# This patch integrates 3 alt_data modules that are implemented but not wired:
+# - Weather: Fetched but bypasses engines → now applies to research_score
+# - Altitude: 62-venue registry unused → now applies to esoteric_score
+# - Travel/B2B: ESPN rest_days computed but orphaned → now applies to context_score
+#
+# Apply with: patch -p1 < v17.9_weather_altitude_travel.patch
+# Or manually apply the changes below.
+
+# =============================================================================
+# FILE: context_layer.py
+# =============================================================================
+
+# ADD after existing services (~line 970):
+# ----------------------------------------
+
+--- a/context_layer.py
++++ b/context_layer.py
+@@ -970,6 +970,78 @@ class ExistingService:
+     # ... existing code ...
+     pass
+
++
++class StadiumAltitudeService:
++    """
++    Altitude impact on game scoring (v17.9)
++
++    High-altitude venues affect player performance:
++    - Denver (5280ft): Significant impact on all sports
++    - Utah (4226ft): Moderate impact
++    - Mexico City (7350ft): Major impact for international games
++    """
++
++    HIGH_ALTITUDE = {
++        "broncos": 5280, "nuggets": 5280, "rockies": 5200, "avalanche": 5280,
++        "jazz": 4226, "utah": 4226, "real salt lake": 4226,
++        "colorado": 5430, "air force": 6621, "wyoming": 7220,
++        "new mexico": 5312, "byu": 4551, "utah state": 4528,
++        "mexico city": 7350, "azteca": 7350,
++    }
++
++    @classmethod
++    def get_altitude_adjustment(cls, sport: str, home_team: str, pick_type: str, pick_side: str) -> tuple:
++        """Returns (adjustment, reasons) tuple for altitude impact."""
++        if not home_team:
++            return (0.0, [])
++
++        home_lower = home_team.lower().strip()
++        altitude = next((alt for k, alt in cls.HIGH_ALTITUDE.items() if k in home_lower), 0)
++
++        if altitude < 4000:
++            return (0.0, [])
++
++        sport_upper = sport.upper() if sport else ""
++        pick_type_upper = pick_type.upper() if pick_type else ""
++        pick_side_lower = pick_side.lower() if pick_side else ""
++
++        # MLB: Coors Field effect
++        if sport_upper == "MLB" and altitude >= 5000:
++            if pick_type_upper == "TOTAL":
++                if "over" in pick_side_lower:
++                    return (0.5, [f"Coors Field {altitude}ft favors OVER (+0.5)"])
++                elif "under" in pick_side_lower:
++                    return (-0.3, [f"Coors Field {altitude}ft penalizes UNDER (-0.3)"])
++            return (0.2, [f"Altitude {altitude}ft boosts offense (+0.2)"])
++
++        # NFL/NCAAF: Mile High visitor fatigue
++        if sport_upper in ("NFL", "NCAAF") and altitude >= 5000:
++            return (0.25, [f"Mile High {altitude}ft visitor fatigue (+0.25)"])
++
++        # NBA/NHL at altitude
++        if sport_upper in ("NBA", "NHL") and altitude >= 4000:
++            return (0.15, [f"Altitude {altitude}ft moderate effect (+0.15)"])
++
++        # Generic high altitude
++        if altitude >= 4000:
++            return (0.15, [f"Altitude {altitude}ft moderate effect (+0.15)"])
++
++        return (0.0, [])
+
+
+# =============================================================================
+# FILE: live_data_router.py
+# =============================================================================
+
+# ADD to imports section (with existing context_layer imports):
+# -------------------------------------------------------------
+
+--- a/live_data_router.py
++++ b/live_data_router.py
+@@ -50,6 +50,7 @@ from context_layer import (
+     OfficialsService,
++    StadiumAltitudeService,
+ )
+
++# Travel module import (v17.9)
++try:
++    from alt_data_sources.travel import calculate_distance, calculate_fatigue_impact
++    TRAVEL_MODULE_AVAILABLE = True
++except ImportError:
++    TRAVEL_MODULE_AVAILABLE = False
+
+
+# ADD in compute_context_modifiers() (~line 2990):
+# ------------------------------------------------
+
+--- a/live_data_router.py
++++ b/live_data_router.py
+@@ -2990,6 +2990,30 @@ def compute_context_modifiers(...):
+     # ... existing context calculations ...
+
++    # ===== TRAVEL FATIGUE (v17.9) =====
++    if rest_days_override is not None:
++        try:
++            if TRAVEL_MODULE_AVAILABLE:
++                distance = 0
++                if away_team and home_team:
++                    distance = calculate_distance(away_team, home_team)
++
++                fatigue = calculate_fatigue_impact(
++                    sport=sport,
++                    distance_miles=distance,
++                    rest_days_away=int(rest_days_override),
++                    rest_days_home=0
++                )
++
++                result["travel_fatigue"] = {
++                    "rest_days": int(rest_days_override),
++                    "distance_miles": distance,
++                    "adjustment": fatigue.get("away_team_fatigue", 0.0),
++                    "overall_impact": fatigue.get("overall_impact", "NONE"),
++                    "reasons": fatigue.get("reasons", [])
++                }
++        except Exception as e:
++            logger.debug("Travel fatigue calc failed: %s", e)
++
+     return result
+
+
+# ADD in calculate_pick_score() (~line 3165, in context section):
+# ---------------------------------------------------------------
+
+--- a/live_data_router.py
++++ b/live_data_router.py
+@@ -3165,6 +3165,32 @@ async def calculate_pick_score(...):
+     # ... existing context scoring ...
+
++            # ===== TRAVEL FATIGUE TO CONTEXT (v17.9) =====
++            travel_adj = 0.0
++            if _ctx_mods and _ctx_mods.get("travel_fatigue"):
++                try:
++                    _tf = _ctx_mods["travel_fatigue"]
++                    _rest = _tf.get("rest_days", 1)
++                    _dist = _tf.get("distance_miles", 0)
++                    _impact = _tf.get("overall_impact", "NONE")
++
++                    if _rest == 0:  # B2B
++                        travel_adj = -0.5
++                        context_reasons.append(f"B2B: Back-to-back game (-0.5)")
++                    elif _rest == 1 and _dist > 1500:
++                        travel_adj = -0.35
++                        context_reasons.append(f"Travel: {_dist}mi + 1-day rest (-0.35)")
++                    elif _impact == "HIGH":
++                        travel_adj = -0.4
++                        for r in _tf.get("reasons", []):
++                            context_reasons.append(f"Travel: {r}")
++                    elif _impact == "MEDIUM" and _dist > 1000:
++                        travel_adj = -0.2
++                        context_reasons.append(f"Travel: {_dist}mi distance (-0.2)")
++
++                    if travel_adj != 0.0:
++                        context_raw += travel_adj
++                except Exception as e:
++                    logger.debug("Travel context failed: %s", e)
+
+
+# ADD in esoteric section (~line 3745, after GLITCH):
+# ---------------------------------------------------
+
+--- a/live_data_router.py
++++ b/live_data_router.py
+@@ -3745,6 +3745,21 @@ async def calculate_pick_score(...):
+     # ... after GLITCH aggregate ...
+
++            # ===== ALTITUDE IMPACT (v17.9) =====
++            altitude_adj = 0.0
++            if CONTEXT_LAYER_AVAILABLE and home_team:
++                try:
++                    altitude_adj, altitude_reasons = StadiumAltitudeService.get_altitude_adjustment(
++                        sport=sport_upper,
++                        home_team=home_team,
++                        pick_type=pick_type,
++                        pick_side=pick_side
++                    )
++                    if altitude_adj != 0.0:
++                        esoteric_raw += altitude_adj
++                        esoteric_reasons.extend(altitude_reasons)
++                except Exception as e:
++                    logger.debug("Altitude adjustment failed: %s", e)
+
+
+# ADD after research calc (~line 4060, before officials):
+# -------------------------------------------------------
+
+--- a/live_data_router.py
++++ b/live_data_router.py
+@@ -4060,6 +4060,21 @@ async def calculate_pick_score(...):
+     # ... after research score calculation ...
+
++            # ===== WEATHER IMPACT ON RESEARCH (v17.9) =====
++            weather_adj = 0.0
++            if sport_upper in ("NFL", "MLB", "NCAAF") and _game_weather:
++                try:
++                    _wmod = _game_weather.get("weather_modifier", 0.0)
++                    if _game_weather.get("available") and _wmod != 0.0:
++                        weather_adj = max(-0.5, _wmod * 0.5)
++                        research_raw += weather_adj
++                        for wr in _game_weather.get("weather_reasons", []):
++                            research_reasons.append(f"Weather: {wr}")
++                except Exception as e:
++                    logger.debug("Weather adjustment failed: %s", e)
+
+
+# REMOVE old weather application (~lines 5371-5377):
+# --------------------------------------------------
+
+--- a/live_data_router.py
++++ b/live_data_router.py
+@@ -5371,7 +5371,7 @@ async def calculate_pick_score(...):
+-            # Apply weather modifier directly to final score
+-            if _game_weather and _game_weather.get("available"):
+-                _wmod = _game_weather.get("weather_modifier", 0.0)
+-                if _wmod != 0.0:
+-                    final_score = max(0.0, min(10.0, final_score + _wmod))
+-                    for wr in _game_weather.get("weather_reasons", []):
+-                        final_reasons.append(f"Weather: {wr}")
++            # v17.9: Weather now applied to research_score (see ~line 4060)
++            # Old direct application removed to respect engine weights

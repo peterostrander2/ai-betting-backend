@@ -3535,6 +3535,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             f"Research: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + ESPN:{espn_odds_boost} + Liquidity:{liquidity_boost} + Base:{base_research})"
         )
 
+        # ===== WEATHER IMPACT ON RESEARCH (v17.9) =====
+        weather_adj = 0.0
+        if sport.upper() in ("NFL", "MLB", "NCAAF") and weather_data and weather_data.get("available"):
+            try:
+                _wmod = weather_data.get("weather_modifier", 0.0)
+                if _wmod != 0.0:
+                    weather_adj = max(-0.5, _wmod * 0.5)
+                    research_score = min(10.0, research_score + weather_adj)
+                    for wr in weather_data.get("weather_reasons", []):
+                        research_reasons.append(f"Weather: {wr}")
+            except Exception as e:
+                logger.debug("Weather adjustment failed: %s", e)
+
         # Pillar score for backwards compatibility (used in scoring_breakdown)
         pillar_score = sharp_boost + line_boost + public_boost
 
@@ -3954,6 +3967,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # Apply Phase 1 dormant signal boosts
         esoteric_raw += biorhythm_boost + gann_boost + founders_boost
 
+        # ===== ALTITUDE IMPACT (v17.9) =====
+        altitude_adj = 0.0
+        try:
+            from context_layer import StadiumAltitudeService
+            altitude_adj, altitude_reasons = StadiumAltitudeService.get_altitude_adjustment(
+                sport=sport, home_team=home_team, pick_type=pick_type, pick_side=pick_side
+            )
+            if altitude_adj != 0.0:
+                esoteric_raw += altitude_adj
+                esoteric_reasons.extend(altitude_reasons)
+        except Exception as e:
+            logger.debug("Altitude adjustment failed: %s", e)
+
         # Clamp to 0-10
         esoteric_score = max(0, min(10, esoteric_raw))
         logger.debug("Esoteric[%s]: mag=%.1f num=%.2f astro=%.2f fib=%.2f vortex=%.2f daily=%.2f trap=%.2f → raw=%.2f",
@@ -4124,6 +4150,34 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # Weighted combination: Defense 50%, Pace 30%, Vacuum 20%
         context_score = (def_component * 0.5) + (pace_component * 0.3) + (vacuum_component * 0.2)
         context_score = round(max(0, min(10, context_score)), 2)
+
+        # ===== TRAVEL FATIGUE TO CONTEXT (v17.9) =====
+        travel_adj = 0.0
+        try:
+            from alt_data_sources.travel import calculate_distance, calculate_fatigue_impact, TRAVEL_ENABLED
+            if TRAVEL_ENABLED and away_team and home_team:
+                _rest_days = rest_days if 'rest_days' in dir() else 1
+                _distance = calculate_distance(away_team, home_team)
+                if _distance > 0:
+                    _fatigue = calculate_fatigue_impact(sport, _distance, _rest_days, 0)
+                    _impact = _fatigue.get("overall_impact", "NONE")
+                    if _rest_days == 0:  # B2B
+                        travel_adj = -0.5
+                        context_reasons.append("B2B: Back-to-back game (-0.5)")
+                    elif _rest_days == 1 and _distance > 1500:
+                        travel_adj = -0.35
+                        context_reasons.append(f"Travel: {_distance}mi + 1-day rest (-0.35)")
+                    elif _impact == "HIGH":
+                        travel_adj = -0.4
+                        for r in _fatigue.get("reasons", []):
+                            context_reasons.append(f"Travel: {r}")
+                    elif _impact == "MEDIUM" and _distance > 1000:
+                        travel_adj = -0.2
+                        context_reasons.append(f"Travel: {_distance}mi distance (-0.2)")
+                    if travel_adj != 0.0:
+                        context_score = round(max(0, min(10, context_score + travel_adj)), 2)
+        except Exception as e:
+            logger.debug("Travel fatigue failed: %s", e)
 
         # --- v17.1 BASE SCORE FORMULA (5 Engines) ---
         # BASE = (ai × 0.15) + (research × 0.20) + (esoteric × 0.15) + (jarvis × 0.10) + (context × 0.30) + confluence_boost

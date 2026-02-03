@@ -1,0 +1,226 @@
+--- Phase 5: Officials Tendency Integration (v17.8) - Pillar 16
+--- Apply to: context_layer.py, live_data_router.py
+
+================================================================================
+PATCH 1: Add officials_data.py to project root
+================================================================================
+
+# File already created: officials_data.py
+# Contains: REFEREE_TENDENCIES database, get_referee_tendency(), calculate_officials_adjustment()
+
+
+================================================================================
+PATCH 2: Add import to context_layer.py (top of file)
+================================================================================
+
+--- context_layer.py (imports section)
++++ context_layer.py (imports section)
+
++from officials_data import get_referee_tendency, calculate_officials_adjustment
+
+
+================================================================================
+PATCH 3: Replace OfficialsService class in context_layer.py (~lines 1527-1620)
+================================================================================
+
+--- context_layer.py:1527 (old OfficialsService)
++++ context_layer.py:1527 (new OfficialsService)
+
+-class OfficialsService:
+-    """Pillar 16: Officials Analysis - PLACEHOLDER"""
+-
+-    @staticmethod
+-    def get_officials_adjustment(...):
+-        # Old implementation returning 0.0
+-        return 0.0, []
+
++class OfficialsService:
++    """
++    Pillar 16: Officials Analysis
++
++    Adjusts scores based on referee tendencies.
++    Data source: ESPN officials API + officials_data.py tendency database.
++
++    v17.8: Now uses real referee tendency data.
++    """
++
++    @staticmethod
++    def get_officials_adjustment(
++        sport: str,
++        officials: dict,
++        pick_type: str,
++        pick_side: str,
++        is_home_team: bool = False
++    ) -> tuple:
++        """
++        Calculate scoring adjustment based on referee tendencies.
++
++        Args:
++            sport: NBA, NFL, NHL (NCAAB/MLB not supported)
++            officials: Dict with lead_official, official_2, etc. from ESPN
++            pick_type: TOTAL, SPREAD, MONEYLINE, PROP
++            pick_side: Over, Under, or team name
++            is_home_team: True if pick is on home team
++
++        Returns:
++            (adjustment: float, reasons: List[str])
++        """
++        adjustment = 0.0
++        reasons = []
++
++        # Only NBA, NFL, NHL have referee data
++        if sport.upper() not in ("NBA", "NFL", "NHL"):
++            return adjustment, reasons
++
++        if not officials:
++            return adjustment, reasons
++
++        # Get lead official (most influential)
++        lead_ref = (
++            officials.get("lead_official") or
++            officials.get("referee") or
++            officials.get("Referee") or
++            officials.get("officials", [{}])[0].get("displayName") if isinstance(officials.get("officials"), list) else None
++        )
++
++        if not lead_ref:
++            return adjustment, reasons
++
++        # Calculate adjustment using officials_data module
++        adj, reason = calculate_officials_adjustment(
++            sport=sport,
++            referee_name=lead_ref,
++            pick_type=pick_type,
++            pick_side=pick_side,
++            is_home_team=is_home_team
++        )
++
++        if adj != 0 and reason:
++            adjustment = adj
++            reasons.append(reason)
++
++        return adjustment, reasons
++
++    @staticmethod
++    def get_referee_info(sport: str, referee_name: str) -> dict:
++        """Get detailed info about a specific referee."""
++        tendency = get_referee_tendency(sport, referee_name)
++        if not tendency:
++            return {"found": False, "name": referee_name, "sport": sport}
++
++        return {
++            "found": True,
++            "name": referee_name,
++            "sport": sport,
++            "over_tendency": tendency.get("over_tendency"),
++            "home_bias": tendency.get("home_bias"),
++            "total_games": tendency.get("total_games"),
++            "notes": tendency.get("notes"),
++        }
+
+
+================================================================================
+PATCH 4: Update officials section in live_data_router.py (~line 3720-3770)
+================================================================================
+
+--- live_data_router.py:3720 (old officials section)
++++ live_data_router.py:3720 (new officials section)
+
+# Find the existing officials section (search for "PILLAR 16" or "officials")
+# Replace with:
+
++            # ===== PILLAR 16: OFFICIALS (v17.8) =====
++            _officials_adjustment = 0.0
++            _officials_reasons = []
++            try:
++                # Check if we have officials data for this game
++                if _officials_by_game and home_team and away_team:
++                    _home_lower = home_team.lower().strip()
++                    _away_lower = away_team.lower().strip()
++
++                    # Try different key formats (ESPN may return various formats)
++                    _game_officials = (
++                        _officials_by_game.get((_home_lower, _away_lower)) or
++                        _officials_by_game.get((_away_lower, _home_lower)) or
++                        _officials_by_game.get((home_team, away_team))
++                    )
++
++                    if _game_officials:
++                        # Determine if pick is on home team
++                        _pick_is_home = False
++                        if pick_side:
++                            _pick_side_lower = pick_side.lower().strip()
++                            _pick_is_home = (
++                                _pick_side_lower == _home_lower or
++                                _pick_side_lower in home_team.lower()
++                            )
++
++                        _officials_adjustment, _officials_reasons = OfficialsService.get_officials_adjustment(
++                            sport=sport,
++                            officials=_game_officials,
++                            pick_type=pick_type,
++                            pick_side=pick_side,
++                            is_home_team=_pick_is_home
++                        )
++
++                        if _officials_adjustment != 0:
++                            logger.debug(
++                                "Officials adjustment: %.2f for %s vs %s (%s)",
++                                _officials_adjustment, home_team, away_team, _officials_reasons
++                            )
++            except Exception as e:
++                logger.debug("Officials adjustment skipped: %s", e)
++
++            # Apply officials adjustment to research score
++            if _officials_adjustment != 0:
++                research_raw += _officials_adjustment
++                research_reasons.extend(_officials_reasons)
+
+
+================================================================================
+PATCH 5: Add officials fields to pick result dict (~line 3800+)
+================================================================================
+
+--- live_data_router.py (pick result dict)
++++ live_data_router.py (pick result dict)
+
+# Add these fields to the return dict in calculate_pick_score():
+
++                "officials_adjustment": _officials_adjustment,
++                "officials_reasons": _officials_reasons,
++                "officials_data": _game_officials if '_game_officials' in dir() and _game_officials else None,
+
+
+================================================================================
+END OF PATCHES
+================================================================================
+
+## Summary of Changes
+
+| File | Changes |
+|------|---------|
+| `officials_data.py` | NEW - Referee tendency database (25+ NBA, 17 NFL, 15 NHL) |
+| `context_layer.py` | Add import, replace OfficialsService class |
+| `live_data_router.py` | Update Pillar 16 section, add output fields |
+
+## Expected Results
+
+Before v17.8:
+- Pillar 16: ⏳ Returns 0.0 for all games
+- No officials info in research_reasons
+
+After v17.8:
+- Pillar 16: ✅ ACTIVE
+- ~40% of NBA/NFL/NHL games will have officials adjustment
+- research_reasons includes: "Officials: Scott Foster over tendency (54%)"
+- Adjustment range: -0.5 to +0.5 on research score
+
+## Data Coverage
+
+| Sport | Referees | Notes |
+|-------|----------|-------|
+| NBA | 25+ | All active refs with 300+ games |
+| NFL | 17 | All current crew chiefs |
+| NHL | 15 | Top referees by games |
+| MLB | 0 | Not applicable (umpires don't affect O/U same way) |
+| NCAAB | 0 | Too many refs, insufficient data |
