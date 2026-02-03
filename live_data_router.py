@@ -153,6 +153,15 @@ except ImportError:
     TIME_ET_AVAILABLE = False
     logger.warning("core.time_et module not available - ET filtering disabled")
 
+# Import Database utilities for line history (v17.7)
+try:
+    from database import get_db, get_line_history_values, get_season_extreme, DB_ENABLED
+    DATABASE_AVAILABLE = True
+except ImportError:
+    DATABASE_AVAILABLE = False
+    DB_ENABLED = False
+    logger.warning("database module not available for line history")
+
 # Import legacy time_filters for compatibility (will be deprecated)
 try:
     from time_filters import (
@@ -3652,12 +3661,32 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 total=total
             )
 
+            # ===== v17.7: HURST EXPONENT DATA =====
+            # Fetch line history for Hurst Exponent calculation in GLITCH
+            _line_history = None
+            try:
+                _event_id = candidate.get("id") if isinstance(candidate, dict) else None
+                if _event_id and DATABASE_AVAILABLE and DB_ENABLED:
+                    with get_db() as db:
+                        if db:
+                            _line_history = get_line_history_values(
+                                db,
+                                event_id=_event_id,
+                                value_type="spread",  # Use spread for primary line movement
+                                limit=30
+                            )
+                            if _line_history and len(_line_history) >= 10:
+                                logger.debug("HURST: Loaded %d line history values for event %s",
+                                            len(_line_history), _event_id[:20] if _event_id else "unknown")
+            except Exception as e:
+                logger.debug("Line history fetch skipped: %s", e)
+
             # Calculate GLITCH aggregate
             glitch_result = get_glitch_aggregate(
                 birth_date_str=_player_birth,
                 game_date=_game_date_obj,
                 game_time=game_datetime,
-                line_history=None,  # TODO: Pass line history when schema implemented
+                line_history=_line_history,  # v17.7: Now using real line history data
                 value_for_benford=_line_values if len(_line_values) >= 10 else None,
                 primary_value=prop_line if prop_line else spread
             )
@@ -3710,6 +3739,50 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         # Apply Vortex boost
         esoteric_raw += vortex_boost
+
+        # ===== v17.7: FIBONACCI RETRACEMENT (Season Extremes) =====
+        # Check if current line is near key Fibonacci retracement levels (23.6%, 38.2%, 50%, 61.8%, 78.6%)
+        fib_retracement_boost = 0.0
+        _is_game_pick = pick_type in ("GAME", "SPREAD", "MONEYLINE", "TOTAL", "SHARP")
+        try:
+            if DATABASE_AVAILABLE and DB_ENABLED and _is_game_pick:
+                from esoteric_engine import calculate_fibonacci_retracement
+
+                # Determine current season (Sept-Aug academic year pattern)
+                _now = datetime.now()
+                _season = f"{_now.year}-{str(_now.year+1)[-2:]}" if _now.month >= 9 else f"{_now.year-1}-{str(_now.year)[-2:]}"
+
+                # Get primary line value (spread or total)
+                _fib_line = abs(spread) if spread else total if total else None
+                _fib_stat = "spread" if spread else "total"
+
+                if _fib_line:
+                    with get_db() as db:
+                        if db:
+                            extremes = get_season_extreme(db, sport_upper, _season, _fib_stat)
+
+                            if extremes and extremes.get("season_high") and extremes.get("season_low"):
+                                fib_result = calculate_fibonacci_retracement(
+                                    current_line=_fib_line,
+                                    season_high=extremes["season_high"],
+                                    season_low=extremes["season_low"]
+                                )
+
+                                if fib_result.get("near_fib_level"):
+                                    _fib_boost = 0.35 if fib_result["signal"] == "REVERSAL_ZONE" else 0.2
+                                    fib_retracement_boost = _fib_boost
+                                    esoteric_reasons.append(
+                                        f"Fib Retracement: {fib_result['closest_fib_level']}% ({fib_result['signal']})"
+                                    )
+                                    logger.debug("FIB_RETRACEMENT[%s]: line=%.1f at %.1f%% of season (high=%.1f, low=%.1f), signal=%s, boost=%.2f",
+                                                game_str[:30], _fib_line, fib_result['retracement_pct'],
+                                                extremes["season_high"], extremes["season_low"],
+                                                fib_result['signal'], _fib_boost)
+        except Exception as e:
+            logger.debug("Fibonacci retracement skipped: %s", e)
+
+        # Apply Fibonacci Retracement boost
+        esoteric_raw += fib_retracement_boost
 
         # ===== PHASE 1: DORMANT ESOTERIC SIGNAL ACTIVATION (v17.5) =====
         # Wiring three previously dormant signals from esoteric_engine.py:
@@ -6339,7 +6412,7 @@ async def debug_pick_breakdown(sport: str):
     - titanium_explanation: Human-readable explanation
 
     This endpoint exposes what was already computed - no new scoring.
-    TODAY-only slate gating (12:01am-11:59pm America/New_York) is enforced.
+    TODAY-only slate gating (midnight-to-midnight America/New_York) is enforced.
     """
     sport_lower = sport.lower()
     if sport_lower not in SPORT_MAPPINGS:
