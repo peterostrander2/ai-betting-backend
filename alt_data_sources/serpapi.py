@@ -150,6 +150,15 @@ def get_search_trend(query: str, location: str = "United States") -> Dict[str, A
         if GUARDRAILS_AVAILABLE:
             increment_quota()
 
+        # Mark usage only after successful response with expected fields
+        if isinstance(data, dict) and "search_information" in data:
+            try:
+                from integration_registry import mark_integration_used
+                mark_integration_used("serpapi")
+            except Exception as e:
+                # Fail-soft: never raise, but don't silently ignore
+                logger.debug("serpapi mark_integration_used failed: %s", str(e))
+
         logger.info("SerpAPI trend: '%s' = %.2f (%s)", query, trend_score, result["interest_level"])
         return result
 

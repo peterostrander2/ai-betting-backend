@@ -1,4 +1,4 @@
-# 17 Pillars Scoring System (v17.1)
+# 17 Pillars Scoring System (v18.0 Option A)
 
 <!-- SCORING_CONTRACT_JSON
 {
@@ -12,18 +12,16 @@
     "STRONG": 3.0
   },
   "engine_weights": {
-    "ai": 0.15,
-    "research": 0.20,
-    "esoteric": 0.15,
-    "jarvis": 0.10,
-    "context": 0.30
+    "ai": 0.25,
+    "research": 0.35,
+    "esoteric": 0.20,
+    "jarvis": 0.20
   },
   "gold_star_gates": {
     "ai_score": 6.8,
     "research_score": 5.5,
     "jarvis_score": 6.5,
-    "esoteric_score": 4.0,
-    "context_score": 4.0
+    "esoteric_score": 4.0
   },
   "gold_star_threshold": 7.5,
   "min_final_score": 6.5,
@@ -41,23 +39,23 @@
 SCORING_CONTRACT_JSON -->
 
 
-## Formula (v17.1 - 5 Engine Architecture)
-BASE = (AI × 0.15) + (Research × 0.20) + (Esoteric × 0.15) + (Jarvis × 0.10) + (Context × 0.30)
-FINAL = BASE + confluence_boost + jason_sim_boost
+## Formula (v18.0 Option A - 4 Base Engines + Context Modifier)
+BASE_4 = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.20) + (Jarvis × 0.20)
+FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
 
 Minimum output: 6.5
 
-## ENGINE 1: AI Score (15%)
+## ENGINE 1: AI Score (25%)
 File: advanced_ml_backend.py
 8 AI models, range 0-10
 
-## ENGINE 2: Research Score (20%)
+## ENGINE 2: Research Score (35%)
 - Sharp Money (0-3 pts)
 - Line Variance (0-3 pts)
 - Public Fade (0-2 pts)
 - Base (2-3 pts)
 
-## ENGINE 3: Esoteric Score (15%)
+## ENGINE 3: Esoteric Score (20%)
 File: live_data_router.py
 Expected: 2.0-5.5 range
 
@@ -71,7 +69,7 @@ Components:
 For props: uses prop_line for magnitude calculation
 For games: uses spread for magnitude calculation
 
-## ENGINE 4: Jarvis Score (10%) - v16.0 ADDITIVE MODEL
+## ENGINE 4: Jarvis Score (20%) - v16.0 ADDITIVE MODEL
 File: live_data_router.py `calculate_jarvis_engine_score()`
 
 ### v16.0 Additive Trigger Scoring
@@ -129,11 +127,9 @@ Every pick includes these fields:
 }
 ```
 
-## ENGINE 5: Context Score (30%) - v17.1 NEW
+## Context Modifier (bounded, NOT a weighted engine)
 File: live_data_router.py
-Range: 0-10
-
-Context engine aggregates Pillars 13-15 (Defensive Rank, Pace, Vacuum):
+Context derives from Pillars 13-15 (Defensive Rank, Pace, Vacuum) and is mapped to a bounded modifier.
 
 ### Components
 | Component | Weight | Source | Formula |
@@ -145,6 +141,11 @@ Context engine aggregates Pillars 13-15 (Defensive Rank, Pace, Vacuum):
 ### Context Score Formula
 ```python
 context_score = (def_component * 0.5) + (pace_component * 0.3) + (vacuum_component * 0.2)
+```
+### Context Modifier
+```python
+context_modifier = ((context_score - 5.0) / 5.0) * CONTEXT_MODIFIER_CAP
+context_modifier = clamp(context_modifier, -CONTEXT_MODIFIER_CAP, +CONTEXT_MODIFIER_CAP)
 ```
 
 ### LSTM Integration
@@ -167,7 +168,7 @@ context_score = (def_component * 0.5) + (pace_component * 0.3) + (vacuum_compone
 ## Tier Assignment
 
 ### TITANIUM_SMASH
-- Rule: ≥3 of 5 engines ≥8.0 (STRICT)
+- Rule: ≥3 of 4 engines ≥8.0 (STRICT)
 - Overrides all other tiers
 - File: `core/titanium.py`
 
@@ -177,7 +178,7 @@ context_score = (def_component * 0.5) + (pace_component * 0.3) + (vacuum_compone
   - research_score ≥ 5.5
   - esoteric_score ≥ 4.0
   - **jarvis_rs ≥ 6.5** (requires triggers to fire)
-  - **context_score ≥ 4.0** (NEW - Pillars 13-15 must contribute)
+  - context gate removed (context is a modifier)
 - If any gate fails → downgrade to EDGE_LEAN
 
 ### EDGE_LEAN

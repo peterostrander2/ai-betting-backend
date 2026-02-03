@@ -8,7 +8,7 @@ Single source of truth - NO duplicate logic allowed.
 
 from core.scoring_contract import TITANIUM_RULE
 
-from typing import Dict, Tuple, List, Any
+from typing import Dict, Tuple, List, Any, Optional
 
 
 def compute_titanium_flag(
@@ -78,3 +78,48 @@ def compute_titanium_flag(
     }
 
     return titanium, diagnostics
+
+
+def evaluate_titanium(
+    ai_score: float,
+    research_score: float,
+    esoteric_score: float,
+    jarvis_score: float,
+    final_score: Optional[float] = None,
+    threshold: float = TITANIUM_RULE["threshold"],
+    min_final_score: Optional[float] = None,
+) -> Tuple[bool, str, List[str]]:
+    """
+    Unified Titanium evaluation helper.
+
+    Context is intentionally excluded: Titanium is STRICT 3-of-4 engines only.
+
+    Args:
+        ai_score, research_score, esoteric_score, jarvis_score: 0-10 engine scores
+        final_score: optional final score (for prerequisite checks)
+        threshold: engine threshold (default 8.0)
+        min_final_score: optional minimum final score prerequisite
+
+    Returns:
+        (triggered, explanation, qualifying_engines)
+    """
+    if min_final_score is None:
+        try:
+            from tiering import TITANIUM_FINAL_SCORE_MIN
+            min_final_score = TITANIUM_FINAL_SCORE_MIN
+        except Exception:
+            min_final_score = None
+
+    if min_final_score is not None and final_score is not None and final_score < min_final_score:
+        return False, f"Titanium: Final score {final_score:.1f} < {min_final_score} (prerequisite not met)", []
+
+    titanium_triggered, diagnostics = compute_titanium_flag(
+        ai_score=ai_score,
+        research_score=research_score,
+        esoteric_score=esoteric_score,
+        jarvis_score=jarvis_score,
+        threshold=threshold,
+    )
+    qualifying_engines = diagnostics.get("titanium_engines_hit", [])
+    explanation = diagnostics.get("titanium_reason", "")
+    return titanium_triggered, explanation, qualifying_engines

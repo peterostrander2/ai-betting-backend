@@ -1245,3 +1245,596 @@ def get_glitch_aggregate(
         "breakdown": results,
         "weights_used": round(total_weight, 2)
     }
+
+
+# =============================================================================
+# PHASE 8 (v18.2): NEW ESOTERIC SIGNALS
+# =============================================================================
+
+def calculate_lunar_phase_intensity(game_datetime: datetime = None) -> Dict[str, Any]:
+    """
+    Calculate lunar phase impact on game scoring (v18.2).
+
+    Full moon (phase 0.5) → boost OVER picks (chaos energy)
+    New moon (phase 0.0) → boost UNDER picks (subdued energy)
+    Quarter moons (0.25, 0.75) → neutral
+
+    Args:
+        game_datetime: Game datetime (defaults to now)
+
+    Returns:
+        Dict with phase, boost_over, boost_under, reason
+    """
+    if game_datetime is None:
+        game_datetime = datetime.now()
+
+    try:
+        # Use astronomical API for accurate moon phase
+        phase_data = calculate_moon_phase(game_datetime)
+        phase = phase_data.get("phase_decimal", 0.5)  # 0.0-1.0
+    except Exception:
+        # Fallback: simple calculation based on lunar cycle (~29.5 days)
+        # Reference new moon: Jan 1, 2000 at 18:14 UTC
+        ref_date = datetime(2000, 1, 1, 18, 14)
+        days_since = (game_datetime - ref_date).total_seconds() / 86400
+        lunar_cycle = 29.530588853
+        phase = (days_since % lunar_cycle) / lunar_cycle
+
+    # Full moon window (0.45 - 0.55)
+    if 0.45 <= phase <= 0.55:
+        return {
+            "phase": "FULL",
+            "phase_decimal": round(phase, 3),
+            "boost_over": 0.25,
+            "boost_under": -0.15,
+            "triggered": True,
+            "reason": f"Full moon ({phase:.0%}) - chaos energy boost"
+        }
+    # New moon window (0.0-0.05 or 0.95-1.0)
+    elif phase <= 0.05 or phase >= 0.95:
+        return {
+            "phase": "NEW",
+            "phase_decimal": round(phase, 3),
+            "boost_over": -0.15,
+            "boost_under": 0.2,
+            "triggered": True,
+            "reason": f"New moon ({phase:.0%}) - subdued energy"
+        }
+    # First quarter (0.20-0.30)
+    elif 0.20 <= phase <= 0.30:
+        return {
+            "phase": "FIRST_QUARTER",
+            "phase_decimal": round(phase, 3),
+            "boost_over": 0.1,
+            "boost_under": 0.0,
+            "triggered": False,
+            "reason": f"First quarter moon ({phase:.0%})"
+        }
+    # Last quarter (0.70-0.80)
+    elif 0.70 <= phase <= 0.80:
+        return {
+            "phase": "LAST_QUARTER",
+            "phase_decimal": round(phase, 3),
+            "boost_over": 0.0,
+            "boost_under": 0.1,
+            "triggered": False,
+            "reason": f"Last quarter moon ({phase:.0%})"
+        }
+    # Neutral
+    else:
+        return {
+            "phase": "WAXING" if phase < 0.5 else "WANING",
+            "phase_decimal": round(phase, 3),
+            "boost_over": 0.0,
+            "boost_under": 0.0,
+            "triggered": False,
+            "reason": None
+        }
+
+
+def check_mercury_retrograde(game_date: date = None) -> Dict[str, Any]:
+    """
+    Check if game date falls during Mercury retrograde (v18.2).
+
+    Mercury retrograde periods cause communication/travel disruptions.
+    Apply variance boost (slight negative adjustment) during retrograde
+    to account for unpredictable outcomes.
+
+    Args:
+        game_date: Game date to check
+
+    Returns:
+        Dict with is_retrograde, adjustment, reason
+    """
+    if game_date is None:
+        game_date = date.today()
+
+    # Mercury retrograde periods for 2025-2027
+    # Format: (start_date, end_date)
+    RETROGRADE_PERIODS = [
+        # 2025
+        (date(2025, 3, 15), date(2025, 4, 7)),
+        (date(2025, 7, 18), date(2025, 8, 11)),
+        (date(2025, 11, 9), date(2025, 11, 29)),
+        # 2026
+        (date(2026, 3, 14), date(2026, 4, 7)),
+        (date(2026, 7, 17), date(2026, 8, 11)),
+        (date(2026, 11, 9), date(2026, 11, 29)),
+        # 2027
+        (date(2027, 2, 25), date(2027, 3, 20)),
+        (date(2027, 6, 29), date(2027, 7, 23)),
+        (date(2027, 10, 24), date(2027, 11, 13)),
+    ]
+
+    # Check shadow periods (1 week before and after retrograde)
+    SHADOW_BUFFER_DAYS = 7
+
+    for start, end in RETROGRADE_PERIODS:
+        # Direct retrograde period
+        if start <= game_date <= end:
+            return {
+                "is_retrograde": True,
+                "is_shadow": False,
+                "adjustment": -0.15,
+                "triggered": True,
+                "period_start": start.isoformat(),
+                "period_end": end.isoformat(),
+                "reason": f"Mercury retrograde ({start.strftime('%b %d')} - {end.strftime('%b %d')}) - expect upsets"
+            }
+        # Pre-shadow period
+        shadow_start = start - timedelta(days=SHADOW_BUFFER_DAYS)
+        if shadow_start <= game_date < start:
+            return {
+                "is_retrograde": False,
+                "is_shadow": True,
+                "adjustment": -0.08,
+                "triggered": True,
+                "period_start": start.isoformat(),
+                "period_end": end.isoformat(),
+                "reason": f"Mercury pre-shadow (retrograde starts {start.strftime('%b %d')}) - caution advised"
+            }
+        # Post-shadow period
+        shadow_end = end + timedelta(days=SHADOW_BUFFER_DAYS)
+        if end < game_date <= shadow_end:
+            return {
+                "is_retrograde": False,
+                "is_shadow": True,
+                "adjustment": -0.05,
+                "triggered": True,
+                "period_start": start.isoformat(),
+                "period_end": end.isoformat(),
+                "reason": f"Mercury post-shadow (retrograde ended {end.strftime('%b %d')}) - stabilizing"
+            }
+
+    return {
+        "is_retrograde": False,
+        "is_shadow": False,
+        "adjustment": 0.0,
+        "triggered": False,
+        "reason": None
+    }
+
+
+def calculate_rivalry_intensity(
+    sport: str,
+    home_team: str,
+    away_team: str
+) -> Dict[str, Any]:
+    """
+    Calculate rivalry intensity score (v18.2).
+
+    Major rivalries tend to be lower-scoring, more defensive games
+    with higher variance. This signal boosts UNDER picks for rivalries.
+
+    Args:
+        sport: Sport code (NBA, NFL, NHL, MLB)
+        home_team: Home team name
+        away_team: Away team name
+
+    Returns:
+        Dict with is_rivalry, intensity, under_boost, reason
+    """
+    # Major rivalries database
+    # Each entry: ({team1_keywords}, {team2_keywords}, intensity_level)
+    MAJOR_RIVALRIES = {
+        "NBA": [
+            ({"celtics", "boston"}, {"lakers", "los angeles lakers", "la lakers"}, "HIGH"),
+            ({"bulls", "chicago"}, {"pistons", "detroit"}, "HIGH"),
+            ({"heat", "miami"}, {"knicks", "new york"}, "MEDIUM"),
+            ({"warriors", "golden state"}, {"cavaliers", "cleveland"}, "MEDIUM"),
+            ({"lakers", "los angeles lakers"}, {"clippers", "los angeles clippers"}, "MEDIUM"),
+            ({"mavericks", "dallas"}, {"spurs", "san antonio"}, "MEDIUM"),
+            ({"sixers", "76ers", "philadelphia"}, {"celtics", "boston"}, "MEDIUM"),
+        ],
+        "NFL": [
+            ({"packers", "green bay"}, {"bears", "chicago"}, "HIGH"),
+            ({"cowboys", "dallas"}, {"eagles", "philadelphia"}, "HIGH"),
+            ({"cowboys", "dallas"}, {"commanders", "washington"}, "HIGH"),
+            ({"ravens", "baltimore"}, {"steelers", "pittsburgh"}, "HIGH"),
+            ({"patriots", "new england"}, {"jets", "new york jets"}, "MEDIUM"),
+            ({"49ers", "san francisco"}, {"seahawks", "seattle"}, "MEDIUM"),
+            ({"chiefs", "kansas city"}, {"raiders", "las vegas"}, "MEDIUM"),
+            ({"giants", "new york giants"}, {"eagles", "philadelphia"}, "MEDIUM"),
+            ({"broncos", "denver"}, {"raiders", "las vegas"}, "MEDIUM"),
+        ],
+        "NHL": [
+            ({"bruins", "boston"}, {"canadiens", "montreal"}, "HIGH"),
+            ({"penguins", "pittsburgh"}, {"flyers", "philadelphia"}, "HIGH"),
+            ({"rangers", "new york rangers"}, {"islanders", "new york islanders"}, "HIGH"),
+            ({"blackhawks", "chicago"}, {"red wings", "detroit"}, "MEDIUM"),
+            ({"avalanche", "colorado"}, {"red wings", "detroit"}, "MEDIUM"),
+            ({"maple leafs", "toronto"}, {"canadiens", "montreal"}, "HIGH"),
+            ({"kings", "los angeles"}, {"sharks", "san jose"}, "MEDIUM"),
+            ({"oilers", "edmonton"}, {"flames", "calgary"}, "HIGH"),
+        ],
+        "MLB": [
+            ({"yankees", "new york yankees"}, {"red sox", "boston"}, "HIGH"),
+            ({"dodgers", "los angeles dodgers"}, {"giants", "san francisco"}, "HIGH"),
+            ({"cubs", "chicago cubs"}, {"cardinals", "st. louis"}, "HIGH"),
+            ({"mets", "new york mets"}, {"phillies", "philadelphia"}, "MEDIUM"),
+            ({"white sox", "chicago white sox"}, {"cubs", "chicago cubs"}, "MEDIUM"),
+            ({"braves", "atlanta"}, {"mets", "new york mets"}, "MEDIUM"),
+        ],
+        "NCAAB": [
+            ({"duke", "blue devils"}, {"north carolina", "tar heels", "unc"}, "HIGH"),
+            ({"kentucky", "wildcats"}, {"louisville", "cardinals"}, "HIGH"),
+            ({"kansas", "jayhawks"}, {"missouri", "tigers"}, "MEDIUM"),
+            ({"michigan", "wolverines"}, {"michigan state", "spartans", "msu"}, "HIGH"),
+            ({"indiana", "hoosiers"}, {"purdue", "boilermakers"}, "MEDIUM"),
+        ],
+    }
+
+    home_lower = home_team.lower()
+    away_lower = away_team.lower()
+
+    rivalries = MAJOR_RIVALRIES.get(sport.upper(), [])
+
+    for team1_set, team2_set, intensity in rivalries:
+        home_match_1 = any(t in home_lower for t in team1_set)
+        home_match_2 = any(t in home_lower for t in team2_set)
+        away_match_1 = any(t in away_lower for t in team1_set)
+        away_match_2 = any(t in away_lower for t in team2_set)
+
+        # Check if both teams are in this rivalry (either order)
+        if (home_match_1 and away_match_2) or (home_match_2 and away_match_1):
+            # High intensity rivalries get bigger under boost
+            if intensity == "HIGH":
+                under_boost = 0.25
+                over_penalty = -0.15
+            else:  # MEDIUM
+                under_boost = 0.15
+                over_penalty = -0.08
+
+            return {
+                "is_rivalry": True,
+                "intensity": intensity,
+                "under_boost": under_boost,
+                "over_penalty": over_penalty,
+                "triggered": True,
+                "reason": f"{intensity} rivalry - defensive intensity expected"
+            }
+
+    return {
+        "is_rivalry": False,
+        "intensity": "NONE",
+        "under_boost": 0.0,
+        "over_penalty": 0.0,
+        "triggered": False,
+        "reason": None
+    }
+
+
+def calculate_streak_momentum(
+    team: str,
+    current_streak: int,
+    streak_type: str = "W"
+) -> Dict[str, Any]:
+    """
+    Calculate streak momentum signal (v18.2).
+
+    Teams on long streaks (5+) tend to regress.
+    Teams on short streaks (2-4) may continue.
+    This affects spread/moneyline picks.
+
+    Args:
+        team: Team name
+        current_streak: Length of current streak (positive number)
+        streak_type: "W" for winning streak, "L" for losing streak
+
+    Returns:
+        Dict with momentum type, boost values, reason
+    """
+    streak = abs(current_streak)
+    streak_type = streak_type.upper()
+
+    # Long winning streak (5+) - regression expected
+    if streak >= 5 and streak_type == "W":
+        return {
+            "momentum": "REGRESSION_DUE",
+            "streak": streak,
+            "streak_type": streak_type,
+            "against_boost": 0.25,  # Boost betting against them
+            "for_boost": -0.15,     # Penalty for betting on them
+            "triggered": True,
+            "reason": f"{team} on {streak}W streak - regression due"
+        }
+
+    # Long losing streak (5+) - bounce expected
+    elif streak >= 5 and streak_type == "L":
+        return {
+            "momentum": "BOUNCE_DUE",
+            "streak": streak,
+            "streak_type": streak_type,
+            "against_boost": -0.1,  # Penalty for betting against them
+            "for_boost": 0.2,       # Boost betting on them
+            "triggered": True,
+            "reason": f"{team} on {streak}L streak - bounce expected"
+        }
+
+    # Medium winning streak (3-4) - momentum continues
+    elif 3 <= streak <= 4 and streak_type == "W":
+        return {
+            "momentum": "CONTINUING",
+            "streak": streak,
+            "streak_type": streak_type,
+            "against_boost": -0.05,
+            "for_boost": 0.15,
+            "triggered": True,
+            "reason": f"{team} on {streak}W streak - momentum continuing"
+        }
+
+    # Medium losing streak (3-4) - still struggling
+    elif 3 <= streak <= 4 and streak_type == "L":
+        return {
+            "momentum": "STRUGGLING",
+            "streak": streak,
+            "streak_type": streak_type,
+            "against_boost": 0.1,
+            "for_boost": -0.1,
+            "triggered": False,  # Not strong enough to trigger
+            "reason": f"{team} on {streak}L streak - struggling"
+        }
+
+    # Short streak (1-2) - no signal
+    else:
+        return {
+            "momentum": "NONE",
+            "streak": streak,
+            "streak_type": streak_type,
+            "against_boost": 0.0,
+            "for_boost": 0.0,
+            "triggered": False,
+            "reason": None
+        }
+
+
+def get_solar_flare_status(game_time: datetime = None) -> Dict[str, Any]:
+    """
+    Get solar flare status for chaos/volatility signal (v18.2).
+
+    X-class and M-class solar flares correlate with electromagnetic
+    disturbances that may affect human performance and outcomes.
+    This enhances the GLITCH protocol with real-time space weather.
+
+    Args:
+        game_time: Game datetime
+
+    Returns:
+        Dict with flare_class, chaos_boost, reason
+    """
+    if game_time is None:
+        game_time = datetime.now()
+
+    try:
+        # Try to get real NOAA data
+        from alt_data_sources.noaa import get_solar_xray_flux, NOAA_ENABLED
+        if NOAA_ENABLED:
+            flux_data = get_solar_xray_flux()
+            if flux_data and flux_data.get("source") == "noaa_live":
+                current_flux = flux_data.get("current_flux", 0)
+
+                # X-class flare (flux >= 1e-4)
+                if current_flux >= 1e-4:
+                    return {
+                        "flare_class": "X",
+                        "flux": current_flux,
+                        "chaos_boost": 0.3,
+                        "triggered": True,
+                        "source": "noaa_live",
+                        "reason": f"X-class solar flare (flux={current_flux:.2e}) - high chaos"
+                    }
+                # M-class flare (flux >= 1e-5)
+                elif current_flux >= 1e-5:
+                    return {
+                        "flare_class": "M",
+                        "flux": current_flux,
+                        "chaos_boost": 0.15,
+                        "triggered": True,
+                        "source": "noaa_live",
+                        "reason": f"M-class solar flare (flux={current_flux:.2e}) - moderate chaos"
+                    }
+                # C-class or below (quiet)
+                else:
+                    return {
+                        "flare_class": "QUIET",
+                        "flux": current_flux,
+                        "chaos_boost": 0.0,
+                        "triggered": False,
+                        "source": "noaa_live",
+                        "reason": None
+                    }
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # Fallback: use Kp-index based estimate
+    # High Kp (>= 5) suggests elevated solar activity
+    try:
+        from alt_data_sources.noaa import get_kp_betting_signal
+        kp_data = get_kp_betting_signal(game_time)
+        if kp_data and kp_data.get("kp_value", 0) >= 5:
+            kp_val = kp_data["kp_value"]
+            return {
+                "flare_class": "ELEVATED_KP",
+                "flux": None,
+                "kp_value": kp_val,
+                "chaos_boost": 0.1 if kp_val >= 7 else 0.05,
+                "triggered": kp_val >= 6,
+                "source": "kp_fallback",
+                "reason": f"Elevated Kp-Index ({kp_val}) - geomagnetic activity"
+            }
+    except Exception:
+        pass
+
+    # No solar activity detected
+    return {
+        "flare_class": "QUIET",
+        "flux": None,
+        "chaos_boost": 0.0,
+        "triggered": False,
+        "source": "unavailable",
+        "reason": None
+    }
+
+
+# =============================================================================
+# PHASE 8 (v18.2): AGGREGATE FUNCTION FOR NEW SIGNALS
+# =============================================================================
+
+def get_phase8_esoteric_signals(
+    game_datetime: datetime = None,
+    game_date: date = None,
+    sport: str = None,
+    home_team: str = None,
+    away_team: str = None,
+    pick_type: str = None,
+    pick_side: str = None,
+    home_streak: int = 0,
+    home_streak_type: str = "W",
+    away_streak: int = 0,
+    away_streak_type: str = "W"
+) -> Dict[str, Any]:
+    """
+    Aggregate all Phase 8 (v18.2) esoteric signals.
+
+    Combines:
+    - Lunar Phase Intensity
+    - Mercury Retrograde
+    - Rivalry Intensity
+    - Streak Momentum
+    - Solar Flare Status
+
+    Args:
+        game_datetime: Game datetime
+        game_date: Game date
+        sport: Sport code
+        home_team: Home team name
+        away_team: Away team name
+        pick_type: PROP, SPREAD, TOTAL, MONEYLINE
+        pick_side: Over/Under/Team name
+        home_streak: Home team current streak length
+        home_streak_type: W or L
+        away_streak: Away team current streak length
+        away_streak_type: W or L
+
+    Returns:
+        Dict with all signal results and combined boost
+    """
+    if game_datetime is None:
+        game_datetime = datetime.now()
+    if game_date is None:
+        game_date = game_datetime.date() if isinstance(game_datetime, datetime) else date.today()
+
+    results = {}
+    total_boost = 0.0
+    reasons = []
+    triggered_signals = []
+
+    # 1. Lunar Phase
+    lunar = calculate_lunar_phase_intensity(game_datetime)
+    results["lunar_phase"] = lunar
+    if lunar.get("triggered"):
+        triggered_signals.append("lunar_phase")
+        if pick_type and pick_type.upper() == "TOTAL":
+            side_lower = (pick_side or "").lower()
+            if "over" in side_lower:
+                total_boost += lunar.get("boost_over", 0)
+            elif "under" in side_lower:
+                total_boost += lunar.get("boost_under", 0)
+        if lunar.get("reason"):
+            reasons.append(f"Lunar: {lunar['reason']}")
+
+    # 2. Mercury Retrograde
+    mercury = check_mercury_retrograde(game_date)
+    results["mercury_retrograde"] = mercury
+    if mercury.get("triggered"):
+        triggered_signals.append("mercury_retrograde" if mercury.get("is_retrograde") else "mercury_shadow")
+        total_boost += mercury.get("adjustment", 0)
+        if mercury.get("reason"):
+            reasons.append(f"Mercury: {mercury['reason']}")
+
+    # 3. Rivalry Intensity (for game picks)
+    if sport and home_team and away_team:
+        rivalry = calculate_rivalry_intensity(sport, home_team, away_team)
+        results["rivalry"] = rivalry
+        if rivalry.get("triggered"):
+            triggered_signals.append("rivalry")
+            if pick_type and pick_type.upper() == "TOTAL":
+                side_lower = (pick_side or "").lower()
+                if "under" in side_lower:
+                    total_boost += rivalry.get("under_boost", 0)
+                elif "over" in side_lower:
+                    total_boost += rivalry.get("over_penalty", 0)
+            if rivalry.get("reason"):
+                reasons.append(f"Rivalry: {rivalry['reason']}")
+
+    # 4. Streak Momentum (for spread/ML picks)
+    if home_team and home_streak:
+        home_momentum = calculate_streak_momentum(home_team, home_streak, home_streak_type)
+        results["home_streak"] = home_momentum
+        if home_momentum.get("triggered"):
+            triggered_signals.append("home_streak")
+            # If picking home team
+            side_lower = (pick_side or "").lower()
+            if home_team.lower() in side_lower or "home" in side_lower:
+                total_boost += home_momentum.get("for_boost", 0)
+            else:
+                total_boost += home_momentum.get("against_boost", 0)
+            if home_momentum.get("reason"):
+                reasons.append(f"Streak: {home_momentum['reason']}")
+
+    if away_team and away_streak:
+        away_momentum = calculate_streak_momentum(away_team, away_streak, away_streak_type)
+        results["away_streak"] = away_momentum
+        if away_momentum.get("triggered"):
+            triggered_signals.append("away_streak")
+            # If picking away team
+            side_lower = (pick_side or "").lower()
+            if away_team.lower() in side_lower or "away" in side_lower:
+                total_boost += away_momentum.get("for_boost", 0)
+            else:
+                total_boost += away_momentum.get("against_boost", 0)
+            if away_momentum.get("reason"):
+                reasons.append(f"Streak: {away_momentum['reason']}")
+
+    # 5. Solar Flare Status (universal chaos signal)
+    solar = get_solar_flare_status(game_datetime)
+    results["solar_flare"] = solar
+    if solar.get("triggered"):
+        triggered_signals.append("solar_flare")
+        # Solar flare adds chaos - slight boost to underdogs/overs
+        total_boost += solar.get("chaos_boost", 0) * 0.5  # Scaled down
+        if solar.get("reason"):
+            reasons.append(f"Solar: {solar['reason']}")
+
+    # Cap total boost at ±0.5
+    total_boost = max(-0.5, min(0.5, total_boost))
+
+    return {
+        "phase8_boost": round(total_boost, 3),
+        "triggered_count": len(triggered_signals),
+        "triggered_signals": triggered_signals,
+        "reasons": reasons,
+        "breakdown": results
+    }

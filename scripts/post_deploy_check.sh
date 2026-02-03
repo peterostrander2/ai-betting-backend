@@ -6,7 +6,7 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-https://web-production-7b2a.up.railway.app}"
-API_KEY="${API_KEY:-bookie-prod-2026-xK9mP2nQ7vR4}"
+API_KEY="${API_KEY:-}"
 
 echo "============================================"
 echo "POST-DEPLOY VERIFICATION"
@@ -29,6 +29,12 @@ check() {
     FAIL=$((FAIL + 1))
   fi
 }
+
+# 0. Require API_KEY for authenticated checks
+if [ -z "$API_KEY" ]; then
+  echo "❌ API_KEY is not set. Export API_KEY and rerun."
+  exit 1
+fi
 
 # 1. Health endpoint
 echo "[1/4] Health endpoint..."
@@ -79,7 +85,7 @@ BEST_BETS=$(curl -s "$BASE_URL/live/best-bets/NBA" -H "X-API-Key: $API_KEY" 2>/d
 SHAPE_OK=$(echo "$BEST_BETS" | jq -r '([
   .props.picks[]?, .game_picks.picks[]?
 ] | all(
-  (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_score != null)
+  (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_modifier != null)
   and (.total_score != null and .final_score != null)
   and (.bet_tier != null)
 ))' 2>/dev/null || echo "false")
@@ -104,9 +110,18 @@ check "Fail-soft: errors array present" "$FAILSOFT_OK"
 INT_DEBUG=$(curl -s "$BASE_URL/live/debug/integrations" -H "X-API-Key: $API_KEY" 2>/dev/null || echo "{}")
 INT_LOUD_OK=$(echo "$INT_DEBUG" | jq -r 'has("by_status") and has("integrations")' 2>/dev/null || echo "false")
 check "Fail-soft: /live/debug/integrations loud" "$INT_LOUD_OK"
+INT_LAST_USED_OK=$(echo "$INT_DEBUG" | jq -r '(.integrations.odds_api | has("last_used_at")) and (.integrations.playbook_api | has("last_used_at")) and (.integrations.balldontlie | has("last_used_at")) and (.integrations.serpapi | has("last_used_at"))' 2>/dev/null || echo "false")
+check "Integrations: last_used_at fields present" "$INT_LAST_USED_OK"
 
 FRESH_OK=$(echo "$BEST_BETS" | jq -r 'has("date_et") and has("run_timestamp_et")' 2>/dev/null || echo "false")
 check "Freshness: date_et + run_timestamp_et" "$FRESH_OK"
+
+# Debug-only used_integrations must exist only in debug payload
+DEBUG_BB=$(curl -s "$BASE_URL/live/best-bets/NBA?debug=1" -H "X-API-Key: $API_KEY" 2>/dev/null || echo "{}")
+USED_PRESENT=$(echo "$DEBUG_BB" | jq -r '(.debug.used_integrations | type) == "array"' 2>/dev/null || echo "false")
+USED_ABSENT=$(echo "$BEST_BETS" | jq -r '(.debug // null) == null' 2>/dev/null || echo "false")
+check "Debug: used_integrations present (debug=1)" "$USED_PRESENT"
+check "Debug: used_integrations absent (debug=0)" "$USED_ABSENT"
 
 NOW=$(date +%s)
 BB_CACHED=$(echo "$BEST_BETS" | jq -r '._cached_at // 0' 2>/dev/null || echo "0")

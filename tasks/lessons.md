@@ -61,8 +61,8 @@
 - Apply filter BEFORE scoring, not after
 
 ### Titanium Rule
-- `titanium_triggered=true` ONLY when >= 3 of 5 engines >= 8.0
-- 1/5 or 2/5 is ALWAYS false, even if scores are high
+- `titanium_triggered=true` ONLY when >= 3 of 4 base engines >= 8.0
+- 1/4 or 2/4 is ALWAYS false, even if scores are high
 - Use `core/titanium.py` as single source of truth
 
 ### Response Contracts
@@ -99,25 +99,25 @@ Watch for these patterns that have caused production issues:
 
 ---
 
-### 3. v17.0/v17.1 5-Engine Architecture (Feb 2026)
+### 3. v18.0 Option A: 4-Engine Base + Context Modifier (Feb 2026)
 
 **What happened:**
-- Upgraded from 4-engine to 5-engine scoring architecture
-- Added Context engine (30% weight) aggregating Pillars 13-15
-- Wired real context data to LSTM (previously hardcoded)
+- Kept 4 base engines (AI/Research/Esoteric/Jarvis)
+- Converted Context into a bounded modifier (not a weighted engine)
+- Preserved real context inputs to LSTM (no hardcoded defaults)
 - Integrated Officials (Pillar 16) and Park Factors (Pillar 17)
 - Implemented Harmonic Convergence boost (+1.5 when Research AND Esoteric both >= 8.0)
 
-**Impact:** Scoring system now leverages all 17 pillars instead of 15
+**Impact:** Context can no longer overpower paid data signals; scoring remains stable and explainable.
 
-**Root cause:** LSTM was receiving hardcoded `def_rank=16, pace=100.0, vacuum=0.0` instead of real values from context layer services
+**Root cause:** Context was overweighted as a 30% engine, distorting outcomes vs paid feeds.
 
 **Changes Made:**
-1. `core/scoring_contract.py` - Updated ENGINE_WEIGHTS to 5-engine (ai:0.15, research:0.20, esoteric:0.15, jarvis:0.10, context:0.30)
-2. `live_data_router.py` - Added context_score calculation, Harmonic Convergence, Officials/Park adjustments
-3. Added GOLD_STAR gate for `context_score >= 4.0`
-4. Titanium rule now 3/5 engines (was 3/4)
-5. LSTM call now passes real `{def_rank, pace, vacuum}` from context layer services
+1. `core/scoring_contract.py` - ENGINE_WEIGHTS = 4 base engines; added `CONTEXT_MODIFIER_CAP`
+2. `live_data_router.py` - Context score -> bounded modifier; base score uses 4 engines only
+3. Removed GOLD_STAR context gate
+4. Titanium remains 3/4 engines (context never counts)
+5. LSTM call still uses real `{def_rank, pace, vacuum}` inputs
 
 **Fix Summary:**
 - Context Layer Services (DefensiveRankService, PaceVectorService, UsageVacuumService) provide real data
@@ -125,10 +125,10 @@ Watch for these patterns that have caused production issues:
 - ParkFactorService adjusts esoteric_score for MLB venue effects
 
 **Lesson:**
-- When adding new engines/pillars, update ALL canonical sources together:
-  - `core/scoring_contract.py` (weights, gates)
-  - `SCORING_LOGIC.md` (formula)
+- When changing scoring architecture, update ALL canonical sources together:
+  - `core/scoring_contract.py` (weights, caps)
   - `CLAUDE.md` (invariants)
+  - `docs/MASTER_INDEX.md` + `docs/JARVIS_SAVANT_MASTER_SPEC.md`
 - Always verify ML models receive real data, not hardcoded defaults
 
 ## Lesson: /health must be truthful (no greenwashing)
@@ -140,13 +140,19 @@ Watch for these patterns that have caused production issues:
 ## Lesson: Post-change gates (run after ANY backend change)
 1) Auth (missing/invalid/correct key)
 2) Shape contract (engine scores, total/final, bet_tier)
-3) Hard gates (final_score >= 6.5, Titanium 3-of-5)
+3) Hard gates (final_score >= 6.5, Titanium 3-of-4)
 4) Fail-soft (200 + errors, debug integrations loud)
 5) Freshness (date_et/run_timestamp_et + cache TTL)
 6) No UTC/telemetry leaks (startTime*, generated_at, *_utc, *_iso)
 7) Cache headers present on /live (GET/HEAD)
 8) Optional daily report (non-blocking): `scripts/daily_sanity_report.sh`
 - Test context integration end-to-end before production
+
+## Smoke Check Checklist (post-deploy, no secrets)
+1) `/live/best-bets/NBA?debug=1` → `debug.used_integrations` present
+2) `/live/best-bets/NBA` → `debug` absent
+3) `/live/debug/integrations` → `last_used_at` fields present
+4) Confirm no response body includes secrets
 
 **Verification:**
 ```bash

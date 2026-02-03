@@ -140,28 +140,17 @@ def check_titanium_rule(
     Returns:
         Tuple of (triggered: bool, explanation: str, qualifying_engines: List[str])
     """
-    # Import the SINGLE SOURCE OF TRUTH for Titanium computation
-    from core.titanium import compute_titanium_flag
+    # SINGLE SOURCE OF TRUTH - core.titanium.evaluate_titanium
+    from core.titanium import evaluate_titanium
 
-    # NEW: Final score prerequisite (mandatory)
-    if final_score is not None and final_score < TITANIUM_FINAL_SCORE_MIN:
-        return False, f"Titanium: Final score {final_score:.1f} < {TITANIUM_FINAL_SCORE_MIN} (prerequisite not met)", []
-
-    # Use the SINGLE SOURCE OF TRUTH - core.titanium.compute_titanium_flag
-    titanium_triggered, diagnostics = compute_titanium_flag(
+    return evaluate_titanium(
         ai_score=ai_score,
         research_score=research_score,
         esoteric_score=esoteric_score,
         jarvis_score=jarvis_score,
+        final_score=final_score,
         threshold=8.0  # STRICT: Must be 8.0 (not 6.5)
     )
-
-    # Extract info from diagnostics
-    qualifying_engines = diagnostics.get("titanium_engines_hit", [])
-    explanation = diagnostics.get("titanium_reason", "Unknown")
-
-    # Return the result from the single source of truth
-    return titanium_triggered, explanation, qualifying_engines
 
 
 def tier_from_score(

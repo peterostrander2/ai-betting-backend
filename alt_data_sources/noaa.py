@@ -204,10 +204,106 @@ def get_space_weather_summary() -> Dict[str, Any]:
     }
 
 
+# =============================================================================
+# SOLAR X-RAY FLUX (v18.2) - Solar Flare Detection
+# =============================================================================
+
+# NOAA X-ray Flux API (GOES satellite data)
+NOAA_XRAY_URL = "https://services.swpc.noaa.gov/json/goes/primary/xrays-1-day.json"
+
+# Cache for X-ray flux (updates every minute, cache for 1 hour)
+_xray_cache: Dict[str, Any] = {}
+_xray_cache_time: float = 0
+XRAY_CACHE_TTL = 60 * 60  # 1 hour
+
+
+def get_solar_xray_flux() -> Dict[str, Any]:
+    """
+    Fetch real-time solar X-ray flux from NOAA GOES satellite (v18.2).
+
+    X-ray flux indicates solar flare activity:
+    - X-class: flux >= 1e-4 W/m² (major flare)
+    - M-class: flux >= 1e-5 W/m² (moderate flare)
+    - C-class: flux >= 1e-6 W/m² (minor flare)
+    - B-class: flux >= 1e-7 W/m² (background)
+    - A-class: flux < 1e-7 W/m² (quiet)
+
+    Returns:
+        Dict with current_flux, flare_class, source
+    """
+    global _xray_cache, _xray_cache_time
+
+    if not NOAA_ENABLED:
+        return {
+            "current_flux": 0,
+            "flare_class": "QUIET",
+            "source": "disabled"
+        }
+
+    # Check cache
+    now = time.time()
+    if _xray_cache and (now - _xray_cache_time) < XRAY_CACHE_TTL:
+        return {**_xray_cache, "source": "cache"}
+
+    try:
+        import httpx
+
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(NOAA_XRAY_URL)
+            response.raise_for_status()
+            data = response.json()
+
+        if not data or len(data) < 1:
+            raise ValueError("Invalid NOAA X-ray response")
+
+        # Get most recent reading (last item)
+        # Format: {"time_tag": "...", "flux": 2.53e-07, "energy": "0.1-0.8nm", ...}
+        latest = data[-1]
+        current_flux = float(latest.get("flux", 0))
+        timestamp = latest.get("time_tag", "")
+
+        # Determine flare class
+        if current_flux >= 1e-4:
+            flare_class = "X"
+        elif current_flux >= 1e-5:
+            flare_class = "M"
+        elif current_flux >= 1e-6:
+            flare_class = "C"
+        elif current_flux >= 1e-7:
+            flare_class = "B"
+        else:
+            flare_class = "A"
+
+        result = {
+            "current_flux": current_flux,
+            "flare_class": flare_class,
+            "timestamp": timestamp,
+            "source": "noaa_live",
+            "fetched_at": datetime.utcnow().isoformat()
+        }
+
+        # Update cache
+        _xray_cache = result
+        _xray_cache_time = now
+
+        logger.info("NOAA X-ray flux fetched: %.2e (%s-class)", current_flux, flare_class)
+        return result
+
+    except Exception as e:
+        logger.warning("NOAA X-ray API error: %s", e)
+        return {
+            "current_flux": 0,
+            "flare_class": "QUIET",
+            "source": "fallback",
+            "error": str(e)
+        }
+
+
 # Export for integration
 __all__ = [
     "fetch_kp_index_live",
     "get_kp_betting_signal",
     "get_space_weather_summary",
+    "get_solar_xray_flux",
     "NOAA_ENABLED",
 ]

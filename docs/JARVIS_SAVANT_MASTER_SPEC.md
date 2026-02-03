@@ -42,12 +42,15 @@ These are enforced in code and **must never be broken**:
 
 ## 3) Scoring Architecture (Current Production)
 
-### 5‑Engine Base Weights (sum = 0.90)
-- AI: 0.15
-- Research: 0.20
-- Esoteric: 0.15
-- Jarvis: 0.10
-- Context: 0.30
+### 4‑Engine Base Weights (Option A)
+- AI: 0.25
+- Research: 0.35
+- Esoteric: 0.20
+- Jarvis: 0.20
+
+### Context Modifier (bounded, not a weighted engine)
+- Derived from Def Rank (50%), Pace (30%), Vacuum (20)
+- Bounded cap: ±0.35 (`CONTEXT_MODIFIER_CAP`)
 
 ### Hard Gates
 - Minimum output: `final_score >= 6.5`
@@ -56,10 +59,10 @@ These are enforced in code and **must never be broken**:
   - Research >= 5.5
   - Esoteric >= 4.0
   - Jarvis >= 6.5
-  - Context >= 4.0
+  - Context gate removed (context is a modifier)
 
-### Context Engine (Pillars 13–15)
-- Def Rank (50%), Pace (30%), Vacuum (20)
+### Context Layer (Pillars 13–15)
+- Def Rank (50%), Pace (30%), Vacuum (20) → bounded modifier
 
 ---
 
@@ -157,4 +160,3 @@ Each pick must include:
 - `total_score`, `final_score`, `tier`
 
 This is **non‑negotiable** for correct frontend rendering.
-

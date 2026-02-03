@@ -6,15 +6,15 @@ This module provides ONE function to score candidates:
 
 NEVER duplicate scoring logic. All scoring MUST go through this pipeline.
 
-v15.0 Four-Engine Architecture:
+v18.0 Option A (4-Engine Base + Context Modifier):
     ENGINE 1: AI Score (25%) - 8 AI Models
-    ENGINE 2: Research Score (30%) - Sharp money, line variance, public fade
+    ENGINE 2: Research Score (35%) - Sharp money, line variance, public fade
     ENGINE 3: Esoteric Score (20%) - Numerology, astro, fib, vortex, daily
-    ENGINE 4: Jarvis Score (15%) - Gematria, triggers, mid-spread
+    ENGINE 4: Jarvis Score (20%) - Gematria, triggers, mid-spread
 
-    FINAL = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15)
-          + confluence_boost
-          + jason_sim_boost (post-pick)
+    CONTEXT_MOD (bounded): optional modifier in [-0.35, +0.35]
+
+    FINAL = BASE_4 + CONTEXT_MOD + confluence_boost + jason_sim_boost
 """
 
 from typing import Dict, Any, Optional
@@ -34,9 +34,9 @@ try:
 except ImportError:
     INVARIANTS_AVAILABLE = False
     ENGINE_WEIGHT_AI = 0.25
-    ENGINE_WEIGHT_RESEARCH = 0.30
+    ENGINE_WEIGHT_RESEARCH = 0.35
     ENGINE_WEIGHT_ESOTERIC = 0.20
-    ENGINE_WEIGHT_JARVIS = 0.15
+    ENGINE_WEIGHT_JARVIS = 0.20
     COMMUNITY_MIN_SCORE = 6.5
 
 logger = logging.getLogger(__name__)
@@ -273,35 +273,57 @@ def score_candidate(
     # For now, placeholder
 
     # =========================================================================
-    # FINAL SCORE
+    # FINAL SCORE (with optional context modifier)
     # =========================================================================
-    final_score = base_score + confluence_boost + jason_sim_boost
+    context_modifier = 0.0
+    if isinstance(context, dict):
+        try:
+            context_modifier = float(context.get("context_modifier", 0.0))
+        except Exception:
+            context_modifier = 0.0
+    # Bound modifier
+    try:
+        from core.scoring_contract import CONTEXT_MODIFIER_CAP
+        _cap = CONTEXT_MODIFIER_CAP
+    except Exception:
+        _cap = 0.35
+    context_modifier = max(-_cap, min(_cap, context_modifier))
+
+    final_score = base_score + context_modifier + confluence_boost + jason_sim_boost
 
     # =========================================================================
     # TIER ASSIGNMENT
     # =========================================================================
-    # Check Titanium first (overrides all)
-    qualifying_engines = []
-    if ai_score >= 8.0:
-        qualifying_engines.append("ai")
-    if research_score >= 8.0:
-        qualifying_engines.append("research")
-    if esoteric_score >= 8.0:
-        qualifying_engines.append("esoteric")
-    if jarvis_score >= 8.0:
-        qualifying_engines.append("jarvis")
-
-    titanium_triggered = len(qualifying_engines) >= 3
+    # Check Titanium first (overrides all) - strict 3/4 via single helper
+    try:
+        from core.titanium import evaluate_titanium
+        titanium_triggered, _, qualifying_engines = evaluate_titanium(
+            ai_score=ai_score,
+            research_score=research_score,
+            esoteric_score=esoteric_score,
+            jarvis_score=jarvis_score,
+            final_score=final_score,
+            threshold=8.0
+        )
+    except Exception:
+        qualifying_engines = [name for name, score in {
+            "ai": ai_score,
+            "research": research_score,
+            "esoteric": esoteric_score,
+            "jarvis": jarvis_score,
+        }.items() if score >= 8.0]
+        titanium_triggered = len(qualifying_engines) >= 3
 
     if titanium_triggered:
         tier = "TITANIUM_SMASH"
     elif final_score >= 7.5:
         # Check GOLD_STAR gates
+        from core.scoring_contract import GOLD_STAR_GATES
         gold_star_eligible = (
-            ai_score >= 6.8 and
-            research_score >= 5.5 and
-            jarvis_score >= 6.5 and
-            esoteric_score >= 4.0
+            ai_score >= GOLD_STAR_GATES["ai_score"] and
+            research_score >= GOLD_STAR_GATES["research_score"] and
+            jarvis_score >= GOLD_STAR_GATES["jarvis_score"] and
+            esoteric_score >= GOLD_STAR_GATES["esoteric_score"]
         )
         tier = "GOLD_STAR" if gold_star_eligible else "EDGE_LEAN"
     elif final_score >= 6.5:
@@ -329,6 +351,7 @@ def score_candidate(
 
         # Score components
         "base_score": round(base_score, 2),
+        "context_modifier": round(context_modifier, 3),
         "confluence_boost": round(confluence_boost, 2),
         "confluence_label": confluence_label,
         "jason_sim_boost": round(jason_sim_boost, 2),

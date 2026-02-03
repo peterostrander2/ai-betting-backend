@@ -60,20 +60,19 @@ curl https://web-production-7b2a.up.railway.app/internal/storage/health
 
 ---
 
-### INVARIANT 2: Titanium 3-of-5 Rule (STRICT) - v17.1
+### INVARIANT 2: Titanium 3-of-4 Rule (STRICT)
 
-**RULE:** `titanium_triggered=true` ONLY when >= 3 of 5 engines >= 8.0
+**RULE:** `titanium_triggered=true` ONLY when >= 3 of 4 base engines >= 8.0
 
-**Implementation:** `core/titanium.py` → `compute_titanium_flag(ai, research, esoteric, jarvis, context)`
+**Implementation:** `core/titanium.py` → `compute_titanium_flag(ai, research, esoteric, jarvis)` / `evaluate_titanium(...)`
 
 **NEVER:**
-- 1/5 engines ≥ 8.0 → `titanium=False` (ALWAYS)
-- 2/5 engines ≥ 8.0 → `titanium=False` (ALWAYS)
+- 1/4 engines ≥ 8.0 → `titanium=False` (ALWAYS)
+- 2/4 engines ≥ 8.0 → `titanium=False` (ALWAYS)
 
 **ALWAYS:**
-- 3/5 engines ≥ 8.0 → `titanium=True` (MANDATORY)
-- 4/5 engines ≥ 8.0 → `titanium=True` (MANDATORY)
-- 5/5 engines ≥ 8.0 → `titanium=True` (MANDATORY)
+- 3/4 engines ≥ 8.0 → `titanium=True` (MANDATORY)
+- 4/4 engines ≥ 8.0 → `titanium=True` (MANDATORY)
 
 **Boundary:** Score of exactly 8.0 DOES qualify. Score of 7.99 does NOT.
 
@@ -81,7 +80,7 @@ curl https://web-production-7b2a.up.railway.app/internal/storage/health
 ```python
 {
     "titanium_triggered": bool,
-    "titanium_count": int,  # 0-5
+    "titanium_count": int,  # 0-4
     "titanium_qualified_engines": List[str],  # ["ai", "research", ...]
     "titanium_threshold": 8.0
 }
@@ -127,9 +126,9 @@ curl /live/best-bets/NBA?debug=1 | jq '.debug.date_window_et.filter_date'  # MUS
 
 ---
 
-### INVARIANT 4: 5-Engine Scoring (v17.1 - NO DOUBLE COUNTING)
+### INVARIANT 4: 4-Engine + Context modifier Scoring (v17.1 - NO DOUBLE COUNTING)
 
-**RULE:** Every pick MUST run through ALL 5 engines + Jason Sim 2.0
+**RULE:** Every pick MUST run through ALL 4 base engines + Jason Sim 2.0
 
 **Engine Weights (v17.1):**
 ```python
@@ -143,8 +142,8 @@ CONTEXT_WEIGHT = 0.30   # 30% - Defensive Rank/Pace/Vacuum (Pillars 13-15)
 
 **Scoring Formula (EXACT):**
 ```python
-BASE = (ai × 0.15) + (research × 0.20) + (esoteric × 0.15) + (jarvis × 0.10) + (context × 0.30)
-FINAL = BASE + confluence_boost + jason_sim_boost
+BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
+FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
 ```
 
 **Engine Separation Rules:**
@@ -174,7 +173,7 @@ FINAL = BASE + confluence_boost + jason_sim_boost
     "research_score": float,     # 0-10
     "esoteric_score": float,     # 0-10
     "jarvis_score": float,       # 0-10
-    "context_score": float,      # 0-10 (v17.1 - Pillars 13-15)
+    "context_score": float,      # 0-10 (backward-compat; context modifier is authoritative)
     "base_score": float,         # Weighted sum before boosts
     "confluence_boost": float,   # STRONG (+3), MODERATE (+1), DIVERGENT (+0), HARMONIC_CONVERGENCE (+4.5)
     "jason_sim_boost": float,    # Can be negative
@@ -266,11 +265,11 @@ top_picks = no_contradictions[:max_picks]
   - `research_score >= 5.5`
   - `jarvis_score >= 6.5`
   - `esoteric_score >= 4.0`
-  - `context_score >= 4.0` (v17.1 - Pillars 13-15 must contribute)
+  - context gate removed (context is a bounded modifier)
 - If ANY gate fails, downgrade to "EDGE_LEAN"
 
 **Tier Hierarchy:**
-1. TITANIUM_SMASH (3/5 engines ≥ 8.0) - Overrides all others
+1. TITANIUM_SMASH (3/4 engines ≥ 8.0) - Overrides all others
 2. GOLD_STAR (≥ 7.5 + passes all gates)
 3. EDGE_LEAN (≥ 6.5)
 4. MONITOR (≥ 5.5) - HIDDEN (not returned)
@@ -354,14 +353,14 @@ top_picks = no_contradictions[:max_picks]
     "final_score",          # Pick score (≥ 6.5)
     "tier",                 # TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN
 
-    # All 5 engine scores
+    # All 4 base engine scores
     "ai_score",
     "research_score",
     "esoteric_score",
     "jarvis_score",
-    "context_score",
+    "context_modifier",
 
-    # All 5 engine reasons
+    # All 4 base engine reasons
     "ai_reasons",
     "research_reasons",
     "esoteric_reasons",
@@ -504,13 +503,13 @@ These checks catch the exact regressions that previously slipped through.
    - correct key → success
 
 2) **Shape contract**
-   - required: `ai_score`, `research_score`, `esoteric_score`, `jarvis_score`, `context_score`
+   - required: `ai_score`, `research_score`, `esoteric_score`, `jarvis_score`, `context_modifier`
    - required: `total_score`, `final_score`
    - required: `bet_tier` object
 
 3) **Hard gates**
    - no picks with `final_score < 6.5` ever returned
-   - Titanium triggers only when ≥3/5 engines ≥8.0
+   - Titanium triggers only when ≥3/4 engines ≥8.0
 
 4) **Fail-soft**
    - integration failures still return 200 with `errors` populated
@@ -540,7 +539,7 @@ These checks catch the exact regressions that previously slipped through.
 2. ✅ Verify production health BEFORE making assumptions
 3. ✅ Run verification checklist BEFORE committing
 4. ✅ Check that RAILWAY_VOLUME_MOUNT_PATH is used everywhere
-5. ✅ Ensure all 5 engines + Jason Sim run on every pick
+5. ✅ Ensure all 4 base engines + Jason Sim run on every pick
 6. ✅ Filter to >= 6.5 BEFORE returning to frontend
 7. ✅ Apply contradiction gate to prevent opposite sides
 8. ✅ Include ALL required fields for autograder
@@ -601,7 +600,7 @@ Checks:
 - ✅ ET filter applied to props (events_before == events_after)
 - ✅ ET filter applied to games (events_before == events_after)
 
-**3. Titanium 3-of-5 Rule (1 check)**
+**3. Titanium 3-of-4 Rule (1 check)**
 - ✅ No picks with `titanium_triggered=true` and < 3 engines >= 8.0
 - Validates every pick in response
 
@@ -621,27 +620,27 @@ Checks:
 PRODUCTION SANITY CHECK - Master Prompt Invariants
 ================================================
 
-[1/5] Validating storage persistence...
+[1/4] Validating storage persistence...
 ✓ Storage: resolved_base_dir is set
 ✓ Storage: is_mountpoint = true
 ✓ Storage: is_ephemeral = false
 ✓ Storage: predictions.jsonl exists
 
-[2/5] Validating best-bets endpoint...
+[2/4] Validating best-bets endpoint...
 ✓ Best-bets: filtered_below_6_5 > 0 OR no picks available
 ✓ Best-bets: minimum returned score >= 6.5
 ✓ Best-bets: ET filter applied to props (events_before == events_after)
 ✓ Best-bets: ET filter applied to games (events_before == events_after)
 
-[3/5] Validating Titanium 3-of-5 rule...
-✓ Titanium: 3-of-5 rule enforced (no picks with titanium=true and < 3 engines >= 8.0)
+[3/4] Validating Titanium 3-of-4 rule...
+✓ Titanium: 3-of-4 rule enforced (no picks with titanium=true and < 3 engines >= 8.0)
 
-[4/5] Validating grader status...
+[4/4] Validating grader status...
 ✓ Grader: available = true
 ✓ Grader: predictions_logged > 0
 ✓ Grader: storage_path is inside Railway volume
 
-[5/5] Validating ET timezone consistency...
+[4/4] Validating ET timezone consistency...
 ✓ ET Timezone: et_date is set
 ✓ ET Timezone: filter_date matches et_date (single source of truth)
 
@@ -785,7 +784,7 @@ Every pick returned from `/live/best-bets/{sport}` includes these fields:
 **NEVER:**
 - ❌ Recalculate `final_score` from engine scores (backend formula is complex)
 - ❌ Recompute `tier` from `final_score` (GOLD_STAR has hard gates beyond score)
-- ❌ Determine `titanium_triggered` from engine scores (uses 3/5 >= 8.0 rule + final_score >= 8.0)
+- ❌ Determine `titanium_triggered` from engine scores (uses 3/4 >= 8.0 rule + final_score >= 8.0)
 - ❌ Convert `start_time_et` to another timezone (already in ET, display as-is)
 - ❌ Compute `game_status` from timestamps (backend knows actual game state)
 - ❌ Show picks with `final_score < 6.5` (API will never return them, but validate anyway)
@@ -830,7 +829,7 @@ function PickCard({ pick }: { pick: Pick }) {
 
       {/* Titanium transparency */}
       {pick.titanium_triggered && (
-        <div>{pick.titanium_count}/5 engines hit Titanium threshold</div>
+        <div>{pick.titanium_count}/4 base engines hit Titanium threshold</div>
       )}
 
       {pick.is_live_bet_candidate && (
@@ -879,7 +878,7 @@ function validatePick(pick: Pick): boolean {
   ].filter(s => s >= 8.0).length;
 
   if (pick.titanium_triggered && enginesAbove8 < 3) {
-    console.error(`Invalid Titanium: only ${enginesAbove8}/5 engines >= 8.0`);
+    console.error(`Invalid Titanium: only ${enginesAbove8}/4 base engines >= 8.0`);
     return false;
   }
 
@@ -1067,7 +1066,7 @@ Check Cache (5-10 min TTL)
    - Games: filter_events_et(raw_games, date_str)        [line 3051]
    - Drops: Events for tomorrow/yesterday
          ↓
-3. SCORE: 5 engines + Jason Sim 2.0
+3. SCORE: 4 base engines + Jason Sim 2.0
    - AI (25%) + Research (30%) + Esoteric (20%) + Jarvis (15%)
    - Confluence boost + Jason Sim boost
    - Tier assignment (TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN)
@@ -1154,7 +1153,7 @@ if TIME_ET_AVAILABLE:
 **Lines 3075-3410: Score each filtered event**
 ```python
 for prop in prop_games:  # ONLY today's events (filtered)
-    # Run through 5 engines + Jason Sim
+    # Run through 4 base engines + Jason Sim
     score_result = calculate_pick_score(
         candidate=prop,
         ai_score=...,
@@ -1235,7 +1234,7 @@ curl /live/best-bets/NBA?debug=1 | jq '.debug.date_window_et'
 4. **If cache miss:**
    - Fetch from Odds API (~2-3 seconds)
    - Filter to TODAY only (ET timezone)
-   - Score through 5 engines (~2-3 seconds)
+   - Score through 4 base engines (~2-3 seconds)
    - Filter to >= 6.5, apply contradiction gate
    - Persist to storage
    - Cache response
@@ -1245,8 +1244,8 @@ curl /live/best-bets/NBA?debug=1 | jq '.debug.date_window_et'
 
 **Formula:**
 ```
-BASE = (AI × 0.25) + (Research × 0.30) + (Esoteric × 0.20) + (Jarvis × 0.15)
-FINAL = BASE + confluence_boost + jason_sim_boost
+BASE_4 = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.20) + (Jarvis × 0.20)
+FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
 ```
 
 **Engines:**
@@ -1261,7 +1260,7 @@ FINAL = BASE + confluence_boost + jason_sim_boost
 **Output Filters:**
 1. Score >= 6.5 (MANDATORY)
 2. Contradiction gate (no opposite sides)
-3. Titanium 3/5 rule (>= 3 engines >= 8.0)
+3. Titanium 3/4 rule (>= 3 engines >= 8.0)
 
 ### Persistence (AutoGrader Integration)
 
@@ -1520,17 +1519,17 @@ grep -n "RAILWAY_VOLUME_MOUNT_PATH" storage_paths.py data_dir.py
 
 ---
 
-### FIX 2: Titanium 3-of-5 Rule (MANDATORY)
+### FIX 2: Titanium 3-of-4 Rule (MANDATORY)
 
-**RULE**: `titanium=true` ONLY when >= 3 of 5 engines >= 8.0
+**RULE**: `titanium=true` ONLY when >= 3 of 4 base engines >= 8.0
 
 **Never**:
-- 1/5 engines → titanium MUST be false
-- 2/5 engines → titanium MUST be false
+- 1/4 engines → titanium MUST be false
+- 2/4 engines → titanium MUST be false
 
 **Always**:
-- 3/5 engines → titanium MUST be true
-- 4/5 engines → titanium MUST be true
+- 3/4 engines → titanium MUST be true
+- 4/4 engines → titanium MUST be true
 
 **Implementation**: Use `core/titanium.py` → `compute_titanium_flag(ai, research, esoteric, jarvis)`
 
@@ -1548,19 +1547,19 @@ diagnostics = {
 }
 ```
 
-**Example** (1/5 - MUST BE FALSE):
+**Example** (1/4 - MUST BE FALSE):
 ```python
 titanium, diag = compute_titanium_flag(8.5, 6.0, 5.0, 4.0)
 # titanium=False
-# reason: "Only 1/5 engines >= 8.0 (need 3+)"
+# reason: "Only 1/4 engines >= 8.0 (need 3+)"
 ```
 
-**Example** (3/5 - MUST BE TRUE):
+**Example** (3/4 - MUST BE TRUE):
 ```python
 titanium, diag = compute_titanium_flag(8.5, 8.2, 8.1, 7.0)
 # titanium=True
 # engines: ['ai', 'research', 'esoteric']
-# reason: "3/5 engines >= 8.0 (TITANIUM)"
+# reason: "3/4 engines >= 8.0 (TITANIUM)"
 ```
 
 **Tests**: `tests/test_titanium_fix.py` (7 tests)
@@ -1953,41 +1952,40 @@ If you add ANY new endpoint or function that processes Odds API events, you MUST
 
 ---
 
-## Signal Architecture (5-Engine v17.1)
+## Signal Architecture (4-Engine + Context modifier v17.1)
 
 ### Scoring Formula
 ```
-FINAL = (AI × 0.15) + (Research × 0.20) + (Esoteric × 0.15) + (Jarvis × 0.10) + (Context × 0.30)
+FINAL = BASE_4 + context_modifier + confluence_boost + jason_sim_boost
        + confluence_boost + jason_sim_boost (post-pick)
 ```
 
 All engines score 0-10. Min output threshold: **6.5** (picks below this are filtered out).
 
-### Engine 1: AI Score (15%)
+### Engine 1: AI Score (25%)
 - 8 AI Models (0-8 scaled to 0-10) - `advanced_ml_backend.py`
 - Dynamic calibration: +0.5 sharp present, +0.25-1.0 signal strength, +0.5 favorable spread, +0.25 player data
 - LSTM receives real context data (def_rank, pace, vacuum) via context layer
 
-### Engine 2: Research Score (20%)
+### Engine 2: Research Score (35%)
 - Sharp Money (0-3 pts): STRONG/MODERATE/MILD signal from Playbook splits
 - Line Variance (0-3 pts): Cross-book spread variance from Odds API
 - Public Fade (0-2 pts): Contrarian signal at ≥65% public + ticket-money divergence ≥5%
 - Base (2-3 pts): 2.0 default, 3.0 when real splits data present with money-ticket divergence
 - Officials adjustment (Pillar 16): OfficialsAnalyzer adjusts based on referee tendencies
 
-### Engine 3: Esoteric Score (15%)
+### Engine 3: Esoteric Score (20%)
 - **See CRITICAL section below for rules**
 - Park Factors (Pillar 17, MLB only): Venue-based adjustments
 
-### Engine 4: Jarvis Score (10%)
+### Engine 4: Jarvis Score (20%)
 - Gematria triggers: 2178, 201, 33, 93, 322
 - Mid-spread Goldilocks, trap detection
 - `jarvis_savant_engine.py`
 
-### Engine 5: Context Score (30%) - v17.1
-- Defensive Rank (50%): Opponent's defensive strength vs position type
-- Pace (30%): Expected game pace from team velocity data
-- Vacuum (20%): Usage vacuum from injury data
+### Context Modifier (bounded, NOT an engine)
+- Derived from Defensive Rank (50%), Pace (30%), Vacuum (20%)
+- Bounded modifier cap: ±0.35 (see `CONTEXT_MODIFIER_CAP`)
 - Services: DefensiveRankService, PaceVectorService, UsageVacuumService
 
 ### Confluence (v17.1 — with STRONG eligibility gate + HARMONIC_CONVERGENCE)
@@ -2012,7 +2010,7 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 | `research_gte_5.5` | Research ≥ 5.5 | Must have real market signals (sharp/splits/variance) |
 | `jarvis_gte_6.5` | Jarvis ≥ 6.5 | Jarvis triggers must fire |
 | `esoteric_gte_4.0` | Esoteric ≥ 4.0 | Esoteric components must contribute |
-| `context_gte_4.0` | Context ≥ 4.0 | Pillars 13-15 must contribute (v17.1) |
+| `context_gte_4.0` | **REMOVED** | Context is a modifier, not a hard gate |
 
 **Output includes**: `scoring_breakdown.gold_star_gates` (dict of gate→bool), `gold_star_eligible` (bool), `gold_star_failed` (list of failed gate names).
 
@@ -2021,7 +2019,7 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 ### Tier Hierarchy
 | Tier | Score Threshold | Additional Requirements |
 |------|----------------|------------------------|
-| TITANIUM_SMASH | 3/5 engines ≥ 8.0 | Overrides all other tiers |
+| TITANIUM_SMASH | 3/4 engines ≥ 8.0 | Overrides all other tiers |
 | GOLD_STAR | ≥ 7.5 | Must pass ALL hard gates |
 | EDGE_LEAN | ≥ 6.5 | Default for picks above output filter |
 | MONITOR | ≥ 5.5 | Below output filter (hidden) |
@@ -2352,15 +2350,16 @@ _best_bets_inner()
         └── Pillar 17: ParkFactorService (MLB only)
 ```
 
-**Engine Weights (scoring_contract.py):**
+**Base Engine Weights (scoring_contract.py):**
 ```python
 ENGINE_WEIGHTS = {
-    "ai": 0.15,        # Pillars 1-8
-    "research": 0.20,  # Pillars 9-12, 16
-    "esoteric": 0.15,  # Pillar 17 + GLITCH
-    "jarvis": 0.10,    # Gematria triggers
-    "context": 0.30,   # Pillars 13-15
+    "ai": 0.25,        # Pillars 1-8
+    "research": 0.35,  # Pillars 9-12, 16
+    "esoteric": 0.20,  # Pillar 17 + GLITCH
+    "jarvis": 0.20,    # Gematria triggers
 }
+
+CONTEXT_MODIFIER_CAP = 0.35  # Context is a bounded modifier, not a weighted engine
 ```
 
 **Verification - Check REAL Values (Not Defaults):**
@@ -2372,9 +2371,10 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '[.game_picks.picks[0:
   def_rank: .context_layer.def_rank,
   pace: .context_layer.pace,
   vacuum: .context_layer.vacuum,
-  context_score: .context_score
+  context_score: .context_score,
+  context_modifier: .context_modifier
 }]'
-# SHOULD show varying def_rank (1-30), varying pace (94-104), context_score varies
+# SHOULD show varying def_rank (1-30), varying pace (94-104), context_score + modifier vary
 
 # 2. Check injuries are loaded
 curl /live/injuries/NBA -H "X-API-Key: KEY" | jq '{source: .source, count: .count, teams: [.data[].teamName]}'
@@ -2386,7 +2386,7 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.game_picks.picks[0] 
   research: .research_score,
   esoteric: .esoteric_score,
   jarvis: .jarvis_score,
-  context: .context_score,
+  context_modifier: .context_modifier,
   officials: .context_layer.officials_adjustment,
   park: .context_layer.park_adjustment
 }'
@@ -2730,7 +2730,7 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
 
 **Implementation:**
 - `core/serp_guardrails.py` - Central config, quota tracking, boost caps, shadow mode control
-- `alt_data_sources/serp_intelligence.py` - 5 signal detectors mapped to 5 engines
+- `alt_data_sources/serp_intelligence.py` - 5 signal detectors mapped to 4 base engines
 - `alt_data_sources/serpapi.py` - SerpAPI client with cache and timeout from guardrails
 
 **Configuration (serp_guardrails.py):**
@@ -2758,7 +2758,7 @@ SERP_CACHE_TTL = 5400         # 90 minutes cache
 detect_silent_spike()   → AI engine      (high search + low news = insider activity)
 detect_sharp_chatter()  → Research engine (sharp money, RLM mentions)
 detect_narrative()      → Jarvis engine   (revenge games, rivalries)
-detect_situational()    → Context engine  (B2B, rest advantage, travel)
+detect_situational()    → Context modifier (B2B, rest advantage, travel)
 detect_noosphere()      → Esoteric engine (search trend velocity)
 ```
 

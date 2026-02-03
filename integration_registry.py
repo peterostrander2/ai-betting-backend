@@ -763,6 +763,7 @@ async def get_all_integrations_status() -> Dict[str, Any]:
     (E) NOT_CONFIGURED - Required env var not set (FAIL LOUD)
     """
     results = {}
+    _ensure_usage_registry()
 
     # Status buckets
     validated = []      # (A) Configured + reachable
@@ -773,6 +774,8 @@ async def get_all_integrations_status() -> Dict[str, Any]:
 
     for name, integration in INTEGRATIONS.items():
         status = await check_integration_health(name)
+        usage = INTEGRATION_USAGE.get(name, {})
+        status["last_used_at"] = usage.get("last_used_at")
         results[name] = status
 
         is_configured = status.get("is_configured", False)
@@ -863,6 +866,27 @@ def get_integrations_summary() -> Dict[str, Any]:
         "configured_count": len(configured),
         "not_configured_count": len(not_configured),
     }
+
+
+# =============================================================================
+# RUNTIME USAGE TELEMETRY (last successful use)
+# =============================================================================
+
+INTEGRATION_USAGE: Dict[str, Dict[str, Any]] = {}
+
+
+def _ensure_usage_registry():
+    if not INTEGRATION_USAGE:
+        for name in INTEGRATIONS.keys():
+            INTEGRATION_USAGE[name] = {"last_used_at": None}
+
+
+def mark_integration_used(name: str):
+    """Mark integration as used (successful call)."""
+    _ensure_usage_registry()
+    if name not in INTEGRATION_USAGE:
+        INTEGRATION_USAGE[name] = {"last_used_at": None}
+    INTEGRATION_USAGE[name]["last_used_at"] = datetime.now(timezone.utc).isoformat()
 
 
 def get_health_check_loud() -> Dict[str, Any]:

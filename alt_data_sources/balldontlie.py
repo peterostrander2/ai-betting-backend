@@ -106,6 +106,11 @@ async def _fetch_bdl(endpoint: str, params: Dict[str, Any] = None) -> Optional[D
                 data = resp.json()
                 _cache[cache_key] = data
                 _cache_timestamps[cache_key] = datetime.now()
+                try:
+                    from integration_registry import mark_integration_used
+                    mark_integration_used("balldontlie")
+                except Exception:
+                    pass
                 return data
             elif resp.status_code == 401:
                 logger.warning("BallDontLie API: Invalid API key")

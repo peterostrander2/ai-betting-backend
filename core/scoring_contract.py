@@ -5,14 +5,16 @@ All scoring logic MUST reference these constants (no duplicated literals).
 
 # Engine Weights (sum = 0.90; remaining headroom is reserved for post-base modifiers
 # such as confluence + Jason Sim + bounded context modifiers, as implemented).
-# v17.1: Added Context engine at 30% per spec, rebalanced others proportionally
+# v18.0: Option A — 4-engine base weights. Context is a bounded modifier layer.
 ENGINE_WEIGHTS = {
-    "ai": 0.15,        # was 0.25 - 8 AI models
-    "research": 0.20,  # was 0.30 - Sharp money, splits, variance
-    "esoteric": 0.15,  # was 0.20 - Numerology, astro, fib, vortex
-    "jarvis": 0.10,    # was 0.15 - Gematria, sacred triggers
-    "context": 0.30,   # NEW - Pillars 13-15: Defensive Rank, Pace, Vacuum
+    "ai": 0.25,        # 8 AI models
+    "research": 0.35,  # Sharp money, splits, variance
+    "esoteric": 0.20,  # Numerology, astro, fib, vortex
+    "jarvis": 0.20,    # Gematria, sacred triggers
 }
+
+# Context modifier cap (applied as bounded boost, NOT a weighted engine)
+CONTEXT_MODIFIER_CAP = 0.35
 
 # Output/visibility threshold (hard invariant)
 MIN_FINAL_SCORE = 6.5
@@ -27,13 +29,11 @@ TITANIUM_RULE = {
 }
 
 # Gold Star hard gates (hard invariant)
-# v17.1: Added context_score gate for 5-engine architecture
 GOLD_STAR_GATES = {
     "ai_score": 6.8,
     "research_score": 5.5,
     "jarvis_score": 6.5,
     "esoteric_score": 4.0,
-    "context_score": 4.0,  # NEW - Pillars 13-15 must contribute
 }
 
 # Confluence boost levels (must match production implementation)

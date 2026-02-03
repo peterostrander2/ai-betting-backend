@@ -139,6 +139,7 @@ except ImportError:
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
 from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD
+from core.telemetry import apply_used_integrations_debug
 
 # Import Time ET - SINGLE SOURCE OF TRUTH for ET timezone
 try:
@@ -435,6 +436,9 @@ def get_shared_client() -> httpx.AsyncClient:
     return _shared_client
 
 
+#
+
+
 async def close_shared_client():
     """Close the shared client (call on app shutdown)."""
     global _shared_client
@@ -473,6 +477,19 @@ async def fetch_with_retries(
                 logger.warning("Rate limited by %s (attempt %d): %s",
                              url, attempt, resp.text[:200] if resp.text else "No body")
                 return resp
+
+            # Odds API usage marking (success + valid JSON only)
+            if resp.status_code == 200 and url.startswith(ODDS_API_BASE):
+                try:
+                    _ = resp.json()
+                    try:
+                        from integration_registry import mark_integration_used
+                        mark_integration_used("odds_api")
+                    except Exception as e:
+                        logger.debug("odds_api mark_integration_used failed: %s", str(e))
+                except Exception:
+                    # Invalid JSON should not mark usage
+                    pass
 
             return resp
 
@@ -1852,6 +1869,8 @@ async def get_sharp_money(sport: str):
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
+    odds_data_used = False
+    playbook_data_used = False
 
     # Derive sharp signals from Playbook splits data (sharp = money% differs significantly from ticket%)
     if PLAYBOOK_API_KEY:
@@ -2409,11 +2428,14 @@ async def get_props(sport: str):
 
     # Try Odds API first for props - must fetch per event using /events/{eventId}/odds
     try:
+        from odds_api import odds_api_get
+        _client = get_shared_client()
         # Step 1: Get list of events for this sport
         events_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/events"
-        events_resp = await fetch_with_retries(
-            "GET", events_url,
-            params={"apiKey": ODDS_API_KEY}
+        events_resp, _events_used = await odds_api_get(
+            events_url,
+            params={"apiKey": ODDS_API_KEY},
+            client=_client,
         )
 
         if events_resp and events_resp.status_code == 200:
@@ -2436,14 +2458,15 @@ async def get_props(sport: str):
 
                 # Fetch props for this specific event
                 event_odds_url = f"{ODDS_API_BASE}/sports/{sport_config['odds']}/events/{event_id}/odds"
-                event_resp = await fetch_with_retries(
-                    "GET", event_odds_url,
+                event_resp, _event_used = await odds_api_get(
+                    event_odds_url,
                     params={
                         "apiKey": ODDS_API_KEY,
                         "regions": "us",
                         "markets": prop_markets,
                         "oddsFormat": "american"
-                    }
+                    },
+                    client=_client,
                 )
 
                 if event_resp and event_resp.status_code == 200:
@@ -2473,6 +2496,7 @@ async def get_props(sport: str):
 
                         if game_props["props"]:
                             data.append(game_props)
+                            odds_data_used = True
                             logger.info("Got %d props for %s vs %s", len(game_props["props"]), game_props["away_team"], game_props["home_team"])
 
                     except ValueError as e:
@@ -2519,6 +2543,7 @@ async def get_props(sport: str):
 
                     if game_props["props"]:
                         data.append(game_props)
+                        playbook_data_used = True
 
                 logger.info("Props data retrieved from Playbook API for %s: %d games with props", sport, len(data))
             else:
@@ -2531,7 +2556,14 @@ async def get_props(sport: str):
     if not data:
         logger.info("No props from APIs for %s; returning empty list", sport)
 
-    result = {"sport": sport.upper(), "source": "odds_api" if data else "generated", "count": len(data), "data": data}
+    if odds_data_used:
+        source = "odds_api"
+    elif playbook_data_used:
+        source = "playbook"
+    else:
+        source = "generated"
+
+    result = {"sport": sport.upper(), "source": source, "count": len(data), "data": data}
     api_cache.set(cache_key, result)
     return JSONResponse(_sanitize_public(result))
 
@@ -2626,6 +2658,17 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                            min_score=6.5, debug_mode=False, date_str=None,
                            max_events=12, max_props=10, max_games=10):
     sport_upper = sport.upper()
+    used_integrations = set()
+
+    def _mark_integration_used(name: str) -> None:
+        """Track integration usage for this run + update last_used_at."""
+        used_integrations.add(name)
+        try:
+            from integration_registry import mark_integration_used
+            mark_integration_used(name)
+        except Exception:
+            # Usage telemetry is best-effort only
+            pass
 
     # --- v16.0 PERFORMANCE: Time budget + per-stage timings ---
     TIME_BUDGET_S = 15.0
@@ -3980,6 +4023,70 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         except Exception as e:
             logger.debug("Altitude adjustment failed: %s", e)
 
+        # ===== PHASE 8 (v18.2) NEW ESOTERIC SIGNALS =====
+        phase8_boost = 0.0
+        phase8_reasons = []
+        try:
+            from esoteric_engine import get_phase8_esoteric_signals
+
+            # Parse game datetime for lunar/solar signals
+            _game_datetime = None
+            if commence_time:
+                try:
+                    if isinstance(commence_time, str):
+                        _game_datetime = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+                    else:
+                        _game_datetime = commence_time
+                except Exception:
+                    _game_datetime = datetime.now()
+            else:
+                _game_datetime = datetime.now()
+
+            # Get streak data if available (from context or injuries lookup)
+            _home_streak = 0
+            _home_streak_type = "W"
+            _away_streak = 0
+            _away_streak_type = "W"
+
+            # Try to get streak info from team data (if available)
+            try:
+                if home_team and sport:
+                    # Could fetch from ESPN or Playbook if we had a streak endpoint
+                    pass  # Placeholder - streaks can be added via future integration
+            except Exception:
+                pass
+
+            # Calculate all Phase 8 signals
+            phase8_result = get_phase8_esoteric_signals(
+                game_datetime=_game_datetime,
+                game_date=_game_date_obj,
+                sport=sport,
+                home_team=home_team,
+                away_team=away_team,
+                pick_type=pick_type,
+                pick_side=pick_side,
+                home_streak=_home_streak,
+                home_streak_type=_home_streak_type,
+                away_streak=_away_streak,
+                away_streak_type=_away_streak_type
+            )
+
+            phase8_boost = phase8_result.get("phase8_boost", 0.0)
+            phase8_reasons = phase8_result.get("reasons", [])
+
+            if phase8_boost != 0.0:
+                esoteric_raw += phase8_boost
+                esoteric_reasons.extend(phase8_reasons)
+
+            if phase8_result.get("triggered_count", 0) > 0:
+                logger.debug("Phase8[%s]: boost=%.2f, signals=%s",
+                            game_str[:30], phase8_boost, phase8_result.get("triggered_signals", []))
+
+        except ImportError:
+            logger.debug("Phase 8 signals module not available")
+        except Exception as e:
+            logger.debug("Phase 8 signals calculation failed: %s", e)
+
         # Clamp to 0-10
         esoteric_score = max(0, min(10, esoteric_raw))
         logger.debug("Esoteric[%s]: mag=%.1f num=%.2f astro=%.2f fib=%.2f vortex=%.2f daily=%.2f trap=%.2f → raw=%.2f",
@@ -4130,9 +4237,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
 
-        # --- v17.1 CONTEXT SCORE (Pillars 13-15) ---
+        # --- v18.0 CONTEXT SCORE (Pillars 13-15) ---
         # Calculate context_score (0-10) from defensive rank, pace, and vacuum
-        # This is now a 5th engine at 30% weight per spec
+        # Context is a bounded modifier layer (NOT a weighted engine)
 
         # Pillar 13: Defensive Rank (lower rank = worse defense = better for offense)
         # Rank 1 = worst defense = best matchup = 10, Rank 32 = best defense = 0
@@ -4179,20 +4286,29 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         except Exception as e:
             logger.debug("Travel fatigue failed: %s", e)
 
-        # --- v17.1 BASE SCORE FORMULA (5 Engines) ---
-        # BASE = (ai × 0.15) + (research × 0.20) + (esoteric × 0.15) + (jarvis × 0.10) + (context × 0.30) + confluence_boost
-        # Context pillars now contribute 30% as per spec
+        # --- v18.0 BASE SCORE FORMULA (4 Engines + Context Modifier) ---
+        # BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
+        # CONTEXT_MOD = bounded modifier (NOT an engine weight)
+        # FINAL = BASE_4 + CONTEXT_MOD + confluence_boost + jason_sim_boost (+ other boosts)
         # If jarvis_rs is None (inputs missing), use 0 for jarvis contribution
         jarvis_contribution = (jarvis_rs * ENGINE_WEIGHTS["jarvis"]) if jarvis_rs is not None else 0
-        context_contribution = context_score * ENGINE_WEIGHTS["context"]
         base_score = (
             (ai_scaled * ENGINE_WEIGHTS["ai"]) +
             (research_score * ENGINE_WEIGHTS["research"]) +
             (esoteric_score * ENGINE_WEIGHTS["esoteric"]) +
-            jarvis_contribution +
-            context_contribution +
-            confluence_boost
+            jarvis_contribution
         )
+
+        # Context modifier: map 0-10 score to bounded modifier (centered at 5)
+        try:
+            from core.scoring_contract import CONTEXT_MODIFIER_CAP
+            _context_cap = CONTEXT_MODIFIER_CAP
+        except Exception:
+            _context_cap = 0.35
+        context_modifier = ((context_score - 5.0) / 5.0) * _context_cap
+        context_modifier = round(max(-_context_cap, min(_context_cap, context_modifier)), 3)
+        if context_modifier != 0:
+            context_reasons.append(f"Context modifier: {context_modifier:+.3f} (score={context_score:.2f})")
 
         # --- v11.08 JASON SIM CONFLUENCE (runs after base score, before tier assignment) ---
         # Jason simulates game outcomes and applies boost/downgrade based on win probability
@@ -4236,9 +4352,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "base_score": base_score
             }
 
-        # FINAL = BASE + JASON_BOOST
+        # FINAL = BASE_4 + CONTEXT_MOD + CONFLUENCE + JASON
         jason_sim_boost = jason_output.get("jason_sim_boost", 0.0)
-        final_score = base_score + jason_sim_boost
+        final_score = base_score + context_modifier + confluence_boost + jason_sim_boost
 
         # ===== v17.8 PILLAR 16: OFFICIALS TENDENCY INTEGRATION =====
         # Referee/Umpire tendencies impact totals, spreads, and props
@@ -4422,29 +4538,26 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # jarvis_rs, jarvis_active, jarvis_hits_count, jarvis_triggers_hit, jarvis_reasons
         # are all set from calculate_jarvis_engine_score() call
 
-        # --- v15.0 TITANIUM CHECK (3 of 4 engines >= 8.0) ---
-        titanium_triggered = False
-        titanium_explanation = ""
-        # If jarvis_rs is None (inputs missing), treat as 0 for Titanium check
-        jarvis_for_titanium = jarvis_rs if jarvis_rs is not None else 0
-        if TIERING_AVAILABLE:
+        # --- v18.0 TITANIUM CHECK (STRICT 3 of 4 engines >= 8.0) ---
+        # Context NEVER counts toward Titanium.
+        try:
+            from core.titanium import evaluate_titanium
+            titanium_triggered, titanium_explanation, qualifying_engines = evaluate_titanium(
+                ai_score=ai_scaled,
+                research_score=research_score,
+                esoteric_score=esoteric_score,
+                jarvis_score=(jarvis_rs if jarvis_rs is not None else 0),
+                final_score=final_score,
+                threshold=8.0
+            )
+        except Exception:
             titanium_triggered, titanium_explanation, qualifying_engines = check_titanium_rule(
                 ai_score=ai_scaled,
                 research_score=research_score,
                 esoteric_score=esoteric_score,
-                jarvis_score=jarvis_for_titanium
+                jarvis_score=(jarvis_rs if jarvis_rs is not None else 0),
+                final_score=final_score
             )
-        else:
-            # Fallback check without tiering module (v17.1: 5 engines now)
-            engines_above_8 = sum([
-                ai_scaled >= 8.0,
-                research_score >= 8.0,
-                esoteric_score >= 8.0,
-                jarvis_for_titanium >= 8.0,
-                context_score >= 8.0  # v17.1: Added context engine
-            ])
-            titanium_triggered = engines_above_8 >= 3
-            titanium_explanation = f"Titanium: {engines_above_8}/5 engines >= 8.0 (need 3)"
 
         # --- v11.08 BET TIER DETERMINATION (Single Source of Truth) ---
         if TIERING_AVAILABLE:
@@ -4467,21 +4580,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             else:
                 bet_tier = {"tier": "PASS", "units": 0.0, "action": "SKIP"}
 
-        # --- v17.1 GOLD_STAR HARD GATES (5 engines) ---
+        # --- v18.0 GOLD_STAR HARD GATES (4 engines) ---
         # GOLD_STAR requires ALL engine minimums. If any gate fails, downgrade to EDGE_LEAN.
         _gold_gates = {
             "ai_gte_6.8": ai_scaled >= GOLD_STAR_GATES["ai_score"],
             "research_gte_5.5": research_score >= GOLD_STAR_GATES["research_score"],
             "jarvis_gte_6.5": (jarvis_rs >= GOLD_STAR_GATES["jarvis_score"]) if jarvis_rs is not None else False,
             "esoteric_gte_4.0": esoteric_score >= GOLD_STAR_GATES["esoteric_score"],
-            "context_gte_4.0": context_score >= GOLD_STAR_GATES["context_score"],  # v17.1
         }
         _gold_gates_passed = all(_gold_gates.values())
         _gold_gates_failed = [k for k, v in _gold_gates.items() if not v]
 
         if bet_tier.get("tier") == "GOLD_STAR" and not _gold_gates_passed:
-            logger.info("GOLD_STAR downgrade: gates failed=%s (ai=%.1f R=%.1f J=%.1f E=%.1f C=%.1f)",
-                       _gold_gates_failed, ai_scaled, research_score, jarvis_rs, esoteric_score, context_score)
+            logger.info("GOLD_STAR downgrade: gates failed=%s (ai=%.1f R=%.1f J=%.1f E=%.1f)",
+                        _gold_gates_failed, ai_scaled, research_score, jarvis_rs, esoteric_score)
             bet_tier = {"tier": "EDGE_LEAN", "units": 1.0, "action": "PLAY",
                         "badge": "EDGE LEAN", "gold_star_downgrade": True,
                         "gold_star_failed_gates": _gold_gates_failed}
@@ -4516,8 +4628,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 smash_reasons.append(f"Esoteric Engine: {round(esoteric_score, 2)}/10")
             if jarvis_rs is not None and jarvis_rs >= 8.0:
                 smash_reasons.append(f"Jarvis Engine: {round(jarvis_rs, 2)}/10")
-            if context_score >= 8.0:
-                smash_reasons.append(f"Context Engine: {round(context_score, 2)}/10")
+            if abs(context_modifier) >= 0.2:
+                smash_reasons.append(f"Context Modifier: {context_modifier:+.2f}")
 
         # Build penalties array from modifiers
         # v15.0: public_fade_mod removed (now only in Research as positive boost)
@@ -4569,8 +4681,6 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         tier_reason.append(f"  - Jarvis inputs missing (None)")
                 elif gate == "esoteric_gte_4.0":
                     tier_reason.append(f"  - Esoteric {esoteric_score:.1f} < 4.0")
-                elif gate == "context_gte_4.0":
-                    tier_reason.append(f"  - Context {context_score:.1f} < 4.0")
 
         return {
             "total_score": round(final_score, 2),
@@ -4588,14 +4698,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "research_score": round(research_score, 2),
             "esoteric_score": round(esoteric_score, 2),
             "jarvis_score": round(jarvis_rs, 2) if jarvis_rs is not None else None,  # Alias for jarvis_rs
-            "context_score": round(context_score, 2),  # v17.1: NEW 5th engine
+            "context_modifier": round(context_modifier, 3),  # v18.0: bounded modifier
+            "context_score": round(context_score, 2),  # backward-compat (raw score)
             # Detailed breakdowns
             "scoring_breakdown": {
                 "research_score": round(research_score, 2),
                 "esoteric_score": round(esoteric_score, 2),
                 "ai_models": round(ai_score, 2),
                 "ai_score": round(ai_scaled, 2),
-                "context_score": round(context_score, 2),  # v17.1
+                "context_modifier": round(context_modifier, 3),  # v18.0
+                "context_score": round(context_score, 2),  # backward-compat
                 "pillars": round(pillar_score, 2),
                 "confluence_boost": confluence_boost,
                 "alignment_pct": confluence.get("alignment_pct", 0),
@@ -4611,7 +4723,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "pace_component": round(pace_component, 2),
                 "vacuum": _vacuum,
                 "vacuum_component": round(vacuum_component, 2),
-                "total": round(context_score, 2)
+                "score": round(context_score, 2),
+                "modifier": round(context_modifier, 3)
             },
             # v14.9 Research breakdown (clean engine separation)
             "research_breakdown": {
@@ -4775,15 +4888,30 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         return await get_props(sport)
 
     async def _fetch_game_odds():
-        return await fetch_with_retries(
-            "GET", odds_url,
-            params={
-                "apiKey": ODDS_API_KEY,
-                "regions": "us",
-                "markets": "spreads,h2h,totals",
-                "oddsFormat": "american"
-            }
-        )
+        try:
+            from odds_api import odds_api_get
+            resp, used = await odds_api_get(
+                odds_url,
+                params={
+                    "apiKey": ODDS_API_KEY,
+                    "regions": "us",
+                    "markets": "spreads,h2h,totals",
+                    "oddsFormat": "american"
+                },
+            )
+            return {"resp": resp, "used": used}
+        except Exception:
+            # Fallback to existing retry helper
+            resp = await fetch_with_retries(
+                "GET", odds_url,
+                params={
+                    "apiKey": ODDS_API_KEY,
+                    "regions": "us",
+                    "markets": "spreads,h2h,totals",
+                    "oddsFormat": "american"
+                }
+            )
+            return {"resp": resp, "used": False}
 
     # v17.2: Add injuries fetch for vacuum calculation (Pillar 15)
     async def _fetch_injuries():
@@ -4817,9 +4945,29 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     if isinstance(game_odds_resp, Exception):
         logger.warning("Game odds fetch failed in parallel: %s", game_odds_resp)
         game_odds_resp = None
+        _odds_used = False
+    else:
+        if isinstance(game_odds_resp, dict):
+            _odds_used = bool(game_odds_resp.get("used"))
+            game_odds_resp = game_odds_resp.get("resp")
+        else:
+            _odds_used = False
     if isinstance(injuries_data, Exception):
         logger.debug("Injuries fetch failed in parallel: %s", injuries_data)
         injuries_data = {"data": []}
+
+    # Integration usage telemetry (best-bets scoring cycle, request-scoped)
+    if isinstance(props_data, dict):
+        src = props_data.get("source", "")
+        if src == "odds_api":
+            _mark_integration_used("odds_api")
+        elif src == "playbook":
+            _mark_integration_used("playbook")
+    if isinstance(injuries_data, dict):
+        if injuries_data.get("source") == "playbook":
+            _mark_integration_used("playbook")
+    if _odds_used:
+        _mark_integration_used("odds_api")
     if isinstance(espn_scoreboard, Exception):
         logger.debug("ESPN scoreboard failed in parallel: %s", espn_scoreboard)
         espn_scoreboard = {"events": []}
@@ -5290,6 +5438,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # ============================================
     _s = time.time()
     game_picks = []
+    _game_scoring_error = False
 
     # v16.0: Weather cache per game (fetch once, apply to all markets)
     _weather_cache: Dict[str, Dict[str, Any]] = {}
@@ -5574,6 +5723,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 "vacuum_score": _game_ctx_mods.get("vacuum_score"),
                             })
     except Exception as e:
+        _game_scoring_error = True
         logger.warning("Game picks scoring failed: %s", e)
 
     _record("game_picks_scoring", _s)
@@ -5707,6 +5857,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # ============================================
     _s = time.time()
     props_picks = []
+    _props_scoring_error = False
     invalid_injury_count = 0
     try:
         for game in prop_games:
@@ -5984,7 +6135,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "vacuum_score": _ctx_mods.get("vacuum_score"),
                 })
     except HTTPException:
+        _props_scoring_error = True
         logger.warning("Props fetch failed for %s", sport)
+    except Exception as e:
+        _props_scoring_error = True
+        logger.warning("Props scoring failed for %s: %s", sport, e)
 
     _record("props_scoring", _s)
 
@@ -6272,10 +6427,45 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     date_et = get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d")
     run_timestamp_et = datetime.now().isoformat()
 
+    # Component status (public, non-telemetry)
+    props_status = "OK"
+    games_status = "OK"
+    if _skip_ncaab_props:
+        props_status = "SKIPPED"
+    elif "props_scoring" in _timed_out_components:
+        props_status = "TIMED_OUT"
+    elif _props_scoring_error:
+        props_status = "ERROR"
+    elif len(top_props) == 0:
+        props_status = "EMPTY"
+
+    if "game_picks_scoring" in _timed_out_components:
+        games_status = "TIMED_OUT"
+    elif _game_scoring_error:
+        games_status = "ERROR"
+    elif len(top_game_picks) == 0:
+        games_status = "EMPTY"
+
+    # Stable error codes for public response
+    errors = []
+    if props_status == "TIMED_OUT":
+        errors.append({"code": "PROPS_TIMED_OUT", "component": "props", "message": "props scoring timed out"})
+    elif props_status == "ERROR":
+        errors.append({"code": "PROPS_ERROR", "component": "props", "message": "props scoring failed"})
+    if games_status == "TIMED_OUT":
+        errors.append({"code": "GAME_PICKS_TIMED_OUT", "component": "game_picks", "message": "game picks scoring timed out"})
+    elif games_status == "ERROR":
+        errors.append({"code": "GAME_PICKS_ERROR", "component": "game_picks", "message": "game picks scoring failed"})
+
+    overall_status = "OK"
+    if any(s in ["TIMED_OUT", "ERROR"] for s in [props_status, games_status]):
+        overall_status = "PARTIAL"
+
     result = {
         "sport": sport.upper(),
         "mode": "live" if live_mode else "standard",  # v14.11: Indicate which mode
         "source": f"jarvis_savant_v{TIERING_VERSION if TIERING_AVAILABLE else '11.08'}",
+        "status": overall_status,
         "scoring_system": "Phase 1-3 Integrated + Titanium v11.08",
         "engine_version": TIERING_VERSION if TIERING_AVAILABLE else "11.08",
         "deploy_version": deploy_version,
@@ -6283,14 +6473,21 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         "identity_resolver": IDENTITY_RESOLVER_AVAILABLE,
         "date_et": date_et,  # v14.9: Today's date in ET
         "run_timestamp_et": run_timestamp_et,  # v14.9: When this response was generated
+        "errors": errors,
+        "component_status": {
+            "props": props_status,
+            "game_picks": games_status
+        },
         "props": {
             "count": len(top_props),
             "total_analyzed": len(props_picks),
+            "status": props_status,
             "picks": top_props
         },
         "game_picks": {
             "count": len(top_game_picks),
             "total_analyzed": len(_all_game_candidates),
+            "status": games_status,
             "picks": top_game_picks
         },
         "esoteric": {
@@ -6485,6 +6682,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "fetch_error": _espn_fetch_error,
             },
         }
+        apply_used_integrations_debug(result, used_integrations, debug_mode)
         # Don't cache debug responses
         return result
 
@@ -6923,17 +7121,24 @@ async def debug_pick_breakdown(sport: str):
         ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
 
         # --- TITANIUM CHECK ---
-        if TIERING_AVAILABLE:
+        try:
+            from core.titanium import evaluate_titanium
+            titanium_triggered, titanium_explanation, qualifying_engines = evaluate_titanium(
+                ai_score=ai_scaled,
+                research_score=research_score,
+                esoteric_score=esoteric_score,
+                jarvis_score=jarvis_rs,
+                final_score=final_score,
+                threshold=8.0
+            )
+        except Exception:
             titanium_triggered, titanium_explanation, qualifying_engines = check_titanium_rule(
                 ai_score=ai_scaled,
                 research_score=research_score,
                 esoteric_score=esoteric_score,
-                jarvis_score=jarvis_rs
+                jarvis_score=jarvis_rs,
+                final_score=final_score
             )
-        else:
-            engines_above_8 = sum([ai_scaled >= 8.0, research_score >= 8.0, esoteric_score >= 8.0, jarvis_rs >= 8.0])
-            titanium_triggered = engines_above_8 >= 3
-            titanium_explanation = f"Titanium: {engines_above_8}/4 engines >= 8.0 (need 3)"
 
         # --- BET TIER ---
         if TIERING_AVAILABLE:

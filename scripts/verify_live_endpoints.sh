@@ -114,7 +114,7 @@ check_json "/live/best-bets/NBA" "best-bets NBA contract" '([
   and (.odds_american != null)
   and (.recommended_units != null)
   and (.pick_type != "moneyline" or (.line != null))
-  and (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_score != null)
+  and (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_modifier != null)
   and (.total_score != null and .final_score != null)
   and (.bet_tier != null)
 ))' "X-API-Key"
@@ -128,7 +128,7 @@ check_json "/live/best-bets/NHL" "best-bets NHL contract" '([
   and (.odds_american != null)
   and (.recommended_units != null)
   and (.pick_type != "moneyline" or (.line != null))
-  and (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_score != null)
+  and (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_modifier != null)
   and (.total_score != null and .final_score != null)
   and (.bet_tier != null)
 ))' "X-API-Key"
@@ -145,6 +145,11 @@ check_json "/live/grader/status" "grader status" '.available == true' "X-API-Key
 check_json "/live/debug/time" "debug time" 'has("et_date")' "X-API-Key"
 check_json "/live/debug/integrations" "debug integrations" 'has("integrations") and has("by_status")' "X-API-Key"
 check_json "/live/best-bets/NBA" "freshness: date_et/run_timestamp_et" 'has("date_et") and has("run_timestamp_et")' "X-API-Key"
+
+# Debug-only used_integrations (must be present in debug, absent in standard)
+check_json "/live/best-bets/NBA" "no used_integrations in standard payload" '(.debug // null) == null' "X-API-Key"
+check_json "/live/best-bets/NBA?debug=1" "debug used_integrations present" '(.debug.used_integrations | type) == "array"' "X-API-Key"
+check_json "/live/debug/integrations" "integrations last_used_at fields present" '(.integrations.odds_api | has("last_used_at")) and (.integrations.playbook_api | has("last_used_at")) and (.integrations.balldontlie | has("last_used_at")) and (.integrations.serpapi | has("last_used_at"))' "X-API-Key"
 
 # Freshness: cache age (best-bets should be short)
 now=$(date +%s)

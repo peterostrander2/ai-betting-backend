@@ -216,6 +216,11 @@ async def playbook_fetch(
         resp = await client.get(url, params=query_params, timeout=30.0)
 
         if resp.status_code == 200:
+            try:
+                from integration_registry import mark_integration_used
+                mark_integration_used("playbook")
+            except Exception:
+                pass
             return resp.json()
         elif resp.status_code == 429:
             logger.warning("Playbook API rate limited (429)")
