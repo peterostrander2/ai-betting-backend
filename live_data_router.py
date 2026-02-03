@@ -4039,8 +4039,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # ===== PHASE 8 (v18.2) NEW ESOTERIC SIGNALS =====
         phase8_boost = 0.0
         phase8_reasons = []
+        logger.info("Phase8: Starting calculation for %s", game_str[:30] if game_str else "unknown")
         try:
             from esoteric_engine import get_phase8_esoteric_signals
+            logger.info("Phase8: Import successful")
 
             # Parse game datetime for lunar/solar signals
             _game_datetime = None
@@ -4086,6 +4088,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
             phase8_boost = phase8_result.get("phase8_boost", 0.0)
             phase8_reasons = phase8_result.get("reasons", [])
+            logger.info("Phase8: result boost=%.3f, reasons=%s, triggered=%s",
+                       phase8_boost, phase8_reasons, phase8_result.get("triggered_signals", []))
 
             if phase8_boost != 0.0:
                 esoteric_raw += phase8_boost
