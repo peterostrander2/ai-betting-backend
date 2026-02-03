@@ -78,11 +78,11 @@ def _make_pick_id(pick: Dict[str, Any]) -> str:
     side = pick.get("side", "")
     subject = player_id if player_id else side
 
-    line = pick.get("line", 0)
-    book = pick.get("book_key", "consensus")
-    date_et = pick.get("date_et", "")
+    line = pick.get("line") or 0  # Handle None explicitly
+    book = pick.get("book_key", "consensus") or "consensus"
+    date_et = pick.get("date_et", "") or ""
 
-    key = f"{sport}|{event_id}|{market}|{subject}|{line:.1f}|{book}|{date_et}"
+    key = f"{sport}|{event_id}|{market}|{subject}|{float(line):.1f}|{book}|{date_et}"
     return hashlib.sha1(key.encode()).hexdigest()[:12]
 
 

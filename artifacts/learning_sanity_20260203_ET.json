@@ -1,0 +1,6 @@
+{
+  "name": "learning_sanity",
+  "date_et": "20260203",
+  "status": "PASS",
+  "output": "WARN: predictions file missing: ./grader_data/grader/predictions.jsonl\nWARN: weights file missing: ./grader_data/grader_data/weights.json\nLearning sanity check: PASS\n"
+}

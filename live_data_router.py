@@ -2315,7 +2315,7 @@ async def get_lines(sport: str):
     cache_key = f"lines:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
-        return JSONResponse(_sanitize_public(cached))
+        return cached  # Return dict for internal callers, FastAPI auto-serializes for endpoints
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
@@ -2336,7 +2336,7 @@ async def get_lines(sport: str):
                     logger.info("Playbook lines retrieved for %s: %d games", sport, len(lines))
                     result = {"sport": sport.upper(), "source": "playbook", "count": len(lines), "data": lines}
                     api_cache.set(cache_key, result)
-                    return JSONResponse(_sanitize_public(result))
+                    return result  # Return dict for internal callers, FastAPI auto-serializes for endpoints
                 except ValueError as e:
                     logger.error("Failed to parse Playbook lines response: %s", e)
 
@@ -2406,7 +2406,7 @@ async def get_lines(sport: str):
 
     result = {"sport": sport.upper(), "source": "odds_api" if data else "none", "count": len(data), "data": data}
     api_cache.set(cache_key, result)
-    return JSONResponse(_sanitize_public(result))
+    return result  # Return dict for internal callers, FastAPI auto-serializes for endpoints
 
 
 @router.get("/props/{sport}")
