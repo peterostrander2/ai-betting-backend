@@ -4142,12 +4142,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         if _is_game_pick and sport_upper in ("NFL", "MLB"):
             try:
                 from alt_data_sources.stadium import calculate_surface_impact_for_scoring
-                _market_type = candidate.get("market", "") if isinstance(candidate, dict) else ""
                 surface_adj, surface_reason = calculate_surface_impact_for_scoring(
                     sport=sport_upper,
                     home_team=home_team,
                     pick_type=pick_type,
-                    market=_market_type
+                    market=market  # Use function parameter
                 )
                 if surface_adj != 0.0 and surface_reason:
                     esoteric_reasons.append(surface_reason)
@@ -4166,14 +4165,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             try:
                 from context_layer import PlayerMatchupService
                 # Determine position from prop type
-                _prop_market = candidate.get("market", "") if isinstance(candidate, dict) else ""
-                _player_pos = PlayerMatchupService.get_prop_type_position(sport_upper, _prop_market)
+                _player_pos = PlayerMatchupService.get_prop_type_position(sport_upper, market)
                 if _player_pos:
                     matchup_adj, matchup_reason = PlayerMatchupService.get_matchup_adjustment(
                         sport=sport_upper,
                         player_position=_player_pos,
                         opponent_team=away_team,  # Player's opponent
-                        prop_type=_prop_market
+                        prop_type=market  # Use function parameter
                     )
                     if matchup_adj != 0.0 and matchup_reason:
                         context_reasons.append(matchup_reason)
@@ -4187,9 +4185,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         # ===== LIVE IN-GAME SIGNALS (v20.0 Phase 9) =====
         # Only applies to LIVE games - score momentum and line movement detection
+        # NOTE: Disabled until game_status is passed to calculate_pick_score
         live_boost = 0.0
         live_reasons = []
-        _game_status = candidate.get("game_status", "") if isinstance(candidate, dict) else ""
+        _game_status = ""  # TODO: Pass game_status as parameter to enable live signals
         if _game_status == "LIVE" and _is_game_pick:
             try:
                 from alt_data_sources.live_signals import (
