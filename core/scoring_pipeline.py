@@ -70,8 +70,29 @@ def compute_final_score_option_a(
     FINAL = BASE_4 + CONTEXT_MOD + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
     """
     context_modifier = clamp_context_modifier(context_modifier, cap=cap)
+    try:
+        from core.scoring_contract import MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, JASON_SIM_BOOST_CAP
+        msrf_boost = max(-MSRF_BOOST_CAP, min(MSRF_BOOST_CAP, msrf_boost))
+        serp_boost = max(0.0, min(SERP_BOOST_CAP_TOTAL, serp_boost))
+        jason_sim_boost = max(-JASON_SIM_BOOST_CAP, min(JASON_SIM_BOOST_CAP, jason_sim_boost))
+    except Exception:
+        pass
     final_score = base_score + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+    # Clamp final score to [0, 10]
+    final_score = max(0.0, min(10.0, final_score))
     return final_score, context_modifier
+
+
+def compute_harmonic_boost(research_score: float, esoteric_score: float) -> float:
+    """Return harmonic convergence boost when both scores meet threshold."""
+    try:
+        from core.scoring_contract import HARMONIC_CONVERGENCE_THRESHOLD, HARMONIC_BOOST
+    except Exception:
+        HARMONIC_CONVERGENCE_THRESHOLD = 7.5
+        HARMONIC_BOOST = 1.5
+    if research_score >= HARMONIC_CONVERGENCE_THRESHOLD and esoteric_score >= HARMONIC_CONVERGENCE_THRESHOLD:
+        return HARMONIC_BOOST
+    return 0.0
 
 # =============================================================================
 # PUBLIC API - SINGLE SCORING FUNCTION

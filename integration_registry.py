@@ -776,6 +776,7 @@ async def get_all_integrations_status() -> Dict[str, Any]:
         status = await check_integration_health(name)
         usage = INTEGRATION_USAGE.get(name, {})
         status["last_used_at"] = usage.get("last_used_at")
+        status["used_count"] = usage.get("used_count", 0)
         results[name] = status
 
         is_configured = status.get("is_configured", False)
@@ -878,15 +879,16 @@ INTEGRATION_USAGE: Dict[str, Dict[str, Any]] = {}
 def _ensure_usage_registry():
     if not INTEGRATION_USAGE:
         for name in INTEGRATIONS.keys():
-            INTEGRATION_USAGE[name] = {"last_used_at": None}
+            INTEGRATION_USAGE[name] = {"last_used_at": None, "used_count": 0}
 
 
 def mark_integration_used(name: str):
     """Mark integration as used (successful call)."""
     _ensure_usage_registry()
     if name not in INTEGRATION_USAGE:
-        INTEGRATION_USAGE[name] = {"last_used_at": None}
+        INTEGRATION_USAGE[name] = {"last_used_at": None, "used_count": 0}
     INTEGRATION_USAGE[name]["last_used_at"] = datetime.now(timezone.utc).isoformat()
+    INTEGRATION_USAGE[name]["used_count"] = INTEGRATION_USAGE[name].get("used_count", 0) + 1
 
 
 def get_health_check_loud() -> Dict[str, Any]:

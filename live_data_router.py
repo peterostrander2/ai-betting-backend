@@ -139,7 +139,7 @@ except ImportError:
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
 from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL
-from core.scoring_pipeline import compute_final_score_option_a
+from core.scoring_pipeline import compute_final_score_option_a, compute_harmonic_boost
 from core.telemetry import apply_used_integrations_debug
 
 # Import Time ET - SINGLE SOURCE OF TRUTH for ET timezone
@@ -4275,11 +4275,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # This represents exceptional alignment between market intelligence and cosmic signals
         # v17.3: Lowered from 8.0 to 7.5 for better trigger rate
         HARMONIC_THRESHOLD = HARMONIC_CONVERGENCE_THRESHOLD  # From scoring_contract.py (7.5)
-        HARMONIC_BOOST = 1.5      # +1.5 on 10-point scale (equivalent to +15 on 100-point)
 
-        harmonic_boost = 0.0
-        if research_score >= HARMONIC_THRESHOLD and esoteric_score >= HARMONIC_THRESHOLD:
-            harmonic_boost = HARMONIC_BOOST
+        harmonic_boost = compute_harmonic_boost(research_score, esoteric_score)
+        if harmonic_boost > 0:
             confluence = {
                 "level": "HARMONIC_CONVERGENCE",
                 "boost": confluence.get("boost", 0) + harmonic_boost,
@@ -4746,12 +4744,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     ai_reasons.append(f"Ensemble hit prob: {hit_prob:.1%} (conf: {ensemble_confidence:.0f}%)")
 
                     # Adjust final score based on ensemble prediction
-                    if hit_prob > 0.6:
-                        final_score = min(10.0, final_score + 0.5)
-                        ai_reasons.append(f"Ensemble boost: +0.5 (prob > 60%)")
-                    elif hit_prob < 0.4:
-                        final_score = max(0.0, final_score - 0.5)
-                        ai_reasons.append(f"Ensemble penalty: -0.5 (prob < 40%)")
+                    try:
+                        from utils.ensemble_adjustment import apply_ensemble_adjustment
+                        final_score, ensemble_reasons = apply_ensemble_adjustment(final_score, hit_prob)
+                        ai_reasons.extend(ensemble_reasons)
+                    except Exception:
+                        # Fallback to inline adjustments if helper unavailable
+                        if hit_prob > 0.6:
+                            final_score = min(10.0, final_score + 0.5)
+                            ai_reasons.append("Ensemble boost: +0.5 (prob > 60%)")
+                        elif hit_prob < 0.4:
+                            final_score = max(0.0, final_score - 0.5)
+                            ai_reasons.append("Ensemble penalty: -0.5 (prob < 40%)")
             except Exception as e:
                 logger.debug(f"Ensemble prediction unavailable: {e}")
 
@@ -5224,10 +5228,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         if src == "odds_api":
             _mark_integration_used("odds_api")
         elif src == "playbook":
-            _mark_integration_used("playbook")
+            _mark_integration_used("playbook_api")
     if isinstance(injuries_data, dict):
         if injuries_data.get("source") == "playbook":
-            _mark_integration_used("playbook")
+            _mark_integration_used("playbook_api")
     if _odds_used:
         _mark_integration_used("odds_api")
     if isinstance(espn_scoreboard, Exception):

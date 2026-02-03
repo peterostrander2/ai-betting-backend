@@ -218,7 +218,7 @@ async def playbook_fetch(
         if resp.status_code == 200:
             try:
                 from integration_registry import mark_integration_used
-                mark_integration_used("playbook")
+                mark_integration_used("playbook_api")
             except Exception:
                 pass
             return resp.json()

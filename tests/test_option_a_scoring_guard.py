@@ -172,6 +172,34 @@ def test_context_modifier_clamped() -> None:
     assert clamp_context_modifier(-0.9) == -CONTEXT_MODIFIER_CAP
 
 
+def test_compute_final_score_caps_serp_and_clamps_final() -> None:
+    """SERP boost must be capped and final_score clamped to [0, 10]."""
+    from core.scoring_pipeline import compute_final_score_option_a
+    from core.scoring_contract import SERP_BOOST_CAP_TOTAL
+
+    # SERP cap
+    final_score, _ = compute_final_score_option_a(
+        base_score=1.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=10.0,
+    )
+    assert final_score == 1.0 + SERP_BOOST_CAP_TOTAL
+
+    # Final clamp
+    final_score, _ = compute_final_score_option_a(
+        base_score=9.9,
+        context_modifier=0.35,
+        confluence_boost=1.0,
+        msrf_boost=1.0,
+        jason_sim_boost=1.0,
+        serp_boost=SERP_BOOST_CAP_TOTAL,
+    )
+    assert final_score == 10.0
+
+
 def test_msrf_and_serp_not_folded_into_confluence() -> None:
     """
     Guard: MSRF and SERP must NOT be folded into confluence_boost.

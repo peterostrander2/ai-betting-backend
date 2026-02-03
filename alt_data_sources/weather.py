@@ -555,6 +555,13 @@ async def fetch_weather_from_api(
             # Cache the result
             _set_cache(stadium_id, result)
 
+            # Mark integration usage (successful live call)
+            try:
+                from integration_registry import mark_integration_used
+                mark_integration_used("weather_api")
+            except Exception:
+                pass
+
             logger.info("Weather fetched for %s: %.1f°F, %.1f mph wind, %.2f in precip, %s",
                        stadium_id, temp_f, wind_mph, precip_in, conditions)
 

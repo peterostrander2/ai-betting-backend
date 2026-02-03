@@ -52,6 +52,7 @@ CONFLUENCE_LEVELS = {
 
 # v17.3: Harmonic Convergence threshold (lowered from 8.0 for better trigger rate)
 HARMONIC_CONVERGENCE_THRESHOLD = 7.5
+HARMONIC_BOOST = 1.5
 
 # Post-base boost caps (documented, bounded)
 # Note: These are caps for the individual boost components (not engines).
@@ -73,6 +74,7 @@ SCORING_CONTRACT = {
     "confluence_levels": CONFLUENCE_LEVELS,
     "weather_status_enum": WEATHER_STATUS,
     "harmonic_convergence_threshold": HARMONIC_CONVERGENCE_THRESHOLD,  # v17.3
+    "harmonic_boost": HARMONIC_BOOST,
     "boost_caps": {
         "confluence_boost_cap": CONFLUENCE_BOOST_CAP,
         "msrf_boost_cap": MSRF_BOOST_CAP,
