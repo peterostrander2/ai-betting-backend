@@ -21,6 +21,27 @@ If you are Claude (or any contributor): before touching code or docs, use this f
 
 ---
 
+## Daily Sanity Report (Best Bets Health)
+
+Use this after deploys or before sending daily picks:
+
+```
+API_KEY=your_key \
+API_BASE=https://web-production-7b2a.up.railway.app \
+SPORTS="NBA NFL NHL MLB" \
+bash scripts/daily_sanity_report.sh
+```
+
+What it validates:
+- `/health` status + build identifiers
+- `/live/best-bets/{sport}` counts + top pick sample
+- ET-only payload (no UTC/telemetry keys)
+- Cache headers for best-bets endpoints
+
+This is also wired into `scripts/ci_sanity_check.sh` as a **non-blocking** step.
+
+---
+
 ## Decision Tree — Where to Look and What to Edit
 
 ### A) Scoring / Thresholds / Tier Rules / Confluence (v17.1 - 5 Engines)
