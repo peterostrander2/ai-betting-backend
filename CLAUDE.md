@@ -2776,10 +2776,32 @@ done
 | `scripts/train_ensemble.py` | Ensemble training | Run with `--min-picks 100` |
 | `models/*.weights.h5` | 13 LSTM weight files | Loaded on-demand |
 
+### Phase 1 Dormant Signals (Activated v17.5 - Feb 2026)
+| File | Function | Pick Type | Boost | Integration Line |
+|------|----------|-----------|-------|------------------|
+| `esoteric_engine.py` | `calculate_biorhythms()` | PROP | +0.3/+0.15/-0.2 | `live_data_router.py:3614-3642` |
+| `esoteric_engine.py` | `analyze_spread_gann()` | GAME | +0.25/+0.15/+0.1 | `live_data_router.py:3647-3673` |
+| `esoteric_engine.py` | `check_founders_echo()` | GAME | +0.2/+0.35 | `live_data_router.py:3678-3707` |
+
+**Esoteric Engine Signal Status (8/10 active):**
+| Signal | Status | Notes |
+|--------|--------|-------|
+| Numerology | ✅ ACTIVE | `calculate_generic_numerology()` |
+| Astro | ✅ ACTIVE | Vedic astrology |
+| Fibonacci | ✅ ACTIVE | `calculate_fibonacci_alignment()` |
+| Vortex | ✅ ACTIVE | Tesla 3-6-9 |
+| Daily Edge | ✅ ACTIVE | Daily energy score |
+| GLITCH (6 signals) | ✅ ACTIVE | `get_glitch_aggregate()` |
+| Biorhythms | ✅ ACTIVE (v17.5) | Props only, player birth cycles |
+| Gann Square | ✅ ACTIVE (v17.5) | Games only, sacred geometry |
+| Founder's Echo | ✅ ACTIVE (v17.5) | Games only, team gematria |
+| Hurst Exponent | ⚠️ STUBBED | Needs line history data |
+| Benford Anomaly | ⚠️ STUBBED | Needs 10+ line values |
+
 ### GLITCH Protocol Files
 | File | Purpose | Key Functions |
 |------|---------|---------------|
-| `esoteric_engine.py` | GLITCH aggregator | `get_glitch_aggregate()`, `calculate_chrome_resonance()` |
+| `esoteric_engine.py` | GLITCH aggregator + Phase 1 signals | `get_glitch_aggregate()`, `calculate_chrome_resonance()`, `calculate_biorhythms()`, `analyze_spread_gann()`, `check_founders_echo()` |
 | `alt_data_sources/noaa.py` | Kp-Index client | `fetch_kp_index_live()`, `get_kp_betting_signal()` |
 | `alt_data_sources/serpapi.py` | Noosphere client | `get_noosphere_data()`, `get_team_buzz()` |
 | `signals/math_glitch.py` | Benford analysis | `check_benford_anomaly()` |
@@ -3461,6 +3483,80 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.debug.serp'
 
 **Fixed in:** Commit enabling SERP live mode by default (Feb 2026)
 
+### Lesson 22: pick_type Value Mismatch (v17.5)
+**Problem:** Phase 1 dormant signals (Gann Square, Founder's Echo) weren't triggering because the code checked `pick_type == "GAME"`, but game picks use `pick_type` values of "SPREAD", "MONEYLINE", or "TOTAL".
+
+**Root Cause:** The `pick_type` parameter passed to `calculate_pick_score()` varies by market:
+- Spread bets: `pick_type = "SPREAD"`
+- Moneyline bets: `pick_type = "MONEYLINE"`
+- Total (O/U) bets: `pick_type = "TOTAL"`
+- Props: `pick_type = "PROP"`
+- Sharp signals: `pick_type = "SHARP"`
+
+The code assumed game picks would have `pick_type = "GAME"`, which is only used as a default/fallback.
+
+**The Bug Pattern:**
+```python
+# WRONG - "GAME" never matches for actual game picks
+if pick_type == "GAME" and spread and total:  # ❌ Never triggers
+
+# CORRECT - Check for all game-related pick types
+_is_game_pick = pick_type in ("GAME", "SPREAD", "MONEYLINE", "TOTAL", "SHARP")
+if _is_game_pick and spread and total:  # ✅ Works correctly
+```
+
+**Prevention:**
+- Before using `pick_type` in conditions, trace where it's set (search for `pick_type=`)
+- Game picks: "SPREAD", "MONEYLINE", "TOTAL", "SHARP"
+- Prop picks: "PROP"
+- Test with real production data, not assumptions
+- Check actual API response `pick_type` values: `jq '[.game_picks.picks[].pick_type] | unique'`
+
+**Verification:**
+```bash
+# Check actual pick_type values in production
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '[.game_picks.picks[].pick_type] | unique'
+# Returns: ["moneyline", "spread", "total"] - NOT "GAME"
+```
+
+**Fixed in:** Commit `9e01390` (Feb 2026)
+
+### Lesson 23: Dormant Signal Activation Pattern (v17.5)
+**Problem:** esoteric_engine.py contained fully implemented signals (Biorhythms, Gann Square, Founder's Echo) that were never called from the scoring pipeline.
+
+**Root Cause:** Functions were written during initial development but integration points were never added to `calculate_pick_score()` in live_data_router.py.
+
+**Solution Pattern (Phase 1 Activation):**
+1. Identify dormant functions: `grep -r "def function_name" esoteric_engine.py`
+2. Verify function is NOT called: `grep -r "function_name(" live_data_router.py`
+3. Find correct integration point (after GLITCH, before esoteric_score clamp)
+4. Add signal with proper pick_type guard (use `_is_game_pick` pattern)
+5. Add to `esoteric_reasons` for debug visibility
+6. Add boost to `esoteric_raw` (NOT to esoteric_score directly)
+7. Test with production curl commands
+
+**Phase 1 Signals Activated:**
+| Signal | Pick Type | Boost Range | Function |
+|--------|-----------|-------------|----------|
+| Biorhythms | PROP only | +0.3 (PEAK), +0.15 (RISING), -0.2 (LOW) | `calculate_biorhythms()` |
+| Gann Square | GAME only | +0.25 (STRONG), +0.15 (MODERATE), +0.1 (Combined) | `analyze_spread_gann()` |
+| Founder's Echo | GAME only | +0.2 (single), +0.35 (both) | `check_founders_echo()` |
+
+**Integration Point:** `live_data_router.py:3605-3710` (after GLITCH, before esoteric_score clamp)
+
+**Esoteric Engine Status:** Now 8/10 signals active (vs 5/10 before)
+
+**Verification:**
+```bash
+# Check esoteric_reasons for new signals
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '[.game_picks.picks[].esoteric_reasons] | flatten | unique'
+# Should show: "Gann: 45° (MODERATE)", "Biorhythm: PEAK (85)", etc.
+```
+
+**Fixed in:** Commits `2bfa25e`, `9e01390` (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -3568,6 +3664,30 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
     msrf: .msrf_boost,
     level: .msrf_metadata.level
   }'
+
+# 9. Phase 1 Dormant Signals - Gann Square (GAME picks)
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '[.game_picks.picks[].esoteric_reasons] | flatten | map(select(startswith("Gann")))'
+# Should show: ["Gann: 45° (MODERATE)"] or similar when angles resonate
+
+# 10. Phase 1 Dormant Signals - Founder's Echo (GAME picks)
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '[.game_picks.picks[].esoteric_reasons] | flatten | map(select(startswith("Founder")))'
+# Shows "Founder's Echo: TeamName (year)" when team gematria resonates with date
+
+# 11. Phase 1 Dormant Signals - Biorhythms (PROP picks)
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '[.props.picks[].esoteric_reasons] | flatten | map(select(startswith("Biorhythm")))'
+# Shows "Biorhythm: PEAK (85)" when player is at peak cycle
+
+# 12. Esoteric Score Variation (confirms signals are differentiating)
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '[.game_picks.picks[].esoteric_score] | {min: min, max: max, avg: (add/length)}'
+# Range should be > 1.0 point (e.g., min: 4.05, max: 5.7)
+
+# 13. All unique esoteric_reasons (full signal inventory)
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '[.game_picks.picks[].esoteric_reasons, .props.picks[].esoteric_reasons] | flatten | unique'
 ```
 
 ---
@@ -3800,6 +3920,18 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 54. **NEVER** forget to increment quota after successful API calls - use `increment_quota()` in serpapi.py
 55. **NEVER** hardcode sport-specific search queries inline - use `SPORT_QUERIES` template dict in serp_intelligence.py
 56. **NEVER** modify signal→engine mapping without updating INVARIANT 23 in CLAUDE.md
+
+## 🚫 NEVER DO THESE (Esoteric/Phase 1 Signals)
+
+57. **NEVER** assume `pick_type == "GAME"` for game picks - actual values are "SPREAD", "MONEYLINE", "TOTAL", "SHARP"
+58. **NEVER** check `pick_type == "GAME"` directly - use pattern: `_is_game_pick = pick_type in ("GAME", "SPREAD", "MONEYLINE", "TOTAL", "SHARP")`
+59. **NEVER** add esoteric signals directly to `esoteric_score` - add to `esoteric_raw` before the clamp
+60. **NEVER** wire signals without adding to `esoteric_reasons` for debug visibility
+61. **NEVER** add GAME-only signals without the `_is_game_pick` guard
+62. **NEVER** add PROP-only signals without checking `pick_type == "PROP"` AND `player_name`
+63. **NEVER** assume all teams will trigger Founder's Echo - only ~7/119 teams resonate on any given day
+64. **NEVER** activate dormant signals without testing on production data via curl verification commands
+65. **NEVER** modify esoteric scoring without running the verification checklist (checks 9-13 in ML & GLITCH section)
 
 ---
 
