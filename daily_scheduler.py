@@ -31,6 +31,7 @@ from typing import Dict, List, Optional
 from loguru import logger
 import threading
 import time
+from core.time_et import now_et
 
 # APScheduler for cron-like scheduling
 try:
@@ -224,6 +225,7 @@ class DailyAuditJob:
         # Save results
         self.last_results = results
         self._save_audit_log(results)
+        self._save_daily_lesson(results)
         
         logger.info("=" * 50)
         logger.info("✅ DAILY AUDIT COMPLETE")
@@ -322,6 +324,112 @@ class DailyAuditJob:
             logger.info(f"Audit log saved: {log_path}")
         except Exception as e:
             logger.error(f"Failed to save audit log: {e}")
+
+    def _generate_daily_lesson(self, results: Dict) -> Dict:
+        """Generate a short, structured daily lesson from audit results."""
+        now = now_et()
+        date_et = now.strftime("%Y-%m-%d")
+        sports = results.get("sports", {}) if isinstance(results, dict) else {}
+
+        total_graded = 0
+        weighted_hit = 0.0
+        weighted_mae = 0.0
+        best_sport = None
+        worst_sport = None
+        best_hit = None
+        worst_hit = None
+        adjusted_sports = []
+        retrain_sports = []
+
+        for sport, data in sports.items():
+            if not isinstance(data, dict):
+                continue
+            summary = data.get("summary", {}) or {}
+            graded = summary.get("total_graded", 0) or data.get("graded", 0) or 0
+            hit_rate = summary.get("hit_rate")
+            mae = summary.get("mae")
+
+            if isinstance(graded, (int, float)) and graded > 0:
+                total_graded += graded
+                if isinstance(hit_rate, (int, float)):
+                    weighted_hit += hit_rate * graded
+                if isinstance(mae, (int, float)):
+                    weighted_mae += mae * graded
+
+            if isinstance(hit_rate, (int, float)):
+                if best_hit is None or hit_rate > best_hit:
+                    best_hit = hit_rate
+                    best_sport = sport
+                if worst_hit is None or hit_rate < worst_hit:
+                    worst_hit = hit_rate
+                    worst_sport = sport
+
+            if data.get("weights_adjusted"):
+                adjusted_sports.append(sport)
+            if data.get("retrain_triggered"):
+                retrain_sports.append(sport)
+
+        overall_hit = round(weighted_hit / total_graded, 3) if total_graded else None
+        overall_mae = round(weighted_mae / total_graded, 3) if total_graded else None
+
+        bullets = []
+        if total_graded:
+            bullets.append(
+                f"Graded {int(total_graded)} picks. "
+                f"Hit rate {overall_hit if overall_hit is not None else 'n/a'}, "
+                f"MAE {overall_mae if overall_mae is not None else 'n/a'}."
+            )
+        else:
+            bullets.append("No completed games to grade. Learning loop paused for today.")
+
+        if best_sport and worst_sport and best_sport != worst_sport:
+            bullets.append(
+                f"Best sport: {best_sport} (hit {best_hit:.3f}). "
+                f"Worst sport: {worst_sport} (hit {worst_hit:.3f})."
+            )
+        elif best_sport:
+            bullets.append(f"Sport signal: {best_sport} hit {best_hit:.3f}.")
+
+        if adjusted_sports or retrain_sports:
+            if adjusted_sports:
+                bullets.append(f"Weights adjusted for: {', '.join(adjusted_sports)}.")
+            if retrain_sports:
+                bullets.append(f"Retrain triggered for: {', '.join(retrain_sports)}.")
+        else:
+            bullets.append("No weight adjustments or retrains triggered today.")
+
+        return {
+            "date_et": date_et,
+            "generated_at_et": now.isoformat(),
+            "total_graded": int(total_graded),
+            "overall_hit_rate": overall_hit,
+            "overall_mae": overall_mae,
+            "best_sport": best_sport,
+            "worst_sport": worst_sport,
+            "weights_adjusted": adjusted_sports,
+            "retrain_triggered": retrain_sports,
+            "bullets": bullets,
+        }
+
+    def _save_daily_lesson(self, results: Dict):
+        """Persist daily lesson to audit logs (JSON + JSONL)."""
+        from data_dir import AUDIT_LOGS
+        log_dir = AUDIT_LOGS
+        os.makedirs(log_dir, exist_ok=True)
+
+        lesson = self._generate_daily_lesson(results)
+        date_et = lesson.get("date_et", now_et().strftime("%Y-%m-%d"))
+        lesson_path = os.path.join(log_dir, f"lesson_{date_et}.json")
+        lesson_jsonl = os.path.join(log_dir, "lessons.jsonl")
+
+        try:
+            with open(lesson_path, "w") as f:
+                json.dump(lesson, f, indent=2)
+            with open(lesson_jsonl, "a") as f:
+                f.write(json.dumps(lesson) + "\n")
+            logger.info(f"Daily lesson saved: {lesson_path}")
+        except Exception as e:
+            logger.error(f"Failed to save daily lesson: {e}")
 
 
 # ============================================
