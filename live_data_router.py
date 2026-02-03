@@ -4192,7 +4192,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             logger.warning("MSRF calculation failed: %s", e)
 
         # ===== v17.4 SERP BETTING INTELLIGENCE =====
-        # Search trend signals from SerpAPI mapped to 5 engines
+        # Search trend signals from SerpAPI mapped to boost layers
         # SHADOW MODE by default: logs signals but applies 0 boost
         serp_intel = None
         serp_boost_total = 0.0
@@ -4752,7 +4752,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "tier_reason": tier_reason,  # v15.3 Transparency: why this tier was assigned
             "action": bet_tier.get("action", "SKIP"),
             "units": bet_tier.get("units", bet_tier.get("unit_size", 0.0)),
-            # v17.1 Engine scores (all 0-10 scale) - 5 engines now
+            # v18.0 Engine scores (all 0-10 scale) - 4 base engines + context modifier
             "ai_score": round(ai_scaled, 2),
             "research_score": round(research_score, 2),
             "esoteric_score": round(esoteric_score, 2),

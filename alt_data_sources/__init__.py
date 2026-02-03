@@ -343,7 +343,7 @@ def get_alt_data_status():
         },
         "serp_intelligence": {
             "available": SERP_INTEL_AVAILABLE,
-            "purpose": "v17.4 - Betting signals from search trends (5 engines)"
+            "purpose": "v17.4 - Betting signals from search trends (boost layer)"
         },
         "gematria_twitter_intel": {
             "available": GEMATRIA_INTEL_AVAILABLE,

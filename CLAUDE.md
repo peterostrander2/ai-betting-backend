@@ -1804,6 +1804,32 @@ curl "https://web-production-7b2a.up.railway.app/live/api-usage" -H "X-API-Key: 
 - **Endpoints:** FAIL SOFT (graceful degradation, return partial data, never crash)
 - **Health checks:** FAIL LOUD (clear error messages showing what's missing)
 
+### Paid APIs Usage Map (Option A - canonical)
+
+**BallDontLie (required)**
+- **Calls from:** `alt_data_sources/balldontlie.py`
+- **Used by:** `live_data_router.py` (live context + props/game normalization)
+- **Signals:** live context, pace/usage context, identity resolution
+- **Debug surfacing:** `/live/debug/integrations` → `balldontlie`
+
+**Odds API (required)**
+- **Calls from:** `odds_api.py` wrapper (used by best-bets paths)
+- **Used by:** `live_data_router.py` via odds wrapper
+- **Signals:** market lines, spreads/totals, line variance
+- **Debug surfacing:** `/live/debug/integrations` → `odds_api`
+
+**Playbook API (required)**
+- **Calls from:** `playbook_api.py`
+- **Used by:** `live_data_router.py` for sharp money, splits, public fade
+- **Signals:** research engine inputs
+- **Debug surfacing:** `/live/debug/integrations` → `playbook`
+
+**SerpAPI (optional/paid)**
+- **Calls from:** `alt_data_sources/serpapi.py`
+- **Used by:** `live_data_router.py` (SERP boosts; shadow mode if enabled)
+- **Signals:** search-trend / noosphere signals as boosts
+- **Debug surfacing:** `/live/debug/integrations` → `serpapi`
+
 ### Key Functions
 
 ```python
@@ -3180,6 +3206,51 @@ get_season_extreme(db, sport, season, stat_type)  # Get extremes for Fib
 | Founder's Echo | ✅ ACTIVE (v17.5) | Games only, team gematria |
 | Hurst Exponent | ✅ WIRED (v17.7) | Line history passed to GLITCH (needs 10+ snapshots) |
 | Benford Anomaly | ✅ ACTIVATED (v17.6) | Multi-book aggregation now provides 10+ values |
+
+### Phase 8 - Advanced Esoteric Signals (v18.2 - Feb 2026)
+| File | Function | Purpose | Trigger Condition |
+|------|----------|---------|-------------------|
+| `esoteric_engine.py` | `calculate_lunar_phase_intensity()` | Moon phase impact on scoring | Full moon (0.45-0.55) or New moon (0.0-0.05) |
+| `esoteric_engine.py` | `check_mercury_retrograde()` | Retrograde caution signal | During 2026 retrograde periods |
+| `esoteric_engine.py` | `calculate_rivalry_intensity()` | Major rivalry detection | Historic rivalry matchups |
+| `esoteric_engine.py` | `calculate_streak_momentum()` | Team streak analysis | 2+ game win/loss streaks |
+| `alt_data_sources/noaa.py` | `get_solar_flare_status()` | Solar activity chaos boost | X-class or M-class flare |
+| `esoteric_engine.py` | `get_phase8_esoteric_signals()` | AGGREGATES ALL 5 | Entry point for Phase 8 |
+
+**Phase 8 Signal Integration (live_data_router.py lines 4039-4106):**
+```python
+phase8_full_result = get_phase8_esoteric_signals(
+    game_datetime=game_datetime,
+    game_date=_game_date_obj,
+    sport=sport,
+    home_team=home_team,
+    away_team=away_team,
+    pick_type=pick_type,
+    pick_side=pick_side,
+    team_streak_data=_team_streak_data
+)
+phase8_boost = phase8_full_result.get("total_boost", 0.0)
+esoteric_raw += phase8_boost
+```
+
+**Phase 8 Output Fields:**
+```python
+{
+    "phase8_boost": float,
+    "phase8_reasons": List[str],
+    "phase8_breakdown": {
+        "lunar": {"phase": "FULL/NEW/QUARTER", "boost_over": float, "boost_under": float},
+        "mercury": {"is_retrograde": bool, "adjustment": float},
+        "rivalry": {"is_rivalry": bool, "intensity": str, "under_boost": float},
+        "streak": {"momentum": str, "for_boost": float},
+        "solar": {"class": "X/M/QUIET", "chaos_boost": float}
+    }
+}
+```
+
+**v18.2 Bug Fixes Applied:**
+1. Timezone-aware `ref_date` in `calculate_lunar_phase_intensity()` (line 1422-1426)
+2. `weather_data = None` initialization at line 3345
 
 ### GLITCH Protocol Files
 | File | Purpose | Key Functions |
@@ -4635,6 +4706,19 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 86. **NEVER** assume game results exist for all sports on all days - handle empty results gracefully
 87. **NEVER** modify trap condition evaluation logic without updating dry-run endpoint to match
 
+## 🚫 NEVER DO THESE (v18.2 - Phase 8 Esoteric Signals)
+
+88. **NEVER** compare timezone-naive datetime to timezone-aware datetime - causes `TypeError: can't subtract offset-naive and offset-aware datetimes`
+89. **NEVER** use `datetime(2000, 1, 1)` without timezone for astronomical calculations - add `tzinfo=ZoneInfo("UTC")`
+90. **NEVER** forget to initialize `weather_data = None` before conditional blocks that may reference it
+91. **NEVER** skip `get_phase8_esoteric_signals()` in the scoring pipeline - all 5 signals must run
+92. **NEVER** hardcode Mercury retrograde dates without updating for the current year
+93. **NEVER** assume Phase 8 signals will always trigger - some dates have no lunar/retrograde/rivalry activity
+94. **NEVER** add Phase 8 boosts directly to `esoteric_score` - add to `esoteric_raw` before the clamp
+95. **NEVER** skip adding Phase 8 reasons to `esoteric_reasons` for debug visibility
+96. **NEVER** use AND logic for env var alternatives when OR is needed - check if ANY alternative is set, not ALL
+97. **NEVER** forget that everything is in ET only - don't assume UTC for game times
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (v19.0 - Trap Learning Loop)
@@ -4715,12 +4799,13 @@ curl -X POST /live/traps/ -H "X-API-Key: KEY" -H "Content-Type: application/json
 }' | jq '.detail'
 # Should return error about exceeding max adjustment cap
 
-# 12. Verify all 5 engines are supported
+# 12. Verify base engines are supported
 python3 -c "
 from trap_learning_loop import SUPPORTED_ENGINES
 print('Supported engines:', list(SUPPORTED_ENGINES.keys()))
-assert len(SUPPORTED_ENGINES) == 5, 'Expected 5 engines'
-print('✓ All 5 engines configured')
+for k in ['ai', 'research', 'esoteric', 'jarvis']:
+    assert k in SUPPORTED_ENGINES, f'Missing base engine: {k}'
+print('✓ Base engines configured')
 "
 
 # 13. Test condition field validation
@@ -4742,7 +4827,7 @@ curl -X PUT "/live/traps/test-trap-verification/status?status=RETIRED" -H "X-API
 - All adjustments capped at 5% single / 15% cumulative
 - Cooldown enforced (24h default between triggers)
 - Audit trail in `/data/trap_learning/adjustments.jsonl`
-- All 5 engines (research, esoteric, jarvis, context, ai) supported
+- Base engines (research, esoteric, jarvis, ai) supported
 
 ---
 
@@ -4825,6 +4910,97 @@ curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
   jq '[.game_picks.picks[].esoteric_reasons, .props.picks[].esoteric_reasons] | flatten | unique | length'
 # Should show 10+ unique signal types
 ```
+
+---
+
+## ✅ VERIFICATION CHECKLIST (v18.2 - Phase 8 Esoteric Signals)
+
+Run these after ANY change to Phase 8 signals (lunar, mercury, rivalry, streak, solar):
+
+```bash
+# 1. Syntax check esoteric_engine.py
+python -m py_compile esoteric_engine.py
+
+# 2. Test Phase 8 aggregator directly
+python3 -c "
+from esoteric_engine import get_phase8_esoteric_signals
+from datetime import datetime, date
+from zoneinfo import ZoneInfo
+dt = datetime.now(ZoneInfo('America/New_York'))
+d = date.today()
+result = get_phase8_esoteric_signals(
+    game_datetime=dt,
+    game_date=d,
+    sport='NBA',
+    home_team='Lakers',
+    away_team='Celtics',
+    pick_type='TOTAL',
+    pick_side='Over'
+)
+print('Phase 8 result:', result)
+print('Total boost:', result.get('total_boost'))
+print('Reasons:', result.get('reasons'))
+"
+
+# 3. Check lunar phase calculation
+python3 -c "
+from esoteric_engine import calculate_lunar_phase_intensity
+from datetime import datetime
+from zoneinfo import ZoneInfo
+dt = datetime.now(ZoneInfo('America/New_York'))
+result = calculate_lunar_phase_intensity(dt)
+print('Lunar:', result)
+"
+
+# 4. Check Mercury retrograde
+python3 -c "
+from esoteric_engine import check_mercury_retrograde
+from datetime import date
+print('Mercury:', check_mercury_retrograde(date.today()))
+"
+
+# 5. Check rivalry detection
+python3 -c "
+from esoteric_engine import calculate_rivalry_intensity
+print('Lakers-Celtics:', calculate_rivalry_intensity('NBA', 'Lakers', 'Celtics'))
+print('Packers-Bears:', calculate_rivalry_intensity('NFL', 'Packers', 'Bears'))
+print('Non-rivalry:', calculate_rivalry_intensity('NBA', 'Kings', 'Wizards'))
+"
+
+# 6. Check Phase 8 in production picks
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {phase8_boost, phase8_reasons, phase8_breakdown}'
+
+# 7. Test all 5 sports
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  result=$(curl -s "/live/best-bets/$sport?debug=1" -H "X-API-Key: KEY")
+  picks=$(echo "$result" | jq '(.game_picks.count + .props.count)')
+  phase8=$(echo "$result" | jq '.game_picks.picks[0].phase8_boost // "null"')
+  echo "Picks: $picks, Phase8 boost: $phase8"
+done
+
+# 8. Check for timezone errors in logs
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0].phase8_error // "none"'
+# Should return "none" or null
+
+# 9. Verify env-map OR logic
+curl /ops/env-map -H "X-Admin-Key: ADMIN_KEY" | \
+  jq '.missing_required'
+# Should NOT include SERP_API_KEY if SERPAPI_KEY is set
+
+# 10. Production sanity check (18 checks)
+./scripts/prod_sanity_check.sh
+# Should pass all 18 checks
+```
+
+**Critical Invariants (ALWAYS verify these):**
+- `game_datetime` MUST be timezone-aware (use `ZoneInfo`)
+- `ref_date` in lunar calculation MUST be timezone-aware (UTC)
+- `weather_data` MUST be initialized to `None` before conditional use
+- Phase 8 boost added to `esoteric_raw`, not directly to final score
+- All 5 signals aggregated via `get_phase8_esoteric_signals()`
 
 ---
 

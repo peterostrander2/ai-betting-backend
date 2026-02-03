@@ -38,9 +38,9 @@ When working on frontend, check:
 
 ### Priority 1: Add 5th Engine (Context Score)
 
-**Backend provides:** `context_score` (0-10, weighted 30% of total)
+**Backend provides:** `context_modifier` (bounded ±0.35) and `context_score` (raw 0-10 for transparency)
 
-**Current state:** Frontend shows 4 engines, missing the largest weighted engine.
+**Current state:** Frontend shows 4 engines; context is a modifier, not a weighted engine.
 
 **Files to modify:**
 - `PropsSmashList.jsx` - Add context_score to engine breakdown
@@ -52,16 +52,16 @@ When working on frontend, check:
 // Current (4 engines)
 AI: 7.2 | Research: 4.5 | Esoteric: 4.8 | Jarvis: 5.0
 
-// Updated (5 engines)
-AI: 7.2 | Research: 4.5 | Esoteric: 4.8 | Jarvis: 5.0 | Context: 7.2
+// Updated (context as modifier)
+AI: 7.2 | Research: 4.5 | Esoteric: 4.8 | Jarvis: 5.0 | Context Mod: +0.18
 ```
 
 **Engine Weights for reference:**
-- AI: 15%
-- Research: 20%
-- Esoteric: 15%
-- Jarvis: 10%
-- **Context: 30%** (NEW - largest weight)
+- AI: 25%
+- Research: 35%
+- Esoteric: 20%
+- Jarvis: 20%
+- **Context: modifier only (±0.35 cap)**
 
 ---
 
@@ -243,7 +243,7 @@ Context Score: 7.2
 
 | Tier | Threshold | Color | Badge |
 |------|-----------|-------|-------|
-| TITANIUM_SMASH | 3/5 engines >= 8.0 | Cyan #00FFFF | Glow effect |
+| TITANIUM_SMASH | 3/4 engines >= 8.0 | Cyan #00FFFF | Glow effect |
 | GOLD_STAR | final >= 7.5 + gates | Gold #FFD700 | Star icon |
 | EDGE_LEAN | final >= 6.5 | Green #10B981 | Checkmark |
 
@@ -256,7 +256,7 @@ After any frontend changes, verify with:
 ```bash
 # 1. Check API returns expected structure
 curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/NBA" \
-  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.game_picks.picks[0] | {
+  -H "X-API-Key: YOUR_KEY" | jq '.game_picks.picks[0] | {
     context_score,
     context_layer,
     harmonic_boost,
