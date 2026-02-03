@@ -201,6 +201,13 @@ if [ -f "$SCRIPT_DIR/run_final_audit.sh" ]; then
     echo ""
 fi
 
+# Optional: Daily sanity report (non-blocking)
+if [ -f "$SCRIPT_DIR/daily_sanity_report.sh" ]; then
+    echo -e "${YELLOW}Optional: Daily sanity report...${NC}"
+    BASE_URL="$BASE_URL" API_KEY="$API_KEY" bash "$SCRIPT_DIR/daily_sanity_report.sh" || echo "⚠️ Daily sanity report skipped or failed (non-blocking)"
+    echo ""
+fi
+
 echo "========================================================"
 echo -e "${GREEN}ALL $TOTAL_SESSIONS SESSIONS PASSED${NC}"
 echo "========================================================"

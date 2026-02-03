@@ -38,7 +38,7 @@ What it validates:
 - ET-only payload (no UTC/telemetry keys)
 - Cache headers for best-bets endpoints
 
-This script is optional and intended for quick daily spot checks.
+This is also wired into `scripts/ci_sanity_check.sh` as a **non-blocking** step.
 
 ---
 
