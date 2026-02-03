@@ -3317,7 +3317,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # Helper function to calculate scores with v15.0 4-engine architecture + Jason Sim
     # v16.1: Added market parameter for LSTM model routing
     # v17.6: Added game_bookmakers parameter for Benford analysis
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market="", game_datetime=None, game_bookmakers=None, book_count: int = 0, market_book_count: int = 0, event_id: str | None = None):
+    # v20.0: Added game_status parameter for live signals, event_id for line history
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market="", game_datetime=None, game_bookmakers=None, book_count: int = 0, market_book_count: int = 0, event_id: str | None = None, game_status: str = ""):
         # =====================================================================
         # v15.0 FOUR-ENGINE ARCHITECTURE (Clean Separation)
         # =====================================================================
@@ -4186,11 +4187,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         # ===== LIVE IN-GAME SIGNALS (v20.0 Phase 9) =====
         # Only applies to LIVE games - score momentum and line movement detection
-        # NOTE: Disabled until game_status is passed to calculate_pick_score
         live_boost = 0.0
         live_reasons = []
-        _game_status = ""  # TODO: Pass game_status as parameter to enable live signals
-        if _game_status == "LIVE" and _is_game_pick:
+        # game_status is now passed as parameter (v20.0)
+        if game_status in ("LIVE", "MISSED_START") and _is_game_pick:
             try:
                 from alt_data_sources.live_signals import (
                     get_combined_live_signals, is_live_signals_enabled
@@ -5737,6 +5737,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     except Exception:
                         start_time_et = ""
 
+                # v20.0: Compute game_status early for live signals
+                _game_status = "UPCOMING"
+                if TIME_FILTERS_AVAILABLE and commence_time:
+                    _game_status = get_game_status(commence_time)
+
                 # v16.0: Fetch weather once per game (async, cached by game_key)
                 _game_weather = _weather_cache.get(game_key)
                 if _game_weather is None and WEATHER_MODULE_AVAILABLE:
@@ -5887,7 +5892,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 game_bookmakers=game_bookmakers,  # v17.6: Multi-book for Benford
                                 book_count=game_book_count,
                                 market_book_count=market_book_count,
-                                event_id=game.get("id")
+                                event_id=game.get("id"),
+                                game_status=_game_status  # v20.0: Pass for live signals
                             )
 
                             # v16.0: Apply weather modifier to score (capped at ±1.0)
@@ -6021,6 +6027,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 except Exception:
                     pass
 
+            # v20.0: Compute game_status for live signals
+            _sharp_game_status = "UPCOMING"
+            if TIME_FILTERS_AVAILABLE and commence_time:
+                _sharp_game_status = get_game_status(commence_time)
+
             score_data = calculate_pick_score(
                 game_str,
                 signal,
@@ -6036,7 +6047,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 prop_line=0,
                 game_datetime=_sharp_game_dt,
                 game_bookmakers=_sharp_bookmakers,  # v17.6: Multi-book for Benford
-                event_id=signal_game_id
+                event_id=signal_game_id,
+                game_status=_sharp_game_status  # v20.0: Pass for live signals
             )
 
             signals_fired = score_data.get("pillars_passed", []).copy()
@@ -6156,6 +6168,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 except Exception:
                     start_time_et = ""
 
+            # v20.0: Compute game_status early for live signals
+            _prop_game_status = "UPCOMING"
+            if TIME_FILTERS_AVAILABLE and commence_time:
+                _prop_game_status = get_game_status(commence_time)
+
             # v16.0: Fetch weather for props game (use existing cache or fetch)
             _prop_game_weather = _weather_cache.get(game_key)
             if _prop_game_weather is None and WEATHER_MODULE_AVAILABLE:
@@ -6237,7 +6254,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     game_bookmakers=game.get("bookmakers", []),  # v17.6: Multi-book for Benford
                     book_count=_prop_book_count,
                     market_book_count=market_book_count,
-                    event_id=game.get("id")
+                    event_id=game.get("id"),
+                    game_status=_prop_game_status  # v20.0: Pass for live signals
                 )
 
                 # Lineup confirmation guard (props only)
