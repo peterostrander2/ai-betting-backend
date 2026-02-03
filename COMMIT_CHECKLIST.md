@@ -21,6 +21,9 @@
 ./scripts/option_a_drift_scan.sh
 python3 -m pytest -q tests/test_option_a_scoring_guard.py
 
+# Optional props pipeline verification (set REQUIRE_PROPS=1 to enforce)
+REQUIRE_PROPS=1 PROPS_REQUIRED_SPORTS="NBA" ./scripts/props_sanity_check.sh
+
 # Verify critical invariants with curls
 curl https://web-production-7b2a.up.railway.app/live/debug/time \
   -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4" | jq '.et_window'

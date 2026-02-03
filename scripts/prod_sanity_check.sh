@@ -7,6 +7,7 @@ set -e
 # Configuration
 BASE_URL="${BASE_URL:-https://web-production-7b2a.up.railway.app}"
 API_KEY="${API_KEY:-bookie-prod-2026-xK9mP2nQ7vR4}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Colors
 RED='\033[0;31m'
@@ -326,6 +327,22 @@ check "No UTC/Telemetry Leaks: _cached_at and _elapsed_s stripped from public re
 
 echo ""
 
+# Props sanity check (required)
+if [ -f "$SCRIPT_DIR/props_sanity_check.sh" ]; then
+    if [ ! -x "$SCRIPT_DIR/props_sanity_check.sh" ]; then
+        chmod +x "$SCRIPT_DIR/props_sanity_check.sh"
+    fi
+    echo "[7.5/11] Props sanity check (required)..."
+    BASE_URL="$BASE_URL" API_KEY="$API_KEY" \
+      PROPS_REQUIRED_SPORTS="${PROPS_REQUIRED_SPORTS:-NBA}" \
+      REQUIRE_PROPS="${REQUIRE_PROPS:-1}" \
+      bash "$SCRIPT_DIR/props_sanity_check.sh" || {
+        echo -e "${RED}ERROR: Props sanity check failed${NC}"
+        exit 1
+      }
+    echo ""
+fi
+
 # =====================================================
 # CHECK 8: End-to-End Best-Bets (All Sports)
 # =====================================================
@@ -342,6 +359,23 @@ for SPORT in $SPORTS; do
         "$([ "$BB_CODE" = "200" ] && echo true || echo false)" \
         "code=$BB_CODE" \
         "200"
+
+    # Payload shape must be stable even when counts are 0
+    SHAPE_OK=$(jq -r 'has("props") and has("game_picks") and has("meta") and (.props.picks | type == "array") and (.game_picks.picks | type == "array")' "$BB_TMP" 2>/dev/null || echo false)
+    check "Best-bets $SPORT: payload shape stable" \
+        "$SHAPE_OK" \
+        "shape=$SHAPE_OK" \
+        "props/game_picks/meta with array picks"
+
+    if [ "$SPORT" = "MLB" ]; then
+        MLB_GAMES=$(jq -r '.game_picks.count // 0' "$BB_TMP" 2>/dev/null || echo 0)
+        MLB_PROPS=$(jq -r '.props.count // 0' "$BB_TMP" 2>/dev/null || echo 0)
+        MLB_EMPTY_OK=$([ "$MLB_GAMES" -eq 0 ] && [ "$MLB_PROPS" -eq 0 ] && echo true || echo false)
+        check "Best-bets MLB: clean empty payload allowed" \
+            "$MLB_EMPTY_OK" \
+            "games=$MLB_GAMES props=$MLB_PROPS" \
+            "0 and 0"
+    fi
 
     # Stack completeness (no partial stack picks returned)
     STACK_OK=$(jq -r '([.props.picks[]?, .game_picks.picks[]?] | all(.stack_complete == true))' "$BB_TMP" 2>/dev/null || echo false)

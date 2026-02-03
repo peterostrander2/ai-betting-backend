@@ -25,6 +25,7 @@
   },
   "gold_star_threshold": 7.5,
   "min_final_score": 6.5,
+  "harmonic_boost": 1.5,
   "boost_caps": {
     "confluence_boost_cap": 10.0,
     "msrf_boost_cap": 1.0,
@@ -50,6 +51,15 @@ BASE_4 = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.20) + (Jarvis × 0.2
 FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
 
 Boosts are additive (NOT engines). Each boost must be present in payloads with status + reasons.
+
+### Boost Field Contract (Required in Pick Payloads)
+Each pick must expose these fields at top level:
+- `base_4_score` (or `base_score`)
+- `context_modifier`, `context_breakdown`, `context_reasons`
+- `confluence_boost`, `confluence_reasons`
+- `msrf_boost`, `msrf_status`, `msrf_reasons`
+- `jason_sim_boost`, `jason_status`, `jason_reasons`
+- `serp_boost`, `serp_status`, `serp_signals`
 
 Minimum output: 6.5
 

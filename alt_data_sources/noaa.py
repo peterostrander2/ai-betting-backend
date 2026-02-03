@@ -28,6 +28,13 @@ KP_CACHE_TTL = 3 * 60 * 60  # 3 hours in seconds
 # NOAA API endpoint
 NOAA_KP_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
 
+def _mark_noaa_used() -> None:
+    try:
+        from integration_registry import mark_integration_used
+        mark_integration_used("noaa_space_weather")
+    except Exception as e:
+        logger.debug("noaa mark_integration_used failed: %s", str(e))
+
 
 def fetch_kp_index_live() -> Dict[str, Any]:
     """
@@ -52,6 +59,7 @@ def fetch_kp_index_live() -> Dict[str, Any]:
     # Check cache
     now = time.time()
     if _kp_cache and (now - _kp_cache_time) < KP_CACHE_TTL:
+        _mark_noaa_used()
         return {**_kp_cache, "source": "cache"}
 
     try:
@@ -102,6 +110,7 @@ def fetch_kp_index_live() -> Dict[str, Any]:
         _kp_cache = result
         _kp_cache_time = now
 
+        _mark_noaa_used()
         logger.info("NOAA Kp-Index fetched: %.1f (%s)", kp_value, storm_level)
         return result
 

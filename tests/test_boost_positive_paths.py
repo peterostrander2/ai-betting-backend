@@ -3,6 +3,8 @@ from datetime import date
 from jarvis_savant_engine import JarvisSavantEngine
 from jason_sim_confluence import JasonSimConfluence
 import signals.msrf_resonance as msrf
+from core.scoring_pipeline import compute_harmonic_boost
+from core.scoring_contract import HARMONIC_CONVERGENCE_THRESHOLD
 
 
 def test_confluence_levels_strong_and_moderate():
@@ -29,6 +31,11 @@ def test_confluence_levels_strong_and_moderate():
     )
     assert moderate["level"] == "MODERATE"
     assert moderate["boost"] == 1
+
+
+def test_harmonic_boost_threshold():
+    boost = compute_harmonic_boost(HARMONIC_CONVERGENCE_THRESHOLD, HARMONIC_CONVERGENCE_THRESHOLD)
+    assert boost > 0
 
 
 def test_jason_sim_positive_and_negative_paths():
