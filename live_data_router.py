@@ -4039,10 +4039,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # ===== PHASE 8 (v18.2) NEW ESOTERIC SIGNALS =====
         phase8_boost = 0.0
         phase8_reasons = []
-        logger.info("Phase8: Starting calculation for %s", game_str[:30] if game_str else "unknown")
+        phase8_error = None  # For debugging
         try:
             from esoteric_engine import get_phase8_esoteric_signals
-            logger.info("Phase8: Import successful")
 
             # Parse game datetime for lunar/solar signals
             _game_datetime = None
@@ -4088,8 +4087,6 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
             phase8_boost = phase8_result.get("phase8_boost", 0.0)
             phase8_reasons = phase8_result.get("reasons", [])
-            logger.info("Phase8: result boost=%.3f, reasons=%s, triggered=%s",
-                       phase8_boost, phase8_reasons, phase8_result.get("triggered_signals", []))
 
             if phase8_boost != 0.0:
                 esoteric_raw += phase8_boost
@@ -4100,9 +4097,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             game_str[:30], phase8_boost, phase8_result.get("triggered_signals", []))
 
         except ImportError as ie:
+            phase8_error = f"ImportError: {ie}"
             logger.warning("Phase 8 signals module not available: %s", ie)
         except Exception as e:
             import traceback
+            phase8_error = f"{type(e).__name__}: {e}"
             logger.warning("Phase 8 signals calculation failed: %s\n%s", e, traceback.format_exc())
 
         # Clamp to 0-10
@@ -4877,6 +4876,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # v18.2 Phase 8 Esoteric Signals
             "phase8_boost": phase8_boost,
             "phase8_reasons": phase8_reasons,
+            "phase8_error": phase8_error,
             # v17.4 SERP Intelligence
             "serp_intel": serp_intel,
             "serp_boost": serp_boost_total,
