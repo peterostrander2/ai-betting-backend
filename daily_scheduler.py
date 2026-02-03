@@ -651,68 +651,105 @@ class DailyScheduler:
 
     def _run_lstm_retrain(self):
         """
-        v16.1: Weekly LSTM model retraining.
+        v18.1: Weekly LSTM model retraining (enhanced).
 
-        Retrains LSTM models on accumulated prediction data.
-        Only runs if sufficient graded data is available.
+        Uses enhanced LSTM trainer with early stopping, model versioning,
+        and metric logging. Only runs if sufficient graded data is available.
         """
         if not ML_RETRAIN_AVAILABLE:
             return
 
-        logger.info("🧠 Starting weekly LSTM retrain check...")
+        logger.info("🧠 Starting weekly LSTM retrain (enhanced)...")
         try:
-            # Check if we have enough data for retraining
-            # This is a placeholder - full LSTM retraining would require
-            # the lstm_training_pipeline module which handles data collection
-            # and model training
+            # v18.1: Use enhanced LSTM trainer
+            import subprocess
+            import sys
 
-            from lstm_training_pipeline import LSTMTrainingPipeline
-            pipeline = LSTMTrainingPipeline()
+            script_path = os.path.join(os.path.dirname(__file__), "scripts", "train_lstm_enhanced.py")
 
-            # Check data availability
-            stats = pipeline.get_data_stats()
-            if stats.get("total_samples", 0) < 500:
-                logger.info("LSTM retrain skipped: only %d samples (need 500+)",
-                          stats.get("total_samples", 0))
+            if not os.path.exists(script_path):
+                # Fallback to old method
+                logger.warning("Enhanced LSTM trainer not found, trying legacy...")
+                try:
+                    from lstm_training_pipeline import LSTMTrainingPipeline
+                    pipeline = LSTMTrainingPipeline()
+                    stats = pipeline.get_data_stats()
+                    if stats.get("total_samples", 0) < 500:
+                        logger.info("LSTM retrain skipped: only %d samples (need 500+)",
+                                  stats.get("total_samples", 0))
+                        return
+                    results = pipeline.retrain_all_models(min_samples=100)
+                    logger.info("🧠 LSTM retrain complete (legacy): %s", results)
+                except ImportError:
+                    logger.warning("LSTM training pipeline not available")
                 return
 
-            # Run retraining for each sport/stat combo with sufficient data
-            results = pipeline.retrain_all_models(min_samples=100)
-            logger.info("🧠 LSTM retrain complete: %s", results)
+            # Run enhanced training for all models
+            result = subprocess.run(
+                [sys.executable, script_path, "--all", "--min-samples", "500"],
+                capture_output=True,
+                text=True,
+                timeout=1800  # 30 minute timeout
+            )
 
-        except ImportError:
-            logger.warning("lstm_training_pipeline not available - LSTM retrain skipped")
+            if result.returncode == 0:
+                logger.info("🧠 LSTM retrain complete (enhanced):\n%s",
+                          result.stdout[-1000:] if result.stdout else "")
+            else:
+                logger.warning("LSTM retrain exited with code %d: %s",
+                             result.returncode, result.stderr[-500:] if result.stderr else "")
+
+        except subprocess.TimeoutExpired:
+            logger.error("LSTM retrain timed out after 30 minutes")
         except Exception as e:
             logger.error("LSTM retrain failed: %s", e)
 
     def _run_ensemble_retrain(self):
         """
-        v16.1: Daily ensemble model retraining.
+        v18.1: Daily ensemble model retraining (enhanced).
 
-        Retrains the ensemble hit predictor on all graded predictions.
-        Runs after daily grading to incorporate fresh results.
+        Uses enhanced ensemble trainer with cross-validation, hyperparameter
+        tuning, and Platt scaling calibration. Runs after daily grading.
         """
         if not ML_RETRAIN_AVAILABLE:
             return
 
-        logger.info("🎯 Starting daily ensemble retrain...")
+        logger.info("🎯 Starting daily ensemble retrain (enhanced)...")
         try:
             import subprocess
             import sys
 
-            # Run the training script
-            script_path = os.path.join(os.path.dirname(__file__), "scripts", "train_ensemble.py")
+            # v18.1: Try enhanced training script first
+            enhanced_script = os.path.join(os.path.dirname(__file__), "scripts", "train_ensemble_enhanced.py")
+            legacy_script = os.path.join(os.path.dirname(__file__), "scripts", "train_ensemble.py")
 
-            if not os.path.exists(script_path):
-                logger.warning("Ensemble training script not found: %s", script_path)
+            if os.path.exists(enhanced_script):
+                script_path = enhanced_script
+                # Use fast tuning for daily runs (full tuning on Sundays)
+                from datetime import datetime
+                import pytz
+                ET = pytz.timezone("America/New_York")
+                is_sunday = datetime.now(ET).weekday() == 6
+
+                args = [sys.executable, script_path, "--min-picks", "100"]
+                if not is_sunday:
+                    args.append("--no-tuning")  # Skip tuning on non-Sundays for speed
+
+                timeout = 600 if is_sunday else 300  # Longer timeout for Sunday tuning
+            elif os.path.exists(legacy_script):
+                script_path = legacy_script
+                args = [sys.executable, script_path, "--min-picks", "100"]
+                timeout = 300
+            else:
+                logger.warning("No ensemble training script found")
                 return
 
-            # Run with minimum picks threshold
+            # Run training
             result = subprocess.run(
-                [sys.executable, script_path, "--min-picks", "100"],
+                args,
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minute timeout
+                timeout=timeout
             )
 
             if result.returncode == 0:
@@ -722,7 +759,7 @@ class DailyScheduler:
                              result.returncode, result.stderr[-500:] if result.stderr else "")
 
         except subprocess.TimeoutExpired:
-            logger.error("Ensemble retrain timed out after 5 minutes")
+            logger.error("Ensemble retrain timed out")
         except Exception as e:
             logger.error("Ensemble retrain failed: %s", e)
 
