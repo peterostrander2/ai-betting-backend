@@ -2424,8 +2424,8 @@ async def get_props(sport: str):
     """
     sport_lower = sport.lower()
     if sport_lower == "ncaab":
-        return JSONResponse(_sanitize_public({"sport": "NCAAB", "source": "disabled", "count": 0, "data": [],
-                "note": "NCAAB player props disabled — state legality varies"}))
+        return _sanitize_public({"sport": "NCAAB", "source": "disabled", "count": 0, "data": [],
+                "note": "NCAAB player props disabled — state legality varies"})
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
@@ -2433,7 +2433,7 @@ async def get_props(sport: str):
     cache_key = f"props:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
-        return JSONResponse(_sanitize_public(cached))
+        return _sanitize_public(cached)
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
@@ -2577,7 +2577,7 @@ async def get_props(sport: str):
 
     result = {"sport": sport.upper(), "source": source, "count": len(data), "data": data}
     api_cache.set(cache_key, result)
-    return JSONResponse(_sanitize_public(result))
+    return _sanitize_public(result)
 
 
 @router.get("/best-bets/{sport}")
@@ -3328,8 +3328,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         #            (NO Jarvis, NO Gematria, NO Public Fade - those are separate)
         # ENGINE 4 - JARVIS SCORE (0-10): Gematria + Sacred Triggers + Mid-Spread
         #
-        # FINAL = (ai × 0.25) + (research × 0.30) + (esoteric × 0.20) + (jarvis × 0.15) + confluence_boost
-        # Then: FINAL += jason_sim_boost (post-pick confluence)
+        # FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+        # BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
         # =====================================================================
 
         # --- ESOTERIC WEIGHTS (v15.0 - Clean Separation, NO Jarvis/Gematria) ---
