@@ -2683,7 +2683,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             pass
 
     # --- v16.0 PERFORMANCE: Time budget + per-stage timings ---
-    TIME_BUDGET_S = 15.0
+    TIME_BUDGET_S = 25.0  # Increased from 15.0 to allow props scoring after games
     _t0 = time.time()
     _deadline = _t0 + TIME_BUDGET_S
     _timings = {}  # stage_name → elapsed_seconds
