@@ -26,30 +26,8 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Any, Tuple
 import logging
 import os
-import asyncio
 
 logger = logging.getLogger("msrf")
-
-
-def _run_async_safely(coro):
-    """
-    Run an async coroutine from sync context.
-
-    Handles the case where we're already in an async event loop
-    (e.g., called from FastAPI endpoint).
-    """
-    try:
-        # Try to get running loop - if we're in async context, this succeeds
-        loop = asyncio.get_running_loop()
-        # We're in an async context - can't use asyncio.run()
-        # Just return None and skip the async call
-        return None
-    except RuntimeError:
-        # No running loop - safe to use asyncio.run()
-        try:
-            return asyncio.run(coro)
-        except Exception:
-            return None
 
 # Feature flag
 MSRF_ENABLED = os.getenv("MSRF_ENABLED", "true").lower() == "true"
@@ -430,16 +408,15 @@ def get_significant_dates_from_player_history(
     try:
         from alt_data_sources.balldontlie import search_player, get_player_game_stats
 
-        # Search for player (async function - run safely)
-        player = _run_async_safely(search_player(player_name))
+        # Search for player
+        player = search_player(player_name)
         if not player or not player.get("id"):
-            # Either in async context (can't call) or no player found
             return []
 
         player_id = player["id"]
 
-        # Get recent game stats (async function - run safely)
-        stats = _run_async_safely(get_player_game_stats(player_id, last_n_games=20))
+        # Get recent game stats
+        stats = get_player_game_stats(player_id, last_n_games=20)
         if not stats or not stats.get("games"):
             return []
 
@@ -469,9 +446,7 @@ def get_significant_dates_from_player_history(
         return sorted(significant)
 
     except Exception as e:
-        # In async context, _run_async_safely returns None which is handled above
-        # Only log unexpected errors at debug level (not spam warnings)
-        logger.debug("MSRF player history unavailable: %s", e)
+        logger.warning("Failed to get player history for MSRF: %s", e)
         return []
 
 
