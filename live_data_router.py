@@ -3602,6 +3602,113 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # Apply GLITCH adjustment to esoteric_raw
         esoteric_raw += glitch_adjustment
 
+        # ===== PHASE 1: DORMANT ESOTERIC SIGNAL ACTIVATION (v17.5) =====
+        # Wiring three previously dormant signals from esoteric_engine.py:
+        # 1. Biorhythms - for props (player birthday-based cycles)
+        # 2. Gann Square - for games (sacred geometry price levels)
+        # 3. Founder's Echo - for games (team gematria resonance)
+
+        # --- 1. BIORHYTHMS (Props Only) ---
+        # Player birth date cycles: physical (23 days), emotional (28 days), intellectual (33 days)
+        biorhythm_boost = 0.0
+        if pick_type == "PROP" and player_name:
+            try:
+                from esoteric_engine import calculate_biorhythms
+                from player_birth_data import get_player_data as _get_player_bio
+                _bio_player = _get_player_bio(player_name)
+                if _bio_player and _bio_player.get("birth_date"):
+                    _bio_target_date = _game_date_obj if _game_date_obj else None
+                    _bio_result = calculate_biorhythms(_bio_player["birth_date"], _bio_target_date)
+                    _bio_status = _bio_result.get("status", "")
+                    _bio_overall = _bio_result.get("overall", 0)
+
+                    # Boost based on biorhythm status
+                    if _bio_status == "PEAK":
+                        biorhythm_boost = 0.3
+                        esoteric_reasons.append(f"Biorhythm: PEAK ({_bio_overall:.0f})")
+                    elif _bio_status == "RISING":
+                        biorhythm_boost = 0.15
+                        esoteric_reasons.append(f"Biorhythm: RISING ({_bio_overall:.0f})")
+                    elif _bio_status == "LOW":
+                        biorhythm_boost = -0.2  # Negative for low periods
+                        esoteric_reasons.append(f"Biorhythm: LOW ({_bio_overall:.0f})")
+
+                    if biorhythm_boost != 0:
+                        logger.debug("BIORHYTHM[%s]: status=%s, overall=%.1f, boost=%.2f",
+                                     player_name[:20], _bio_status, _bio_overall, biorhythm_boost)
+            except ImportError:
+                logger.debug("Biorhythms module not available")
+            except Exception as e:
+                logger.debug("Biorhythms calculation failed: %s", e)
+
+        # --- 2. GANN SQUARE (Games Only) ---
+        # Sacred geometry: checks if spread/total hit resonant angles (45°, 90°, 180°, 360°)
+        gann_boost = 0.0
+        if pick_type == "GAME" and spread and total:
+            try:
+                from esoteric_engine import analyze_spread_gann
+                _gann_result = analyze_spread_gann(abs(spread), total)
+                _gann_signal = _gann_result.get("spread", {}).get("signal", "WEAK")
+                _gann_angle = _gann_result.get("spread", {}).get("closest_key_angle", 0)
+                _gann_combined = _gann_result.get("combined_resonance", False)
+
+                if _gann_signal == "STRONG":
+                    gann_boost = 0.25
+                    esoteric_reasons.append(f"Gann: {_gann_angle}° (STRONG)")
+                elif _gann_signal == "MODERATE":
+                    gann_boost = 0.15
+                    esoteric_reasons.append(f"Gann: {_gann_angle}° (MODERATE)")
+
+                # Extra boost for combined resonance (both spread and total hit key angles)
+                if _gann_combined:
+                    gann_boost += 0.1
+                    esoteric_reasons.append("Gann: Combined Resonance")
+
+                if gann_boost > 0:
+                    logger.debug("GANN[%s]: spread_signal=%s, angle=%d, combined=%s, boost=%.2f",
+                                 game_str[:30], _gann_signal, _gann_angle, _gann_combined, gann_boost)
+            except ImportError:
+                logger.debug("Gann Square module not available")
+            except Exception as e:
+                logger.debug("Gann Square calculation failed: %s", e)
+
+        # --- 3. FOUNDER'S ECHO (Games Only) ---
+        # Team founding year gematria resonance with game date
+        founders_boost = 0.0
+        if pick_type == "GAME" and (home_team or away_team):
+            try:
+                from esoteric_engine import check_founders_echo
+                _founders_target_date = _game_date_obj if _game_date_obj else None
+
+                # Check both teams for founder resonance
+                _home_echo = check_founders_echo(home_team, _founders_target_date) if home_team else {}
+                _away_echo = check_founders_echo(away_team, _founders_target_date) if away_team else {}
+
+                _home_resonance = _home_echo.get("resonance", False)
+                _away_resonance = _away_echo.get("resonance", False)
+
+                if _home_resonance or _away_resonance:
+                    founders_boost = 0.2
+                    _resonant_team = home_team if _home_resonance else away_team
+                    _founding_year = _home_echo.get("founding_year") if _home_resonance else _away_echo.get("founding_year")
+                    esoteric_reasons.append(f"Founder's Echo: {_resonant_team} ({_founding_year})")
+
+                    # Extra boost if both teams resonate (rare)
+                    if _home_resonance and _away_resonance:
+                        founders_boost = 0.35
+                        esoteric_reasons.append(f"Founder's Echo: Both teams resonate!")
+
+                    logger.debug("FOUNDER[%s vs %s]: home=%s, away=%s, boost=%.2f",
+                                 home_team or "?", away_team or "?",
+                                 _home_resonance, _away_resonance, founders_boost)
+            except ImportError:
+                logger.debug("Founder's Echo module not available")
+            except Exception as e:
+                logger.debug("Founder's Echo calculation failed: %s", e)
+
+        # Apply Phase 1 dormant signal boosts
+        esoteric_raw += biorhythm_boost + gann_boost + founders_boost
+
         # Clamp to 0-10
         esoteric_score = max(0, min(10, esoteric_raw))
         logger.debug("Esoteric[%s]: mag=%.1f num=%.2f astro=%.2f fib=%.2f vortex=%.2f daily=%.2f trap=%.2f → raw=%.2f",
