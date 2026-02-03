@@ -282,6 +282,39 @@ except ImportError:
 
     SPORT_QUERIES = {}
 
+# Gematria Twitter Intelligence (v17.9 - Community Signal Aggregation)
+try:
+    from .gematria_twitter_intel import (
+        fetch_account_posts,
+        analyze_post,
+        aggregate_community_signals,
+        get_gematria_consensus_boost,
+        generate_daily_digest,
+        GEMATRIA_ACCOUNTS,
+        SACRED_NUMBERS,
+    )
+    GEMATRIA_INTEL_AVAILABLE = True
+except ImportError:
+    GEMATRIA_INTEL_AVAILABLE = False
+
+    def fetch_account_posts(*args, **kwargs):
+        return {"available": False, "posts": []}
+
+    def analyze_post(*args, **kwargs):
+        return {"numbers_found": [], "sport_detected": None, "direction": None}
+
+    def aggregate_community_signals(*args, **kwargs):
+        return {"available": False, "consensus": {}}
+
+    def get_gematria_consensus_boost(*args, **kwargs):
+        return 0.0, {"available": False, "reason": "Module not available"}
+
+    def generate_daily_digest(*args, **kwargs):
+        return {"available": False, "digest": None}
+
+    GEMATRIA_ACCOUNTS = []
+    SACRED_NUMBERS = {}
+
 # Integration helpers
 def get_alt_data_status():
     """Get status of all alternative data sources."""
@@ -311,6 +344,10 @@ def get_alt_data_status():
         "serp_intelligence": {
             "available": SERP_INTEL_AVAILABLE,
             "purpose": "v17.4 - Betting signals from search trends (5 engines)"
+        },
+        "gematria_twitter_intel": {
+            "available": GEMATRIA_INTEL_AVAILABLE,
+            "purpose": "v17.9 - Gematria community signal aggregation (12 accounts)"
         }
     }
 
@@ -367,6 +404,15 @@ __all__ = [
     "detect_situational",
     "detect_noosphere",
     "SERP_INTEL_AVAILABLE",
+    # Gematria Twitter Intelligence (v17.9)
+    "fetch_account_posts",
+    "analyze_post",
+    "aggregate_community_signals",
+    "get_gematria_consensus_boost",
+    "generate_daily_digest",
+    "GEMATRIA_ACCOUNTS",
+    "SACRED_NUMBERS",
+    "GEMATRIA_INTEL_AVAILABLE",
     # Integration
     "get_alt_data_status",
 ]
