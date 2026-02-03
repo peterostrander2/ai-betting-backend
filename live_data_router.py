@@ -2663,13 +2663,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _filter_date = None
     if TIME_ET_AVAILABLE:
         try:
-            _et_start, _et_end, _iso_date = et_day_bounds(date_str)
+            _et_start, _et_end, _start_utc, _end_utc = et_day_bounds(date_str=date_str)
+            _iso_date = _et_start.date().isoformat()
             _filter_date = _iso_date  # Single source of truth for filter date
             _date_window_et_debug.update({
                 "date_str": date_str or "today",
-                "start_et": _et_start.isoformat(),  # Full ISO: 2026-01-29T00:01:00-05:00
+                "start_et": _et_start.isoformat(),  # Full ISO: 2026-01-29T00:00:00-05:00
                 "end_et": _et_end.isoformat(),      # Full ISO: 2026-01-30T00:00:00-05:00 (exclusive)
-                "window_display": f"{_iso_date} 00:01:00 to 23:59:59 ET",  # Human readable (canonical window)
+                "window_display": f"{_iso_date} 00:00:00 to 23:59:59 ET",  # Human readable (canonical window)
                 "filter_date": _filter_date,  # This MUST match /debug/time.et_date
                 "interval_notation": "[start, end)",  # Half-open interval: start inclusive, end exclusive
             })
@@ -4052,19 +4053,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         jason_sim_boost = jason_output.get("jason_sim_boost", 0.0)
         final_score = base_score + jason_sim_boost
 
-        # ===== v17.2 PILLAR 16: OFFICIALS ADJUSTMENT =====
-        # Referee/Umpire tendencies can impact totals, spreads, and props
-        # v17.2: ESPN Hidden API integration for referee assignments
+        # ===== v17.8 PILLAR 16: OFFICIALS TENDENCY INTEGRATION =====
+        # Referee/Umpire tendencies impact totals, spreads, and props
+        # v17.8: Now uses real referee tendency database (officials_data.py)
         officials_adjustment = 0.0
-        officials_reason = None
+        officials_reasons = []
 
-        if sport_upper in ["NBA", "NFL", "MLB", "NHL", "NCAAB"] and CONTEXT_LAYER_AVAILABLE:
+        if sport_upper in ["NBA", "NFL", "NHL"] and CONTEXT_LAYER_AVAILABLE:
             try:
                 # v17.2: Lookup officials from ESPN prefetched data
                 # _officials_by_game keys are (home_team_lower, away_team_lower)
                 lead_official = ""
                 official_2 = ""
                 official_3 = ""
+                officials_data = None
 
                 if home_team and away_team and _officials_by_game:
                     officials_data = _find_espn_data(_officials_by_game, home_team, away_team)
@@ -4077,31 +4079,52 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                     officials_data.get("source", "unknown"))
 
                 # Only apply if we have official data
-                if lead_official:
-                    # Determine bet type for officials analysis
+                if lead_official and officials_data:
+                    # v17.8: Use new tendency-based adjustment method
+                    # Determine pick type for officials analysis
                     if player_name:
-                        officials_bet_type = "props"
-                    elif "total" in game_str.lower() or total:
-                        officials_bet_type = "total"
+                        officials_pick_type = "PROP"
+                    elif "total" in game_str.lower() or (total and not spread):
+                        officials_pick_type = "TOTAL"
                     else:
-                        officials_bet_type = "spread"
+                        officials_pick_type = "SPREAD"
 
-                    officials_obj = OfficialsService.get_adjustment(
+                    # Determine pick side for tendency matching
+                    # For totals: Over/Under
+                    # For spreads: team name or home/away
+                    officials_pick_side = pick_side
+                    if officials_pick_type == "TOTAL":
+                        pick_side_lower = (pick_side or "").lower()
+                        if "over" in pick_side_lower:
+                            officials_pick_side = "Over"
+                        elif "under" in pick_side_lower:
+                            officials_pick_side = "Under"
+
+                    # Determine if betting on home team
+                    is_home = False
+                    if home_team and pick_side:
+                        pick_side_lower = pick_side.lower()
+                        home_lower = home_team.lower()
+                        is_home = home_lower in pick_side_lower or pick_side_lower == "home"
+
+                    # v17.8: Call new tendency-based method
+                    adj, reasons = OfficialsService.get_officials_adjustment(
                         sport=sport_upper,
-                        lead_official=lead_official,
-                        official_2=official_2,
-                        official_3=official_3,
-                        bet_type=officials_bet_type,
-                        is_home=(pick_side == "Home") if pick_side else False,
-                        is_star=False  # Could enhance with star player detection
+                        officials=officials_data,
+                        pick_type=officials_pick_type,
+                        pick_side=officials_pick_side,
+                        is_home_team=is_home
                     )
 
-                    if officials_obj:
-                        officials_adjustment = officials_obj.get("value", 0.0)
-                        officials_reason = officials_obj.get("reason", "")
-                        research_reasons.append(f"Officials: {officials_reason} ({officials_adjustment:+.2f})")
+                    if adj != 0.0 and reasons:
+                        officials_adjustment = adj
+                        officials_reasons = reasons
+                        for reason in reasons:
+                            research_reasons.append(f"Officials: {reason} ({adj:+.2f})")
                         # Apply to research_score (officials = market intelligence)
                         research_score = min(10.0, research_score + officials_adjustment)
+                        logger.debug("OFFICIALS v17.8: %s adjustment=%+.2f reasons=%s",
+                                    lead_official, officials_adjustment, officials_reasons)
             except Exception as e:
                 logger.debug(f"Officials adjustment failed: {e}")
 
@@ -5853,7 +5876,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _grader_store_duplicates = 0
     try:
         # Use top-level import (already imported at line 99)
-        _, _, date_et_for_store = et_day_bounds(date_str)
+        _start_et, _end_et, _start_utc, _end_utc = et_day_bounds(date_str=date_str)
+        date_et_for_store = _start_et.date().isoformat()
 
         # Persist all picks (props + games)
         all_picks_to_persist = top_props + top_game_picks
@@ -7278,7 +7302,8 @@ async def grader_status():
     try:
         import grader_store
         # Use top-level import (already imported at line 99)
-        _, _, today = et_day_bounds()
+        _start_et, _end_et, _start_utc, _end_utc = et_day_bounds()
+        today = _start_et.date().isoformat()
 
         # Load predictions from grader_store with reconciliation stats
         recon_data = grader_store.load_predictions_with_reconciliation()
@@ -7744,7 +7769,7 @@ async def debug_time(api_key: str = Depends(verify_api_key)):
     plus fail-loud validation of ET bounds invariants.
 
     CANONICAL ET SLATE WINDOW:
-        Start: 00:01:00 ET (12:01 AM) - inclusive
+        Start: 00:00:00 ET (midnight) - inclusive
         End:   00:00:00 ET next day (midnight) - exclusive
         Interval: [start, end)
 
@@ -7752,7 +7777,7 @@ async def debug_time(api_key: str = Depends(verify_api_key)):
         - now_utc_iso: Current UTC time
         - now_et_iso: Current ET time
         - et_date: Today's date in ET (YYYY-MM-DD)
-        - et_day_start_iso: Start of ET day (00:01:00)
+        - et_day_start_iso: Start of ET day (00:00:00)
         - et_day_end_iso: End of ET day (00:00:00 next day, exclusive)
         - canonical_window: Description of the canonical window
         - bounds_validation: Invariant validation results (FAIL LOUD if invalid)
@@ -7770,7 +7795,8 @@ async def debug_time(api_key: str = Depends(verify_api_key)):
         now_et_dt = now_et()
 
         # ET day bounds
-        start_et, end_et, et_date = et_day_bounds()
+        start_et, end_et, _start_utc, _end_utc = et_day_bounds()
+        et_date = start_et.date().isoformat()
 
         # FAIL LOUD: Validate bounds invariants
         validation = assert_et_bounds(start_et, end_et)
@@ -7785,12 +7811,12 @@ async def debug_time(api_key: str = Depends(verify_api_key)):
             "et_date": et_date,
             "et_day_start_iso": start_et.isoformat(),
             "et_day_end_iso": end_et.isoformat(),
-            "window_display": f"{et_date} 00:01:00 to 23:59:59 ET",
+            "window_display": f"{et_date} 00:00:00 to 23:59:59 ET",
             "canonical_window": {
-                "start_time": "00:01:00 ET",
+                "start_time": "00:00:00 ET",
                 "end_time": "00:00:00 ET (next day, exclusive)",
                 "interval_notation": "[start, end)",
-                "description": "Events at exactly midnight belong to PREVIOUS day",
+                "description": "ET day runs midnight to midnight (exclusive end)",
             },
             "bounds_validation": validation,
             "bounds_valid": validation["valid"],

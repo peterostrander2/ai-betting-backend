@@ -17,8 +17,16 @@ Each sport has:
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from loguru import logger
+
+# v17.8: Import officials tendency data for Pillar 16
+try:
+    from officials_data import get_referee_tendency, calculate_officials_adjustment
+    OFFICIALS_DATA_AVAILABLE = True
+except ImportError:
+    OFFICIALS_DATA_AVAILABLE = False
+    logger.warning("officials_data module not found - Pillar 16 will use fallback")
 
 # ============================================================
 # SPORT CONFIGURATION
@@ -2164,7 +2172,81 @@ class OfficialsService:
                     grouped[tendency].sort(key=lambda x: x.get("over_pct", 50))
         
         return grouped
-    
+
+    @classmethod
+    def get_officials_adjustment(
+        cls,
+        sport: str,
+        officials: Dict[str, Any],
+        pick_type: str,
+        pick_side: str,
+        is_home_team: bool = False
+    ) -> Tuple[float, List[str]]:
+        """
+        v17.8: Calculate scoring adjustment based on referee tendencies.
+
+        Uses the officials_data.py module for detailed tendency data.
+
+        Args:
+            sport: NBA, NFL, NHL (NCAAB/MLB not supported)
+            officials: Dict with lead_official, referee, or officials list from ESPN
+            pick_type: TOTAL, SPREAD, MONEYLINE, PROP
+            pick_side: Over, Under, or team name
+            is_home_team: True if pick is on home team
+
+        Returns:
+            (adjustment: float, reasons: List[str])
+        """
+        adjustment = 0.0
+        reasons = []
+
+        # Only NBA, NFL, NHL have detailed tendency data
+        if sport.upper() not in ("NBA", "NFL", "NHL"):
+            return adjustment, reasons
+
+        if not officials:
+            return adjustment, reasons
+
+        # Check if officials_data module is available
+        if not OFFICIALS_DATA_AVAILABLE:
+            return adjustment, reasons
+
+        # Get lead official from various ESPN formats
+        lead_ref = None
+        if isinstance(officials, dict):
+            lead_ref = (
+                officials.get("lead_official") or
+                officials.get("referee") or
+                officials.get("Referee")
+            )
+            # Handle officials list format
+            if not lead_ref and isinstance(officials.get("officials"), list):
+                officials_list = officials.get("officials", [])
+                if officials_list and isinstance(officials_list[0], dict):
+                    lead_ref = officials_list[0].get("displayName") or officials_list[0].get("name")
+
+        if not lead_ref:
+            return adjustment, reasons
+
+        # Calculate adjustment using officials_data module
+        try:
+            adj, reason = calculate_officials_adjustment(
+                sport=sport,
+                referee_name=lead_ref,
+                pick_type=pick_type,
+                pick_side=pick_side,
+                is_home_team=is_home_team
+            )
+
+            if adj != 0 and reason:
+                adjustment = adj
+                reasons.append(reason)
+
+        except Exception as e:
+            logger.debug(f"Officials adjustment calculation failed: {e}")
+
+        return adjustment, reasons
+
     @classmethod
     def get_supported_sports(cls) -> List[str]:
         """Get list of sports with officials data"""

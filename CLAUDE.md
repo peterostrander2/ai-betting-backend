@@ -2257,7 +2257,7 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.noaa, .serpapi'
 
 ---
 
-### INVARIANT 16: 17-Pillar Scoring System (v17.2 - COMPLETE)
+### INVARIANT 16: 17-Pillar Scoring System (v17.8 - ALL PILLARS ACTIVE)
 
 **RULE:** All 17 pillars must contribute to scoring. No pillar may be orphaned.
 
@@ -2272,31 +2272,36 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.noaa, .serpapi'
 | 13 | Defensive Rank | Context (30%) | 50% | `DefensiveRankService` | ✅ Real values |
 | 14 | Pace Vector | Context | 30% | `PaceVectorService` | ✅ Real values |
 | 15 | Usage Vacuum | Context | 20% | `UsageVacuumService` + injuries | ✅ Real values |
-| 16 | Officials | Research | Adjustment | `OfficialsService` | ⏳ Needs data source |
+| 16 | Officials | Research | Adjustment | `OfficialsService` + `officials_data.py` | ✅ ACTIVE (v17.8) |
 | 17 | Park Factors | Esoteric | MLB only | `ParkFactorService` | ✅ |
 
-**v17.2 Completion Status (Feb 2026):**
+**v17.8 Completion Status (Feb 2026):**
 - ✅ **Pillars 13-15 now use REAL DATA** (not hardcoded defaults)
 - ✅ **Injuries fetched in parallel** with props and game odds
 - ✅ **Context calculation runs for ALL pick types** (PROP, GAME, SHARP)
-- ⏳ **Pillar 16 (Officials)** - Code ready, waiting for referee data API
+- ✅ **Pillar 16 (Officials)** - ACTIVE with referee tendency database (v17.8)
+  - 25 NBA referees with over_tendency, foul_rate, home_bias
+  - 17 NFL referee crews with flag_rate, over_tendency
+  - 15 NHL referees with penalty_rate, over_tendency
+  - Adjustment range: -0.5 to +0.5 on research score
 
-**Data Flow (v17.2):**
+**Data Flow (v17.8):**
 ```
 _best_bets_inner()
   │
   ├── Parallel Fetch (asyncio.gather)
   │     ├── get_props(sport)
   │     ├── fetch_game_odds()
-  │     └── get_injuries(sport)  ← NEW in v17.2
+  │     └── get_injuries(sport)
   │
   ├── Build _injuries_by_team lookup (handles Playbook + ESPN formats)
+  ├── Build _officials_by_game lookup (ESPN Hidden API)
   │
   └── calculate_pick_score() [for ALL pick types]
         ├── Pillar 13: DefensiveRankService.get_rank()
         ├── Pillar 14: PaceVectorService.get_game_pace()
         ├── Pillar 15: UsageVacuumService.calculate_vacuum(_injuries_by_team)
-        ├── Pillar 16: OfficialsService (pending data source)
+        ├── Pillar 16: OfficialsService.get_officials_adjustment() ← v17.8
         └── Pillar 17: ParkFactorService (MLB only)
 ```
 
@@ -2340,17 +2345,19 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.game_picks.picks[0] 
 }'
 ```
 
-**Key Files (v17.2):**
+**Key Files (v17.8):**
 | File | Lines | Purpose |
 |------|-------|---------|
 | `live_data_router.py` | 4172-4227 | Parallel fetch including injuries |
 | `live_data_router.py` | 4201-4227 | Build _injuries_by_team (Playbook + ESPN format) |
+| `live_data_router.py` | 4055-4106 | Pillar 16: Officials tendency integration (v17.8) |
 | `live_data_router.py` | 3139-3183 | Context calculation for ALL pick types |
 | `context_layer.py` | 413-472 | DefensiveRankService |
 | `context_layer.py` | 543-635 | PaceVectorService |
 | `context_layer.py` | 637-706 | UsageVacuumService |
 | `context_layer.py` | 713-763 | ParkFactorService |
-| `context_layer.py` | 1527-1620 | OfficialsService (ready, needs data) |
+| `context_layer.py` | 2176-2248 | OfficialsService.get_officials_adjustment() (v17.8) |
+| `officials_data.py` | All | Referee tendency database (25 NBA, 17 NFL, 15 NHL refs) |
 
 ---
 
