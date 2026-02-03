@@ -163,6 +163,33 @@ JARVIS_TRIGGERS = {
         "description": "Tesla's universe key. Vortex mathematics.",
         "mathematical": False,
         "reduction": 18  # 3+6+9 = 18
+    },
+    # ========================================================================
+    # PHOENIX CHRONOLOGY (Archaix) - Added from Jason Breshears research
+    # ========================================================================
+    1656: {
+        "name": "THE PHOENIX",
+        "boost": 12,
+        "tier": "HIGH",
+        "description": "Phoenix destruction cycle. World reset every 1656 years (Rashi). The Great Year.",
+        "mathematical": True,
+        "reduction": 18  # 1+6+5+6 = 18 (same as 2178!)
+    },
+    552: {
+        "name": "THE PHOENIX FRAGMENT",
+        "boost": 10,
+        "tier": "HIGH",
+        "description": "Phoenix sub-cycle (1656/3). Anno Domini Reset interval. Hidden by Papacy.",
+        "mathematical": True,
+        "reduction": 12  # 5+5+2 = 12
+    },
+    138: {
+        "name": "THE PLASMA CYCLE",
+        "boost": 10,
+        "tier": "HIGH",
+        "description": "Phoenix/Plasma apocalypse interval. Regional cataclysm cycle. 2178 AD = 138 years after 2040.",
+        "mathematical": True,
+        "reduction": 12  # 1+3+8 = 12
     }
 }
 

@@ -771,6 +771,150 @@ def calculate_vortex_energy(value: float, context: str = "general") -> Dict[str,
 
 
 # =============================================================================
+# 12. PHOENIX CHRONOLOGY (Archaix - Jason Breshears Research)
+# =============================================================================
+# Phoenix Cycles from Archaix research:
+# - 1656 years: Major Phoenix/destruction cycle (Rashi wrote "world destroyed every 1656 years")
+# - 552 years: Sub-cycle (1656 / 3), Anno Domini Reset interval
+# - 138 years: Plasma/regional apocalypse cycle (2178 AD = 138 years after 2040 Phoenix)
+#
+# The 2178 Immortal Loop: Mathematical constant that never collapses
+# - 2178 × 4 = 8712 (its own reverse)
+# - 2178 - 8712 = 6534, 6534 - 4356 = 2178 (infinite loop)
+#
+# Historical Phoenix dates: 3895 BC, 2239 BC, 1687 BC, 31 BC, 522 AD, 2178 AD
+
+PHOENIX_CYCLES = {
+    1656: {"name": "THE PHOENIX", "strength": 1.0, "description": "Major destruction cycle"},
+    552: {"name": "PHOENIX FRAGMENT", "strength": 0.8, "description": "Sub-cycle (1656/3)"},
+    138: {"name": "PLASMA CYCLE", "strength": 0.7, "description": "Regional cataclysm interval"},
+}
+
+# Key Phoenix historical dates (years only, using approximate values)
+PHOENIX_ANCHOR_YEARS = [
+    -3895,  # Genesis Reset cataclysm
+    -2239,  # Great Flood, Vapor Canopy collapse
+    -1687,  # Bronze Age collapse, Phoenix in sky
+    -31,    # Ancient Americas devastation
+    522,    # Anno Domini Reset
+    2040,   # Projected Phoenix (from Archaix)
+    2178,   # Portal/Terminus (138 years after 2040)
+]
+
+
+def calculate_phoenix_resonance(game_date: date = None) -> Dict[str, Any]:
+    """
+    Calculate Phoenix cycle resonance for a game date.
+
+    Checks if the current year aligns with Phoenix cycles (138, 552, 1656)
+    from historical anchor dates.
+
+    Based on Archaix research by Jason Breshears:
+    - Every 1656 years: Major Phoenix destruction cycle
+    - Every 552 years: Sub-cycle (1656/3)
+    - Every 138 years: Regional plasma events
+
+    Args:
+        game_date: Date to check (default: today)
+
+    Returns:
+        Dict with:
+        - phoenix_score: 0-10 resonance score
+        - cycles_hit: List of matching cycles
+        - closest_anchor: Nearest Phoenix anchor date
+        - triggered: True if significant resonance
+        - boost: Suggested score boost (0.0 to 0.5)
+    """
+    from datetime import date as date_type
+
+    if game_date is None:
+        game_date = date_type.today()
+
+    current_year = game_date.year
+    cycles_hit = []
+    best_resonance = 0.0
+
+    # Check alignment with each Phoenix cycle from each anchor
+    for anchor_year in PHOENIX_ANCHOR_YEARS:
+        years_diff = abs(current_year - anchor_year)
+
+        for cycle_years, cycle_info in PHOENIX_CYCLES.items():
+            # Check if years_diff is a multiple of cycle (with tolerance)
+            if years_diff == 0:
+                continue
+
+            remainder = years_diff % cycle_years
+            # Allow 0-2 year tolerance for alignment
+            if remainder <= 2 or remainder >= (cycle_years - 2):
+                cycles_complete = years_diff // cycle_years
+                alignment_strength = 1.0 - (min(remainder, cycle_years - remainder) / cycle_years)
+
+                cycles_hit.append({
+                    "cycle": cycle_years,
+                    "name": cycle_info["name"],
+                    "anchor_year": anchor_year,
+                    "cycles_complete": cycles_complete,
+                    "alignment": round(alignment_strength, 3),
+                    "strength": cycle_info["strength"]
+                })
+
+                resonance = alignment_strength * cycle_info["strength"]
+                if resonance > best_resonance:
+                    best_resonance = resonance
+
+    # Calculate phoenix score (0-10)
+    if not cycles_hit:
+        phoenix_score = 5.0  # Neutral
+        triggered = False
+        boost = 0.0
+    else:
+        # Score based on number of cycles hit and their strength
+        unique_cycles = len(set(c["cycle"] for c in cycles_hit))
+        phoenix_score = 5.0 + (unique_cycles * 1.0) + (best_resonance * 2.0)
+        phoenix_score = min(10.0, phoenix_score)
+
+        # Major resonance: hitting 1656 cycle or multiple cycles
+        if any(c["cycle"] == 1656 for c in cycles_hit):
+            phoenix_score += 0.5
+            triggered = True
+            boost = 0.3
+        elif unique_cycles >= 2:
+            triggered = True
+            boost = 0.2
+        elif best_resonance >= 0.9:
+            triggered = True
+            boost = 0.15
+        else:
+            triggered = False
+            boost = 0.0
+
+    # Find closest anchor for context
+    closest_anchor = min(PHOENIX_ANCHOR_YEARS, key=lambda y: abs(current_year - y))
+
+    # Build signal string
+    if cycles_hit:
+        top_cycle = max(cycles_hit, key=lambda c: c["strength"] * c["alignment"])
+        signal = f"PHOENIX_{top_cycle['name'].replace(' ', '_').upper()}"
+    else:
+        signal = "NO_PHOENIX_ALIGNMENT"
+
+    return {
+        "game_date": game_date.isoformat(),
+        "current_year": current_year,
+        "phoenix_score": round(phoenix_score, 2),
+        "cycles_hit": cycles_hit[:5],  # Top 5 for brevity
+        "cycles_hit_count": len(cycles_hit),
+        "closest_anchor": closest_anchor,
+        "years_to_closest": abs(current_year - closest_anchor),
+        "best_resonance": round(best_resonance, 3),
+        "triggered": triggered,
+        "boost": boost,
+        "signal": signal,
+        "confidence": best_resonance if cycles_hit else 0.0,
+    }
+
+
+# =============================================================================
 # PLANETARY HOURS (Bonus)
 # =============================================================================
 
