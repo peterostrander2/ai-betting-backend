@@ -6,19 +6,16 @@ RULES:
 2. All app logic enforces ET (America/New_York)
 3. Core functions:
    - now_et(): UTC -> ET conversion
-   - et_day_bounds(): Returns [start_et, end_et) and et_date
+   - et_day_bounds(): Returns [start_et, end_et) plus UTC bounds
    - within_et_bounds(): Check if event falls within bounds
    - assert_et_bounds(): Validate bounds invariants
 4. NO other date helpers allowed
 5. Uses zoneinfo (Python 3.9+) ONLY - no pytz
 
 CANONICAL ET SLATE WINDOW (HARD RULE):
-    Start: 00:01:00 America/New_York (12:01 AM ET)
+    Start: 00:00:00 America/New_York (midnight ET) - inclusive
     End:   00:00:00 America/New_York next day (midnight, exclusive)
     Interval: [start_et, end_et)
-
-    Why 00:01:00? Avoids ambiguity at midnight boundary and ensures
-    games at exactly 00:00:00 are NOT double-counted across days.
 
 Usage:
     from core.time_et import now_et, et_day_bounds, within_et_bounds
@@ -27,10 +24,10 @@ Usage:
     current = now_et()
 
     # Get ET day bounds
-    start, end, et_date = et_day_bounds()
-    # start = 2026-01-28 00:01:00 ET
+    start, end, start_utc, end_utc = et_day_bounds()
+    # start = 2026-01-28 00:00:00 ET
     # end = 2026-01-29 00:00:00 ET (exclusive)
-    # et_date = "2026-01-28"
+    # start_utc/end_utc for DB queries
 
     # Check if event is in bounds
     if within_et_bounds(event_time, start, end):
@@ -44,11 +41,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# America/New_York timezone
+# America/New_York timezone (single source of truth)
 ET = ZoneInfo("America/New_York")
 
-# Canonical slate window start time: 00:01:00 ET (NOT midnight)
-ET_SLATE_START_TIME = time(0, 1, 0)  # 12:01 AM ET
+# Canonical slate window start time: midnight ET
+ET_SLATE_START_TIME = time(0, 0, 0)
 
 
 def now_et() -> datetime:
@@ -68,51 +65,56 @@ def now_et() -> datetime:
     return datetime.now(timezone.utc).astimezone(ET)
 
 
-def et_day_bounds(date_str: str = None) -> Tuple[datetime, datetime, str]:
+def et_day_bounds(
+    now_utc: Optional[datetime] = None,
+    date_str: Optional[str] = None
+) -> Tuple[datetime, datetime, datetime, datetime]:
     """
     Get ET day bounds [start, end) and date string.
 
     CANONICAL ET SLATE WINDOW:
-        Start: 00:01:00 ET (12:01 AM) - inclusive
+        Start: 00:00:00 ET (midnight) - inclusive
         End:   00:00:00 ET next day (midnight) - exclusive
         Interval: [start, end)
 
-    Why 00:01:00? Events exactly at midnight (00:00:00) belong to the
-    PREVIOUS day, avoiding double-counting across day boundaries.
-
     Args:
-        date_str: Optional date "YYYY-MM-DD". If None, uses today in ET.
+        now_utc: Optional UTC datetime. If None, uses current UTC time.
+        date_str: Optional ET date "YYYY-MM-DD". If provided, overrides now_utc.
 
     Returns:
-        Tuple of (start_et, end_et, et_date)
-        - start_et: datetime at 00:01:00 ET (12:01 AM)
+        Tuple of (start_et, end_et, start_utc, end_utc)
+        - start_et: datetime at 00:00:00 ET
         - end_et: datetime at 00:00:00 ET next day (exclusive upper bound)
-        - et_date: "YYYY-MM-DD" format
+        - start_utc: UTC-converted start_et (for DB filtering)
+        - end_utc: UTC-converted end_et (for DB filtering)
 
     Example:
-        >>> start, end, et_date = et_day_bounds("2026-01-28")
-        >>> et_date
-        "2026-01-28"
+        >>> start, end, start_utc, end_utc = et_day_bounds()
         >>> start
-        datetime(2026, 1, 28, 0, 1, 0, tzinfo=ZoneInfo('America/New_York'))
+        datetime(2026, 1, 28, 0, 0, 0, tzinfo=ZoneInfo('America/New_York'))
         >>> end
         datetime(2026, 1, 29, 0, 0, 0, tzinfo=ZoneInfo('America/New_York'))
         >>> start <= some_event < end  # start inclusive, end exclusive
     """
-    # Get target date
+    if isinstance(now_utc, str) and date_str is None:
+        date_str = now_utc
+        now_utc = None
+
     if date_str:
         day = datetime.strptime(date_str, "%Y-%m-%d").date()
+        start_et = datetime.combine(day, time(0, 0, 0), tzinfo=ET)
+        end_et = start_et + timedelta(days=1)
     else:
-        day = now_et().date()
+        if now_utc is None:
+            now_utc = datetime.now(timezone.utc)
+        now_et = now_utc.astimezone(ET)
+        start_et = now_et.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_et = start_et + timedelta(days=1)
 
-    # CANONICAL: 00:01:00 to next day 00:00:00 (start at 12:01 AM, end exclusive at midnight)
-    start = datetime.combine(day, ET_SLATE_START_TIME, tzinfo=ET)  # 00:01:00 ET
-    end = datetime.combine(day + timedelta(days=1), time(0, 0, 0), tzinfo=ET)  # Next day midnight
+    start_utc = start_et.astimezone(timezone.utc)
+    end_utc = end_et.astimezone(timezone.utc)
 
-    # ISO date string
-    et_date = day.isoformat()
-
-    return start, end, et_date
+    return start_et, end_et, start_utc, end_utc
 
 
 def parse_event_time(event_time: Union[str, datetime]) -> Optional[datetime]:
@@ -175,11 +177,11 @@ def within_et_bounds(
         bool: True if start_et <= event_time_et < end_et
 
     Example:
-        >>> start, end, _ = et_day_bounds("2026-01-28")
+        >>> start, end, _, _ = et_day_bounds(date_str="2026-01-28")
         >>> within_et_bounds("2026-01-28T19:30:00Z", start, end)
         True
         >>> within_et_bounds("2026-01-28T00:00:30Z", start, end)
-        False  # 00:00:30 ET is before 00:01:00 ET start
+        True  # 00:00:30 ET is within midnight-start window
     """
     event_et = parse_event_time(event_time)
     if event_et is None:
@@ -192,7 +194,7 @@ def is_in_et_day(event_time: str, date_str: str = None) -> bool:
     """
     Check if event time falls within ET day bounds.
 
-    Uses the canonical slate window: [00:01:00 ET, 00:00:00 next day ET)
+    Uses the canonical slate window: [00:00:00 ET, 00:00:00 next day ET)
 
     Args:
         event_time: ISO datetime string (e.g., "2026-01-28T19:30:00Z")
@@ -207,13 +209,13 @@ def is_in_et_day(event_time: str, date_str: str = None) -> bool:
         >>> is_in_et_day("2026-01-29T05:00:00Z", "2026-01-28")
         False
         >>> is_in_et_day("2026-01-28T00:00:30-05:00", "2026-01-28")
-        False  # 00:00:30 ET is before 00:01:00 ET start
+        True  # 00:00:30 ET is within midnight-start window
     """
     if not event_time:
         return False
 
     # Get day bounds
-    start, end, _ = et_day_bounds(date_str)
+    start, end, _, _ = et_day_bounds(date_str=date_str)
 
     # Use canonical within_et_bounds check
     return within_et_bounds(event_time, start, end)
@@ -258,7 +260,7 @@ def assert_et_bounds(start: datetime, end: datetime) -> Dict[str, Any]:
     Invariants checked:
     1. end > start (positive duration)
     2. end.date() == start.date() + 1 day (spans exactly to next day)
-    3. start.time() == 00:01:00 (canonical start time)
+    3. start.time() == 00:00:00 (canonical start time)
     4. end.time() == 00:00:00 (midnight end)
     5. Both have America/New_York timezone
 
@@ -273,7 +275,7 @@ def assert_et_bounds(start: datetime, end: datetime) -> Dict[str, Any]:
             - errors: List[str] - Error messages for failed checks
 
     Example:
-        >>> start, end, _ = et_day_bounds()
+        >>> start, end, _, _ = et_day_bounds()
         >>> result = assert_et_bounds(start, end)
         >>> result["valid"]
         True
@@ -292,10 +294,10 @@ def assert_et_bounds(start: datetime, end: datetime) -> Dict[str, Any]:
     if not checks["spans_to_next_day"]:
         errors.append(f"end.date() ({end.date()}) must be start.date() + 1 ({expected_end_date})")
 
-    # Check 3: start.time() == 00:01:00
-    checks["start_is_0001"] = start.time() == ET_SLATE_START_TIME
-    if not checks["start_is_0001"]:
-        errors.append(f"start.time() ({start.time()}) must be 00:01:00")
+    # Check 3: start.time() == 00:00:00
+    checks["start_is_midnight"] = start.time() == time(0, 0, 0)
+    if not checks["start_is_midnight"]:
+        errors.append(f"start.time() ({start.time()}) must be 00:00:00")
 
     # Check 4: end.time() == 00:00:00
     checks["end_is_midnight"] = end.time() == time(0, 0, 0)
@@ -335,7 +337,8 @@ def get_et_debug_info() -> Dict[str, Any]:
         "2026-01-29"
     """
     now = now_et()
-    start, end, et_date = et_day_bounds()
+    start, end, _, _ = et_day_bounds()
+    et_date = start.date().isoformat()
     validation = assert_et_bounds(start, end)
 
     return {
@@ -344,9 +347,9 @@ def get_et_debug_info() -> Dict[str, Any]:
         "et_date": et_date,
         "et_day_start_iso": start.isoformat(),
         "et_day_end_iso": end.isoformat(),
-        "window_display": f"{et_date} 00:01:00 to 23:59:59 ET",
+        "window_display": f"{et_date} 00:00:00 to 23:59:59 ET",
         "canonical_window": {
-            "start_time": "00:01:00",
+            "start_time": "00:00:00",
             "end_time": "00:00:00 (next day, exclusive)",
             "interval_notation": "[start, end)",
         },

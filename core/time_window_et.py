@@ -5,20 +5,15 @@ This module provides ET day-bound filtering to ensure only TODAY's games
 are processed and returned to users.
 
 CANONICAL ET SLATE WINDOW (HARD RULE):
-    Start: 00:01:00 America/New_York (12:01 AM ET) - inclusive
+    Start: 00:00:00 America/New_York (midnight ET) - inclusive
     End:   00:00:00 America/New_York next day (midnight) - exclusive
     Interval: [start, end)
 
 CRITICAL RULES:
-1. Day bounds: [00:01:00 ET, 00:00:00 ET next day) - half-open interval
+1. Day bounds: [00:00:00 ET, 00:00:00 ET next day) - half-open interval
 2. Timezone: America/New_York (explicit via ZoneInfo, not implicit)
 3. MANDATORY: Every data path that touches Odds API events MUST filter to today-only
-4. Events at exactly 00:00:00 (midnight) belong to PREVIOUS day
-
-WHY 00:01:00?
-- Avoids ambiguity at midnight boundary
-- Events exactly at midnight are NOT double-counted across days
-- Consistent behavior for late-night games that extend past midnight
+4. Events are included from midnight to midnight (exclusive end)
 
 WHY THIS EXISTS:
 - Without ET gating, Odds API returns ALL upcoming events (60+ games across multiple days)
@@ -37,7 +32,7 @@ USAGE:
 """
 
 from typing import List, Dict, Any, Tuple, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 import logging
 
 # Import core invariants
@@ -47,7 +42,7 @@ try:
 except ImportError:
     INVARIANTS_AVAILABLE = False
     ET_TIMEZONE = "America/New_York"
-    ET_DAY_START = "00:01:00"  # CANONICAL: 12:01 AM ET (not midnight)
+    ET_DAY_START = "00:00:00"  # CANONICAL: midnight ET
     ET_DAY_END = "00:00:00"    # CANONICAL: midnight next day (exclusive)
 
 # Try to import existing time_filters module
@@ -80,9 +75,9 @@ def filter_today_et(
     date_str: Optional[str] = None
 ) -> Tuple[List[Dict], List[Dict]]:
     """
-    Filter events to ET day [00:01:00 ET, 00:00:00 ET next day).
+    Filter events to ET day [00:00:00 ET, 00:00:00 ET next day).
 
-    Uses canonical slate window: start at 00:01:00 ET, end at midnight
+    Uses canonical slate window: start at 00:00:00 ET, end at midnight
     next day (exclusive upper bound).
 
     Args:
@@ -135,7 +130,7 @@ def is_in_today_et(
 
 def get_today_et_bounds(
     date_str: Optional[str] = None
-) -> Tuple[datetime, datetime, str]:
+) -> Tuple[datetime, datetime, datetime, datetime]:
     """
     Get ET day bounds for a given date.
 
@@ -143,22 +138,27 @@ def get_today_et_bounds(
         date_str: Optional date string (YYYY-MM-DD). If None, uses today.
 
     Returns:
-        Tuple of (start_dt, end_dt, iso_date_str)
-        - start_dt: datetime at 00:00:00 ET
-        - end_dt: datetime at 00:00:00 ET next day (exclusive upper bound)
-        - iso_date_str: YYYY-MM-DD format
+        Tuple of (start_et, end_et, start_utc, end_utc)
+        - start_et: datetime at 00:00:00 ET
+        - end_et: datetime at 00:00:00 ET next day (exclusive upper bound)
+        - start_utc: UTC-converted start_et (for DB filtering)
+        - end_utc: UTC-converted end_et (for DB filtering)
 
     Example:
-        start, end, iso_date = get_today_et_bounds()
+        start, end, start_utc, end_utc = get_today_et_bounds()
         # start = 2026-01-28 00:00:00 ET
         # end = 2026-01-29 00:00:00 ET
-        # iso_date = "2026-01-28"
+        # start_utc/end_utc for DB queries
     """
-    if TIME_FILTERS_AVAILABLE:
-        return et_day_bounds(date_str)
-    else:
+    try:
+        from core.time_et import et_day_bounds as core_et_day_bounds
+        return core_et_day_bounds(date_str=date_str)
+    except Exception:
         # Fallback
-        return _fallback_et_bounds(date_str)
+        start, end, date_str_local = _fallback_et_bounds(date_str)
+        start_utc = start.astimezone(timezone.utc) if start.tzinfo else start.replace(tzinfo=timezone.utc)
+        end_utc = end.astimezone(timezone.utc) if end.tzinfo else end.replace(tzinfo=timezone.utc)
+        return start, end, start_utc, end_utc
 
 
 def get_today_date_string() -> str:

@@ -2932,7 +2932,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         player_team: str = "",
         pick_type: str = "GAME",
         pick_side: str = "",
-        injuries_data: dict = None
+        injuries_data: dict = None,
+        rest_days_override: Optional[int] = None
     ) -> dict:
         """
         Compute all 4 context modifier fields for a pick.
@@ -2975,7 +2976,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             }
 
         # 2. REST_DAYS
-        if TRAVEL_MODULE_AVAILABLE:
+        if rest_days_override is not None:
+            result["rest_days"] = {
+                "value": int(rest_days_override),
+                "status": "COMPUTED",
+                "reason": "ESPN_SCHEDULE"
+            }
+        elif TRAVEL_MODULE_AVAILABLE:
             try:
                 travel_data = get_travel_impact(sport, away_team, home_team)
                 result["rest_days"] = {
@@ -3216,7 +3223,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # Helper function to calculate scores with v15.0 4-engine architecture + Jason Sim
     # v16.1: Added market parameter for LSTM model routing
     # v17.6: Added game_bookmakers parameter for Benford analysis
-    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market="", game_datetime=None, game_bookmakers=None):
+    def calculate_pick_score(game_str, sharp_signal, base_ai=5.0, player_name="", home_team="", away_team="", spread=0, total=220, public_pct=50, pick_type="GAME", pick_side="", prop_line=0, market="", game_datetime=None, game_bookmakers=None, book_count: int = 0, market_book_count: int = 0):
         # =====================================================================
         # v15.0 FOUR-ENGINE ARCHITECTURE (Clean Separation)
         # =====================================================================
@@ -3417,6 +3424,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 research_reasons.append(f"ESPN spread close (diff {diff:.1f})")
                         except (ValueError, TypeError):
                             pass
+
                     elif espn_total and total:
                         try:
                             diff = abs(float(espn_total) - float(total))
@@ -3428,6 +3436,17 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 research_reasons.append(f"ESPN total close (diff {diff:.1f})")
                         except (ValueError, TypeError):
                             pass
+
+        # Market liquidity boost (book coverage)
+        liquidity_boost = 0.0
+        if market_book_count >= 8:
+            liquidity_boost = 0.5
+        elif market_book_count >= 5:
+            liquidity_boost = 0.3
+        elif market_book_count >= 3:
+            liquidity_boost = 0.1
+        if liquidity_boost > 0:
+            research_reasons.append(f"Market liquidity: {market_book_count} books (+{liquidity_boost})")
 
         # Pillar 3: Public Betting Fade (0-2 pts) - fading heavy public action
         # v14.11: Use centralized public fade calculator (single-calculation policy)
@@ -3471,9 +3490,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 research_reasons.append("Splits data present (minimal divergence)")
 
         # Research score: Sum of pillars normalized to 0-10
-        # Max possible: 3 (sharp) + 3 (line) + 2 (public) + 3 (base) + 0.5 (ESPN) = 11.5 → capped at 10
-        research_score = min(10.0, base_research + sharp_boost + line_boost + public_boost + espn_odds_boost)
-        research_reasons.append(f"Research: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + ESPN:{espn_odds_boost} + Base:{base_research})")
+        # Max possible: 3 (sharp) + 3 (line) + 2 (public) + 3 (base) + 0.5 (ESPN) + 0.5 (liquidity) = 12.0 → capped at 10
+        research_score = min(10.0, base_research + sharp_boost + line_boost + public_boost + espn_odds_boost + liquidity_boost)
+        research_reasons.append(
+            f"Research: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + ESPN:{espn_odds_boost} + Liquidity:{liquidity_boost} + Base:{base_research})"
+        )
 
         # Pillar score for backwards compatibility (used in scoring_breakdown)
         pillar_score = sharp_boost + line_boost + public_boost
@@ -4481,7 +4502,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "sharp_boost": round(sharp_boost, 2),
                 "line_boost": round(line_boost, 2),
                 "public_boost": round(public_boost, 2),
-                "base_research": 2.0,
+                "liquidity_boost": round(liquidity_boost, 2),
+                "book_count": int(book_count or 0),
+                "market_book_count": int(market_book_count or 0),
+                "base_research": round(base_research, 2),
                 "signal_strength": sig_strength,
                 "total": round(research_score, 2)
             },
@@ -4794,6 +4818,70 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 _espn_events_by_teams[(_normalize_team_name(home_team), _normalize_team_name(away_team))] = event_id
 
     logger.info("ESPN EVENTS LOOKUP: %d games mapped", len(_espn_events_by_teams))
+
+    # v17.9: REST DAYS from ESPN schedule (lookback window)
+    _rest_days_by_team = {}
+    if ESPN_OFFICIALS_AVAILABLE:
+        try:
+            if _filter_date:
+                _target_date_et = datetime.fromisoformat(_filter_date).date()
+            else:
+                _target_date_et = datetime.now(_ET).date() if _ET else datetime.now(timezone.utc).date()
+
+            _lookback_days = 7
+            _dates = [(_target_date_et - timedelta(days=i)) for i in range(1, _lookback_days + 1)]
+
+            async def _fetch_scoreboard_for_date(d):
+                return await get_espn_scoreboard(sport, d.isoformat())
+
+            _scoreboards = await asyncio.gather(
+                *[_fetch_scoreboard_for_date(d) for d in _dates],
+                return_exceptions=True
+            )
+
+            _last_game_date_by_team = {}
+            for d, sb in zip(_dates, _scoreboards):
+                if isinstance(sb, Exception):
+                    continue
+                for event in sb.get("events", []):
+                    # ESPN event date is ISO timestamp
+                    ev_date = event.get("date")
+                    if ev_date:
+                        try:
+                            ev_dt = datetime.fromisoformat(ev_date.replace("Z", "+00:00"))
+                            ev_et_date = ev_dt.astimezone(_ET).date() if _ET else ev_dt.date()
+                        except Exception:
+                            ev_et_date = d
+                    else:
+                        ev_et_date = d
+
+                    competitions = event.get("competitions", [])
+                    if not competitions:
+                        continue
+                    comp = competitions[0]
+                    for team_data in comp.get("competitors", []):
+                        team_name = team_data.get("team", {}).get("displayName", "")
+                        if not team_name:
+                            continue
+                        key = _normalize_team_name(team_name)
+                        prev = _last_game_date_by_team.get(key)
+                        if prev is None or ev_et_date > prev:
+                            _last_game_date_by_team[key] = ev_et_date
+
+            for team_key, last_date in _last_game_date_by_team.items():
+                delta_days = (_target_date_et - last_date).days - 1
+                _rest_days_by_team[team_key] = max(0, delta_days)
+
+            logger.info("REST_DAYS (ESPN): computed for %d teams (lookback=%d)",
+                        len(_rest_days_by_team), _lookback_days)
+        except Exception as e:
+            logger.debug("REST_DAYS (ESPN) failed: %s", e)
+            _rest_days_by_team = {}
+
+    def _rest_days_for_team(team_name: str) -> Optional[int]:
+        if not team_name:
+            return None
+        return _rest_days_by_team.get(_normalize_team_name(team_name))
 
     # v17.2: Prefetch officials for all ESPN events (batch operation)
     _officials_by_game = {}
@@ -5195,8 +5283,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         if _espn_venue.get("attendance"):
                             _game_weather["espn_venue"]["attendance"] = _espn_venue.get("attendance")
 
+                game_bookmakers = game.get("bookmakers", [])
+                game_book_count = len(game_bookmakers)
+                market_book_counts = {}
+                for bm in game_bookmakers:
+                    bm_key_raw = bm.get("key") or bm.get("title") or ""
+                    bm_key_norm = bm_key_raw.lower() if isinstance(bm_key_raw, str) else ""
+                    for market in bm.get("markets", []):
+                        market_key = market.get("key", "")
+                        if market_key:
+                            market_book_counts.setdefault(market_key, set()).add(bm_key_norm or bm.get("title", "").lower())
+                market_book_counts = {k: len(v) for k, v in market_book_counts.items()}
+
                 best_odds_by_market = {}
-                for bm in game.get("bookmakers", []):
+                for bm in game_bookmakers:
                     book_name = bm.get("title", "Unknown")
                     book_key = bm.get("key", "") or "consensus"  # FIX: Never store empty book_key
                     bm_link = AFFILIATE_LINKS.get(book_key, "")
@@ -5216,7 +5316,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             if outcome_key not in best_odds_by_market or odds > best_odds_by_market[outcome_key][0]:
                                 best_odds_by_market[outcome_key] = (odds, book_name, book_key, bm_link)
 
-                for bm in game.get("bookmakers", [])[:1]:
+                for bm in game_bookmakers[:1]:
                     for market in bm.get("markets", []):
                         market_key = market.get("key", "")
                         for outcome in market.get("outcomes", []):
@@ -5242,6 +5342,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             else:
                                 continue
 
+                            market_book_count = market_book_counts.get(market_key, 0)
                             score_data = calculate_pick_score(
                                 game_str,
                                 sharp_signal,
@@ -5256,7 +5357,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 pick_side=pick_side,
                                 prop_line=point if point else 0,
                                 game_datetime=_game_datetime,
-                                game_bookmakers=game.get("bookmakers", [])  # v17.6: Multi-book for Benford
+                                game_bookmakers=game_bookmakers,  # v17.6: Multi-book for Benford
+                                book_count=game_book_count,
+                                market_book_count=market_book_count
                             )
 
                             # v16.0: Apply weather modifier to score (capped at ±1.0)
@@ -5289,6 +5392,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
                             # v16.0: Compute context modifiers for this game pick
                             # v17.2: Pass injuries data for vacuum calculation
+                            _rest_override = _rest_days_for_team(away_team)
                             _game_ctx_mods = await compute_context_modifiers(
                                 sport=sport.upper(),
                                 home_team=home_team,
@@ -5296,7 +5400,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 player_team="",
                                 pick_type="GAME",
                                 pick_side=pick_side,
-                                injuries_data=_injuries_by_team
+                                injuries_data=_injuries_by_team,
+                                rest_days_override=_rest_override
                             )
 
                             game_picks.append({
@@ -5330,6 +5435,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 "recommendation": display,
                                 "best_book": best_book,
                                 "best_book_link": best_link,
+                                "book_count": game_book_count,
+                                "market_book_count": market_book_count,
                                 "signals_fired": signals_fired,
                                 "signals_firing": signals_fired,
                                 "pillars_hit": score_data.get("pillars_passed", []),
@@ -5415,6 +5522,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
             # v16.0: Compute context modifiers for sharp fallback picks
             # v17.2: Pass injuries data for vacuum calculation
+            _rest_override = _rest_days_for_team(away_team)
             _sharp_ctx_mods = await compute_context_modifiers(
                 sport=sport.upper(),
                 home_team=home_team,
@@ -5422,7 +5530,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 player_team="",
                 pick_type="SHARP",
                 pick_side=signal.get("side", "HOME"),
-                injuries_data=_injuries_by_team
+                injuries_data=_injuries_by_team,
+                rest_days_override=_rest_override
             )
 
             game_picks.append({
@@ -5547,7 +5656,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "weather_reasons": []
                 }
 
-            for prop in game.get("props", []):
+            _props_list = game.get("props", [])
+            _prop_books_by_market = {}
+            _prop_books_all = set()
+            for _p in _props_list:
+                _book_raw = _p.get("book") or _p.get("book_key") or _p.get("bookmaker") or ""
+                _book_norm = _book_raw.lower().strip() if isinstance(_book_raw, str) else ""
+                _market_key = _p.get("market", "")
+                if _book_norm:
+                    _prop_books_all.add(_book_norm)
+                    if _market_key:
+                        _prop_books_by_market.setdefault(_market_key, set()).add(_book_norm)
+            _prop_book_count = len(_prop_books_all)
+
+            for prop in _props_list:
                 player = prop.get("player", "Unknown")
                 market = prop.get("market", "")
                 line = prop.get("line", 0)
@@ -5565,6 +5687,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     invalid_injury_count += 1
                     continue
 
+                market_book_count = len(_prop_books_by_market.get(market, set()))
                 score_data = calculate_pick_score(
                     game_str + player,
                     sharp_signal,
@@ -5580,7 +5703,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     prop_line=line,
                     market=market,  # v16.1: Pass market for LSTM model routing
                     game_datetime=_prop_game_datetime,
-                    game_bookmakers=game.get("bookmakers", [])  # v17.6: Multi-book for Benford
+                    game_bookmakers=game.get("bookmakers", []),  # v17.6: Multi-book for Benford
+                    book_count=_prop_book_count,
+                    market_book_count=market_book_count
                 )
 
                 # v16.0: Apply weather modifier to props (capped at ±1.0)
@@ -5659,6 +5784,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
                 # v16.0: Compute context modifiers for this prop
                 # v17.2: Pass injuries data for vacuum calculation
+                _rest_override = _rest_days_for_team(player_team or away_team)
                 _ctx_mods = await compute_context_modifiers(
                     sport=sport.upper(),
                     home_team=home_team,
@@ -5666,7 +5792,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     player_team=player_team or "",
                     pick_type="PROP",
                     pick_side=side,
-                    injuries_data=_injuries_by_team
+                    injuries_data=_injuries_by_team,
+                    rest_days_override=_rest_override
                 )
 
                 props_picks.append({
@@ -5711,6 +5838,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "injury_checked": True,  # v14.9: Injury was checked via identity resolver
                     "best_book": book_name,
                     "best_book_link": book_link,
+                    "book_count": _prop_book_count,
+                    "market_book_count": market_book_count,
                     "signals_fired": signals_fired,  # v14.9: Array of all triggered signals
                     "signals_firing": signals_fired,  # v14.11: Alias for output contract
                     "pillars_hit": score_data.get("pillars_passed", []),  # v14.11: Alias

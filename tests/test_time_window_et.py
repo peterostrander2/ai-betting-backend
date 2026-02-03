@@ -2,7 +2,7 @@
 Test: TODAY-ONLY ET window filtering.
 
 CANONICAL ET SLATE WINDOW (HARD RULE):
-    Start: 00:01:00 America/New_York (12:01 AM ET) - inclusive
+    Start: 00:00:00 America/New_York (midnight ET) - inclusive
     End:   00:00:00 America/New_York next day (midnight) - exclusive
     Interval: [start, end)
 
@@ -17,25 +17,27 @@ from core.time_et import now_et, et_day_bounds, is_in_et_day, filter_events_et
 
 
 def test_et_day_bounds_returns_0001_to_next_midnight():
-    """CANONICAL: ET day bounds are [00:01:00, 00:00:00 next day) exclusive."""
-    start, end, date_str = et_day_bounds()
+    """CANONICAL: ET day bounds are [00:00:00, 00:00:00 next day) exclusive."""
+    start, end, start_utc, end_utc = et_day_bounds()
+    date_str = start.date().isoformat()
 
     assert start.tzinfo == ZoneInfo("America/New_York")
     assert end.tzinfo == ZoneInfo("America/New_York")
     assert start.hour == 0
-    assert start.minute == 1  # CANONICAL: 00:01:00 start
+    assert start.minute == 0  # CANONICAL: 00:00:00 start
     assert start.second == 0
     assert end.hour == 0
     assert end.minute == 0
     assert end.second == 0
-    # Duration: 23 hours 59 minutes
+    # Duration: 24 hours
     duration = end - start
-    assert duration.total_seconds() == 23 * 3600 + 59 * 60
+    assert duration.total_seconds() == 24 * 3600
 
 
 def test_filter_events_today_only():
     """Filter keeps only events in today's ET window."""
-    start, end, today = et_day_bounds()
+    start, end, start_utc, end_utc = et_day_bounds()
+    today = start.date().isoformat()
 
     # Event today at noon ET
     today_event = {
@@ -70,10 +72,11 @@ def test_filter_events_today_only():
 
 
 def test_is_in_et_day_canonical_boundaries():
-    """Test canonical boundaries: 00:01:00 start (inclusive), 00:00:00 next day (exclusive)."""
-    start, end, today = et_day_bounds()
+    """Test canonical boundaries: 00:00:00 start (inclusive), 00:00:00 next day (exclusive)."""
+    start, end, start_utc, end_utc = et_day_bounds()
+    today = start.date().isoformat()
 
-    # Start of day at 00:01:00 (inclusive)
+    # Start of day at 00:00:00 (inclusive)
     assert is_in_et_day(start.isoformat()) is True
 
     # 1 second before end (still in day)
@@ -87,8 +90,8 @@ def test_is_in_et_day_canonical_boundaries():
     after_end = end + timedelta(seconds=1)
     assert is_in_et_day(after_end.isoformat()) is False
 
-    # Before start (00:00:30 - should be excluded)
-    before_start = start - timedelta(seconds=30)  # 00:00:30
+    # Before start (23:59:30 previous day - should be excluded)
+    before_start = start - timedelta(seconds=30)
     assert is_in_et_day(before_start.isoformat()) is False
 
 
@@ -105,24 +108,26 @@ def test_filter_events_handles_missing_commence_time():
     assert len(dropped_missing) == 2
 
 
-def test_midnight_excluded_from_window():
-    """CANONICAL: 00:00:00 ET should be EXCLUDED (belongs to previous day)."""
-    start, end, today = et_day_bounds()
+def test_midnight_included_in_window():
+    """CANONICAL: 00:00:00 ET should be INCLUDED (midnight start)."""
+    start, end, start_utc, end_utc = et_day_bounds()
+    today = start.date().isoformat()
 
     # Create midnight timestamp
     midnight = start.replace(hour=0, minute=0, second=0)
 
-    assert is_in_et_day(midnight.isoformat()) is False
+    assert is_in_et_day(midnight.isoformat()) is True
 
 
 def test_canonical_boundary_events():
     """Test events at canonical boundary times."""
-    start, end, today = et_day_bounds()
+    start, end, start_utc, end_utc = et_day_bounds()
+    today = start.date().isoformat()
 
     events = [
-        # EXCLUDE: 00:00:30 (before 00:01:00 start)
-        {"id": "too_early", "commence_time": start.replace(hour=0, minute=0, second=30).isoformat()},
-        # INCLUDE: 00:01:00 (exactly at start)
+        # INCLUDE: 00:00:30 (after midnight start)
+        {"id": "after_start", "commence_time": start.replace(hour=0, minute=0, second=30).isoformat()},
+        # INCLUDE: 00:00:00 (exactly at start)
         {"id": "at_start", "commence_time": start.isoformat()},
         # INCLUDE: noon
         {"id": "noon", "commence_time": start.replace(hour=12, minute=0).isoformat()},
@@ -134,14 +139,14 @@ def test_canonical_boundary_events():
 
     kept, dropped_window, dropped_missing = filter_events_et(events, today)
 
-    assert len(kept) == 3
-    assert len(dropped_window) == 2
+    assert len(kept) == 4
+    assert len(dropped_window) == 1
 
     kept_ids = [e["id"] for e in kept]
+    assert "after_start" in kept_ids
     assert "at_start" in kept_ids
     assert "noon" in kept_ids
     assert "last_second" in kept_ids
 
     dropped_ids = [e["id"] for e in dropped_window]
-    assert "too_early" in dropped_ids
     assert "at_end" in dropped_ids

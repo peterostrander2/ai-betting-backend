@@ -4,12 +4,12 @@ TIME_FILTERS.PY - TODAY-ONLY SLATE GATING
 v15.4 - Production time filtering for America/New_York timezone
 
 CANONICAL ET SLATE WINDOW (HARD RULE):
-    Start: 00:01:00 America/New_York (12:01 AM ET) - inclusive
+    Start: 00:00:00 America/New_York (midnight ET) - inclusive
     End:   00:00:00 America/New_York next day (midnight) - exclusive
     Interval: [start, end)
 
 This module enforces TODAY-only slate gating:
-- Only games between 00:01:00 ET and 00:00:00 ET next day are valid
+- Only games between 00:00:00 ET and 00:00:00 ET next day are valid
 - Ghost games (teams not playing today) are blocked
 - Tomorrow games from APIs are excluded
 - Events at exactly 00:00:00 (midnight) belong to PREVIOUS day
@@ -72,7 +72,7 @@ def get_today_range_et(date_str: Optional[str] = None) -> Tuple[datetime, dateti
     Get today's valid time range in ET.
 
     CANONICAL ET SLATE WINDOW:
-        Start: 00:01:00 ET (12:01 AM) - inclusive
+        Start: 00:00:00 ET (midnight) - inclusive
         End:   00:00:00 ET next day (midnight) - exclusive
 
     Args:
@@ -80,7 +80,7 @@ def get_today_range_et(date_str: Optional[str] = None) -> Tuple[datetime, dateti
 
     Returns:
         Tuple of (start_of_day, end_of_day) in ET
-        Start: 00:01:00 ET
+        Start: 00:00:00 ET
         End: 00:00:00 ET next day (exclusive upper bound)
     """
     if date_str:
@@ -90,12 +90,12 @@ def get_today_range_et(date_str: Optional[str] = None) -> Tuple[datetime, dateti
         today = now_et.date()
 
     if ET:
-        # CANONICAL: 00:01:00 start, midnight next day end (exclusive)
-        start = datetime.combine(today, dt_time(0, 1, 0), tzinfo=ET)
+        # CANONICAL: midnight start, midnight next day end (exclusive)
+        start = datetime.combine(today, dt_time(0, 0, 0), tzinfo=ET)
         end = datetime.combine(today + timedelta(days=1), dt_time(0, 0, 0), tzinfo=ET)
     else:
         # Fallback: naive datetimes
-        start = datetime.combine(today, dt_time(0, 1, 0))
+        start = datetime.combine(today, dt_time(0, 0, 0))
         end = datetime.combine(today + timedelta(days=1), dt_time(0, 0, 0))
 
     return start, end
@@ -146,7 +146,7 @@ def is_game_today(commence_time: str) -> bool:
     """
     Check if a game is scheduled for today (ET timezone).
 
-    Uses canonical ET slate window: [00:01:00 ET, 00:00:00 next day ET)
+    Uses canonical ET slate window: [00:00:00 ET, 00:00:00 next day ET)
 
     Args:
         commence_time: ISO format datetime string
@@ -504,12 +504,12 @@ def get_game_status(commence_time: str) -> str:
 # ET DAY BOUNDS — date_str-aware filtering (v15.1)
 # =============================================================================
 
-def et_day_bounds(date_str: Optional[str] = None) -> Tuple[datetime, datetime, str]:
+def et_day_bounds(date_str: Optional[str] = None) -> Tuple[datetime, datetime, datetime, datetime]:
     """
     Get ET day bounds. If date_str None, use today.
 
     CANONICAL ET SLATE WINDOW:
-        Start: 00:01:00 ET (12:01 AM) - inclusive
+        Start: 00:00:00 ET (midnight) - inclusive
         End:   00:00:00 ET next day (midnight) - exclusive
         Interval: [start, end)
 
@@ -517,27 +517,34 @@ def et_day_bounds(date_str: Optional[str] = None) -> Tuple[datetime, datetime, s
         date_str: Optional date string (YYYY-MM-DD)
 
     Returns:
-        Tuple of (start, end, iso_date_str)
-        - start: datetime at 00:01:00 ET
-        - end: datetime at 00:00:00 ET next day (exclusive upper bound)
-        - iso_date_str: YYYY-MM-DD format
+        Tuple of (start_et, end_et, start_utc, end_utc)
+        - start_et: datetime at 00:00:00 ET
+        - end_et: datetime at 00:00:00 ET next day (exclusive upper bound)
+        - start_utc: UTC-converted start_et (for DB filtering)
+        - end_utc: UTC-converted end_et (for DB filtering)
     """
-    # Get the target date
-    if date_str:
-        day = datetime.strptime(date_str, "%Y-%m-%d").date()
-    else:
-        day = get_now_et().date()
+    # Delegate to core.time_et (single source of truth)
+    try:
+        from core.time_et import et_day_bounds as core_et_day_bounds
+        start_et, end_et, start_utc, end_utc = core_et_day_bounds(date_str=date_str)
+        return start_et, end_et, start_utc, end_utc
+    except Exception:
+        # Fallback to local implementation if core not available
+        if date_str:
+            day = datetime.strptime(date_str, "%Y-%m-%d").date()
+        else:
+            day = get_now_et().date()
 
-    if ET:
-        # CANONICAL: 00:01:00 start, midnight next day end (exclusive)
-        start = datetime.combine(day, dt_time(0, 1, 0), tzinfo=ET)
-        end = datetime.combine(day + timedelta(days=1), dt_time(0, 0, 0), tzinfo=ET)
-    else:
-        # Fallback: naive datetimes
-        start = datetime.combine(day, dt_time(0, 1, 0))
-        end = datetime.combine(day + timedelta(days=1), dt_time(0, 0, 0))
+        if ET:
+            start = datetime.combine(day, dt_time(0, 0, 0), tzinfo=ET)
+            end = datetime.combine(day + timedelta(days=1), dt_time(0, 0, 0), tzinfo=ET)
+        else:
+            start = datetime.combine(day, dt_time(0, 0, 0))
+            end = datetime.combine(day + timedelta(days=1), dt_time(0, 0, 0))
 
-    return start, end, day.isoformat()
+        start_utc = start.astimezone(timezone.utc) if start.tzinfo else start.replace(tzinfo=timezone.utc)
+        end_utc = end.astimezone(timezone.utc) if end.tzinfo else end.replace(tzinfo=timezone.utc)
+        return start, end, start_utc, end_utc
 
 
 def is_in_et_day(commence_time: str, date_str: Optional[str] = None) -> bool:
@@ -554,7 +561,7 @@ def is_in_et_day(commence_time: str, date_str: Optional[str] = None) -> bool:
     game_dt = parse_game_time(commence_time)
     if not game_dt:
         return False
-    start, end, _ = et_day_bounds(date_str)  # Ignore iso_date_str
+    start, end, _, _ = et_day_bounds(date_str)  # Ignore UTC bounds for filtering
 
     if ET:
         # Ensure game_dt is timezone-aware and in ET

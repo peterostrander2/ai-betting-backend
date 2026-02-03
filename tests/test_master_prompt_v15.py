@@ -141,7 +141,7 @@ class TestESTGating:
 
     def test_et_day_bounds_returns_00_to_23_59(self):
         """Day bounds should be 00:00:00 to 23:59:59 ET"""
-        start, end = et_day_bounds("2026-01-28")
+        start, end, start_utc, end_utc = et_day_bounds("2026-01-28")
 
         assert start.hour == 0
         assert start.minute == 0

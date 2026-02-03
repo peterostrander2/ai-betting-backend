@@ -88,9 +88,9 @@ ESOTERIC_PROP_NUMEROLOGY_COMPONENTS = ["daily", "prop_line"]
 # Timezone for "today" filtering
 ET_TIMEZONE = "America/New_York"
 
-# Day boundaries in ET
-ET_DAY_START = "00:01"  # 12:01 AM ET
-ET_DAY_END = "23:59"    # 11:59 PM ET
+# Day boundaries in ET (midnight to midnight, exclusive end)
+ET_DAY_START = "00:00"  # 12:00 AM ET
+ET_DAY_END = "00:00"    # Next day midnight (exclusive)
 
 # Maximum reasonable event count for single sport "today" slate
 # (used for sanity check warnings)
