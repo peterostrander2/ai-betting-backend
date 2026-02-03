@@ -675,6 +675,58 @@ class TrapLearningLoop:
 
         return results
 
+    def get_recent_parameter_adjustments(
+        self,
+        engine: str,
+        parameter: str,
+        hours_back: int = 24
+    ) -> List[Dict]:
+        """
+        Get recent adjustments for a specific engine/parameter.
+
+        Used by AutoGrader reconciliation to avoid conflicting adjustments.
+
+        Args:
+            engine: Target engine (research, esoteric, jarvis, context, ai)
+            parameter: Specific parameter name
+            hours_back: Look back window in hours (default 24)
+
+        Returns:
+            List of adjustment records for this engine/parameter
+        """
+        cutoff = datetime.now() - timedelta(hours=hours_back)
+
+        results = []
+        for adj in self.adjustments:
+            if adj.target_engine != engine:
+                continue
+            if adj.target_parameter != parameter:
+                continue
+
+            adj_time = datetime.fromisoformat(adj.applied_at)
+            if adj_time >= cutoff:
+                results.append(asdict(adj))
+
+        return results
+
+    def has_recent_trap_adjustment(
+        self,
+        engine: str,
+        parameter: str,
+        hours_back: int = 24
+    ) -> Tuple[bool, Optional[Dict]]:
+        """
+        Check if there's a recent trap adjustment for this parameter.
+
+        Returns:
+            (has_recent, last_adjustment) - bool and the most recent adjustment dict
+        """
+        recent = self.get_recent_parameter_adjustments(engine, parameter, hours_back)
+        if recent:
+            # Return most recent
+            return True, recent[-1]
+        return False, None
+
     def get_trap_stats(self, trap_id: str) -> Dict[str, Any]:
         """Get statistics for a specific trap."""
         trap = self.traps.get(trap_id)

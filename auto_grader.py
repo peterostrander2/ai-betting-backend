@@ -39,11 +39,14 @@ INTERPRETING BIAS RESULTS:
 
 import json
 import os
+import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from collections import defaultdict
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # ============================================
 # DATA STRUCTURES
@@ -60,21 +63,43 @@ class PredictionRecord:
     actual_value: Optional[float] = None
     line: Optional[float] = None
     timestamp: str = ""
-    
-    # Context features used
+
+    # Pick type for differentiated learning (PROP, SPREAD, TOTAL, MONEYLINE, SHARP)
+    pick_type: str = ""
+
+    # Context features used (Pillars 13-15)
     defense_adjustment: float = 0.0
     pace_adjustment: float = 0.0
     vacuum_adjustment: float = 0.0
     lstm_adjustment: float = 0.0
     officials_adjustment: float = 0.0
-    
+
+    # Research engine signals (GAP 1 fix: sharp money, public fade, line variance)
+    sharp_money_adjustment: float = 0.0
+    public_fade_adjustment: float = 0.0
+    line_variance_adjustment: float = 0.0
+
+    # GLITCH Protocol signals (GAP 2 fix: esoteric signal tracking)
+    # Keys: chrome_resonance, void_moon, noosphere, hurst, kp_index, benford
+    glitch_signals: Optional[Dict[str, float]] = None
+
+    # Esoteric engine contributions (GAP 2 fix: track all esoteric signals)
+    # Keys: numerology, astro, fib_alignment, fib_retracement, vortex, daily_edge,
+    #       biorhythms, gann_square, founders_echo, lunar, mercury, rivalry, streak, solar
+    esoteric_contributions: Optional[Dict[str, float]] = None
+
     # Outcome tracking
     hit: Optional[bool] = None  # Did prediction beat the line correctly?
     error: Optional[float] = None  # predicted - actual
-    
+
     def __post_init__(self):
         if not self.timestamp:
             self.timestamp = datetime.now().isoformat()
+        # Initialize dicts to empty if None (for dataclass field default)
+        if self.glitch_signals is None:
+            self.glitch_signals = {}
+        if self.esoteric_contributions is None:
+            self.esoteric_contributions = {}
 
 
 @dataclass
@@ -219,19 +244,33 @@ class AutoGrader:
         stat_type: str,
         predicted_value: float,
         line: Optional[float] = None,
-        adjustments: Optional[Dict] = None
+        adjustments: Optional[Dict] = None,
+        pick_type: str = "",
+        glitch_signals: Optional[Dict[str, float]] = None,
+        esoteric_contributions: Optional[Dict[str, float]] = None
     ) -> str:
         """
         Log a prediction for later grading.
-        
+
+        Args:
+            sport: Sport code (NBA, NFL, etc.)
+            player_name: Player name for props, team for games
+            stat_type: Stat being predicted (points, spread, total, etc.)
+            predicted_value: Model's predicted value
+            line: Betting line
+            adjustments: Dict of adjustment values from scoring pipeline
+            pick_type: PROP, SPREAD, TOTAL, MONEYLINE, SHARP
+            glitch_signals: GLITCH protocol signal contributions
+            esoteric_contributions: Esoteric engine signal breakdown
+
         Returns prediction_id for tracking.
         """
         sport = sport.upper()
         prediction_id = f"{sport}_{player_name}_{stat_type}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        
+
         # Extract adjustment values
         adj = adjustments or {}
-        
+
         record = PredictionRecord(
             prediction_id=prediction_id,
             sport=sport,
@@ -239,11 +278,21 @@ class AutoGrader:
             stat_type=stat_type,
             predicted_value=predicted_value,
             line=line,
+            pick_type=pick_type,
+            # Context features (Pillars 13-15)
             defense_adjustment=adj.get("defense", 0.0),
             pace_adjustment=adj.get("pace", 0.0),
             vacuum_adjustment=adj.get("vacuum", 0.0),
             lstm_adjustment=adj.get("lstm_brain", 0.0),
-            officials_adjustment=adj.get("officials", 0.0)
+            officials_adjustment=adj.get("officials", 0.0),
+            # Research engine signals (GAP 1)
+            sharp_money_adjustment=adj.get("sharp_money", 0.0),
+            public_fade_adjustment=adj.get("public_fade", 0.0),
+            line_variance_adjustment=adj.get("line_variance", 0.0),
+            # GLITCH Protocol signals (GAP 2)
+            glitch_signals=glitch_signals or {},
+            # Esoteric contributions (GAP 2)
+            esoteric_contributions=esoteric_contributions or {}
         )
         
         self.predictions[sport].append(record)
@@ -350,109 +399,237 @@ class AutoGrader:
         self,
         sport: str,
         stat_type: str = "all",
-        days_back: int = 1
+        days_back: int = 1,
+        pick_type: str = "all",
+        apply_confidence_decay: bool = True
     ) -> Dict:
         """
         Calculate prediction bias for a sport/stat combination.
-        
+
+        v19.1: Expanded to include all signals for complete learning:
+        - Research signals: sharp_money, public_fade, line_variance
+        - GLITCH signals: chrome_resonance, void_moon, noosphere, hurst, kp_index, benford
+        - Esoteric signals: all 14 esoteric contributions
+        - Confidence decay: older picks weighted less (70% decay per day)
+        - Pick type separation: PROP vs GAME picks analyzed separately
+
         Returns bias metrics per adjustment factor.
         """
         sport = sport.upper()
         cutoff = datetime.now() - timedelta(days=days_back)
-        
+
         # Filter relevant predictions
         relevant = []
+        weights = []  # Confidence decay weights
         for record in self.predictions.get(sport, []):
             if record.actual_value is None:
                 continue
-            
+
             record_date = datetime.fromisoformat(record.timestamp)
             if record_date < cutoff:
                 continue
-            
+
             if stat_type != "all" and record.stat_type != stat_type:
                 continue
-            
+
+            # GAP 3 fix: Filter by pick_type for differentiated learning
+            if pick_type != "all" and record.pick_type and record.pick_type.upper() != pick_type.upper():
+                continue
+
             relevant.append(record)
-        
+
+            # GAP 5 fix: Confidence decay - older picks weighted less
+            if apply_confidence_decay:
+                days_old = (datetime.now() - record_date).days
+                weight = 0.7 ** days_old  # 70% decay per day (1.0 today, 0.7 yesterday, 0.49 2 days ago)
+                weights.append(weight)
+            else:
+                weights.append(1.0)
+
         if not relevant:
             return {"error": "No graded predictions found", "sample_size": 0}
-        
-        # Calculate overall bias
+
+        # Calculate overall bias (with optional weighting)
         errors = [r.error for r in relevant]
-        mean_error = np.mean(errors)
+        if apply_confidence_decay and sum(weights) > 0:
+            weighted_errors = [e * w for e, w in zip(errors, weights)]
+            mean_error = sum(weighted_errors) / sum(weights)
+        else:
+            mean_error = np.mean(errors)
+
         std_error = np.std(errors)
         hit_rate = sum(1 for r in relevant if r.hit) / len(relevant) if relevant else 0
-        
+
         # Calculate bias contribution per factor
         factor_bias = {}
-        
+
+        # ===== CONTEXT LAYER SIGNALS (Pillars 13-15) =====
         # Defense bias: correlation between defense_adjustment and error
         defense_adj = [r.defense_adjustment for r in relevant]
         if any(a != 0 for a in defense_adj):
-            factor_bias["defense"] = self._calculate_factor_bias(defense_adj, errors)
-        
+            factor_bias["defense"] = self._calculate_factor_bias(defense_adj, errors, weights)
+
         # Pace bias
         pace_adj = [r.pace_adjustment for r in relevant]
         if any(a != 0 for a in pace_adj):
-            factor_bias["pace"] = self._calculate_factor_bias(pace_adj, errors)
-        
+            factor_bias["pace"] = self._calculate_factor_bias(pace_adj, errors, weights)
+
         # Vacuum bias
         vacuum_adj = [r.vacuum_adjustment for r in relevant]
         if any(a != 0 for a in vacuum_adj):
-            factor_bias["vacuum"] = self._calculate_factor_bias(vacuum_adj, errors)
-        
+            factor_bias["vacuum"] = self._calculate_factor_bias(vacuum_adj, errors, weights)
+
         # LSTM bias
         lstm_adj = [r.lstm_adjustment for r in relevant]
         if any(a != 0 for a in lstm_adj):
-            factor_bias["lstm"] = self._calculate_factor_bias(lstm_adj, errors)
-        
+            factor_bias["lstm"] = self._calculate_factor_bias(lstm_adj, errors, weights)
+
         # Officials bias
         officials_adj = [r.officials_adjustment for r in relevant]
         if any(a != 0 for a in officials_adj):
-            factor_bias["officials"] = self._calculate_factor_bias(officials_adj, errors)
+            factor_bias["officials"] = self._calculate_factor_bias(officials_adj, errors, weights)
+
+        # ===== GAP 1 FIX: RESEARCH ENGINE SIGNALS =====
+        # Sharp money bias
+        sharp_adj = [r.sharp_money_adjustment for r in relevant]
+        if any(a != 0 for a in sharp_adj):
+            factor_bias["sharp_money"] = self._calculate_factor_bias(sharp_adj, errors, weights)
+
+        # Public fade bias
+        fade_adj = [r.public_fade_adjustment for r in relevant]
+        if any(a != 0 for a in fade_adj):
+            factor_bias["public_fade"] = self._calculate_factor_bias(fade_adj, errors, weights)
+
+        # Line variance bias
+        variance_adj = [r.line_variance_adjustment for r in relevant]
+        if any(a != 0 for a in variance_adj):
+            factor_bias["line_variance"] = self._calculate_factor_bias(variance_adj, errors, weights)
+
+        # ===== GAP 2 FIX: GLITCH PROTOCOL SIGNALS =====
+        glitch_bias = {}
+        glitch_signal_names = ["chrome_resonance", "void_moon", "noosphere", "hurst", "kp_index", "benford"]
+        for signal_name in glitch_signal_names:
+            signal_adj = [r.glitch_signals.get(signal_name, 0.0) for r in relevant]
+            if any(a != 0 for a in signal_adj):
+                glitch_bias[signal_name] = self._calculate_factor_bias(signal_adj, errors, weights)
+        if glitch_bias:
+            factor_bias["glitch"] = glitch_bias
+
+        # ===== GAP 2 FIX: ESOTERIC ENGINE SIGNALS =====
+        esoteric_bias = {}
+        esoteric_signal_names = [
+            "numerology", "astro", "fib_alignment", "fib_retracement", "vortex", "daily_edge",
+            "biorhythms", "gann_square", "founders_echo", "lunar", "mercury", "rivalry", "streak", "solar"
+        ]
+        for signal_name in esoteric_signal_names:
+            signal_adj = [r.esoteric_contributions.get(signal_name, 0.0) for r in relevant]
+            if any(a != 0 for a in signal_adj):
+                esoteric_bias[signal_name] = self._calculate_factor_bias(signal_adj, errors, weights)
+        if esoteric_bias:
+            factor_bias["esoteric"] = esoteric_bias
+
+        # ===== GAP 3 FIX: PICK TYPE BREAKDOWN =====
+        pick_type_stats = {}
+        for pt in ["PROP", "SPREAD", "TOTAL", "MONEYLINE", "SHARP"]:
+            pt_records = [r for r in relevant if r.pick_type and r.pick_type.upper() == pt]
+            if pt_records:
+                pt_hits = sum(1 for r in pt_records if r.hit)
+                pt_errors = [r.error for r in pt_records]
+                pick_type_stats[pt] = {
+                    "count": len(pt_records),
+                    "hit_rate": round((pt_hits / len(pt_records)) * 100, 1),
+                    "mean_error": round(np.mean(pt_errors), 3),
+                    "std_error": round(np.std(pt_errors), 3)
+                }
         
         return {
             "sport": sport,
             "stat_type": stat_type,
+            "pick_type_filter": pick_type,
             "sample_size": len(relevant),
             "days_analyzed": days_back,
+            "confidence_decay_applied": apply_confidence_decay,
             "overall": {
                 "mean_error": round(mean_error, 3),
                 "std_error": round(std_error, 3),
                 "hit_rate": round(hit_rate * 100, 1),
                 "bias_direction": "OVER" if mean_error > 0 else "UNDER"
             },
-            "factor_bias": factor_bias
+            "factor_bias": factor_bias,
+            "pick_type_breakdown": pick_type_stats if pick_type_stats else None
         }
-    
+
     def _calculate_factor_bias(
         self,
         adjustments: List[float],
-        errors: List[float]
+        errors: List[float],
+        weights: Optional[List[float]] = None
     ) -> Dict:
-        """Calculate how much a factor contributes to prediction error."""
+        """
+        Calculate how much a factor contributes to prediction error.
+
+        v19.1: Added optional weights for confidence decay support.
+
+        Args:
+            adjustments: List of adjustment values for this factor
+            errors: List of prediction errors
+            weights: Optional confidence weights (1.0 = today, 0.7 = yesterday, etc.)
+
+        Returns:
+            Dict with correlation, mean_when_over, mean_when_under, suggested_adjustment
+        """
         if not adjustments or not errors:
             return {"contribution": 0, "correlation": 0}
-        
-        # Correlation between adjustment and error
+
+        # Use uniform weights if not provided
+        if weights is None:
+            weights = [1.0] * len(adjustments)
+
+        # Weighted correlation between adjustment and error
         if np.std(adjustments) > 0 and np.std(errors) > 0:
-            correlation = np.corrcoef(adjustments, errors)[0, 1]
+            # Weighted covariance / (weighted std_adj * weighted std_err)
+            total_weight = sum(weights)
+            if total_weight > 0:
+                weighted_mean_adj = sum(a * w for a, w in zip(adjustments, weights)) / total_weight
+                weighted_mean_err = sum(e * w for e, w in zip(errors, weights)) / total_weight
+
+                weighted_cov = sum(w * (a - weighted_mean_adj) * (e - weighted_mean_err)
+                                   for a, e, w in zip(adjustments, errors, weights)) / total_weight
+                weighted_var_adj = sum(w * (a - weighted_mean_adj) ** 2
+                                       for a, w in zip(adjustments, weights)) / total_weight
+                weighted_var_err = sum(w * (e - weighted_mean_err) ** 2
+                                       for e, w in zip(errors, weights)) / total_weight
+
+                if weighted_var_adj > 0 and weighted_var_err > 0:
+                    correlation = weighted_cov / (np.sqrt(weighted_var_adj) * np.sqrt(weighted_var_err))
+                else:
+                    correlation = 0
+            else:
+                correlation = np.corrcoef(adjustments, errors)[0, 1]
         else:
             correlation = 0
-        
-        # Mean adjustment when error was positive vs negative
-        pos_error_adj = [a for a, e in zip(adjustments, errors) if e > 0]
-        neg_error_adj = [a for a, e in zip(adjustments, errors) if e < 0]
-        
-        mean_pos = np.mean(pos_error_adj) if pos_error_adj else 0
-        mean_neg = np.mean(neg_error_adj) if neg_error_adj else 0
-        
+
+        # Mean adjustment when error was positive vs negative (weighted)
+        pos_pairs = [(a, w) for a, e, w in zip(adjustments, errors, weights) if e > 0]
+        neg_pairs = [(a, w) for a, e, w in zip(adjustments, errors, weights) if e < 0]
+
+        if pos_pairs:
+            total_pos_weight = sum(w for _, w in pos_pairs)
+            mean_pos = sum(a * w for a, w in pos_pairs) / total_pos_weight if total_pos_weight > 0 else 0
+        else:
+            mean_pos = 0
+
+        if neg_pairs:
+            total_neg_weight = sum(w for _, w in neg_pairs)
+            mean_neg = sum(a * w for a, w in neg_pairs) / total_neg_weight if total_neg_weight > 0 else 0
+        else:
+            mean_neg = 0
+
         return {
-            "correlation": round(correlation, 3),
+            "correlation": round(correlation, 3) if not np.isnan(correlation) else 0,
             "mean_when_over": round(mean_pos, 3),
             "mean_when_under": round(mean_neg, 3),
-            "suggested_adjustment": round(-correlation * 0.1, 4)  # Damped correction
+            "suggested_adjustment": round(-correlation * 0.1, 4) if not np.isnan(correlation) else 0  # Damped correction
         }
     
     # ============================================
@@ -536,9 +713,177 @@ class AutoGrader:
             "stat_type": stat_type,
             "bias_analysis": bias,
             "weight_adjustments": adjustments,
+            "applied": apply_changes,
+            "reconciliation": reconciliation_results if 'reconciliation_results' in dir() else None
+        }
+
+    # ============================================
+    # GAP 4 FIX: TRAP-AUTOGRADER RECONCILIATION
+    # ============================================
+
+    def check_trap_reconciliation(
+        self,
+        engine: str,
+        parameter: str,
+        hours_back: int = 24
+    ) -> Tuple[bool, Optional[Dict]]:
+        """
+        Check if Trap Learning Loop recently adjusted this parameter.
+
+        v19.1: Prevents AutoGrader from conflicting with trap adjustments.
+
+        Args:
+            engine: Engine name (context, ai, etc. - maps to trap engines)
+            parameter: Parameter being adjusted
+            hours_back: Look back window
+
+        Returns:
+            (should_skip, trap_info) - True if AutoGrader should skip this adjustment
+        """
+        try:
+            from trap_learning_loop import get_trap_loop
+            trap_loop = get_trap_loop()
+
+            # Map AutoGrader factor names to trap engine/parameter names
+            factor_to_trap = {
+                "defense": ("context", "weight_def_rank"),
+                "pace": ("context", "weight_pace"),
+                "vacuum": ("context", "weight_vacuum"),
+                "lstm": ("ai", "lstm_weight"),
+                "officials": ("research", "weight_officials"),  # If added to traps
+            }
+
+            # Check if this factor maps to a trap-adjustable parameter
+            trap_mapping = factor_to_trap.get(parameter)
+            if trap_mapping:
+                trap_engine, trap_param = trap_mapping
+                has_recent, last_adj = trap_loop.has_recent_trap_adjustment(
+                    trap_engine, trap_param, hours_back
+                )
+                if has_recent:
+                    logger.info(
+                        "RECONCILIATION: Skipping AutoGrader adjustment for %s/%s - "
+                        "trap %s adjusted it %s ago",
+                        engine, parameter, last_adj.get("trap_id"), last_adj.get("applied_at")
+                    )
+                    return True, last_adj
+
+            return False, None
+
+        except ImportError:
+            # Trap learning loop not available
+            return False, None
+        except Exception as e:
+            logger.warning("Trap reconciliation check failed: %s", e)
+            return False, None
+
+    def adjust_weights_with_reconciliation(
+        self,
+        sport: str,
+        stat_type: str = "points",
+        days_back: int = 1,
+        apply_changes: bool = True,
+        reconcile_with_traps: bool = True
+    ) -> Dict:
+        """
+        Adjust weights based on calculated bias WITH trap reconciliation.
+
+        v19.1: Checks for recent trap adjustments before applying changes
+        to prevent AutoGrader from overriding hypothesis-driven learning.
+
+        Args:
+            sport: Sport code
+            stat_type: Stat type to analyze
+            days_back: Days of data to analyze
+            apply_changes: Whether to apply changes
+            reconcile_with_traps: Whether to skip factors recently adjusted by traps
+        """
+        sport = sport.upper()
+
+        # Get current weights
+        if stat_type not in self.weights.get(sport, {}):
+            stat_type = "points"
+
+        if sport not in self.weights or stat_type not in self.weights[sport]:
+            return {"error": f"No weights found for {sport}/{stat_type}", "weights_unchanged": True}
+
+        current = self.weights[sport][stat_type]
+
+        # Calculate bias
+        bias = self.calculate_bias(sport, stat_type, days_back)
+
+        if "error" in bias:
+            return {"error": bias["error"], "weights_unchanged": True}
+
+        # Calculate new weights with reconciliation
+        adjustments = {}
+        new_weights = {}
+        reconciliation_results = {}
+
+        for factor in ["defense", "pace", "vacuum", "lstm", "officials"]:
+            old_weight = getattr(current, factor)
+
+            # GAP 4 FIX: Check trap reconciliation
+            if reconcile_with_traps:
+                should_skip, trap_info = self.check_trap_reconciliation("context", factor)
+                if should_skip:
+                    reconciliation_results[factor] = {
+                        "skipped": True,
+                        "reason": "recent_trap_adjustment",
+                        "trap_info": trap_info
+                    }
+                    adjustments[factor] = {
+                        "old": round(old_weight, 4),
+                        "delta": 0,
+                        "new": round(old_weight, 4),
+                        "skipped_reason": "trap_reconciliation"
+                    }
+                    new_weights[factor] = old_weight
+                    continue
+
+            # Normal adjustment logic
+            if factor in bias.get("factor_bias", {}):
+                suggested = bias["factor_bias"][factor].get("suggested_adjustment", 0)
+                delta = suggested * current.learning_rate
+                new_weight = np.clip(
+                    old_weight + delta,
+                    current.min_weight,
+                    current.max_weight
+                )
+            else:
+                new_weight = old_weight
+                delta = 0
+
+            adjustments[factor] = {
+                "old": round(old_weight, 4),
+                "delta": round(delta, 4),
+                "new": round(new_weight, 4)
+            }
+            new_weights[factor] = new_weight
+
+        # Apply changes if requested
+        if apply_changes:
+            for factor, value in new_weights.items():
+                setattr(current, factor, value)
+
+            self._save_state()
+
+            self.bias_history[f"{sport}_{stat_type}"].append({
+                "timestamp": datetime.now().isoformat(),
+                "bias": bias,
+                "adjustments": adjustments,
+                "reconciliation": reconciliation_results
+            })
+
+        return {
+            "sport": sport,
+            "stat_type": stat_type,
+            "bias_analysis": bias,
+            "weight_adjustments": adjustments,
+            "reconciliation": reconciliation_results,
             "applied": apply_changes
         }
-    
+
     def run_daily_audit(self, days_back: int = 1) -> Dict:
         """
         Run full audit across all sports and stat types.

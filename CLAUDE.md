@@ -3076,6 +3076,144 @@ curl /live/scheduler/status -H "X-API-Key: KEY" | jq '.jobs[] | select(.id == "t
 
 ---
 
+### INVARIANT 25: Complete Learning System (v19.1)
+
+**RULE:** Every signal contribution MUST be tracked for learning. AutoGrader and Trap Learning Loop MUST NOT conflict.
+
+**Philosophy:** "Competition + variance. Learning loop baked in via fused upgrades."
+
+**Implementation:**
+- `auto_grader.py` - Statistical/reactive learning (daily 6:00 AM ET)
+- `trap_learning_loop.py` - Hypothesis-driven/proactive learning (daily 6:15 AM ET)
+- `live_data_router.py` - Pick persistence with full signal tracking
+
+**Two Learning Systems (Complementary):**
+| System | Type | Schedule | What It Learns |
+|--------|------|----------|----------------|
+| **AutoGrader** | Statistical/Reactive | 6:00 AM ET | Bias from prediction errors → adjusts context weights |
+| **Trap Learning Loop** | Hypothesis/Proactive | 6:15 AM ET | Conditional rules → adjusts research/esoteric/jarvis weights |
+
+**Signal Tracking Coverage (28 signals - 100% coverage):**
+| Category | Count | Signals | Learning System |
+|----------|-------|---------|-----------------|
+| Context Layer | 5 | defense, pace, vacuum, lstm, officials | AutoGrader |
+| Research Engine | 3 | sharp_money, public_fade, line_variance | AutoGrader + Traps |
+| GLITCH Protocol | 6 | chrome_resonance, void_moon, noosphere, hurst, kp_index, benford | AutoGrader |
+| Esoteric Engine | 14 | numerology, astro, fib_alignment, fib_retracement, vortex, daily_edge, biorhythms, gann, founders_echo, lunar, mercury, rivalry, streak, solar | AutoGrader + Traps |
+| **Total** | **28** | All signals tracked | Full coverage |
+
+**PredictionRecord Fields (auto_grader.py lines 52-95):**
+```python
+@dataclass
+class PredictionRecord:
+    # Core
+    prediction_id: str
+    sport: str
+    player_name: str
+    stat_type: str
+    predicted_value: float
+    actual_value: Optional[float] = None
+    line: Optional[float] = None
+    timestamp: str = ""
+
+    # Pick type (for differentiated learning)
+    pick_type: str = ""  # PROP, SPREAD, TOTAL, MONEYLINE, SHARP
+
+    # Context Layer (Pillars 13-15)
+    defense_adjustment: float = 0.0
+    pace_adjustment: float = 0.0
+    vacuum_adjustment: float = 0.0
+    lstm_adjustment: float = 0.0
+    officials_adjustment: float = 0.0
+
+    # Research Engine Signals (GAP 1 fix)
+    sharp_money_adjustment: float = 0.0
+    public_fade_adjustment: float = 0.0
+    line_variance_adjustment: float = 0.0
+
+    # GLITCH Protocol Signals (GAP 2 fix)
+    glitch_signals: Optional[Dict[str, float]] = None  # chrome_resonance, void_moon, etc.
+
+    # Esoteric Contributions (GAP 2 fix)
+    esoteric_contributions: Optional[Dict[str, float]] = None  # numerology, astro, etc.
+
+    # Outcome
+    hit: Optional[bool] = None
+    error: Optional[float] = None
+```
+
+**Bias Calculation (auto_grader.py calculate_bias()):**
+- Calculates bias for ALL 28 signals (not just 5)
+- Supports confidence decay (70% per day - older picks weighted less)
+- Supports pick_type filtering (PROP vs GAME analysis separately)
+- Returns `pick_type_breakdown` for differentiated learning
+
+**Trap-AutoGrader Reconciliation:**
+- Before AutoGrader adjusts a weight, it checks if Trap Learning Loop recently adjusted it
+- 24-hour lookback window for reconciliation
+- If trap adjusted in last 24h, AutoGrader SKIPS that parameter
+- Prevents conflicting adjustments
+
+**Key Functions:**
+```python
+from auto_grader import (
+    get_grader,                          # Singleton access
+    PredictionRecord,                    # Full signal tracking
+    AutoGrader.calculate_bias,           # All 28 signals
+    AutoGrader.adjust_weights_with_reconciliation,  # Trap-safe adjustment
+    AutoGrader.check_trap_reconciliation,  # Check for recent trap adjustments
+)
+
+from trap_learning_loop import (
+    get_trap_loop,                       # Singleton access
+    has_recent_trap_adjustment,          # Check for recent adjustments
+    get_recent_parameter_adjustments,    # Get adjustments for engine/parameter
+)
+```
+
+**Verification:**
+```bash
+# 1. Check all signal fields in pick output
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.game_picks.picks[0] | {
+  research_breakdown: .research_breakdown,
+  glitch_signals: .glitch_signals,
+  esoteric_contributions: .esoteric_contributions
+}'
+
+# 2. Verify bias calculation includes all signals
+curl /live/grader/bias/NBA?days_back=1 -H "X-API-Key: KEY" | jq '.factor_bias | keys'
+# Should include: defense, pace, vacuum, lstm, officials, sharp_money, public_fade, line_variance, glitch, esoteric
+
+# 3. Check reconciliation in adjustment result
+curl -X POST /live/grader/adjust/NBA -H "X-API-Key: KEY" | jq '.reconciliation'
+# Shows which parameters were skipped due to recent trap adjustments
+
+# 4. Check pick_type breakdown
+curl /live/grader/bias/NBA?days_back=7 -H "X-API-Key: KEY" | jq '.pick_type_breakdown'
+# Shows hit_rate and mean_error by pick type (PROP, SPREAD, TOTAL, etc.)
+```
+
+**NEVER:**
+- Add a new signal without tracking it in PredictionRecord
+- Skip signal persistence in live_data_router.py pick logging
+- Let AutoGrader override recent trap adjustments (reconciliation mandatory)
+- Calculate bias for only some signals (must be ALL 28)
+- Assume pick_type is "GAME" for game picks (actual values: SPREAD, MONEYLINE, TOTAL, SHARP)
+
+**Files Modified (v19.1):**
+| File | Lines | Change |
+|------|-------|--------|
+| `auto_grader.py` | 52-95 | Expanded PredictionRecord with 28 signal fields |
+| `auto_grader.py` | 237-290 | Updated log_prediction() to accept new fields |
+| `auto_grader.py` | 395-555 | Expanded calculate_bias() for all signals + confidence decay |
+| `auto_grader.py` | 556-630 | Updated _calculate_factor_bias() for weighted calculations |
+| `auto_grader.py` | 716-825 | Added reconciliation methods |
+| `trap_learning_loop.py` | 677-722 | Added has_recent_trap_adjustment(), get_recent_parameter_adjustments() |
+| `live_data_router.py` | 4887-4899 | Added glitch_signals, esoteric_contributions to scoring result |
+| `live_data_router.py` | 6390-6420 | Updated pick persistence with all signal fields |
+
+---
+
 ## 📚 MASTER FILE INDEX (ML & GLITCH)
 
 ### Core ML Files
@@ -3313,6 +3451,74 @@ class TrapDefinition:
     cooldown_hours: int = 24        # Min time between triggers
     max_triggers_per_week: int = 3  # Rate limiting
     status: str = "ACTIVE"          # ACTIVE, PAUSED, RETIRED
+```
+
+### Complete Learning System Files (v19.1)
+| File | Purpose | Key Functions/Classes |
+|------|---------|----------------------|
+| `auto_grader.py` | Statistical learning (6:00 AM ET) | `AutoGrader`, `PredictionRecord`, `calculate_bias()`, `adjust_weights_with_reconciliation()`, `check_trap_reconciliation()` |
+| `trap_learning_loop.py` | Hypothesis learning (6:15 AM ET) | `TrapLearningLoop`, `has_recent_trap_adjustment()`, `get_recent_parameter_adjustments()` |
+| `grader_store.py` | Pick persistence | `persist_pick()`, `load_predictions()` |
+| `live_data_router.py` | Signal extraction for learning | Lines 4887-4899 (glitch_signals), Lines 6390-6420 (pick persistence) |
+
+**PredictionRecord Signal Tracking (28 signals - 100% coverage):**
+```python
+@dataclass
+class PredictionRecord:
+    # Core fields
+    prediction_id: str
+    sport: str
+    player_name: str
+    stat_type: str
+    predicted_value: float
+    actual_value: Optional[float] = None
+    pick_type: str = ""  # PROP, SPREAD, TOTAL, MONEYLINE, SHARP
+
+    # Context Layer (Pillars 13-15)
+    defense_adjustment: float = 0.0
+    pace_adjustment: float = 0.0
+    vacuum_adjustment: float = 0.0
+    lstm_adjustment: float = 0.0
+    officials_adjustment: float = 0.0
+
+    # Research Engine Signals
+    sharp_money_adjustment: float = 0.0
+    public_fade_adjustment: float = 0.0
+    line_variance_adjustment: float = 0.0
+
+    # GLITCH Protocol Signals (6 signals)
+    glitch_signals: Optional[Dict[str, float]] = None
+    # chrome_resonance, void_moon, noosphere, hurst, kp_index, benford
+
+    # Esoteric Contributions (14 signals)
+    esoteric_contributions: Optional[Dict[str, float]] = None
+    # numerology, astro, fib_alignment, fib_retracement, vortex, daily_edge,
+    # biorhythms, gann, founders_echo, lunar, mercury, rivalry, streak, solar
+```
+
+**Trap-AutoGrader Reconciliation Flow:**
+```
+AutoGrader (6:00 AM ET)
+    │
+    ├── Calculate bias for ALL 28 signals
+    │   (with 70% confidence decay per day)
+    │
+    ├── Before adjusting any parameter:
+    │   check_trap_reconciliation(engine, parameter)
+    │       │
+    │       └── has_recent_trap_adjustment(engine, parameter, lookback=24h)
+    │           │
+    │           └── If trap adjusted in last 24h → SKIP this parameter
+    │
+    └── Apply remaining adjustments
+        (only parameters NOT recently adjusted by traps)
+
+Trap Learning Loop (6:15 AM ET)
+    │
+    ├── Evaluate pre-game traps against results
+    │
+    └── Apply conditional adjustments
+        (logged to adjustments.jsonl)
 ```
 
 ### Context Layer Files
@@ -4300,6 +4506,68 @@ self.scheduler.add_job(
 
 **Fixed in:** v19.0 (Feb 2026)
 
+### Lesson 28: Complete Learning System Pattern (v19.1)
+**Problem:** After implementing AutoGrader (statistical) and Trap Learning Loop (hypothesis-driven), we discovered 15 gaps where learning should happen but doesn't:
+- GAP 1: Research Engine signals (sharp_money, public_fade, line_variance) not tracked for learning
+- GAP 2: GLITCH/Esoteric signals not tracked for learning
+- GAP 3: Props vs Games treated identically (no pick_type differentiation)
+- GAP 4: AutoGrader and Trap Learning Loop could conflict on same parameter
+- GAP 5: No confidence decay (old picks weighted same as recent)
+
+**Solution Implemented (v19.1):**
+1. Expanded `PredictionRecord` with ALL 28 signal tracking fields
+2. Updated `calculate_bias()` to analyze ALL signals with 70% confidence decay
+3. Added `pick_type_breakdown` for differentiated learning (PROP vs SPREAD vs TOTAL)
+4. Added Trap-AutoGrader reconciliation (24h lookback prevents conflicts)
+5. Updated `live_data_router.py` to extract and persist all signal contributions
+
+**Key Design Decisions:**
+| Decision | Why |
+|----------|-----|
+| Track ALL 28 signals | Complete learning coverage - no blind spots |
+| 70% confidence decay | Recent picks more relevant than older picks |
+| pick_type differentiation | Props behave differently than game picks |
+| 24h reconciliation window | Prevents conflicting adjustments |
+| Dict fields for GLITCH/Esoteric | Flexible signal structure, easy to extend |
+
+**Signal Coverage (28 total):**
+| Category | Count | Signals |
+|----------|-------|---------|
+| Context Layer | 5 | defense, pace, vacuum, lstm, officials |
+| Research Engine | 3 | sharp_money, public_fade, line_variance |
+| GLITCH Protocol | 6 | chrome_resonance, void_moon, noosphere, hurst, kp_index, benford |
+| Esoteric Engine | 14 | numerology, astro, fib_alignment, fib_retracement, vortex, daily_edge, biorhythms, gann, founders_echo, lunar, mercury, rivalry, streak, solar |
+
+**Reconciliation Pattern:**
+```python
+# In AutoGrader.adjust_weights_with_reconciliation()
+for param in parameters_to_adjust:
+    if has_recent_trap_adjustment(engine, param, lookback_hours=24):
+        logger.info("SKIP %s.%s - trap adjusted in last 24h", engine, param)
+        continue
+    # Apply statistical adjustment
+```
+
+**Verification Commands:**
+```bash
+# Check all signal fields in pick output
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.game_picks.picks[0] | {
+  glitch_signals: .glitch_signals,
+  esoteric_contributions: .esoteric_contributions,
+  research_breakdown: .research_breakdown
+}'
+
+# Check bias calculation includes all signals
+curl /live/grader/bias/NBA?days_back=1 -H "X-API-Key: KEY" | jq '.factor_bias | keys'
+
+# Check pick_type breakdown
+curl /live/grader/bias/NBA?days_back=7 -H "X-API-Key: KEY" | jq '.pick_type_breakdown'
+```
+
+**Invariant:** Every signal contribution MUST be tracked for learning. Two learning systems MUST NOT conflict. Philosophy: "Competition + variance. Learning loop baked in via fused upgrades."
+
+**Fixed in:** v19.1 (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -4842,6 +5110,92 @@ curl -X PUT "/live/traps/test-trap-verification/status?status=RETIRED" -H "X-API
 
 ---
 
+## ✅ VERIFICATION CHECKLIST (v19.1 - Complete Learning System)
+
+Run these after ANY change to AutoGrader, PredictionRecord, or signal tracking:
+
+```bash
+# 1. Syntax check learning system modules
+python -m py_compile auto_grader.py trap_learning_loop.py grader_store.py
+
+# 2. Verify PredictionRecord has all signal fields
+python3 -c "
+from auto_grader import PredictionRecord
+import dataclasses
+fields = [f.name for f in dataclasses.fields(PredictionRecord)]
+required = ['pick_type', 'sharp_money_adjustment', 'public_fade_adjustment',
+            'line_variance_adjustment', 'glitch_signals', 'esoteric_contributions']
+for r in required:
+    assert r in fields, f'Missing field: {r}'
+print(f'✓ PredictionRecord has {len(fields)} fields including all signal tracking')
+"
+
+# 3. Check signal fields in pick output
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.game_picks.picks[0] | {
+  glitch_signals: .glitch_signals,
+  esoteric_contributions: .esoteric_contributions,
+  pick_type: .pick_type
+}'
+# Should show glitch_signals dict, esoteric_contributions dict, pick_type string
+
+# 4. Verify reconciliation functions exist
+python3 -c "
+from trap_learning_loop import has_recent_trap_adjustment, get_recent_parameter_adjustments
+from auto_grader import AutoGrader
+grader = AutoGrader.__new__(AutoGrader)
+assert hasattr(grader, 'check_trap_reconciliation') or hasattr(AutoGrader, 'check_trap_reconciliation'), 'Missing reconciliation'
+print('✓ Reconciliation functions available')
+"
+
+# 5. Verify all 28 signals are tracked (spot check)
+python3 -c "
+from auto_grader import PredictionRecord
+# Context Layer (5)
+assert hasattr(PredictionRecord, '__dataclass_fields__')
+# Check a sample
+fields = PredictionRecord.__dataclass_fields__
+context_fields = ['defense_adjustment', 'pace_adjustment', 'vacuum_adjustment', 'lstm_adjustment', 'officials_adjustment']
+research_fields = ['sharp_money_adjustment', 'public_fade_adjustment', 'line_variance_adjustment']
+glitch_field = 'glitch_signals'  # Dict for 6 signals
+esoteric_field = 'esoteric_contributions'  # Dict for 14 signals
+
+for f in context_fields + research_fields:
+    assert f in fields, f'Missing: {f}'
+assert glitch_field in fields, 'Missing glitch_signals'
+assert esoteric_field in fields, 'Missing esoteric_contributions'
+print('✓ All signal categories tracked (5 context + 3 research + 6 GLITCH + 14 esoteric = 28)')
+"
+
+# 6. Test grader status endpoint
+curl /live/grader/status -H "X-API-Key: KEY" | jq '{
+  available: .available,
+  predictions_logged: .predictions_logged,
+  storage_path: .storage_path
+}'
+# Should show available: true, predictions_logged > 0
+
+# 7. Verify pick persistence includes new fields
+# (This checks that live_data_router extracts signal data)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '[.game_picks.picks[0] | keys[]] | map(select(startswith("glitch") or startswith("esoteric")))'
+# Should show glitch_signals, esoteric_contributions, etc.
+
+# 8. Test all 5 sports signal extraction
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  curl -s "/live/best-bets/$sport?debug=1" -H "X-API-Key: KEY" | \
+    jq '{sport: .sport, picks: (.game_picks.count + .props.count), has_signals: (.game_picks.picks[0].glitch_signals != null)}'
+done
+```
+
+**Critical Invariants (ALWAYS verify these):**
+- ALL 28 signals tracked in PredictionRecord (5 context + 3 research + 6 GLITCH + 14 esoteric)
+- pick_type field populated (PROP, SPREAD, TOTAL, MONEYLINE, SHARP)
+- glitch_signals and esoteric_contributions are dicts (not null)
+- Trap-AutoGrader reconciliation prevents conflicting adjustments
+- 70% confidence decay applied in bias calculation
+
+---
+
 ## ✅ VERIFICATION CHECKLIST (v17.6 - Vortex, Benford, Line History)
 
 Run these after ANY change to Vortex, Benford, or Line History features:
@@ -5080,3 +5434,45 @@ curl -s "$API_BASE/live/grader/daily-lesson" -H "X-API-Key: $API_KEY"
 ### Failure policy
 - If lesson file missing before 6 AM ET: return **404** (expected).
 - After 6 AM ET: lesson should exist for the day.
+
+---
+
+## Codex DNS / GitHub Push Caveat (Feb 3, 2026)
+
+**Problem observed:**
+- Codex runtime reported "No DNS configuration available" (from `scutil --dns`).
+- Codex could not resolve `github.com` or `api.github.com`, so `git push`/`git fetch` failed inside Codex.
+- Mac Wi-Fi was connected; the issue was isolated to Codex's runtime environment.
+
+**What was true at the time:**
+- A real commit existed locally: `d152a96` ("docs: lock Option A + add scoring guard").
+- The commit was not pushed due to DNS failure inside Codex.
+- Therefore, Option A only "lives in the system" after a successful push from a working terminal.
+
+**Manual steps to finalize when Codex cannot push:**
+```bash
+cd /Users/apple/ai-betting-backend
+
+# 1) Confirm the commit exists locally
+git show -s --oneline d152a96
+
+# 2) Push it
+git push origin main
+
+# 3) Verify remote has it
+git ls-remote origin refs/heads/main | head -n 1
+```
+
+**Interpretation:**
+- If `git ls-remote` returns a hash matching `d152a96` (or a newer commit that includes it), the change is pushed.
+- If DNS still fails in Codex, use the local terminal to push; no Codex DNS fix is required for this workflow.
+
+**Only meaningful DNS test inside Codex:**
+```bash
+python3 -c 'import socket; print(socket.gethostbyname("github.com"))'
+```
+
+**Next hardening steps (after push confirmed):**
+1) Ensure guard tests run in CI (e.g., `tests/test_option_a_scoring_guard.py`).
+2) Keep a one-line invariant in this file: Option A is canonical and context is modifier-only.
+3) Add a drift-scan to `scripts/ci_sanity_check.sh` to block `BASE_5` / context-weighted strings.

@@ -4886,6 +4886,23 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "gematria_reasons": gematria_reasons,
             # v17.5 GLITCH Protocol adjustment
             "glitch_adjustment": glitch_adjustment,
+            # v19.1 GLITCH signal breakdown (for learning loop)
+            "glitch_signals": glitch_result.get("breakdown", {}) if 'glitch_result' in dir() and glitch_result else {},
+            # v19.1 Esoteric contributions (for learning loop - track individual signal boosts)
+            "esoteric_contributions": {
+                "numerology": numerology_score if 'numerology_score' in dir() else 0.0,
+                "astro": astro_score if 'astro_score' in dir() else 0.0,
+                "fib_alignment": fib_score if 'fib_score' in dir() else 0.0,
+                "vortex": vortex_score if 'vortex_score' in dir() else 0.0,
+                "daily_edge": daily_edge_score if 'daily_edge_score' in dir() else 0.0,
+                "glitch": glitch_adjustment if 'glitch_adjustment' in dir() else 0.0,
+                "biorhythm": bio_boost if 'bio_boost' in dir() else 0.0,
+                "gann": gann_boost if 'gann_boost' in dir() else 0.0,
+                "founders_echo": echo_boost if 'echo_boost' in dir() else 0.0,
+                "phase8": phase8_boost if 'phase8_boost' in dir() else 0.0,
+                "harmonic": harmonic_boost if 'harmonic_boost' in dir() else 0.0,
+                "msrf": msrf_boost if 'msrf_boost' in dir() else 0.0,
+            },
             # v17.0 Ensemble Model (for GAME picks)
             "ensemble_metadata": ensemble_metadata
         }
@@ -6387,13 +6404,24 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     stat_type = stat_type_map.get(prop_type.lower(), "points")
 
                     # Extract adjustments from pick if available
+                    # v19.1: Extract context layer adjustments
+                    _ctx = pick.get("context_layer", {})
                     adjustments = {
-                        "defense": pick.get("defense_adjustment", 0.0),
-                        "pace": pick.get("pace_adjustment", 0.0),
-                        "vacuum": pick.get("vacuum_adjustment", 0.0),
+                        "defense": _ctx.get("def_rank", 0.0) if isinstance(_ctx.get("def_rank"), (int, float)) else 0.0,
+                        "pace": _ctx.get("pace", 0.0) if isinstance(_ctx.get("pace"), (int, float)) else 0.0,
+                        "vacuum": _ctx.get("vacuum", 0.0) if isinstance(_ctx.get("vacuum"), (int, float)) else 0.0,
                         "lstm_brain": pick.get("lstm_adjustment", 0.0),
-                        "officials": pick.get("officials_adjustment", 0.0),
+                        "officials": _ctx.get("officials_adjustment", 0.0),
+                        # v19.1: GAP 1 fix - Research engine signals
+                        "sharp_money": pick.get("research_breakdown", {}).get("sharp_boost", 0.0),
+                        "public_fade": pick.get("research_breakdown", {}).get("public_boost", 0.0),
+                        "line_variance": pick.get("research_breakdown", {}).get("line_boost", 0.0),
                     }
+
+                    # v19.1: GAP 2 fix - Extract GLITCH signals and esoteric contributions
+                    _glitch_signals = pick.get("glitch_signals", {})
+                    _esoteric_contribs = pick.get("esoteric_contributions", {})
+                    _pick_type = pick.get("pick_type", pick.get("market", "PROP")).upper()
 
                     grader.log_prediction(
                         sport=sport.upper(),
@@ -6401,7 +6429,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         stat_type=stat_type,
                         predicted_value=line,  # Use line as predicted value
                         line=line,
-                        adjustments=adjustments
+                        adjustments=adjustments,
+                        pick_type=_pick_type,
+                        glitch_signals=_glitch_signals,
+                        esoteric_contributions=_esoteric_contribs
                     )
                     grader_logged += 1
 

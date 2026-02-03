@@ -274,6 +274,61 @@ curl -s -X POST https://web-production-7b2a.up.railway.app/live/grader/dry-run -
 ### I) Officials / Pillar 16 / Referee Tendency (v17.8)
 **Examples:** "officials adjustment always 0", "referee not found", "wrong tendency data".
 
+---
+
+### J) Phase 8 Esoteric Signals / Lunar / Mercury / Rivalry (v18.2)
+**Examples:** "lunar phase not calculating", "mercury retrograde not triggering", "rivalry boost missing", "timezone errors in esoteric".
+
+**Canonical sources (edit here only):**
+- `esoteric_engine.py` - All Phase 8 signal functions + `get_phase8_esoteric_signals()` aggregator
+- `alt_data_sources/noaa.py` - Solar flare status from NOAA
+
+**Related files:**
+- `live_data_router.py` (lines 4039-4106) - Phase 8 integration into scoring
+- `astronomical_api.py` - Lunar phase calculations
+
+**Hard invariants:**
+- All Phase 8 signals aggregated via `get_phase8_esoteric_signals()`
+- `phase8_boost` added to `esoteric_raw`, NOT directly to final score
+- Timezone-aware datetimes REQUIRED for lunar calculations (use `ZoneInfo`)
+- 5 signals active: Lunar Phase, Mercury Retrograde, Rivalry Intensity, Streak Momentum, Solar Flare
+- Signal count: 17/17 active in Esoteric Engine
+
+**Verification:**
+```bash
+# Check Phase 8 in production picks
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {phase8_boost, phase8_reasons, phase8_breakdown}'
+
+# Test Phase 8 signals directly
+python3 -c "
+from esoteric_engine import get_phase8_esoteric_signals
+from datetime import datetime, date
+from zoneinfo import ZoneInfo
+result = get_phase8_esoteric_signals(
+    game_datetime=datetime.now(ZoneInfo('America/New_York')),
+    game_date=date.today(),
+    sport='NBA', home_team='Lakers', away_team='Celtics',
+    pick_type='TOTAL', pick_side='Over'
+)
+print('Phase 8 boost:', result.get('total_boost'))
+"
+```
+
+**Tests:**
+- `scripts/prod_sanity_check.sh` includes 4 Phase 8 checks (18 total)
+
+**Docs:**
+- `CLAUDE.md` (Phase 8 section, NEVER DO THESE rules 88-97)
+- `docs/LESSONS.md` (Lessons 14-16: timezone, env vars, variable init)
+
+**Never do:**
+- Compare timezone-naive to timezone-aware datetimes (causes TypeError)
+- Skip `get_phase8_esoteric_signals()` in the scoring pipeline
+- Add Phase 8 boosts directly to `esoteric_score` instead of `esoteric_raw`
+- Forget to initialize `weather_data = None` before conditional blocks
+- Use AND logic for env var alternatives when OR is needed
+
 **Canonical sources (edit here only):**
 - `officials_data.py` - Referee tendency database (25 NBA, 17 NFL, 15 NHL refs)
 - `context_layer.py:OfficialsService.get_officials_adjustment()` - Adjustment calculation
@@ -322,6 +377,7 @@ python3 -c "from officials_data import get_database_stats; print(get_database_st
 | Scoring contract | `core/scoring_contract.py` | Weights, thresholds, gates, boost levels (v17.1: 5-engine) |
 | Context layer | `context_layer.py` | DefensiveRank, Pace, Vacuum, Officials services (Pillars 13-16) |
 | **Officials data (v17.8)** | `officials_data.py` | Referee tendency database (25 NBA, 17 NFL, 15 NHL refs) |
+| **Phase 8 Esoteric (v18.2)** | `esoteric_engine.py` | Lunar, Mercury, Rivalry, Streak, Solar signals (17/17 active) |
 | ML integration | `ml_integration.py` | LSTM, Ensemble models with real context data |
 | Integrations mapping | `integration_registry.py` + `docs/AUDIT_MAP.md` | Env vars → modules/endpoints + validation |
 | ET window | `core/time_et.py` | ET bounds + timezone correctness |
@@ -369,6 +425,7 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 | Pick output fields/format | `utils/pick_normalizer.py` + `docs/PICK_CONTRACT_V1.md` | Maintain frontend contract |
 | Pillar additions (13-17) | `context_layer.py`, `live_data_router.py`, docs | All 17 pillars must be documented |
 | Officials data (Pillar 16) | `officials_data.py`, `context_layer.py`, `live_data_router.py` | Referee tendency database + adjustment logic (v17.8) |
+| **Phase 8 signals (v18.2)** | `esoteric_engine.py`, `live_data_router.py`, `CLAUDE.md` | Lunar/Mercury/Rivalry/Streak/Solar (17/17 signals) |
 | Public payload ET-only rules | `utils/public_payload_sanitizer.py` + `CLAUDE.md` | No UTC/telemetry leaks; ET display only |
 | Live caching headers | `main.py` middleware + `live_data_router.py` | Ensure no-store headers on GET/HEAD |
 

@@ -1,8 +1,8 @@
-# Bookie-o-em v14.1 - AI Sports Betting Backend
+# Bookie-o-em v18.2 - AI Sports Betting Backend
 
 > "Someone always knows." - NOOSPHERE VELOCITY
 
-Production-hardened FastAPI backend for AI-powered sports betting predictions with live odds, sharp money detection, and esoteric edge analysis.
+Production-hardened FastAPI backend for AI-powered sports betting predictions with 4-engine scoring, 17-pillar signal system, and esoteric edge analysis.
 
 ## Quick Start
 
@@ -36,7 +36,7 @@ Visit `http://localhost:8000/docs` for interactive API documentation.
 | `GET /live/gann-physics-status` | GANN physics module |
 | `GET /esoteric/today-energy` | Today's energy reading |
 
-**Supported Sports:** `nba`, `nfl`, `mlb`, `nhl`
+**Supported Sports:** `nba`, `nfl`, `mlb`, `nhl`, `ncaab`
 
 ## Response Schema
 
@@ -51,29 +51,41 @@ All live endpoints return standardized responses:
 }
 ```
 
-## Production Features (v14.1)
+## Production Features (v18.2)
 
-- **Shared HTTP Client** - Connection pooling via httpx.AsyncClient
-- **Retry with Backoff** - Exponential backoff (0.5s, 1s, 2s), 2 retries
-- **Rate Limit Handling** - 429 → HTTP 503 with informative message
-- **Structured Logging** - Timestamped logs for debugging
-- **Deterministic Fallbacks** - MD5 hash seeding for stable fallback data
-- **Clean Shutdown** - Proper httpx client cleanup on app shutdown
+- **4-Engine Scoring** - AI (25%), Research (35%), Esoteric (20%), Jarvis (20%)
+- **17-Pillar Signal System** - 8 AI models + 9 specialized pillars
+- **17/17 Esoteric Signals** - Including Phase 8: Lunar, Mercury, Rivalry, Streak, Solar
+- **GLITCH Protocol** - 6 signals: Chrome Resonance, Void Moon, Noosphere, Hurst, Kp-Index, Benford
+- **Trap Learning Loop (v19.0)** - Automated weight adjustments based on game results
+- **ESPN Integration** - Officials, odds cross-validation, injuries supplement
+- **SERP Intelligence** - Search-trend signals for all 5 engines
+- **Railway Persistence** - 5GB persistent volume at `/data`
+- **ET-Only Public Payloads** - No UTC/telemetry leaks to frontend
 
 ## Architecture
 
 ```
-main.py                    # FastAPI app entry point (v14.1)
-├── live_data_router.py    # All /live/* endpoints + esoteric functions
-├── services/
-│   ├── odds_api_service.py      # The Odds API (standalone service)
-│   └── playbook_api_service.py  # Playbook API (standalone service)
-├── context_layer.py       # Context features for ML predictions
-├── lstm_brain.py          # LSTM neural prediction engine
-├── auto_grader.py         # Prediction grading & weight adjustment
-├── daily_scheduler.py     # Scheduled audit jobs
-├── prediction_api.py      # Legacy 8-model prediction API
-└── advanced_ml_backend.py # Legacy ML models
+main.py                    # FastAPI app entry point (v18.2)
+├── live_data_router.py    # All /live/* endpoints + 4-engine scoring
+├── esoteric_engine.py     # 17 esoteric signals including Phase 8
+├── context_layer.py       # Pillars 13-16 (DefRank, Pace, Vacuum, Officials)
+├── officials_data.py      # Referee tendency database
+├── core/
+│   ├── scoring_contract.py    # Engine weights, thresholds, gates
+│   ├── titanium.py            # Titanium 3/4 rule
+│   └── time_et.py             # ET timezone handling
+├── alt_data_sources/
+│   ├── espn_lineups.py        # ESPN Hidden API integration
+│   ├── noaa.py                # Solar flare + Kp-Index
+│   └── serp_intelligence.py   # SERP betting signals
+├── signals/
+│   ├── msrf_resonance.py      # Turn date resonance
+│   └── math_glitch.py         # Benford anomaly
+├── trap_learning_loop.py  # v19.0 automated weight adjustments
+├── ml_integration.py      # LSTM + Ensemble models
+├── auto_grader.py         # Prediction grading
+└── daily_scheduler.py     # Scheduled jobs (6 AM audit, etc.)
 ```
 
 ### Active vs Legacy Files
@@ -121,42 +133,42 @@ The project is configured for Railway:
 
 | Version | Codename | Key Features |
 |---------|----------|--------------|
-| **v14.1** | PRODUCTION_HARDENED | Retries, logging, rate limits, deterministic fallbacks |
-| v14.0 | NOOSPHERE_VELOCITY | Global consciousness indicators, 3 modules |
+| **v18.2** | PHASE_8_ESOTERIC | Lunar, Mercury, Rivalry, Streak, Solar signals (17/17 active) |
+| v19.0 | TRAP_LEARNING | Automated weight adjustments from game results |
+| v17.8 | OFFICIALS_PILLAR | Referee tendency database (25 NBA, 17 NFL, 15 NHL) |
+| v17.6 | VORTEX_BENFORD | Tesla 3-6-9, multi-book Benford analysis |
+| v17.2 | ML_GLITCH_ACTIVATION | LSTM models + GLITCH Protocol (6 signals) |
+| v14.1 | PRODUCTION_HARDENED | Retries, logging, rate limits, fallbacks |
+| v14.0 | NOOSPHERE_VELOCITY | Global consciousness indicators |
 | v13.0 | GANN_PHYSICS | W.D. Gann geometric principles |
-| v11.0 | OMNI_GLITCH | Vortex math, Shannon entropy, 6 modules |
-| v10.4 | SCALAR_SAVANT | Bio-sine wave, chrome resonance, 6 modules |
-| v10.1 | RESEARCH_OPTIMIZED | +94.40u YTD edge system |
 
-## Esoteric Edge System
+## Esoteric Edge System (17/17 Signals Active)
 
-The system includes 18 esoteric modules for edge detection:
+The system includes 17 active esoteric signals across multiple protocols:
 
-**NOOSPHERE VELOCITY (v14.0):**
-- Insider Leak Detection
-- Main Character Syndrome
-- Phantom Injury Scanner
+**PHASE 8 (v18.2) - Advanced Cosmic Signals:**
+- Lunar Phase Intensity (Full/New moon detection)
+- Mercury Retrograde (2026 periods with pre-shadow)
+- Rivalry Intensity (Historic matchup detection)
+- Streak Momentum (Win/loss regression signals)
+- Solar Flare Status (NOAA X-ray flux chaos boost)
 
-**GANN PHYSICS (v13.0):**
-- 50% Retracement (Gravity Check)
-- Rule of Three (Exhaustion Node)
-- Annulifier Cycle (Harmonic Lock)
+**GLITCH Protocol (v17.2) - 6 Signals:**
+- Chrome Resonance (Player birthday + game date)
+- Void Moon (Void-of-course lunar)
+- Noosphere Velocity (Google Trends momentum)
+- Hurst Exponent (Line history trending)
+- Kp-Index (Geomagnetic storm activity)
+- Benford Anomaly (First-digit distribution)
 
-**OMNI-GLITCH (v11.0):**
+**Core Esoteric Signals:**
+- Numerology (Generic + daily edge)
+- Astrology (Vedic calculations)
+- Fibonacci Alignment + Retracement
 - Vortex Math (Tesla 3-6-9)
-- Shannon Entropy
-- Atmospheric Drag
-- Void of Course Moon
-- Gann Spiral
-- Mars-Uranus Nuclear
-
-**SCALAR-SAVANT (v10.4):**
-- Bio-Sine Wave
-- Chrome Resonance
-- Lunacy Factor
-- Schumann Spike
-- Saturn Block
-- Zebra Privilege
+- Biorhythms (Player birth cycles - props only)
+- Gann Square (Sacred geometry - games only)
+- Founder's Echo (Team gematria resonance)
 
 ## Testing
 

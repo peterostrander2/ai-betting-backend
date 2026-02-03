@@ -18,6 +18,11 @@
 9. [Dual-Use Functions Return Type](#9-dual-use-functions-return-type)
 10. [pick_type Value Mismatch](#10-pick_type-value-mismatch)
 11. [Multi-Call-Site Parameter Threading](#11-multi-call-site-parameter-threading)
+12. [Database Session Context Manager](#12-database-session-context-manager-v177)
+13. [Variable Name Typos in Large Dict Returns](#13-variable-name-typos-in-large-dict-returns-v178)
+14. [Timezone-Aware vs Naive Datetime Comparisons](#14-timezone-aware-vs-naive-datetime-comparisons-v182)
+15. [Environment Variable OR Logic](#15-environment-variable-or-logic-v182)
+16. [Variable Initialization Before Conditional Use](#16-variable-initialization-before-conditional-use-v182)
 
 ---
 
@@ -456,6 +461,128 @@ Write a daily lesson at 6 AM ET (after audit):
 
 ### Rule
 > **INVARIANT**: Every automated learning step must produce a daily lesson artifact and expose it via a member-safe endpoint.
+
+---
+
+## 14. Timezone-Aware vs Naive Datetime Comparisons (v18.2)
+
+### The Mistake
+Phase 8 lunar phase calculation crashed with `TypeError: can't subtract offset-naive and offset-aware datetimes` because the reference date was created without a timezone.
+
+### The Evidence
+```python
+# WRONG - ref_date is naive (no timezone)
+ref_date = datetime(2000, 1, 6, 18, 14, 0)  # Reference new moon
+days_since = (game_datetime - ref_date).days  # CRASH! Can't mix aware/naive
+```
+
+### The Fix
+Always use timezone-aware datetimes for astronomical calculations:
+
+```python
+# CORRECT - Both datetimes are timezone-aware
+from zoneinfo import ZoneInfo
+
+ref_date = datetime(2000, 1, 6, 18, 14, 0, tzinfo=ZoneInfo("UTC"))
+game_datetime = datetime.now(ZoneInfo("America/New_York"))
+days_since = (game_datetime - ref_date).days  # Works!
+```
+
+### Rule
+> **INVARIANT**: When doing datetime arithmetic, BOTH datetimes must be timezone-aware. Use `ZoneInfo("UTC")` for reference dates and `ZoneInfo("America/New_York")` for game times.
+
+---
+
+## 15. Environment Variable OR Logic (v18.2)
+
+### The Mistake
+SERP API integration failed because the env var check used AND logic when it should have used OR. Both `SERPAPI_KEY` and `SERP_API_KEY` are valid alternatives, but the code required BOTH to be set.
+
+### The Evidence
+```python
+# WRONG - Requires BOTH keys to be set
+if SERPAPI_KEY and SERP_API_KEY:
+    # Only runs if both exist
+
+# Also WRONG - all() requires ALL to be truthy
+if all([os.getenv("SERPAPI_KEY"), os.getenv("SERP_API_KEY")]):
+    # Only runs if both exist
+```
+
+### The Fix
+Use `any()` for alternative env vars:
+
+```python
+# CORRECT - Either key works
+if any([os.getenv("SERPAPI_KEY"), os.getenv("SERP_API_KEY")]):
+    key = os.getenv("SERPAPI_KEY") or os.getenv("SERP_API_KEY")
+    # Runs if at least one exists
+```
+
+### Rule
+> **INVARIANT**: When env vars are ALTERNATIVES (either one works), use `any()`. When env vars are ALL REQUIRED, use `all()`. Document which pattern is intended.
+
+---
+
+## 16. Variable Initialization Before Conditional Use (v18.2)
+
+### The Mistake
+Production crashed with `NameError: name 'weather_data' is not defined` because the variable was only assigned inside a conditional block but used outside it.
+
+### The Evidence
+```python
+# WRONG - weather_data only defined if condition is True
+if outdoor_sport:
+    weather_data = fetch_weather()
+
+# Later in code...
+if weather_data:  # NameError if outdoor_sport was False!
+    apply_weather_boost()
+```
+
+### The Fix
+Initialize variables to `None` BEFORE conditional blocks:
+
+```python
+# CORRECT - weather_data always defined
+weather_data = None  # Initialize first
+
+if outdoor_sport:
+    weather_data = fetch_weather()
+
+# Later in code...
+if weather_data:  # Safe - weather_data is always defined
+    apply_weather_boost()
+```
+
+### Rule
+> **INVARIANT**: Any variable used after a conditional block MUST be initialized before that block. Initialize to `None`, `[]`, `{}`, or appropriate default.
+
+### Checklist for Conditional Variables
+- [ ] Variable initialized before `if` block
+- [ ] Initialized value handles the "else" case correctly
+- [ ] All code paths after the block can handle the initialized value
+
+---
+
+## Quick Reference: The Golden Rules (Updated v18.2)
+
+1. **Database**: Always use `with get_db() as db:` context manager
+2. **Parameters**: When adding params, wire them to real data (never hardcode None)
+3. **Timing**: New signals need 24-48 hours to accumulate data
+4. **Naming**: Comment which similarly-named function you're using
+5. **Imports**: Extend existing import lines, don't scatter new ones
+6. **Errors**: Wrap all optional signals in try/except
+7. **Testing**: Test with None/empty data, not just happy path
+8. **Data Sources**: Always pair raw data with interpretation/tendency database
+9. **Return Types**: Dual-use functions must return dicts, not JSONResponse
+10. **pick_type**: Game picks use "SPREAD"/"MONEYLINE"/"TOTAL", not "GAME"
+11. **Call Sites**: Update ALL call sites when adding function parameters
+12. **Database Sessions**: Always use `with get_db() as db:` and check `DATABASE_AVAILABLE and DB_ENABLED`
+13. **Variable Names**: Copy-paste variable names in dict returns, run `python -m py_compile`
+14. **Timezones**: Both datetimes must be timezone-aware for arithmetic
+15. **Env Vars**: Use `any()` for alternatives, `all()` for required
+16. **Initialization**: Initialize variables before conditional blocks that might skip assignment
 
 ---
 
