@@ -562,7 +562,7 @@ These checks catch the exact regressions that previously slipped through.
 
 This script validates ALL master prompt invariants in production. Run before every deployment.
 
-**Last Verified:** January 29, 2026 - **ALL 17 CHECKS PASSING ✅**
+**Last Verified:** February 3, 2026 - **ALL 18 CHECKS PASSING ✅**
 
 ### Usage
 
@@ -616,7 +616,7 @@ BASE_URL="https://your-deployment.app" API_KEY="YOUR_KEY" \
   bash scripts/post_deploy_check.sh
 ```
 
-### What It Checks (17 Total)
+### What It Checks (18 Total)
 
 **1. Storage Persistence (4 checks)**
 - ✅ `resolved_base_dir` is set to `/data`
@@ -643,7 +643,13 @@ BASE_URL="https://your-deployment.app" API_KEY="YOUR_KEY" \
 - ✅ `et_date` is set (America/New_York)
 - ✅ `filter_date` matches `et_date` (single source of truth)
 
-### Production Verification (Jan 29, 2026)
+**6. Phase 8 Esoteric Signals (4 checks)**
+- ✅ `phase8_boost` field present in picks
+- ✅ Lunar phase calculation works (no timezone errors)
+- ✅ All 5 signals aggregated via `get_phase8_esoteric_signals()`
+- ✅ Phase 8 reasons appear in `esoteric_reasons` or `phase8_reasons`
+
+### Production Verification (Feb 3, 2026)
 
 ```bash
 ================================================
@@ -3191,7 +3197,7 @@ update_season_extreme(db, sport, season, ...)     # Update high/low
 get_season_extreme(db, sport, season, stat_type)  # Get extremes for Fib
 ```
 
-**Esoteric Engine Signal Status (12/12 active as of v17.7):**
+**Esoteric Engine Signal Status (17/17 active as of v18.2):**
 | Signal | Status | Notes |
 |--------|--------|-------|
 | Numerology | ✅ ACTIVE | `calculate_generic_numerology()` |
@@ -3206,6 +3212,11 @@ get_season_extreme(db, sport, season, stat_type)  # Get extremes for Fib
 | Founder's Echo | ✅ ACTIVE (v17.5) | Games only, team gematria |
 | Hurst Exponent | ✅ WIRED (v17.7) | Line history passed to GLITCH (needs 10+ snapshots) |
 | Benford Anomaly | ✅ ACTIVATED (v17.6) | Multi-book aggregation now provides 10+ values |
+| **Lunar Phase** | ✅ ACTIVE (v18.2) | Full/New moon detection via `calculate_lunar_phase_intensity()` |
+| **Mercury Retrograde** | ✅ ACTIVE (v18.2) | 2026 retrograde periods via `check_mercury_retrograde()` |
+| **Rivalry Intensity** | ✅ ACTIVE (v18.2) | Major rivalry detection via `calculate_rivalry_intensity()` |
+| **Streak Momentum** | ✅ ACTIVE (v18.2) | Win/loss streak analysis via `calculate_streak_momentum()` |
+| **Solar Flare** | ✅ ACTIVE (v18.2) | NOAA X-ray flux via `get_solar_flare_status()` |
 
 ### Phase 8 - Advanced Esoteric Signals (v18.2 - Feb 2026)
 | File | Function | Purpose | Trigger Condition |

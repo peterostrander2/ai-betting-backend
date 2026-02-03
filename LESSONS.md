@@ -16,6 +16,9 @@
 7. [Testing with No Data](#7-testing-with-no-data)
 8. [External Data Without Interpretation Layer](#8-external-data-without-interpretation-layer)
 9. [Alt Data Modules Implemented But Not Wired](#9-alt-data-modules-implemented-but-not-wired)
+10. [Timezone-Aware vs Naive Datetime Comparisons](#10-timezone-aware-vs-naive-datetime-comparisons)
+11. [Environment Variable OR Logic for Alternatives](#11-environment-variable-or-logic-for-alternatives)
+12. [Variable Initialization Before Conditional Use](#12-variable-initialization-before-conditional-use)
 
 ---
 
@@ -351,6 +354,155 @@ if _ctx_mods.get("travel_fatigue"):
 - [ ] Adjustment is applied to correct engine (context/esoteric/research)
 - [ ] Reasons are added to the engine's reasons list
 - [ ] Old/duplicate applications are removed
+
+---
+
+## 10. Timezone-Aware vs Naive Datetime Comparisons
+
+### The Mistake
+In Phase 8 (v18.2), the lunar phase calculation failed with:
+```
+TypeError: can't subtract offset-naive and offset-aware datetimes
+```
+
+The reference date `datetime(2000, 1, 1, 18, 14)` was timezone-naive, but `game_datetime` from API parsing was timezone-aware.
+
+### The Evidence
+```python
+# BUG - ref_date is naive, game_datetime is aware
+ref_date = datetime(2000, 1, 1, 18, 14)  # No timezone!
+days_since = (game_datetime - ref_date).total_seconds() / 86400  # CRASH!
+```
+
+### The Fix
+Always make reference dates timezone-aware when comparing to aware datetimes:
+
+```python
+from zoneinfo import ZoneInfo
+
+# CORRECT - ref_date is now timezone-aware (UTC)
+ref_date = datetime(2000, 1, 1, 18, 14, tzinfo=ZoneInfo("UTC"))
+
+# Also ensure game_datetime has timezone
+if game_datetime.tzinfo is None:
+    game_datetime = game_datetime.replace(tzinfo=ZoneInfo("UTC"))
+
+days_since = (game_datetime - ref_date).total_seconds() / 86400  # Works!
+```
+
+### Rule
+> **INVARIANT**: When comparing datetimes, BOTH must be timezone-aware OR both must be naive. In this system (ET-only), always use timezone-aware with `ZoneInfo("America/New_York")` or `ZoneInfo("UTC")`.
+
+### Quick Check
+```python
+# Test if datetime is aware
+is_aware = dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) is not None
+```
+
+---
+
+## 11. Environment Variable OR Logic for Alternatives
+
+### The Mistake
+The `/ops/env-map` endpoint showed `missing_required: ["SERP_API_KEY"]` even though `SERPAPI_KEY` was set. The integration contract defined both as alternatives (either one satisfies the requirement), but the code used AND logic.
+
+### The Evidence
+```python
+# BUG - AND logic (ALL must be set)
+is_configured = all(os.getenv(ev) for ev in env_vars_list)
+
+# With env_vars_list = ["SERPAPI_KEY", "SERP_API_KEY"]
+# If SERPAPI_KEY is set but SERP_API_KEY is not, is_configured = False (WRONG!)
+```
+
+### The Fix
+Use OR logic for alternative env vars:
+
+```python
+# CORRECT - OR logic (ANY can satisfy)
+any_set = any(bool(os.getenv(ev)) for ev in env_vars_list)
+
+# With env_vars_list = ["SERPAPI_KEY", "SERP_API_KEY"]
+# If either is set, any_set = True (CORRECT!)
+```
+
+### The Pattern
+```python
+# Track which integrations have at least one env var set
+integration_satisfied = {}
+for name, meta in CONTRACT_INTEGRATIONS.items():
+    env_vars_list = meta.get("env_vars", [])
+    any_set = any(bool(os.getenv(ev)) for ev in env_vars_list)
+    integration_satisfied[name] = any_set
+
+# For missing_required: only flag if integration has NO env vars set
+missing_required = sorted([
+    k for k, v in env_map.items()
+    if v["required"] and not v["is_set"]
+    and not all(integration_satisfied.get(i, False) for i in v["integrations"])
+])
+```
+
+### Rule
+> **INVARIANT**: When an integration lists multiple env vars as alternatives (e.g., `["SERPAPI_KEY", "SERP_API_KEY"]`), use OR logic. The integration is satisfied if ANY of its env vars is set.
+
+---
+
+## 12. Variable Initialization Before Conditional Use
+
+### The Mistake
+NFL best-bets crashed with `NameError: name 'weather_data' is not defined` because `weather_data` was only set inside a conditional block, but used later unconditionally.
+
+### The Evidence
+```python
+# BUG - weather_data only set inside condition
+if is_outdoor_sport and venue_id:
+    weather_data = fetch_weather(venue_id)  # Only set here!
+
+# ... later in code ...
+if weather_data and weather_data.get("available"):  # CRASH! weather_data undefined
+    apply_weather_boost()
+```
+
+### The Fix
+Initialize variables to `None` BEFORE conditional blocks:
+
+```python
+# CORRECT - Initialize before condition
+weather_data = None  # Initialize first!
+
+if is_outdoor_sport and venue_id:
+    weather_data = fetch_weather(venue_id)
+
+# ... later in code ...
+if weather_data and weather_data.get("available"):  # Safe! weather_data is None if not fetched
+    apply_weather_boost()
+```
+
+### Rule
+> **INVARIANT**: Any variable used after a conditional block MUST be initialized before the block. This applies especially in nested functions where variables may be used across multiple code paths.
+
+### Checklist for New Variables
+- [ ] Is this variable used outside the block where it's first assigned?
+- [ ] If yes, initialize it (usually to `None`) before the block
+- [ ] Check all code paths that might skip the assignment
+
+---
+
+## Quick Reference: The Golden Rules
+
+1. **Database**: Always use `with get_db() as db:` context manager
+2. **Parameters**: When adding params, wire them to real data (never hardcode None)
+3. **Timing**: New signals need 24-48 hours to accumulate data
+4. **Naming**: Comment which similarly-named function you're using
+5. **Imports**: Extend existing import lines, don't scatter new ones
+6. **Errors**: Wrap all optional signals in try/except
+7. **Testing**: Test with None/empty data, not just happy path
+8. **Data Sources**: Always pair raw data with interpretation/tendency database
+9. **Alt Data Wiring**: Follow full data flow: fetch → pass → apply → add reasons
+10. **Timezones**: Both datetimes in a comparison MUST be timezone-aware (or both naive)
+11. **Env Var Alternatives**: Use OR logic for alternative env vars (any satisfies)
+12. **Variable Init**: Initialize variables BEFORE conditional blocks that may skip assignment
 
 ---
 
