@@ -4222,6 +4222,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # v11.08 Research/Pillar tracking
             "research_reasons": research_reasons,
             "ai_reasons": ai_reasons,
+            "esoteric_reasons": esoteric_reasons,
             "pillars_passed": pillars_passed,
             "pillars_failed": pillars_failed,
             # v16.1 LSTM ML fields (for props with LSTM prediction)
@@ -4249,6 +4250,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "serp_boost": serp_boost_total,
             "serp_reasons": serp_reasons,
             "serp_shadow_mode": SERP_SHADOW_MODE if SERP_INTEL_AVAILABLE else True,
+            # v17.5 GLITCH Protocol adjustment
+            "glitch_adjustment": glitch_adjustment,
             # v17.0 Ensemble Model (for GAME picks)
             "ensemble_metadata": ensemble_metadata
         }
