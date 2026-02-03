@@ -33,8 +33,12 @@ This section contains ALL critical invariants that must NEVER be violated. Break
 ├── grader_data/
 │   ├── weights.json                ← Learned weights (data_dir.py)
 │   └── predictions.json            ← Weight learning data
-└── audit_logs/
-    └── audit_{YYYY-MM-DD}.json     ← Daily audits (data_dir.py)
+├── audit_logs/
+│   └── audit_{YYYY-MM-DD}.json     ← Daily audits (data_dir.py)
+└── trap_learning/                  ← v19.0 Trap Learning Loop
+    ├── traps.jsonl                 ← Trap definitions
+    ├── evaluations.jsonl           ← Evaluation history
+    └── adjustments.jsonl           ← Weight adjustment audit trail
 ```
 
 **CRITICAL FACTS:**
@@ -1023,6 +1027,7 @@ const statusColor = {
 | **5:00 AM** | Grading + Tuning | Grade yesterday's picks, adjust weights based on results |
 | **5:30 AM** | Smoke Test | Verify system health before picks go out |
 | **6:00 AM** | JSONL Grading | Grade predictions from logs (auto-grader) |
+| **6:15 AM** | Trap Evaluation | v19.0: Evaluate pre-game traps against yesterday's results |
 | **6:30 AM** | Daily Audit | Full audit for all sports, update weights |
 | **10:00 AM** | Props Fetch | Fresh morning props data for all sports |
 | **12:00 PM** | Props Fetch (Weekends Only) | Noon games (NBA/NCAAB) |
@@ -2848,6 +2853,197 @@ done
 
 ---
 
+### INVARIANT 24: Trap Learning Loop (v19.0)
+
+**RULE:** Pre-game traps define conditional rules that automatically adjust engine weights based on post-game results.
+
+**Implementation:**
+- `trap_learning_loop.py` - Core module (~800 lines): TrapDefinition, TrapEvaluation, TrapLearningLoop
+- `trap_router.py` - API endpoints (~400 lines): CRUD for traps, dry-run, history
+- `daily_scheduler.py` - Evaluation job at 6:15 AM ET (after grading at 6:00 AM)
+
+**Storage (JSONL on Railway volume):**
+```
+/data/trap_learning/
+├── traps.jsonl              # Trap definitions
+├── evaluations.jsonl        # Evaluation history (condition_met, action_taken)
+└── adjustments.jsonl        # Weight change audit trail
+```
+
+**Supported Engines (5 total):**
+| Engine | Parameters | Range |
+|--------|------------|-------|
+| **research** | `weight_public_fade`, `weight_sharp_money`, `weight_line_variance`, `splits_base` | 0.0-3.0 |
+| **esoteric** | `weight_gematria`, `weight_astro`, `weight_fib`, `weight_vortex`, `weight_daily_edge`, `weight_glitch` | 0.0-1.0 |
+| **jarvis** | `trigger_boost_2178`, `trigger_boost_201`, `trigger_boost_33`, `trigger_boost_93`, `trigger_boost_322`, `trigger_boost_666`, `trigger_boost_1656`, `trigger_boost_552`, `trigger_boost_138`, `baseline_score` | 0.0-20.0 |
+| **context** | `weight_def_rank`, `weight_pace`, `weight_vacuum` | 0.1-0.7 |
+| **ai** | `lstm_weight`, `ensemble_weight` | 0.1-0.4 |
+
+**Safety Guards (Code-Enforced):**
+| Guard | Value | Purpose |
+|-------|-------|---------|
+| `MAX_SINGLE_ADJUSTMENT` | 5% (0.05) | Prevent large swings |
+| `MAX_CUMULATIVE_ADJUSTMENT` | 15% (0.15) | Lifetime cap per trap |
+| `cooldown_hours` | 24 (default) | Min time between triggers |
+| `max_triggers_per_week` | 3 (default) | Rate limiting |
+| `DECAY_FACTOR` | 0.7 | Each trigger = 70% of previous |
+
+**Condition Language:**
+```json
+{
+    "operator": "AND",
+    "conditions": [
+        {"field": "result", "comparator": "==", "value": "win"},
+        {"field": "margin", "comparator": ">=", "value": 20}
+    ]
+}
+```
+
+**Supported Condition Fields:**
+| Category | Fields |
+|----------|--------|
+| **Outcome** | `result`, `margin`, `total_points`, `spread_result`, `over_under_result` |
+| **Date** | `day_number`, `numerology_day`, `day_of_week`, `month` |
+| **Gematria** | `name_sum_cipher`, `city_sum_cipher`, `combined_cipher` |
+| **Scores** | `ai_score_was`, `research_score_was`, `jarvis_score_was`, `final_score_was` |
+
+**API Endpoints:**
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/live/traps/` | POST | Create new trap |
+| `/live/traps/` | GET | List traps (filter by sport, status) |
+| `/live/traps/{trap_id}` | GET | Get trap details + evaluation history |
+| `/live/traps/{trap_id}/status` | PUT | Update status (ACTIVE, PAUSED, RETIRED) |
+| `/live/traps/evaluate/dry-run` | POST | Test trap without applying |
+| `/live/traps/history/{engine}` | GET | Adjustment history by engine |
+| `/live/traps/stats/summary` | GET | Aggregate statistics |
+
+**Example Traps:**
+```json
+// Trap 1: Dallas Blowout → Reduce Public Fade weight
+{
+    "trap_id": "dallas-blowout-public-fade",
+    "name": "Dallas Blowout Reduces Public Fade Weight",
+    "sport": "NBA",
+    "team": "Dallas Mavericks",
+    "condition": {
+        "operator": "AND",
+        "conditions": [
+            {"field": "result", "comparator": "==", "value": "win"},
+            {"field": "margin", "comparator": ">=", "value": 20}
+        ]
+    },
+    "action": {"type": "WEIGHT_ADJUST", "delta": -0.01},
+    "target_engine": "research",
+    "target_parameter": "weight_public_fade"
+}
+
+// Trap 2: Rangers Numerology → Trigger cipher audit
+{
+    "trap_id": "rangers-1day-cipher-audit",
+    "name": "Rangers Day 1 Loss Triggers Cipher Audit",
+    "sport": "MLB",
+    "team": "Texas Rangers",
+    "condition": {
+        "operator": "AND",
+        "conditions": [
+            {"field": "result", "comparator": "==", "value": "loss"},
+            {"field": "numerology_day", "comparator": "==", "value": 1}
+        ]
+    },
+    "action": {"type": "AUDIT_TRIGGER", "audit_type": "cipher_comparison"},
+    "target_engine": "jarvis",
+    "target_parameter": "name_vs_city_cipher"
+}
+
+// Trap 3: Phoenix 1656 Cycle → Reduce trigger boost on loss
+{
+    "trap_id": "phoenix-1656-validation",
+    "name": "1656 Trigger Loss Adjustment",
+    "sport": "ALL",
+    "condition": {
+        "operator": "AND",
+        "conditions": [
+            {"field": "combined_cipher", "comparator": "==", "value": 1656},
+            {"field": "jarvis_score_was", "comparator": ">=", "value": 7.0},
+            {"field": "result", "comparator": "==", "value": "loss"}
+        ]
+    },
+    "action": {"type": "WEIGHT_ADJUST", "delta": -0.5},
+    "target_engine": "jarvis",
+    "target_parameter": "trigger_boost_1656"
+}
+```
+
+**Scheduler Integration (daily_scheduler.py):**
+```python
+# v19.0: Post-game trap evaluation (daily at 6:15 AM ET, after grading)
+self.scheduler.add_job(
+    self._run_trap_evaluation,
+    CronTrigger(hour=6, minute=15, timezone="America/New_York"),
+    id="trap_evaluation",
+    name="Post-Game Trap Evaluation"
+)
+```
+
+**Key Functions:**
+```python
+from trap_learning_loop import (
+    get_trap_loop,           # Singleton access
+    TrapLearningLoop,        # Main class
+    TrapDefinition,          # Dataclass for trap config
+    TrapEvaluation,          # Dataclass for evaluation result
+    enrich_game_result,      # Add numerology/gematria fields
+    calculate_numerology_day,# Reduce date to single digit
+    calculate_team_gematria, # Team name cipher values
+    SUPPORTED_ENGINES,       # Engine→parameter→range mapping
+    CONDITION_FIELDS,        # Valid condition fields
+)
+```
+
+**Verification:**
+```bash
+# 1. List active traps
+curl /live/traps/ -H "X-API-Key: KEY"
+
+# 2. Create a test trap
+curl -X POST /live/traps/ -H "X-API-Key: KEY" -H "Content-Type: application/json" -d '{
+  "name": "Test Trap",
+  "sport": "NBA",
+  "condition": {"operator": "AND", "conditions": [
+    {"field": "margin", "comparator": ">=", "value": 10}
+  ]},
+  "action": {"type": "WEIGHT_ADJUST", "delta": -0.01},
+  "target_engine": "research",
+  "target_parameter": "weight_public_fade"
+}'
+
+# 3. Dry-run evaluation
+curl -X POST /live/traps/evaluate/dry-run -H "X-API-Key: KEY" -H "Content-Type: application/json" -d '{
+  "trap_id": "test-trap",
+  "game_result": {"margin": 25, "result": "win"}
+}'
+
+# 4. Check adjustment history
+curl /live/traps/history/research -H "X-API-Key: KEY"
+
+# 5. Get summary stats
+curl /live/traps/stats/summary -H "X-API-Key: KEY"
+
+# 6. Check scheduler job registered
+curl /live/scheduler/status -H "X-API-Key: KEY" | jq '.jobs[] | select(.id == "trap_evaluation")'
+```
+
+**NEVER:**
+- Exceed `MAX_SINGLE_ADJUSTMENT` (5%) per trigger
+- Bypass cooldown period (24h default)
+- Create traps targeting invalid engine/parameter combinations
+- Skip safety validation in `_validate_adjustment_safety()`
+- Modify `SUPPORTED_ENGINES` without updating trap_router validation
+- Apply adjustments without logging to `adjustments.jsonl`
+
+---
+
 ## 📚 MASTER FILE INDEX (ML & GLITCH)
 
 ### Core ML Files
@@ -2996,6 +3192,46 @@ get_season_extreme(db, sport, season, stat_type)  # Get extremes for Fib
 | `signals/hive_mind.py` | Void moon | `get_void_moon()` |
 | `database.py` | Line history schema (v17.6) | `LineSnapshot`, `SeasonExtreme`, `save_line_snapshot()`, `get_line_history_values()` |
 | `daily_scheduler.py` | Line history capture (v17.6) | `_run_line_snapshot_capture()`, `_run_update_season_extremes()` |
+
+### Trap Learning Loop Files (v19.0)
+| File | Purpose | Key Functions |
+|------|---------|---------------|
+| `trap_learning_loop.py` | Core trap system (~800 LOC) | `TrapLearningLoop`, `TrapDefinition`, `TrapEvaluation`, `get_trap_loop()`, `enrich_game_result()`, `calculate_numerology_day()`, `calculate_team_gematria()` |
+| `trap_router.py` | API endpoints (~400 LOC) | `create_trap()`, `list_traps()`, `get_trap()`, `update_trap_status()`, `dry_run_evaluation()`, `get_adjustment_history()` |
+| `daily_scheduler.py` | Trap evaluation job | `_run_trap_evaluation()`, `_fetch_yesterday_results()` |
+
+**Trap Data Flow:**
+```
+PRE-GAME                         POST-GAME (6:15 AM ET)
+   │                                    │
+Create Trap ───────────────────► Evaluate Traps
+   │                                    │
+   │  {condition, action,          Game Results
+   │   target_engine,                   │
+   │   target_parameter}           Check Conditions
+   │                                    │
+   └──────────────────────────► Apply Adjustments
+                                        │
+                                  Log & Audit
+```
+
+**Trap Definition Schema:**
+```python
+@dataclass
+class TrapDefinition:
+    trap_id: str                    # "dallas-blowout-public-fade"
+    name: str                       # Human-readable name
+    sport: str                      # NBA, NFL, MLB, NHL, NCAAB, ALL
+    team: Optional[str]             # Specific team or None for all
+    condition: Dict                 # JSON condition object
+    action: Dict                    # What to do when triggered
+    target_engine: str              # ai, research, esoteric, jarvis, context
+    target_parameter: str           # Specific weight/parameter
+    adjustment_cap: float = 0.05    # Max 5% per trigger
+    cooldown_hours: int = 24        # Min time between triggers
+    max_triggers_per_week: int = 3  # Rate limiting
+    status: str = "ACTIVE"          # ACTIVE, PAUSED, RETIRED
+```
 
 ### Context Layer Files
 | File | Purpose | Key Classes |
@@ -3916,6 +4152,72 @@ print(f'Adjustment: {adj:+.2f} ({reason})')
 
 **Fixed in:** v17.8 (Feb 2026)
 
+### Lesson 27: Trap Learning Loop Architecture (v19.0)
+**Problem:** Manual weight adjustments based on observed patterns (e.g., "Dallas always covers by 20+ when favored") required human intervention and weren't systematically tracked.
+
+**Solution Implemented (v19.0):**
+1. Create `trap_learning_loop.py` - Core hypothesis-driven learning system
+2. Create `trap_router.py` - RESTful API for trap CRUD operations
+3. Add scheduler job at 6:15 AM ET for post-game trap evaluation
+4. JSONL storage for traps, evaluations, and adjustment audit trail
+
+**Architecture Pattern - Hypothesis-Driven Learning:**
+```
+PRE-GAME: User creates trap with condition + action
+          "If Dallas wins by 20+, reduce public_fade by 1%"
+                    ↓
+POST-GAME: System evaluates condition against results
+          Yesterday's games → enrich_game_result() → check conditions
+                    ↓
+ADJUSTMENT: If condition met AND safety checks pass
+          Apply delta to target_engine.target_parameter
+                    ↓
+AUDIT: Log to adjustments.jsonl with full context
+```
+
+**Key Design Decisions:**
+| Decision | Why |
+|----------|-----|
+| JSONL storage (not DB) | Matches existing grader pattern, portable, human-readable |
+| 5% single / 15% cumulative caps | Prevents runaway adjustments from bad traps |
+| 24h cooldown default | Allows observation before next trigger |
+| Decay factor (0.7x) | Reduces impact of repeatedly-firing traps |
+| Separate evaluation time (6:15 AM) | Runs after grading (6:00 AM) has results |
+| Dry-run endpoint | Test traps before committing to production |
+
+**Condition Language Design:**
+- JSON-based for API compatibility
+- Operator support: AND, OR
+- Comparators: ==, !=, >, <, >=, <=, IN, BETWEEN
+- Extensible fields: outcome, date, gematria, prior scores
+
+**Safety Guards (Defense in Depth):**
+1. **Validation on create**: Engine/parameter must exist in SUPPORTED_ENGINES
+2. **Cooldown check**: Skip if triggered within cooldown_hours
+3. **Weekly limit**: Skip if max_triggers_per_week exceeded
+4. **Single cap**: Clamp adjustment to MAX_SINGLE_ADJUSTMENT (5%)
+5. **Cumulative cap**: Clamp total adjustments to MAX_CUMULATIVE_ADJUSTMENT (15%)
+6. **Parameter bounds**: New value clamped to engine's valid range
+7. **Audit trail**: Every adjustment logged with before/after values
+
+**Integration Points:**
+```python
+# main.py - Register router
+from trap_router import trap_router
+app.include_router(trap_router)
+
+# daily_scheduler.py - Add evaluation job
+self.scheduler.add_job(
+    self._run_trap_evaluation,
+    CronTrigger(hour=6, minute=15, timezone="America/New_York"),
+    id="trap_evaluation"
+)
+```
+
+**Invariant:** Learning systems must have safety bounds. Unbounded automated adjustments can destabilize scoring. Always cap single and cumulative changes, enforce cooldowns, and maintain audit trails.
+
+**Fixed in:** v19.0 (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -4315,6 +4617,132 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 71. **NEVER** modify line history tables without considering the scheduler job dependencies
 72. **NEVER** run `_run_line_snapshot_capture()` without checking Odds API quota first
 73. **NEVER** assume line history exists for new events - check for NULL/empty returns
+
+## 🚫 NEVER DO THESE (v19.0 - Trap Learning Loop)
+
+74. **NEVER** exceed `MAX_SINGLE_ADJUSTMENT` (5%) per trap trigger - safety guard is code-enforced
+75. **NEVER** bypass the cooldown period (24h default) - prevents runaway adjustments
+76. **NEVER** create traps targeting invalid engine/parameter combinations - validate against `SUPPORTED_ENGINES`
+77. **NEVER** skip `_validate_adjustment_safety()` before applying adjustments
+78. **NEVER** apply adjustments without logging to `adjustments.jsonl` - audit trail is mandatory
+79. **NEVER** modify `SUPPORTED_ENGINES` dict without updating trap_router validation logic
+80. **NEVER** create traps with `adjustment_cap > 0.05` - exceeds max single adjustment
+81. **NEVER** run trap evaluation before grading completes (6:15 AM runs after 6:00 AM grading)
+82. **NEVER** skip `enrich_game_result()` before evaluating conditions - numerology/gematria fields required
+83. **NEVER** delete trap files manually - use `update_trap_status(trap_id, "RETIRED")` instead
+84. **NEVER** allow cumulative adjustments to exceed 15% per trap - `MAX_CUMULATIVE_ADJUSTMENT` enforced
+85. **NEVER** create traps without specifying `target_engine` AND `target_parameter` - both required
+86. **NEVER** assume game results exist for all sports on all days - handle empty results gracefully
+87. **NEVER** modify trap condition evaluation logic without updating dry-run endpoint to match
+
+---
+
+## ✅ VERIFICATION CHECKLIST (v19.0 - Trap Learning Loop)
+
+Run these after ANY change to Trap Learning Loop:
+
+```bash
+# 1. Syntax check trap modules
+python -m py_compile trap_learning_loop.py trap_router.py
+
+# 2. Verify trap storage directory exists
+curl /internal/storage/health -H "X-API-Key: KEY" | jq '.trap_learning_dir'
+# Should show: /data/trap_learning
+
+# 3. List active traps
+curl /live/traps/ -H "X-API-Key: KEY" | jq 'length'
+# Should return count of active traps
+
+# 4. Test trap creation
+curl -X POST /live/traps/ -H "X-API-Key: KEY" -H "Content-Type: application/json" -d '{
+  "name": "Test Trap Verification",
+  "sport": "NBA",
+  "condition": {"operator": "AND", "conditions": [
+    {"field": "margin", "comparator": ">=", "value": 15}
+  ]},
+  "action": {"type": "WEIGHT_ADJUST", "delta": -0.01},
+  "target_engine": "research",
+  "target_parameter": "weight_public_fade"
+}' | jq '{success, trap_id}'
+# Should show success: true
+
+# 5. Test dry-run evaluation (condition met)
+curl -X POST /live/traps/evaluate/dry-run -H "X-API-Key: KEY" -H "Content-Type: application/json" -d '{
+  "trap_id": "test-trap-verification",
+  "game_result": {"margin": 25, "result": "win", "home_team": "Lakers", "away_team": "Celtics"}
+}' | jq '{condition_met, would_apply, proposed_adjustment}'
+# Should show condition_met: true
+
+# 6. Test dry-run evaluation (condition NOT met)
+curl -X POST /live/traps/evaluate/dry-run -H "X-API-Key: KEY" -H "Content-Type: application/json" -d '{
+  "trap_id": "test-trap-verification",
+  "game_result": {"margin": 5, "result": "win", "home_team": "Lakers", "away_team": "Celtics"}
+}' | jq '{condition_met, would_apply}'
+# Should show condition_met: false
+
+# 7. Check adjustment history endpoint
+curl /live/traps/history/research -H "X-API-Key: KEY" | jq '{engine, adjustments_count: (.adjustments | length)}'
+# Should return engine: "research"
+
+# 8. Get summary stats
+curl /live/traps/stats/summary -H "X-API-Key: KEY" | jq '{total_traps, by_engine, by_sport}'
+# Should show breakdown by engine and sport
+
+# 9. Verify scheduler job is registered
+curl /live/scheduler/status -H "X-API-Key: KEY" | jq '.jobs[] | select(.id == "trap_evaluation") | {id, next_run}'
+# Should show trap_evaluation job with next_run time
+
+# 10. Test SUPPORTED_ENGINES validation
+curl -X POST /live/traps/ -H "X-API-Key: KEY" -H "Content-Type: application/json" -d '{
+  "name": "Invalid Engine Test",
+  "sport": "NBA",
+  "condition": {"operator": "AND", "conditions": [{"field": "margin", "comparator": ">=", "value": 10}]},
+  "action": {"type": "WEIGHT_ADJUST", "delta": -0.01},
+  "target_engine": "invalid_engine",
+  "target_parameter": "some_param"
+}' | jq '.detail'
+# Should return error about invalid engine
+
+# 11. Test safety cap enforcement
+curl -X POST /live/traps/ -H "X-API-Key: KEY" -H "Content-Type: application/json" -d '{
+  "name": "Overcap Test",
+  "sport": "NBA",
+  "condition": {"operator": "AND", "conditions": [{"field": "margin", "comparator": ">=", "value": 10}]},
+  "action": {"type": "WEIGHT_ADJUST", "delta": -0.10},
+  "target_engine": "research",
+  "target_parameter": "weight_public_fade",
+  "adjustment_cap": 0.10
+}' | jq '.detail'
+# Should return error about exceeding max adjustment cap
+
+# 12. Verify all 5 engines are supported
+python3 -c "
+from trap_learning_loop import SUPPORTED_ENGINES
+print('Supported engines:', list(SUPPORTED_ENGINES.keys()))
+assert len(SUPPORTED_ENGINES) == 5, 'Expected 5 engines'
+print('✓ All 5 engines configured')
+"
+
+# 13. Test condition field validation
+python3 -c "
+from trap_learning_loop import CONDITION_FIELDS
+print('Condition fields:', list(CONDITION_FIELDS.keys())[:10], '...')
+assert 'result' in CONDITION_FIELDS, 'Missing result field'
+assert 'margin' in CONDITION_FIELDS, 'Missing margin field'
+assert 'numerology_day' in CONDITION_FIELDS, 'Missing numerology_day field'
+print('✓ Condition fields valid')
+"
+
+# 14. Cleanup test trap
+curl -X PUT "/live/traps/test-trap-verification/status?status=RETIRED" -H "X-API-Key: KEY"
+```
+
+**Critical Invariants (ALWAYS verify these):**
+- Trap evaluation runs AFTER grading (6:15 AM > 6:00 AM)
+- All adjustments capped at 5% single / 15% cumulative
+- Cooldown enforced (24h default between triggers)
+- Audit trail in `/data/trap_learning/adjustments.jsonl`
+- All 5 engines (research, esoteric, jarvis, context, ai) supported
 
 ---
 
