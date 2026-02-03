@@ -4312,6 +4312,29 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         research_score = min(10.0, research_score + officials_adjustment)
                         logger.debug("OFFICIALS v17.8: %s adjustment=%+.2f reasons=%s",
                                     lead_official, officials_adjustment, officials_reasons)
+
+                    # v18.0: Record official assignment for automated tracking
+                    # Fire-and-forget: don't block scoring if recording fails
+                    if lead_official and event_id:
+                        try:
+                            from services.officials_tracker import officials_tracker
+                            officials_tracker.record_game_assignment(
+                                event_id=event_id,
+                                sport=sport_upper,
+                                home_team=home_team or "",
+                                away_team=away_team or "",
+                                officials={
+                                    "lead_official": lead_official,
+                                    "official_2": official_2,
+                                    "official_3": official_3,
+                                },
+                                game_date=_game_date_str if _game_date_str else "",
+                                over_under_line=total,
+                                spread_line=spread,
+                                game_start_time=_game_datetime if _game_datetime else None
+                            )
+                        except Exception as rec_err:
+                            logger.debug(f"Officials assignment recording skipped: {rec_err}")
             except Exception as e:
                 logger.debug(f"Officials adjustment failed: {e}")
 

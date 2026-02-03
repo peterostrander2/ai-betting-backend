@@ -1048,6 +1048,23 @@ async def auto_grade_picks(
                     away_team=matched_game.away_team
                 )
 
+                # v18.0: Record outcome for officials tracking
+                # Uses event_id to link back to official assignment record
+                event_id = pick.get("event_id") or matched_game.game_id
+                if event_id:
+                    try:
+                        from services.officials_tracker import officials_tracker
+                        officials_tracker.record_outcome(
+                            event_id=event_id,
+                            final_total=float(matched_game.home_score + matched_game.away_score),
+                            home_score=matched_game.home_score,
+                            away_score=matched_game.away_score
+                        )
+                    except ImportError:
+                        pass  # Officials tracker not available
+                    except Exception as oe:
+                        logger.debug(f"Officials outcome recording skipped: {oe}")
+
             # Update the pick in grader_store (SINGLE SOURCE OF TRUTH)
             from core.time_et import now_et
             grade_result = grader_store.mark_graded(

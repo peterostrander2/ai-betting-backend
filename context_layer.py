@@ -2183,9 +2183,11 @@ class OfficialsService:
         is_home_team: bool = False
     ) -> Tuple[float, List[str]]:
         """
-        v17.8: Calculate scoring adjustment based on referee tendencies.
+        v18.0: Calculate scoring adjustment based on referee tendencies.
 
-        Uses the officials_data.py module for detailed tendency data.
+        Hierarchy:
+        1. Try database tendencies first (from automated tracking)
+        2. Fall back to static officials_data.py
 
         Args:
             sport: NBA, NFL, NHL (NCAAB/MLB not supported)
@@ -2207,10 +2209,6 @@ class OfficialsService:
         if not officials:
             return adjustment, reasons
 
-        # Check if officials_data module is available
-        if not OFFICIALS_DATA_AVAILABLE:
-            return adjustment, reasons
-
         # Get lead official from various ESPN formats
         lead_ref = None
         if isinstance(officials, dict):
@@ -2228,7 +2226,30 @@ class OfficialsService:
         if not lead_ref:
             return adjustment, reasons
 
-        # Calculate adjustment using officials_data module
+        # v18.0: Try database tendencies first (automated tracking)
+        try:
+            from services.officials_tracker import get_live_tendency
+            db_tendency = get_live_tendency(sport.upper(), lead_ref)
+
+            if db_tendency and db_tendency.get("sample_size_sufficient"):
+                adj, reason = cls._calculate_adjustment_from_tendency(
+                    tendency=db_tendency,
+                    pick_type=pick_type,
+                    pick_side=pick_side,
+                    is_home_team=is_home_team,
+                    source="database"
+                )
+                if adj != 0 and reason:
+                    return adj, [reason]
+        except ImportError:
+            pass  # Fall back to static data
+        except Exception as e:
+            logger.debug(f"Database tendency lookup failed: {e}")
+
+        # Fall back to static officials_data module
+        if not OFFICIALS_DATA_AVAILABLE:
+            return adjustment, reasons
+
         try:
             adj, reason = calculate_officials_adjustment(
                 sport=sport,
@@ -2246,6 +2267,74 @@ class OfficialsService:
             logger.debug(f"Officials adjustment calculation failed: {e}")
 
         return adjustment, reasons
+
+    @classmethod
+    def _calculate_adjustment_from_tendency(
+        cls,
+        tendency: Dict[str, Any],
+        pick_type: str,
+        pick_side: str,
+        is_home_team: bool,
+        source: str = "database"
+    ) -> Tuple[float, str]:
+        """
+        v18.0: Calculate adjustment from database tendency data.
+
+        Args:
+            tendency: Tendency dict from OfficialTendency table
+            pick_type: TOTAL, SPREAD, etc.
+            pick_side: Over, Under, or team name
+            is_home_team: True if pick is on home team
+            source: "database" or "static" for logging
+
+        Returns:
+            (adjustment, reason_string)
+        """
+        adjustment = 0.0
+        reason = ""
+
+        official_name = tendency.get("official_name", "Unknown")
+        over_pct = tendency.get("over_pct")
+        home_bias = tendency.get("home_bias")
+        whistle_rate = tendency.get("whistle_rate")
+
+        # Total (Over/Under) adjustments based on over_pct
+        if pick_type.upper() == "TOTAL" and over_pct is not None:
+            pick_side_upper = pick_side.upper() if isinstance(pick_side, str) else ""
+
+            if pick_side_upper == "OVER":
+                if over_pct >= 0.55:
+                    adjustment = 0.3
+                    reason = f"Officials[{source}]: {official_name} ({over_pct:.0%} overs) - strong over tendency"
+                elif over_pct >= 0.52:
+                    adjustment = 0.15
+                    reason = f"Officials[{source}]: {official_name} ({over_pct:.0%} overs) - slight over lean"
+            elif pick_side_upper == "UNDER":
+                if over_pct <= 0.45:
+                    adjustment = 0.3
+                    reason = f"Officials[{source}]: {official_name} ({over_pct:.0%} overs) - strong under tendency"
+                elif over_pct <= 0.48:
+                    adjustment = 0.15
+                    reason = f"Officials[{source}]: {official_name} ({over_pct:.0%} overs) - slight under lean"
+
+        # Spread adjustments based on home_bias
+        elif pick_type.upper() == "SPREAD" and home_bias is not None:
+            if is_home_team:
+                if home_bias >= 0.03:
+                    adjustment = 0.2
+                    reason = f"Officials[{source}]: {official_name} ({home_bias:+.1%} home bias) - favors home"
+                elif home_bias >= 0.015:
+                    adjustment = 0.1
+                    reason = f"Officials[{source}]: {official_name} ({home_bias:+.1%} home bias)"
+            else:
+                if home_bias <= -0.03:
+                    adjustment = 0.2
+                    reason = f"Officials[{source}]: {official_name} ({home_bias:+.1%} home bias) - favors away"
+                elif home_bias <= -0.015:
+                    adjustment = 0.1
+                    reason = f"Officials[{source}]: {official_name} ({home_bias:+.1%} home bias)"
+
+        return adjustment, reason
 
     @classmethod
     def get_supported_sports(cls) -> List[str]:

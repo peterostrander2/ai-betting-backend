@@ -559,6 +559,374 @@ def save_weights(db: Session, sport: str, stat_type: str, weights: Dict[str, flo
         return record
 
 
+# ============================================================================
+# OFFICIAL TRACKING MODELS (v18.0 - Automated Officials)
+# ============================================================================
+
+class OfficialGameRecord(Base):
+    """
+    Track official assignments and game outcomes for tendency calculation.
+    Records referee assignments when bets are made, outcomes after games complete.
+    """
+    __tablename__ = "official_game_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(String(100), nullable=False, index=True)
+    sport = Column(String(20), nullable=False, index=True)
+    season = Column(String(20))  # "2025-26"
+
+    # Teams
+    home_team = Column(String(100))
+    away_team = Column(String(100))
+
+    # Officials (from ESPN)
+    lead_official = Column(String(100), index=True)
+    official_2 = Column(String(100))
+    official_3 = Column(String(100))
+
+    # Game timing
+    game_date = Column(String(10), index=True)  # YYYY-MM-DD
+    game_start_time = Column(DateTime(timezone=True))
+
+    # Lines at game time (for determining over/under result)
+    over_under_line = Column(Float, nullable=True)
+    spread_line = Column(Float, nullable=True)
+
+    # Outcomes (populated after game ends)
+    final_total = Column(Float, nullable=True)  # Actual combined score
+    spread_result = Column(Float, nullable=True)  # Home team margin (home - away)
+    home_score = Column(Integer, nullable=True)
+    away_score = Column(Integer, nullable=True)
+
+    # Derived (calculated when outcome is recorded)
+    went_over = Column(Boolean, nullable=True)  # final_total > over_under_line
+    home_covered = Column(Boolean, nullable=True)  # spread_result > spread_line
+
+    # Metadata
+    recorded_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    outcome_recorded_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index('ix_official_games_sport_date', 'sport', 'game_date'),
+        Index('ix_official_games_lead_official', 'lead_official', 'sport'),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "event_id": self.event_id,
+            "sport": self.sport,
+            "season": self.season,
+            "home_team": self.home_team,
+            "away_team": self.away_team,
+            "lead_official": self.lead_official,
+            "official_2": self.official_2,
+            "official_3": self.official_3,
+            "game_date": self.game_date,
+            "game_start_time": self.game_start_time.isoformat() if self.game_start_time else None,
+            "over_under_line": self.over_under_line,
+            "spread_line": self.spread_line,
+            "final_total": self.final_total,
+            "spread_result": self.spread_result,
+            "home_score": self.home_score,
+            "away_score": self.away_score,
+            "went_over": self.went_over,
+            "home_covered": self.home_covered,
+            "recorded_at": self.recorded_at.isoformat() if self.recorded_at else None,
+            "outcome_recorded_at": self.outcome_recorded_at.isoformat() if self.outcome_recorded_at else None,
+        }
+
+
+class OfficialTendency(Base):
+    """
+    Computed referee tendencies, refreshed weekly from game history.
+    Used by OfficialsService to provide data-driven adjustments.
+    """
+    __tablename__ = "official_tendencies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sport = Column(String(20), nullable=False, index=True)
+    official_name = Column(String(100), nullable=False, index=True)
+    season = Column(String(20))  # "2025-26" or "all-time"
+
+    # Core metrics
+    total_games = Column(Integer, default=0)
+    over_games = Column(Integer, default=0)
+    over_pct = Column(Float, nullable=True)  # over_games / total_games
+
+    home_cover_games = Column(Integer, default=0)
+    home_cover_pct = Column(Float, nullable=True)  # home_cover_games / total_games
+    home_bias = Column(Float, nullable=True)  # home_cover_pct - 0.50
+
+    # Whistle rate (HIGH/MEDIUM/LOW) - for NBA foul rate, NFL flag rate, NHL penalty rate
+    whistle_rate = Column(String(20), nullable=True)
+    avg_total_points = Column(Float, nullable=True)  # Average final total in their games
+
+    # Confidence
+    sample_size_sufficient = Column(Boolean, default=False)  # >= 50 games
+
+    last_updated = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('ix_tendencies_sport_official', 'sport', 'official_name', unique=False),
+        Index('ix_tendencies_season', 'season'),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "sport": self.sport,
+            "official_name": self.official_name,
+            "season": self.season,
+            "total_games": self.total_games,
+            "over_games": self.over_games,
+            "over_pct": self.over_pct,
+            "home_cover_games": self.home_cover_games,
+            "home_cover_pct": self.home_cover_pct,
+            "home_bias": self.home_bias,
+            "whistle_rate": self.whistle_rate,
+            "avg_total_points": self.avg_total_points,
+            "sample_size_sufficient": self.sample_size_sufficient,
+            "last_updated": self.last_updated.isoformat() if self.last_updated else None,
+        }
+
+
+# ============================================================================
+# OFFICIAL TRACKING HELPER FUNCTIONS (v18.0)
+# ============================================================================
+
+def save_official_game_record(
+    db: Session,
+    event_id: str,
+    sport: str,
+    home_team: str,
+    away_team: str,
+    lead_official: str,
+    game_date: str,
+    over_under_line: float = None,
+    spread_line: float = None,
+    official_2: str = None,
+    official_3: str = None,
+    game_start_time: datetime = None,
+    season: str = None
+) -> Optional[OfficialGameRecord]:
+    """Save an official assignment record for tracking."""
+    if not db or not event_id or not lead_official:
+        return None
+
+    try:
+        # Check if record already exists for this event
+        existing = db.query(OfficialGameRecord).filter(
+            OfficialGameRecord.event_id == event_id
+        ).first()
+
+        if existing:
+            # Update existing record (officials might be added later)
+            if lead_official:
+                existing.lead_official = lead_official
+            if official_2:
+                existing.official_2 = official_2
+            if official_3:
+                existing.official_3 = official_3
+            db.flush()
+            return existing
+
+        # Create new record
+        record = OfficialGameRecord(
+            event_id=event_id,
+            sport=sport.upper(),
+            season=season or _get_current_season(),
+            home_team=home_team,
+            away_team=away_team,
+            lead_official=lead_official,
+            official_2=official_2,
+            official_3=official_3,
+            game_date=game_date,
+            game_start_time=game_start_time,
+            over_under_line=over_under_line,
+            spread_line=spread_line,
+        )
+        db.add(record)
+        db.flush()
+        return record
+    except Exception as e:
+        logger.error("Failed to save official game record: %s", e)
+        return None
+
+
+def record_game_outcome(
+    db: Session,
+    event_id: str,
+    final_total: float,
+    home_score: int,
+    away_score: int
+) -> Optional[OfficialGameRecord]:
+    """Record game outcome for an existing official assignment."""
+    if not db or not event_id:
+        return None
+
+    try:
+        record = db.query(OfficialGameRecord).filter(
+            OfficialGameRecord.event_id == event_id
+        ).first()
+
+        if not record:
+            logger.warning("No official record found for event_id: %s", event_id)
+            return None
+
+        # Update with outcome
+        record.final_total = final_total
+        record.home_score = home_score
+        record.away_score = away_score
+        record.spread_result = home_score - away_score
+        record.outcome_recorded_at = datetime.utcnow()
+
+        # Calculate derived fields
+        if record.over_under_line is not None:
+            record.went_over = final_total > record.over_under_line
+        if record.spread_line is not None:
+            record.home_covered = record.spread_result > record.spread_line
+
+        db.flush()
+        logger.info("Recorded outcome for event %s: total=%s, went_over=%s",
+                    event_id, final_total, record.went_over)
+        return record
+    except Exception as e:
+        logger.error("Failed to record game outcome: %s", e)
+        return None
+
+
+def get_official_tendency(
+    db: Session,
+    sport: str,
+    official_name: str,
+    season: str = None
+) -> Optional[Dict[str, Any]]:
+    """Get computed tendency for an official."""
+    if not db or not official_name:
+        return None
+
+    try:
+        query = db.query(OfficialTendency).filter(
+            OfficialTendency.sport == sport.upper(),
+            OfficialTendency.official_name == official_name
+        )
+
+        if season:
+            query = query.filter(OfficialTendency.season == season)
+        else:
+            # Prefer current season, fall back to all-time
+            query = query.order_by(OfficialTendency.season.desc())
+
+        record = query.first()
+        if record:
+            return record.to_dict()
+        return None
+    except Exception as e:
+        logger.error("Failed to get official tendency: %s", e)
+        return None
+
+
+def save_official_tendency(
+    db: Session,
+    sport: str,
+    official_name: str,
+    season: str,
+    total_games: int,
+    over_games: int,
+    home_cover_games: int,
+    avg_total_points: float = None,
+    whistle_rate: str = None
+) -> Optional[OfficialTendency]:
+    """Save or update computed tendency for an official."""
+    if not db or not official_name:
+        return None
+
+    try:
+        # Check for existing
+        existing = db.query(OfficialTendency).filter(
+            OfficialTendency.sport == sport.upper(),
+            OfficialTendency.official_name == official_name,
+            OfficialTendency.season == season
+        ).first()
+
+        if existing:
+            record = existing
+        else:
+            record = OfficialTendency(
+                sport=sport.upper(),
+                official_name=official_name,
+                season=season
+            )
+            db.add(record)
+
+        # Update metrics
+        record.total_games = total_games
+        record.over_games = over_games
+        record.home_cover_games = home_cover_games
+        record.avg_total_points = avg_total_points
+        record.whistle_rate = whistle_rate
+        record.last_updated = datetime.utcnow()
+
+        # Calculate derived fields
+        if total_games > 0:
+            record.over_pct = over_games / total_games
+            record.home_cover_pct = home_cover_games / total_games
+            record.home_bias = record.home_cover_pct - 0.50
+        else:
+            record.over_pct = None
+            record.home_cover_pct = None
+            record.home_bias = None
+
+        record.sample_size_sufficient = total_games >= 50
+
+        db.flush()
+        return record
+    except Exception as e:
+        logger.error("Failed to save official tendency: %s", e)
+        return None
+
+
+def get_official_game_history(
+    db: Session,
+    sport: str,
+    official_name: str,
+    season: str = None,
+    limit: int = 100
+) -> list:
+    """Get game history for an official (for tendency calculation)."""
+    if not db or not official_name:
+        return []
+
+    try:
+        query = db.query(OfficialGameRecord).filter(
+            OfficialGameRecord.sport == sport.upper(),
+            OfficialGameRecord.lead_official == official_name,
+            OfficialGameRecord.outcome_recorded_at.isnot(None)  # Only graded games
+        )
+
+        if season:
+            query = query.filter(OfficialGameRecord.season == season)
+
+        records = query.order_by(
+            OfficialGameRecord.game_date.desc()
+        ).limit(limit).all()
+
+        return [r.to_dict() for r in records]
+    except Exception as e:
+        logger.error("Failed to get official game history: %s", e)
+        return []
+
+
+def _get_current_season() -> str:
+    """Get current season string (e.g., '2025-26')."""
+    now = datetime.utcnow()
+    # Season starts in October, so before October = previous season
+    if now.month >= 10:
+        return f"{now.year}-{str(now.year + 1)[-2:]}"
+    else:
+        return f"{now.year - 1}-{str(now.year)[-2:]}"
+
+
 def get_database_status() -> Dict[str, Any]:
     """Get database connection status."""
     return {

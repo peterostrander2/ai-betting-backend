@@ -603,6 +603,15 @@ class DailyScheduler:
                     name="Update Season Extremes"
                 )
                 logger.info("Season extremes update enabled: runs daily at 5 AM ET")
+
+                # v18.0: Weekly officials tendency recalculation (Sundays 3 AM ET)
+                self.scheduler.add_job(
+                    self._run_officials_tendency_update,
+                    CronTrigger(day_of_week="sun", hour=3, minute=0, timezone="America/New_York"),
+                    id="officials_tendency_update",
+                    name="Weekly Officials Tendency Recalculation"
+                )
+                logger.info("Officials tendency update enabled: runs weekly on Sundays at 3 AM ET")
         except ImportError:
             logger.warning("Database not available - line history capture disabled")
 
@@ -945,6 +954,47 @@ class DailyScheduler:
             logger.warning("Season extremes update unavailable: %s", e)
         except Exception as e:
             logger.error("Season extremes update failed: %s", e)
+
+    def _run_officials_tendency_update(self):
+        """
+        v18.0: Weekly officials tendency recalculation.
+
+        Recalculates referee tendencies from game history for all sports.
+        Uses data collected from OfficialGameRecord table.
+        Runs weekly on Sundays at 3 AM ET.
+        """
+        logger.info("👨‍⚖️ Starting weekly officials tendency update...")
+        try:
+            from services.officials_tracker import officials_tracker
+
+            if not officials_tracker.enabled:
+                logger.warning("Officials tracker not enabled - skipping tendency update")
+                return
+
+            from data_dir import SUPPORTED_SPORTS
+            total_updated = 0
+
+            for sport in SUPPORTED_SPORTS:
+                try:
+                    tendencies = officials_tracker.calculate_tendencies(
+                        sport=sport,
+                        min_games=50  # Require 50+ games for sufficient sample
+                    )
+                    updated_count = len([t for t in tendencies.values()
+                                       if t.get("sample_size_sufficient")])
+                    total_updated += updated_count
+                    logger.info("👨‍⚖️ %s: Updated %d official tendencies (%d with sufficient data)",
+                              sport, len(tendencies), updated_count)
+                except Exception as e:
+                    logger.error("Officials tendency update failed for %s: %s", sport, e)
+
+            logger.info("👨‍⚖️ Officials tendency update complete: %d officials with sufficient data",
+                       total_updated)
+
+        except ImportError as e:
+            logger.warning("Officials tracker not available: %s", e)
+        except Exception as e:
+            logger.error("Officials tendency update failed: %s", e)
 
     def _start_simple_scheduler(self):
         """Fallback simple scheduler using threading."""
