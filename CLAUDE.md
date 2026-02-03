@@ -2668,6 +2668,104 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
 
 ---
 
+### INVARIANT 23: SERP Intelligence Integration (v17.4)
+
+**RULE:** SERP betting intelligence provides search-trend signals that boost engine scores. Default is LIVE MODE (not shadow mode).
+
+**Implementation:**
+- `core/serp_guardrails.py` - Central config, quota tracking, boost caps, shadow mode control
+- `alt_data_sources/serp_intelligence.py` - 5 signal detectors mapped to 5 engines
+- `alt_data_sources/serpapi.py` - SerpAPI client with cache and timeout from guardrails
+
+**Configuration (serp_guardrails.py):**
+```python
+SERP_SHADOW_MODE = False      # LIVE MODE by default (boosts applied)
+SERP_INTEL_ENABLED = True     # Feature flag
+SERP_DAILY_QUOTA = 166        # 5000/30 days
+SERP_MONTHLY_QUOTA = 5000     # Monthly API calls
+SERP_TIMEOUT = 2.0            # Strict 2s timeout
+SERP_CACHE_TTL = 5400         # 90 minutes cache
+```
+
+**Boost Caps (Code-Enforced):**
+| Engine | Max Boost | Signal Type |
+|--------|-----------|-------------|
+| AI | 0.8 | Silent Spike (high search + low news) |
+| Research | 1.3 | Sharp Chatter (RLM, sharp money mentions) |
+| Esoteric | 0.6 | Noosphere (search velocity momentum) |
+| Jarvis | 0.7 | Narrative (revenge, rivalry, playoff) |
+| Context | 0.9 | Situational (B2B, rest, travel) |
+| **TOTAL** | **4.3** | Combined max across all engines |
+
+**Signal → Engine Mapping:**
+```
+detect_silent_spike()   → AI engine      (high search + low news = insider activity)
+detect_sharp_chatter()  → Research engine (sharp money, RLM mentions)
+detect_narrative()      → Jarvis engine   (revenge games, rivalries)
+detect_situational()    → Context engine  (B2B, rest advantage, travel)
+detect_noosphere()      → Esoteric engine (search trend velocity)
+```
+
+**Integration Point (live_data_router.py:3715-3750):**
+```python
+serp_intel = get_serp_betting_intelligence(sport, home_team, away_team, pick_side)
+if serp_intel.get("available"):
+    serp_boosts = serp_intel.get("boosts", {})
+    serp_boost_total = sum(serp_boosts.values())
+    confluence["boost"] += serp_boost_total  # Added to confluence
+```
+
+**Required Pick Output Fields:**
+```python
+{
+    "serp_boost": float,           # Total SERP boost applied
+    "serp_reasons": List[str],     # ["SERP[context]: Situational: b2b", ...]
+    "serp_shadow_mode": bool,      # False when live
+}
+```
+
+**Debug Output (debug.serp):**
+```json
+{
+  "available": true,
+  "shadow_mode": false,
+  "mode": "live",
+  "status": {
+    "enabled": true,
+    "quota": {"daily_remaining": 80, "monthly_remaining": 4800},
+    "cache": {"hits": 1000, "misses": 150, "hit_rate_pct": 87.0}
+  }
+}
+```
+
+**Verification:**
+```bash
+# Check SERP status
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.debug.serp'
+# Expected: available=true, shadow_mode=false, mode="live"
+
+# Check boosts on picks
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {serp_boost, serp_reasons}'
+# Expected: serp_boost > 0 when signals fire
+
+# Test all sports
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  curl -s "/live/best-bets/$sport?debug=1" -H "X-API-Key: KEY" | \
+    jq '{sport: .sport, serp_mode: .debug.serp.mode}'
+done
+```
+
+**NEVER:**
+- Set `SERP_SHADOW_MODE=True` in production (disables all boosts)
+- Skip quota checks before API calls
+- Exceed boost caps (enforced in `cap_boost()` and `cap_total_boost()`)
+- Make SERP calls inside scoring loop without try/except
+- Forget to add both `SERPAPI_KEY` and `SERP_API_KEY` to env var checks
+
+---
+
 ## 📚 MASTER FILE INDEX (ML & GLITCH)
 
 ### Core ML Files
@@ -2731,6 +2829,47 @@ get_msrf_confluence_boost() → (boost, metadata)
         ↓
 live_data_router.py:3567 → adds to confluence["boost"]
 ```
+
+### SERP Intelligence Files (Added Feb 2026 - v17.4)
+| File | Purpose | Key Functions |
+|------|---------|---------------|
+| `core/serp_guardrails.py` | Central config, quota, caps (~354 LOC) | `check_quota_available()`, `apply_shadow_mode()`, `cap_boost()`, `get_serp_status()` |
+| `alt_data_sources/serp_intelligence.py` | 5-engine signal detection (~823 LOC) | `get_serp_betting_intelligence()`, `get_serp_prop_intelligence()`, `detect_*()` |
+| `alt_data_sources/serpapi.py` | SerpAPI client with guardrails (~326 LOC) | `get_search_trend()`, `get_team_buzz()`, `get_player_buzz()`, `get_noosphere_data()` |
+
+**SERP Signal Detectors:**
+| Function | Engine | What It Detects |
+|----------|--------|-----------------|
+| `detect_silent_spike()` | AI | High search volume + low news (insider activity) |
+| `detect_sharp_chatter()` | Research | Sharp money, RLM mentions in search |
+| `detect_narrative()` | Jarvis | Revenge games, rivalries, playoff implications |
+| `detect_situational()` | Context | B2B, rest advantage, travel fatigue |
+| `detect_noosphere()` | Esoteric | Search trend velocity between teams |
+
+**SERP Data Flow:**
+```
+get_serp_betting_intelligence(sport, home, away, pick_side)
+  ├── detect_silent_spike(team, sport) → AI boost
+  ├── detect_sharp_chatter(team, sport) → Research boost
+  ├── detect_narrative(home, away, sport) → Jarvis boost
+  ├── detect_situational(team, sport, b2b, rest) → Context boost
+  └── detect_noosphere(home, away) → Esoteric boost
+        ↓
+  cap_total_boost(boosts) → enforce 4.3 total cap
+        ↓
+  apply_shadow_mode(boosts) → zero if shadow mode (currently OFF)
+        ↓
+  live_data_router.py:3727 → confluence["boost"] += serp_boost_total
+```
+
+**SERP Query Templates (SPORT_QUERIES):**
+- NBA: `"{team} sharp money"`, `"{team} reverse line movement"`, `"{team1} vs {team2} rivalry"`
+- NFL: `"{team} sharp action"`, `"{team} weather game"`, `"{team} short week"`
+- MLB: `"{team} sharp money MLB"`, `"{team} bullpen tired"`, `"{team} pennant race"`
+- NHL: `"{team} sharp money NHL"`, `"{team} back to back NHL"`
+- NCAAB: `"{team} sharp money college basketball"`, `"{team} tournament"`
+
+---
 
 ### ESPN Hidden API Files (Added Feb 2026 - v17.3)
 | File | Purpose | Key Functions |
@@ -3290,6 +3429,38 @@ if not picks:
 
 **Fixed in:** Commit `b5ffc3c` (Feb 2026)
 
+### Lesson 21: SERP Shadow Mode Default (Live Mode Required)
+**Problem:** SERP intelligence was configured with `SERP_SHADOW_MODE=True` by default, which zeroed all boosts. User explicitly wanted LIVE MODE where boosts are actively applied to scoring.
+
+**Root Cause:** The default was set to True (shadow/observation mode) as a safety measure during initial implementation, but it was never flipped to False for production use.
+
+**The Shadow Mode Pattern:**
+```python
+# WRONG - All boosts zeroed, signals logged but never applied
+SERP_SHADOW_MODE = _env_bool("SERP_SHADOW_MODE", True)  # ❌
+
+# CORRECT - Boosts applied to scoring (LIVE MODE)
+SERP_SHADOW_MODE = _env_bool("SERP_SHADOW_MODE", False)  # ✅
+```
+
+**What Shadow Mode Does:**
+- When `True`: All SERP boosts are logged but set to 0.0 before applying
+- When `False`: Boosts from Silent Spike, Sharp Chatter, Narrative, etc. actively modify scores
+
+**Prevention:**
+- Always verify `SERP_SHADOW_MODE` default in `core/serp_guardrails.py`
+- Check debug output shows `shadow_mode: false` and `mode: "live"`
+- Test that picks have non-zero `serp_boost` when signals fire
+- User confirmed preference: "i dont want anything in shadowmode. I want everything active"
+
+**Verification:**
+```bash
+# Must show shadow_mode: false, mode: "live"
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.debug.serp'
+```
+
+**Fixed in:** Commit enabling SERP live mode by default (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -3496,6 +3667,60 @@ curl -s "https://web-production-7b2a.up.railway.app/live/sharp/NBA" \
 
 ---
 
+## ✅ VERIFICATION CHECKLIST (SERP Intelligence)
+
+Run these after ANY change to SERP integration (serp_guardrails.py, serp_intelligence.py, serpapi.py):
+
+```bash
+# 1. Syntax check SERP modules
+python -m py_compile core/serp_guardrails.py alt_data_sources/serp_intelligence.py alt_data_sources/serpapi.py
+
+# 2. Verify SERP status (shadow mode OFF, live mode ON)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.debug.serp'
+# MUST show: available=true, shadow_mode=false, mode="live"
+
+# 3. Check quota tracking
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug.serp.status.quota | {daily_remaining, monthly_remaining}'
+# Should show remaining counts (166/day, 5000/month starting values)
+
+# 4. Check cache performance
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug.serp.status.cache | {hits, misses, hit_rate_pct}'
+# Hit rate should be >50% after initial warm-up
+
+# 5. Check boosts on picks (signals should fire)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {serp_boost, serp_reasons}'
+# serp_boost > 0 when signals fire, serp_reasons shows which signals
+
+# 6. Test all 5 sports SERP integration
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  curl -s "/live/best-bets/$sport?debug=1" -H "X-API-Key: KEY" | \
+    jq '{sport: .sport, serp_available: .debug.serp.available, serp_mode: .debug.serp.mode}'
+done
+# All should show available=true, mode="live"
+
+# 7. Verify boost caps enforced (no single engine > cap)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[].serp_boost] | max'
+# Max should be <= 4.3 (SERP_TOTAL_CAP)
+
+# 8. Check env var aliases work
+curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
+# Should show configured=true if either SERPAPI_KEY or SERP_API_KEY is set
+```
+
+**Critical Invariants (ALWAYS verify these):**
+- `SERP_SHADOW_MODE` must be `False` (live mode)
+- Boosts must be capped per engine (ai=0.8, research=1.3, esoteric=0.6, jarvis=0.7, context=0.9)
+- Total boost must not exceed 4.3
+- Quota must be checked before API calls
+- All SERP calls wrapped in try/except (fail-soft)
+
+---
+
 ## 🚫 NEVER DO THESE (ML & GLITCH)
 
 1. **NEVER** add a new signal without wiring it into the scoring pipeline
@@ -3561,6 +3786,20 @@ curl -s "https://web-production-7b2a.up.railway.app/live/sharp/NBA" \
 43. **NEVER** assume ESPN venue data exists for indoor sports - only fetch venue/weather for MLB and NFL
 44. **NEVER** add ESPN boosts without logging them in research_reasons for debug visibility
 45. **NEVER** modify ESPN integration without testing ALL 5 sports (different endpoints, different data availability)
+
+## 🚫 NEVER DO THESE (SERP Intelligence)
+
+46. **NEVER** set `SERP_SHADOW_MODE=True` in production - user wants LIVE MODE with active boosts
+47. **NEVER** skip quota checks before SerpAPI calls - use `check_quota_available()` first
+48. **NEVER** exceed boost caps - enforced in `cap_boost()` (per-engine) and `cap_total_boost()` (4.3 total)
+49. **NEVER** make SERP calls inside scoring loop without try/except - must fail-soft, never 500
+50. **NEVER** add SERP env var aliases without updating BOTH `integration_contract.py` AND `serpapi.py`
+51. **NEVER** change SERP_CACHE_TTL or SERP_TIMEOUT in `serpapi.py` - single source of truth is `serp_guardrails.py`
+52. **NEVER** forget to call `record_cache_hit()` / `record_cache_miss()` / `record_cache_error()` for tracking
+53. **NEVER** skip `apply_shadow_mode()` before returning boosts - even in live mode (it's a no-op but keeps code paths consistent)
+54. **NEVER** forget to increment quota after successful API calls - use `increment_quota()` in serpapi.py
+55. **NEVER** hardcode sport-specific search queries inline - use `SPORT_QUERIES` template dict in serp_intelligence.py
+56. **NEVER** modify signal→engine mapping without updating INVARIANT 23 in CLAUDE.md
 
 ---
 
