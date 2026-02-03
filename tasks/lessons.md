@@ -222,6 +222,111 @@ curl -s "https://web-production-7b2a.up.railway.app/health" | jq '.deploy_versio
 
 ---
 
+---
+
+### 6. Two Storage Systems Architecture (Feb 2026)
+
+**What happened:**
+- Confusion about why there are TWO storage paths: `grader_store.py` and `auto_grader.py`
+- Questions about whether predictions.json should be removed from auto_grader
+
+**Impact:** Risk of accidentally breaking the storage separation or duplicating pick writes.
+
+**Root cause:** Intentional architectural decision that wasn't clearly documented.
+
+**The Architecture (INTENTIONAL SEPARATION):**
+
+| System | Module | Path | Purpose | Frequency |
+|--------|--------|------|---------|-----------|
+| **Picks Storage** | `grader_store.py` | `/data/grader/predictions.jsonl` | Store all picks | High-frequency (every best-bets call) |
+| **Weights Storage** | `auto_grader.py` | `/data/grader_data/weights.json` | Learned weights only | Low-frequency (daily 6 AM) |
+
+**Why Separate?**
+1. **Access patterns differ**: Picks written constantly; weights updated daily
+2. **File locking**: Separate files avoid contention
+3. **Recovery**: Can restore weights without losing picks (and vice versa)
+4. **Audit trail**: Picks are append-only JSONL; weights are overwritten
+
+**Data Flow:**
+```
+Best-bets endpoint → grader_store.persist_pick() → /data/grader/predictions.jsonl
+                                                          ↓ (read)
+Daily 6 AM audit → auto_grader.grade_prediction() → /data/grader_data/weights.json
+```
+
+**What was removed (v20.x):**
+- Legacy `_save_predictions()` method from auto_grader
+- Predictions.json saving from `_save_state()`
+- `_save_predictions()` calls from `grade_prediction()`
+
+**What remains:**
+- `auto_grader.py` READS from `grader_store` but only WRITES weights
+- Predictions flow through `grader_store` exclusively
+
+**Lesson:**
+- Document intentional architectural decisions before they look like bugs
+- Two storage systems is CORRECT - don't merge them
+- Picks: `grader_store.py` (append-only JSONL)
+- Weights: `auto_grader.py` (daily overwrite)
+
+---
+
+### 7. Props Sanity Check Gate (Feb 2026)
+
+**What happened:**
+- Props pipeline could silently fail without blocking deployment
+- No automated verification that props were flowing correctly
+
+**Impact:** Users might receive game picks but no props without anyone noticing.
+
+**Fix:**
+- Added `scripts/props_sanity_check.sh` for props pipeline verification
+- Added to `COMMIT_CHECKLIST.md` as optional gate (set `REQUIRE_PROPS=1` to enforce)
+- Documents expected behavior when props are unavailable vs broken
+
+**Lesson:**
+- Add sanity checks for each major data pipeline
+- Make gates configurable (REQUIRE_PROPS=1 for strict mode)
+- Document expected vs unexpected empty states
+
+---
+
+### 8. Integration Tracking Pattern (Feb 2026)
+
+**What happened:**
+- NOAA integration was being used but `last_used_at` wasn't updating
+- Made it hard to verify which integrations were actually called
+
+**Fix:**
+- Added `_mark_noaa_used()` helper in `alt_data_sources/noaa.py`
+- Call `mark_integration_used()` on both cache hits AND live fetches
+- Pattern: Every integration module should track its usage
+
+**Lesson:**
+- Integration tracking should happen at the source module level
+- Track usage on BOTH cache hits and live API calls
+- Use try/except to avoid breaking main flow if registry fails
+
+---
+
+### 9. Boost Field Contract (Feb 2026)
+
+**What happened:**
+- Frontend expected certain boost fields but they were inconsistently present
+- No clear contract for which boost fields must appear in pick payloads
+
+**Fix:**
+- Documented Boost Field Contract in `SCORING_LOGIC.md`
+- Required fields: `base_4_score`, `context_modifier`, `confluence_boost`, `msrf_boost`, `jason_sim_boost`, `serp_boost`
+- Each boost includes `*_status` and `*_reasons` fields
+
+**Lesson:**
+- Document output contracts explicitly
+- Every boost must have: value, status, and reasons
+- Frontend should never have to guess field presence
+
+---
+
 ## Template: Adding New Lessons
 
 ```markdown

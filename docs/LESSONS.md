@@ -586,6 +586,178 @@ if weather_data:  # Safe - weather_data is always defined
 
 ---
 
+## 17. Two Storage Systems Architecture (v20.x)
+
+### The Design (INTENTIONAL)
+Two separate storage systems exist by design, NOT by accident:
+
+| System | Module | Path | Purpose |
+|--------|--------|------|---------|
+| **Picks** | `grader_store.py` | `/data/grader/predictions.jsonl` | All picks (high-frequency writes) |
+| **Weights** | `auto_grader.py` | `/data/grader_data/weights.json` | Learned weights only (daily updates) |
+
+### Why Not Merge Them?
+1. **Different access patterns**: Picks are written on every best-bets call; weights updated once daily
+2. **File locking**: Separate files prevent contention between frequent writes and daily batch processing
+3. **Recovery**: Can restore weights without losing picks (and vice versa)
+4. **Format**: Picks use append-only JSONL; weights use overwrite JSON
+
+### The Data Flow
+```
+[Best-bets endpoint]
+        ↓
+grader_store.persist_pick(pick_data)
+        ↓
+/data/grader/predictions.jsonl  ←── [WRITE PATH]
+        ↓
+[Daily 6 AM audit reads picks]
+        ↓
+auto_grader.grade_prediction()
+        ↓
+/data/grader_data/weights.json  ←── [WRITE PATH]
+```
+
+### What Was Removed (Cleanup)
+- `_save_predictions()` method from auto_grader.py
+- `predictions.json` saving from `_save_state()`
+- `_save_predictions()` calls from `grade_prediction()`
+
+### What Remains
+- `auto_grader.py` READS from `grader_store` but only WRITES `weights.json`
+- All pick persistence goes through `grader_store.py` exclusively
+
+### Rule
+> **INVARIANT**: Two storage systems is CORRECT. Picks flow through `grader_store.py` only. AutoGrader reads picks but only writes weights. Never merge these systems.
+
+### Verification
+```bash
+# Check both storage paths are healthy
+curl /internal/storage/health | jq '{picks: .predictions_line_count, weights_dir: .grader_data_dir}'
+
+# Verify grader reads picks correctly
+curl /live/grader/status -H "X-API-Key: KEY" | jq '{predictions_logged, weights_loaded}'
+```
+
+---
+
+## 18. Props Pipeline Sanity Check
+
+### The Mistake
+Props pipeline could silently fail without blocking deployment. Games would show but props would be missing.
+
+### The Fix
+Added `scripts/props_sanity_check.sh` with configurable enforcement:
+
+```bash
+# Optional check (warnings only)
+./scripts/props_sanity_check.sh
+
+# Strict mode (fails if no props)
+REQUIRE_PROPS=1 PROPS_REQUIRED_SPORTS="NBA" ./scripts/props_sanity_check.sh
+```
+
+### What It Checks
+1. Props endpoint returns 200
+2. Props count > 0 for required sports
+3. Props have required fields (pick_id, final_score, etc.)
+
+### Rule
+> **INVARIANT**: Add sanity checks for each major data pipeline. Make them configurable (strict vs advisory mode).
+
+---
+
+## 19. Integration Usage Tracking Pattern
+
+### The Mistake
+NOAA integration worked but `last_used_at` wasn't updating, making it impossible to verify the integration was actually called.
+
+### The Fix
+Add tracking helper at the source module:
+
+```python
+# alt_data_sources/noaa.py
+def _mark_noaa_used() -> None:
+    try:
+        from integration_registry import mark_integration_used
+        mark_integration_used("noaa_space_weather")
+    except Exception as e:
+        logger.debug("noaa mark_integration_used failed: %s", str(e))
+
+def fetch_kp_index_live():
+    # Track on cache hit
+    if _kp_cache and (now - _kp_cache_time) < KP_CACHE_TTL:
+        _mark_noaa_used()  # ← Important: track even cache hits
+        return {**_kp_cache, "source": "cache"}
+
+    # ... API call ...
+
+    _mark_noaa_used()  # ← Track on successful fetch
+    return result
+```
+
+### Rule
+> **INVARIANT**: Integration tracking should happen at the source module level. Track usage on BOTH cache hits AND live API calls.
+
+---
+
+## 20. Boost Field Output Contract
+
+### The Mistake
+Frontend expected boost fields but they were inconsistently present in pick payloads.
+
+### The Fix
+Documented explicit contract in `SCORING_LOGIC.md`:
+
+```json
+{
+  "base_4_score": 7.2,
+  "context_modifier": 0.15,
+  "context_breakdown": {...},
+  "context_reasons": [...],
+  "confluence_boost": 1.5,
+  "confluence_reasons": [...],
+  "msrf_boost": 0.25,
+  "msrf_status": "MODERATE",
+  "msrf_reasons": [...],
+  "jason_sim_boost": 0.5,
+  "jason_status": "STRONG",
+  "jason_reasons": [...],
+  "serp_boost": 0.3,
+  "serp_status": "LIVE",
+  "serp_signals": [...]
+}
+```
+
+### Rule
+> **INVARIANT**: Every boost must expose: value, status/breakdown, and reasons. Frontend should never have to guess field presence.
+
+---
+
+## Quick Reference: The Golden Rules (Updated v20.x)
+
+1. **Database**: Always use `with get_db() as db:` context manager
+2. **Parameters**: When adding params, wire them to real data (never hardcode None)
+3. **Timing**: New signals need 24-48 hours to accumulate data
+4. **Naming**: Comment which similarly-named function you're using
+5. **Imports**: Extend existing import lines, don't scatter new ones
+6. **Errors**: Wrap all optional signals in try/except
+7. **Testing**: Test with None/empty data, not just happy path
+8. **Data Sources**: Always pair raw data with interpretation/tendency database
+9. **Return Types**: Dual-use functions must return dicts, not JSONResponse
+10. **pick_type**: Game picks use "SPREAD"/"MONEYLINE"/"TOTAL", not "GAME"
+11. **Call Sites**: Update ALL call sites when adding function parameters
+12. **Database Sessions**: Always use `with get_db() as db:` and check `DATABASE_AVAILABLE and DB_ENABLED`
+13. **Variable Names**: Copy-paste variable names in dict returns, run `python -m py_compile`
+14. **Timezones**: Both datetimes must be timezone-aware for arithmetic
+15. **Env Vars**: Use `any()` for alternatives, `all()` for required
+16. **Initialization**: Initialize variables before conditional blocks that might skip assignment
+17. **Two Storage Systems**: Picks via `grader_store.py`; Weights via `auto_grader.py` - NEVER merge
+18. **Pipeline Checks**: Add sanity checks for each major data pipeline
+19. **Integration Tracking**: Track usage at source module level, including cache hits
+20. **Boost Contract**: Every boost exposes value + status + reasons
+
+---
+
 ## Adding New Lessons
 
 When you encounter a bug or issue, add it here:

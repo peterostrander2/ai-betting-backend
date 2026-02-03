@@ -43,11 +43,11 @@ This section contains ALL critical invariants that must NEVER be violated. Break
 
 ### INVARIANT 1: Storage Persistence (MANDATORY)
 
-**RULE:** ALL persistent data MUST live on Railway volume at `/data`
+**RULE:** ALL persistent data MUST live under `RAILWAY_VOLUME_MOUNT_PATH` (e.g., `/data` or `/app/grader_data` depending on Railway mount)
 
 **Canonical Storage Locations (DO NOT CHANGE):**
 ```
-/data/  (Railway 5GB persistent volume - NEVER use /data in production)
+${RAILWAY_VOLUME_MOUNT_PATH}/  (Railway 5GB persistent volume)
 ├── grader/
 │   └── predictions.jsonl           ← Picks (grader_store.py) - WRITE PATH
 ├── grader_data/
@@ -167,12 +167,21 @@ CONTEXT_MODIFIER_CAP = 0.35  # Context is a bounded modifier, NOT an engine
 **Scoring Formula (EXACT):**
 ```python
 BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
-FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment
 ```
 
 **Boosts are additive (NOT engines):**
 - `msrf_boost` and `serp_boost` must remain separate (do NOT fold into confluence).
 - Each boost must be present in payloads with status + reasons (even when 0.0 / unavailable).
+- `ensemble_adjustment` is applied post-base for game picks when the ensemble model is available
+  (+0.5 if hit_prob > 0.60, -0.5 if hit_prob < 0.40, else 0.0). Currently surfaced via `ai_reasons`.
+- Live in-game adjustment: `live_adjustment` (bounded ±0.50) applied to **research_score** when game_status is LIVE.
+
+**Non-negotiable rule for any NEW final_score adjustment:**
+- Must be **bounded**
+- Must be **surfaced as its own field** in payloads
+- Must be **included in docs contract scan**
+- Must be **included in endpoint sanity math checks**
 
 **Engine Separation Rules:**
 1. **Research Engine** - ALL market signals ONLY (sharp, splits, variance, public fade)
@@ -403,6 +412,72 @@ top_picks = no_contradictions[:max_picks]
 **Write Path:** `grader_store.persist_pick()` called from `/live/best-bets/{sport}`
 
 **Read Path:** AutoGrader reads from same file via `grader_store.load_predictions()`
+
+---
+
+### INVARIANT 9.1: Two Storage Systems (INTENTIONAL SEPARATION)
+
+**RULE:** Picks and Weights use SEPARATE storage systems by design. Never merge them.
+
+**Architecture:**
+
+| System | Module | Path | Purpose | Frequency |
+|--------|--------|------|---------|-----------|
+| **Picks** | `grader_store.py` | `/data/grader/predictions.jsonl` | All picks | High (every best-bets call) |
+| **Weights** | `auto_grader.py` | `/data/grader_data/weights.json` | Learned weights | Low (daily 6 AM audit) |
+
+**Why Separate?**
+1. **Access patterns differ**: Picks written on every request; weights updated once daily
+2. **File locking**: Separate files prevent contention between frequent writes and batch processing
+3. **Recovery**: Can restore weights without losing picks (and vice versa)
+4. **Format**: Picks use append-only JSONL; weights use overwrite JSON
+
+**Data Flow:**
+```
+Best-bets endpoint
+        ↓
+grader_store.persist_pick(pick_data)
+        ↓
+/data/grader/predictions.jsonl  ←── [PICKS WRITE PATH]
+        ↓ (read by auto_grader)
+Daily 6 AM audit
+        ↓
+auto_grader → grade_prediction() → adjust_weights()
+        ↓
+/data/grader_data/weights.json  ←── [WEIGHTS WRITE PATH]
+```
+
+**What Was Removed (v20.x cleanup):**
+- Legacy `_save_predictions()` method from auto_grader.py
+- `predictions.json` saving from `_save_state()`
+- `_save_predictions()` calls from `grade_prediction()`
+
+**What Remains:**
+- `auto_grader.py` READS picks from `grader_store` but only WRITES `weights.json`
+- All pick persistence flows through `grader_store.py` exclusively
+
+**NEVER:**
+- Write picks from `auto_grader.py` (only `grader_store.py` writes picks)
+- Write weights from `grader_store.py` (only `auto_grader.py` writes weights)
+- Merge the two storage systems (they're separate by design)
+- Add a new `_save_predictions()` method to auto_grader
+
+**Verification:**
+```bash
+# Check both storage systems are healthy
+curl /internal/storage/health | jq '{
+  picks_count: .predictions_line_count,
+  picks_path: .predictions_path,
+  weights_dir: .grader_data_dir
+}'
+
+# Verify grader reads picks and manages weights correctly
+curl /live/grader/status -H "X-API-Key: KEY" | jq '{
+  predictions_logged: .predictions_logged,
+  weights_loaded: .weights_loaded,
+  storage_path: .storage_path
+}'
+```
 
 ---
 
@@ -1306,7 +1381,7 @@ curl /live/best-bets/NBA?debug=1 | jq '.debug.date_window_et'
 **Formula:**
 ```
 BASE_4 = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.20) + (Jarvis × 0.20)
-FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment
 ```
 
 **Engines:**
@@ -2044,7 +2119,7 @@ If you add ANY new endpoint or function that processes Odds API events, you MUST
 
 ### Scoring Formula
 ```
-FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment
        + msrf_boost + serp_boost (if enabled)
 ```
 
@@ -3115,7 +3190,7 @@ curl /live/scheduler/status -H "X-API-Key: KEY" | jq '.jobs[] | select(.id == "t
 **Two Learning Systems (Complementary):**
 | System | Type | Schedule | What It Learns |
 |--------|------|----------|----------------|
-| **AutoGrader** | Statistical/Reactive | 6:00 AM ET | Bias from prediction errors → adjusts context weights |
+| **AutoGrader** | Statistical/Reactive | 6:00 AM ET | Bias from prediction errors → adjusts context modifier calibration |
 | **Trap Learning Loop** | Hypothesis/Proactive | 6:15 AM ET | Conditional rules → adjusts research/esoteric/jarvis weights |
 
 **Signal Tracking Coverage (28 signals - 100% coverage):**
@@ -3594,7 +3669,7 @@ live_data_router.py:3567 → adds to confluence["boost"]
 | File | Purpose | Key Functions |
 |------|---------|---------------|
 | `core/serp_guardrails.py` | Central config, quota, caps (~354 LOC) | `check_quota_available()`, `apply_shadow_mode()`, `cap_boost()`, `get_serp_status()` |
-| `alt_data_sources/serp_intelligence.py` | 5-engine signal detection (~823 LOC) | `get_serp_betting_intelligence()`, `get_serp_prop_intelligence()`, `detect_*()` |
+| `alt_data_sources/serp_intelligence.py` | Engine-aligned signal detection (~823 LOC) | `get_serp_betting_intelligence()`, `get_serp_prop_intelligence()`, `detect_*()` |
 | `alt_data_sources/serpapi.py` | SerpAPI client with guardrails (~326 LOC) | `get_search_trend()`, `get_team_buzz()`, `get_player_buzz()`, `get_noosphere_data()` |
 
 **SERP Signal Detectors:**
@@ -3824,7 +3899,7 @@ done
 7. Include `XXX_boost` and `XXX_metadata` in pick output
 
 **Why Confluence Boost:**
-- Avoids diluting existing 5-engine weights
+- Avoids diluting BASE_4 weights (context is modifier-only)
 - Easy to enable/disable via feature flag
 - Provides additive boost only when signal fires
 - Keeps engines clean and focused
@@ -5115,6 +5190,22 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 96. **NEVER** use AND logic for env var alternatives when OR is needed - check if ANY alternative is set, not ALL
 97. **NEVER** forget that everything is in ET only - don't assume UTC for game times
 
+## 🚫 NEVER DO THESE (v20.x - Two Storage Systems)
+
+98. **NEVER** write picks from `auto_grader.py` - only `grader_store.py` writes picks
+99. **NEVER** write weights from `grader_store.py` - only `auto_grader.py` writes weights
+100. **NEVER** merge the two storage systems - they're separate by design for good reasons
+101. **NEVER** add a new `_save_predictions()` method to auto_grader - it was removed intentionally
+102. **NEVER** assume picks and weights should be in the same file - different access patterns require separation
+103. **NEVER** bypass `grader_store.persist_pick()` when saving picks - it's the single source of truth
+104. **NEVER** call `auto_grader._save_state()` expecting it to save picks - it only saves weights now
+
+## 🚫 NEVER DO THESE (Boost Field Contract)
+
+105. **NEVER** return a pick without all required boost fields (value + status + reasons)
+106. **NEVER** omit `msrf_boost`, `jason_sim_boost`, or `serp_boost` from pick payloads - even if 0.0
+107. **NEVER** skip tracking integration usage on cache hits - call `mark_integration_used()` for both cache and live
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (v19.0 - Trap Learning Loop)
@@ -5517,8 +5608,8 @@ Inspect 1 prod pick and verify:
 - FINAL ~= BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost (within rounding).
 **Pass condition:** hand-calc one pick and it matches response fields.
 
-### 5) Hard guard against context weighting regression
-**Goal:** CI fails if 5-engine weighting returns.
+### 5) Hard guard against context-as-engine regression
+**Goal:** CI fails if legacy weighted scoring returns.
 - Add invariant test that fails if any of these appear in scoring paths:
   - `BASE_5`
   - `ENGINE_WEIGHTS["context"]`

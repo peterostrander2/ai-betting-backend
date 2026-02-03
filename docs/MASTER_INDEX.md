@@ -173,6 +173,25 @@ Expected:
 **Hard invariant (must remain true everywhere):**
 - All persisted data must be written **under `RAILWAY_VOLUME_MOUNT_PATH`** (derived paths only)
 
+**Two Storage Systems (INTENTIONAL SEPARATION):**
+
+| System | Module | Path | Purpose | Frequency |
+|--------|--------|------|---------|-----------|
+| **Picks** | `grader_store.py` | `/data/grader/predictions.jsonl` | All picks | High (every request) |
+| **Weights** | `auto_grader.py` | `/data/grader_data/weights.json` | Learned weights | Low (daily 6 AM) |
+
+**Why Separate?**
+- Different access patterns (frequent writes vs daily batch)
+- Avoids file locking contention
+- Independent recovery (restore weights without losing picks)
+
+**Data Flow:**
+```
+Best-bets → grader_store.persist_pick() → /data/grader/predictions.jsonl
+                                                    ↓ (read)
+Daily 6 AM → auto_grader.grade_prediction() → /data/grader_data/weights.json
+```
+
 **Runtime verification:**
 - `/internal/storage/health` must confirm mount + writeability
 - Session 2 + Session 9 must pass in CI
@@ -180,6 +199,9 @@ Expected:
 **Never do:**
 - Hardcode `/app/...` or other ephemeral filesystem paths for persistence
 - Build new paths without going through the canonical storage helpers
+- Merge the two storage systems (they're separate by design)
+- Write picks from `auto_grader.py` (only `grader_store.py` writes picks)
+- Write weights from `grader_store.py` (only `auto_grader.py` writes weights)
 
 ---
 
@@ -374,18 +396,22 @@ python3 -c "from officials_data import get_database_stats; print(get_database_st
 
 | Topic | Canonical File(s) | What It Defines |
 |---|---|---|
-| Scoring contract | `core/scoring_contract.py` | Weights, thresholds, gates, boost levels (v17.1: 5-engine) |
+| Scoring contract | `core/scoring_contract.py` | Weights, thresholds, gates, boost levels (v18.0: 4-engine + context modifier) |
 | Context layer | `context_layer.py` | DefensiveRank, Pace, Vacuum, Officials services (Pillars 13-16) |
 | **Officials data (v17.8)** | `officials_data.py` | Referee tendency database (25 NBA, 17 NFL, 15 NHL refs) |
 | **Phase 8 Esoteric (v18.2)** | `esoteric_engine.py` | Lunar, Mercury, Rivalry, Streak, Solar signals (17/17 active) |
 | ML integration | `ml_integration.py` | LSTM, Ensemble models with real context data |
 | Integrations mapping | `integration_registry.py` + `docs/AUDIT_MAP.md` | Env vars → modules/endpoints + validation |
 | ET window | `core/time_et.py` | ET bounds + timezone correctness |
-| Storage | `storage_paths.py` + `data_dir.py` | All persisted paths rooted at volume mount |
+| **Picks storage** | `grader_store.py` | Pick persistence (`/data/grader/predictions.jsonl`) |
+| **Weights storage** | `auto_grader.py` + `data_dir.py` | Learned weights (`/data/grader_data/weights.json`) |
+| Storage paths | `storage_paths.py` + `data_dir.py` | All persisted paths rooted at volume mount |
 | Scheduler | `daily_scheduler.py` | Jobs + ET schedule + exported status |
 | Tiering | `tiering.py` | Tier assignment + filters |
 | **Pick output format** | `utils/pick_normalizer.py` + `docs/PICK_CONTRACT_V1.md` | PickContract v1 fields, normalization rules |
+| **Boost field contract** | `SCORING_LOGIC.md` | Required boost fields in pick payloads |
 | **Public payload sanitizer** | `utils/public_payload_sanitizer.py` + `live_data_router.py` | ET-only public payloads, strip UTC/telemetry |
+| **Props sanity check** | `scripts/props_sanity_check.sh` | Props pipeline verification (optional gate) |
 | CI sessions | `scripts/ci_sanity_check.sh` | Sessions 1–10 must pass |
 
 ---
@@ -419,15 +445,19 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 | Engine weights | `SCORING_LOGIC.md`, `CLAUDE.md`, frontend display | All must show same weights |
 | Any invariant behavior | `CLAUDE.md` invariants section | Keep ops rules aligned |
 | Any persisted path logic | `storage_paths.py` / `data_dir.py` only | Keep everything under volume mount |
+| **Pick persistence** | `grader_store.py` only | Picks flow through grader_store exclusively |
+| **Weights persistence** | `auto_grader.py` + `data_dir.py` only | Weights flow through auto_grader exclusively |
 | Any scheduler job / export | `/live/scheduler/status` output + Session 10 | Ensure observability |
 | Any integration env var usage | `integration_registry.py` + `docs/AUDIT_MAP.md` | Maintain env var → code mapping |
 | Any session spec changes | `scripts/ci_sanity_check.sh` + spot check scripts | CI must fail on regression |
 | Pick output fields/format | `utils/pick_normalizer.py` + `docs/PICK_CONTRACT_V1.md` | Maintain frontend contract |
+| **Boost output fields** | `SCORING_LOGIC.md` (Boost Field Contract) | All boosts need value + status + reasons |
 | Pillar additions (13-17) | `context_layer.py`, `live_data_router.py`, docs | All 17 pillars must be documented |
 | Officials data (Pillar 16) | `officials_data.py`, `context_layer.py`, `live_data_router.py` | Referee tendency database + adjustment logic (v17.8) |
 | **Phase 8 signals (v18.2)** | `esoteric_engine.py`, `live_data_router.py`, `CLAUDE.md` | Lunar/Mercury/Rivalry/Streak/Solar (17/17 signals) |
 | Public payload ET-only rules | `utils/public_payload_sanitizer.py` + `CLAUDE.md` | No UTC/telemetry leaks; ET display only |
 | Live caching headers | `main.py` middleware + `live_data_router.py` | Ensure no-store headers on GET/HEAD |
+| **Integration tracking** | Source module + `integration_registry.py` | Track usage at source level |
 
 ---
 
