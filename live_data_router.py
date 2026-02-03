@@ -3337,6 +3337,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         research_reasons = []
         esoteric_reasons = []
+        context_reasons = []
         pillars_passed = []
         pillars_failed = []
         ai_reasons = []
