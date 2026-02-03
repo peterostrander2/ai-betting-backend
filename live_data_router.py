@@ -340,6 +340,17 @@ except ImportError:
     SERP_SHADOW_MODE = True  # Default to shadow mode if module not available
     print("[WARNING] serp_intelligence module not available - SERP signals disabled")
 
+# Import Gematria Twitter Intelligence for community consensus signals (v17.9)
+try:
+    from alt_data_sources.gematria_twitter_intel import (
+        get_gematria_consensus_boost,
+        GEMATRIA_ACCOUNTS,
+    )
+    GEMATRIA_INTEL_AVAILABLE = True
+except ImportError:
+    GEMATRIA_INTEL_AVAILABLE = False
+    print("[WARNING] gematria_twitter_intel module not available - Gematria community signals disabled")
+
 # Import Astronomical API for Void-of-Course moon detection (v17.5 - Phase 2.2)
 try:
     from astronomical_api import is_void_moon_now
@@ -4236,6 +4247,50 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 logger.debug("SERP intelligence failed: %s", e)
                 serp_intel = {"available": False, "error": str(e)}
 
+        # ===== v17.9 GEMATRIA TWITTER INTELLIGENCE =====
+        # Community consensus signals from gematria Twitter accounts
+        # Monitors: GematriaClub, ScriptLeaker, ZachHubbard, archaix138, etc.
+        gematria_boost = 0.0
+        gematria_metadata = {"available": False, "reason": "not_run"}
+        gematria_reasons = []
+
+        if GEMATRIA_INTEL_AVAILABLE:
+            try:
+                # Build context for gematria consensus lookup
+                gematria_context = {
+                    "sport": sport_upper,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "player_name": player_name,
+                    "market": market,
+                    "pick_side": pick_side,
+                    "prop_line": prop_line,
+                    "spread": spread,
+                    "total": total,
+                }
+
+                gematria_boost, gematria_metadata = get_gematria_consensus_boost(gematria_context)
+
+                if gematria_boost > 0:
+                    confluence["boost"] = confluence.get("boost", 0) + gematria_boost
+                    confluence["gematria_boost"] = gematria_boost
+
+                    consensus_level = gematria_metadata.get("consensus_level", "MODERATE")
+                    account_count = gematria_metadata.get("accounts_aligned", 0)
+                    gematria_reasons.append(f"Gematria: {consensus_level} consensus ({account_count} accounts) +{gematria_boost:.2f}")
+
+                    logger.info("GEMATRIA[%s vs %s]: %s consensus, %d accounts, boost=+%.2f",
+                                home_team or "?", away_team or "?",
+                                consensus_level, account_count, gematria_boost)
+
+                    # Add any sacred number triggers found
+                    for trigger in gematria_metadata.get("triggers", [])[:3]:
+                        gematria_reasons.append(f"Gematria: {trigger}")
+
+            except Exception as e:
+                logger.debug("Gematria intelligence failed: %s", e)
+                gematria_metadata = {"available": False, "error": str(e)}
+
         confluence_level = confluence.get("level", "DIVERGENT")
         confluence_boost = confluence.get("boost", 0)
 
@@ -4819,6 +4874,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "serp_boost": serp_boost_total,
             "serp_reasons": serp_reasons,
             "serp_shadow_mode": SERP_SHADOW_MODE if SERP_INTEL_AVAILABLE else True,
+            # v17.9 Gematria Twitter Intelligence
+            "gematria_boost": gematria_boost,
+            "gematria_metadata": gematria_metadata,
+            "gematria_reasons": gematria_reasons,
             # v17.5 GLITCH Protocol adjustment
             "glitch_adjustment": glitch_adjustment,
             # v17.0 Ensemble Model (for GAME picks)
