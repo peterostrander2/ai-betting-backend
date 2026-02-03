@@ -1097,8 +1097,16 @@ async def ops_env_map():
     Canonical source: core.integration_contract.INTEGRATIONS
     """
     env_map = {}
+    # Track which integrations have at least one env var set
+    integration_satisfied = {}
+
     for name, meta in CONTRACT_INTEGRATIONS.items():
-        for env_var in meta.get("env_vars", []):
+        env_vars_list = meta.get("env_vars", [])
+        # Check if ANY of the integration's env vars are set
+        any_set = any(bool(_os.getenv(ev)) for ev in env_vars_list)
+        integration_satisfied[name] = any_set
+
+        for env_var in env_vars_list:
             entry = env_map.setdefault(env_var, {
                 "env_var": env_var,
                 "integrations": [],
@@ -1121,7 +1129,13 @@ async def ops_env_map():
         entry["endpoints"] = sorted(set(entry["endpoints"]))
         entry["jobs"] = sorted(set(entry["jobs"]))
 
-    missing_required = sorted([k for k, v in env_map.items() if v["required"] and not v["is_set"]])
+    # For missing_required: only flag if the integration has NO env vars set (OR logic)
+    # Skip env vars whose integration is already satisfied by another env var
+    missing_required = sorted([
+        k for k, v in env_map.items()
+        if v["required"] and not v["is_set"]
+        and not all(integration_satisfied.get(i, False) for i in v["integrations"])
+    ])
     missing_any = sorted([k for k, v in env_map.items() if not v["is_set"]])
     unused_env_vars = sorted([
         k for k in _os.environ.keys()
