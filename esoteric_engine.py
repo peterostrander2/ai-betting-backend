@@ -1419,7 +1419,11 @@ def calculate_lunar_phase_intensity(game_datetime: datetime = None) -> Dict[str,
     except Exception:
         # Fallback: simple calculation based on lunar cycle (~29.5 days)
         # Reference new moon: Jan 1, 2000 at 18:14 UTC
-        ref_date = datetime(2000, 1, 1, 18, 14)
+        from zoneinfo import ZoneInfo
+        ref_date = datetime(2000, 1, 1, 18, 14, tzinfo=ZoneInfo("UTC"))
+        # Ensure game_datetime is timezone-aware
+        if game_datetime.tzinfo is None:
+            game_datetime = game_datetime.replace(tzinfo=ZoneInfo("UTC"))
         days_since = (game_datetime - ref_date).total_seconds() / 86400
         lunar_cycle = 29.530588853
         phase = (days_since % lunar_cycle) / lunar_cycle
