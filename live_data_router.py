@@ -5749,17 +5749,6 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
                 # Lineup confirmation guard (props only)
                 lineup_guard = _lineup_risk_guard(commence_time, injury_status)
-                if lineup_guard.get("penalty", 0.0) != 0.0:
-                    _p = lineup_guard["penalty"]
-                    _old_score = score_data.get("total_score", 0)
-                    _old_final = score_data.get("final_score", _old_score)
-                    score_data["total_score"] = round(_old_score + _p, 2)
-                    score_data["final_score"] = round(_old_final + _p, 2)
-                    score_data.setdefault("penalties", []).append({
-                        "name": "Lineup Risk",
-                        "magnitude": _p,
-                        "reason": lineup_guard.get("reason", "Lineup unconfirmed")
-                    })
 
                 # v16.0: Apply weather modifier to props (capped at ±1.0)
                 _prop_weather_mod = _prop_game_weather.get("weather_modifier", 0.0) if _prop_game_weather else 0.0
