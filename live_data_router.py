@@ -330,6 +330,16 @@ except ImportError:
     SERP_SHADOW_MODE = True  # Default to shadow mode if module not available
     print("[WARNING] serp_intelligence module not available - SERP signals disabled")
 
+# Import Astronomical API for Void-of-Course moon detection (v17.5 - Phase 2.2)
+try:
+    from astronomical_api import is_void_moon_now
+    ASTRONOMICAL_API_AVAILABLE = True
+except ImportError:
+    ASTRONOMICAL_API_AVAILABLE = False
+    print("[WARNING] astronomical_api module not available - VOC detection disabled")
+    def is_void_moon_now():
+        return (False, 0.0)
+
 # Redis import with fallback
 try:
     import redis
@@ -1385,7 +1395,12 @@ def get_moon_phase() -> Dict[str, Any]:
 
 
 def get_daily_energy() -> Dict[str, Any]:
-    """Get overall daily energy reading for betting."""
+    """Get overall daily energy reading for betting.
+
+    v17.5 (Phase 2.2): Added Void-of-Course moon penalty.
+    When moon is void-of-course with confidence > 0.5, apply -20 penalty.
+    Traditional astrological wisdom: avoid initiating bets during VOC periods.
+    """
     numerology = calculate_date_numerology()
     moon = get_moon_phase()
 
@@ -1413,6 +1428,22 @@ def get_daily_energy() -> Dict[str, Any]:
     day_name, modifier, day_meaning = day_modifiers[dow]
     energy_score += modifier
 
+    # ===== v17.5: VOID OF COURSE MOON PENALTY =====
+    # Traditional astrological wisdom: avoid initiating new bets during VOC periods
+    voc_penalty = 0
+    voc_data = {"is_void": False, "confidence": 0.0, "penalty": 0}
+    try:
+        is_void, voc_confidence = is_void_moon_now()
+        voc_data["is_void"] = is_void
+        voc_data["confidence"] = voc_confidence
+        if is_void and voc_confidence > 0.5:
+            voc_penalty = -20  # Significant penalty during void periods
+            energy_score += voc_penalty
+            voc_data["penalty"] = voc_penalty
+            logger.debug("VOC Moon detected (confidence=%.2f) - applying %d penalty", voc_confidence, voc_penalty)
+    except Exception as e:
+        logger.warning("VOC calculation failed: %s", e)
+
     return {
         "overall_score": min(100, max(0, energy_score)),
         "rating": "HIGH" if energy_score >= 70 else "MEDIUM" if energy_score >= 40 else "LOW",
@@ -1420,7 +1451,8 @@ def get_daily_energy() -> Dict[str, Any]:
         "day_influence": day_meaning,
         "recommended_action": "Aggressive betting" if energy_score >= 70 else "Standard sizing" if energy_score >= 40 else "Conservative approach",
         "numerology_summary": numerology,
-        "moon_summary": moon
+        "moon_summary": moon,
+        "void_of_course": voc_data
     }
 
 

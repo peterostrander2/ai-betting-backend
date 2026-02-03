@@ -2783,14 +2783,26 @@ done
 | `esoteric_engine.py` | `analyze_spread_gann()` | GAME | +0.25/+0.15/+0.1 | `live_data_router.py:3647-3673` |
 | `esoteric_engine.py` | `check_founders_echo()` | GAME | +0.2/+0.35 | `live_data_router.py:3678-3707` |
 
-**Esoteric Engine Signal Status (8/10 active):**
+### Phase 2.2 - Void-of-Course Daily Edge (Activated v17.5 - Feb 2026)
+| File | Function | Purpose | Integration Line |
+|------|----------|---------|------------------|
+| `astronomical_api.py` | `is_void_moon_now()` | VOC moon detection | `live_data_router.py:1431-1445` |
+| `live_data_router.py` | `get_daily_energy()` | Daily Edge scoring | Lines 1397-1456 |
+
+**VOC Penalty Logic:**
+- When `is_void_moon_now()` returns `is_void=True` AND `confidence > 0.5`
+- Apply `-20` penalty to `energy_score`
+- This can push `daily_edge_score` from HIGH to MEDIUM or MEDIUM to LOW
+- Traditional astrological wisdom: avoid initiating new bets during VOC periods
+
+**Esoteric Engine Signal Status (9/10 active):**
 | Signal | Status | Notes |
 |--------|--------|-------|
 | Numerology | ✅ ACTIVE | `calculate_generic_numerology()` |
 | Astro | ✅ ACTIVE | Vedic astrology |
 | Fibonacci | ✅ ACTIVE | `calculate_fibonacci_alignment()` |
 | Vortex | ✅ ACTIVE | Tesla 3-6-9 |
-| Daily Edge | ✅ ACTIVE | Daily energy score |
+| Daily Edge | ✅ ACTIVE + VOC (v17.5) | Daily energy score with VOC penalty |
 | GLITCH (6 signals) | ✅ ACTIVE | `get_glitch_aggregate()` |
 | Biorhythms | ✅ ACTIVE (v17.5) | Props only, player birth cycles |
 | Gann Square | ✅ ACTIVE (v17.5) | Games only, sacred geometry |
@@ -3688,6 +3700,19 @@ curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
 # 13. All unique esoteric_reasons (full signal inventory)
 curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
   jq '[.game_picks.picks[].esoteric_reasons, .props.picks[].esoteric_reasons] | flatten | unique'
+
+# 14. Phase 2.2 - Void-of-Course Daily Edge (check VOC penalty)
+curl -s '/live/best-bets/NBA?debug=1' -H 'X-API-Key: KEY' | \
+  jq '.debug.daily_energy'
+# Should include: void_of_course: {is_void, confidence, penalty}
+
+# 15. Test VOC function directly
+python3 -c "from astronomical_api import is_void_moon_now; is_void, conf = is_void_moon_now(); print(f'VOC: is_void={is_void}, confidence={conf}')"
+# Returns current VOC status
+
+# 16. Verify daily energy includes VOC data in response
+curl -s '/live/daily-energy' -H 'X-API-Key: KEY' | jq '.void_of_course'
+# When VOC active: {is_void: true, confidence: 0.87, penalty: -20}
 ```
 
 ---
