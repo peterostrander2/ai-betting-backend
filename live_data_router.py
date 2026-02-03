@@ -4874,6 +4874,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # v17.2 MSRF Resonance
             "msrf_boost": msrf_boost,
             "msrf_metadata": msrf_metadata,
+            # v18.2 Phase 8 Esoteric Signals
+            "phase8_boost": phase8_boost,
+            "phase8_reasons": phase8_reasons,
             # v17.4 SERP Intelligence
             "serp_intel": serp_intel,
             "serp_boost": serp_boost_total,
