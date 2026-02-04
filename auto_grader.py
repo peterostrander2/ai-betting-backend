@@ -172,20 +172,27 @@ class AutoGrader:
     
     def _initialize_weights(self):
         """Initialize default weights for all sports and stat types."""
-        stat_types = {
+        # v20.2: PROP stat types (player-level predictions)
+        prop_stat_types = {
             "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "pra"],
             "NFL": ["passing_yards", "rushing_yards", "receiving_yards", "receptions", "touchdowns"],
             "MLB": ["hits", "runs", "rbis", "strikeouts", "total_bases", "walks"],
             "NHL": ["goals", "assists", "points", "shots", "saves", "blocks"],
             "NCAAB": ["points", "rebounds", "assists", "threes"]
         }
-        
+
+        # v20.2: GAME stat types (game-level predictions: spread, total, moneyline, sharp)
+        # These are stored with these stat_type values when picks are persisted
+        game_stat_types = ["spread", "total", "moneyline", "sharp"]
+
         for sport in self.SUPPORTED_SPORTS:
             self.weights[sport] = {}
-            for stat in stat_types.get(sport, ["points"]):
+
+            # Initialize PROP stat types
+            for stat in prop_stat_types.get(sport, ["points"]):
                 self.weights[sport][stat] = WeightConfig()
-                
-                # Sport-specific default adjustments
+
+                # Sport-specific default adjustments for props
                 if sport == "MLB":
                     self.weights[sport][stat].park_factor = 0.15
                     self.weights[sport][stat].pace = 0.08  # Less relevant for MLB
@@ -193,6 +200,19 @@ class AutoGrader:
                     self.weights[sport][stat].vacuum = 0.22  # Injuries huge in NFL
                 elif sport == "NHL":
                     self.weights[sport][stat].pace = 0.18  # Pace matters in hockey
+
+            # v20.2: Initialize GAME stat types (spread, total, moneyline, sharp)
+            for stat in game_stat_types:
+                self.weights[sport][stat] = WeightConfig()
+
+                # Sport-specific default adjustments for game picks
+                if sport == "MLB":
+                    self.weights[sport][stat].park_factor = 0.15
+                    self.weights[sport][stat].pace = 0.08
+                elif sport == "NFL":
+                    self.weights[sport][stat].vacuum = 0.22
+                elif sport == "NHL":
+                    self.weights[sport][stat].pace = 0.18
     
     def _load_state(self):
         """Load persisted weights and prediction history from grader_store."""
