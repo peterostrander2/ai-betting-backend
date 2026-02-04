@@ -65,7 +65,7 @@ check_best_bets() {
   game_count=$(jq -r '.game_picks.picks | length' "$resp_file" 2>/dev/null || echo 0)
   if [ "$game_count" -gt 0 ]; then
     local ok
-    ok=$(jq -r --argjson req "$req" '.game_picks.picks[0] as $p | ($req | all($p | has(.)))' "$resp_file" 2>/dev/null || echo false)
+    ok=$(jq -r --argjson req "$req" '.game_picks.picks[0] as $p | [$req[] | . as $key | $p | has($key)] | all' "$resp_file" 2>/dev/null || echo false)
     if [ "$ok" != "true" ]; then
       fail "best-bets $sport missing required fields in game pick"
     fi
@@ -106,7 +106,7 @@ PY
   prop_count=$(jq -r '.props.picks | length' "$resp_file" 2>/dev/null || echo 0)
   if [ "$prop_count" -gt 0 ]; then
     local ok
-    ok=$(jq -r --argjson req "$req" '.props.picks[0] as $p | ($req | all($p | has(.)))' "$resp_file" 2>/dev/null || echo false)
+    ok=$(jq -r --argjson req "$req" '.props.picks[0] as $p | [$req[] | . as $key | $p | has($key)] | all' "$resp_file" 2>/dev/null || echo false)
     if [ "$ok" != "true" ]; then
       fail "best-bets $sport missing required fields in prop pick"
     fi

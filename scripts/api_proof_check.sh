@@ -62,7 +62,7 @@ fi
 required_fields='["serp_status","msrf_status","jason_status"]'
 count=$(echo "$PICK" | jq -r '.game_picks.picks | length' 2>/dev/null || echo 0)
 if [ "$count" -gt 0 ]; then
-  ok=$(echo "$PICK" | jq -r --argjson req "$required_fields" '.game_picks.picks[0] as $p | ($req | all($p | has(.)))' 2>/dev/null || echo false)
+  ok=$(echo "$PICK" | jq -r --argjson req "$required_fields" '.game_picks.picks[0] as $p | [$req[] | . as $key | $p | has($key)] | all' 2>/dev/null || echo false)
   if [ "$ok" != "true" ]; then
     fail "Missing status fields in game_picks.picks[0]"
   fi
@@ -70,7 +70,7 @@ fi
 
 count=$(echo "$PICK" | jq -r '.props.picks | length' 2>/dev/null || echo 0)
 if [ "$count" -gt 0 ]; then
-  ok=$(echo "$PICK" | jq -r --argjson req "$required_fields" '.props.picks[0] as $p | ($req | all($p | has(.)))' 2>/dev/null || echo false)
+  ok=$(echo "$PICK" | jq -r --argjson req "$required_fields" '.props.picks[0] as $p | [$req[] | . as $key | $p | has($key)] | all' 2>/dev/null || echo false)
   if [ "$ok" != "true" ]; then
     fail "Missing status fields in props.picks[0]"
   fi
