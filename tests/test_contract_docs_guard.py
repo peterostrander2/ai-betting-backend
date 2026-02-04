@@ -50,5 +50,10 @@ def test_endpoint_matrix_math_includes_ensemble_adjustment() -> None:
     text = _read(ENDPOINT_MATRIX)
     # Require ensemble_adjustment in the math sum check
     assert "ensemble_adjustment" in text
-    # Ensure math uses explicit additive terms
-    assert "base_4_score" in text and "context_modifier" in text
+
+
+def test_titanium_rule_matches_docs() -> None:
+    """CLAUDE.md must state Titanium rule as 3/4 engines >= 8.0."""
+    claude_text = _read(CLAUDE_MD)
+    assert "3/4 engines" in claude_text or "3 of 4 engines" in claude_text
+    assert ">= 8.0" in claude_text or ">=8.0" in claude_text

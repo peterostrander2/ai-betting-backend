@@ -164,3 +164,7 @@ Endpoints should return HTTP 200 when possible. If errors occur:
 ## Notes
 - For offseason sports (e.g., MLB), endpoints must still return the shape above with empty arrays and `count=0`.
 - Debug payloads (`?debug=1`) must include full scoring breakdowns and `used_integrations` where supported.
+- Debug payloads also include integration telemetry blocks:
+  - `debug.integration_calls`
+  - `debug.integration_impact`
+  - `debug.integration_totals`

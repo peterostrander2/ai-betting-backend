@@ -117,6 +117,32 @@ def test_weights_load_missing_is_safe(tmp_path):
     assert "NBA" in weights
 
 
+def test_predictions_roundtrip_survives_reload(tmp_path, monkeypatch):
+    """Persist to grader_store then reload and ensure predictions load."""
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", str(mount))
+
+    import grader_store
+    importlib.reload(grader_store)
+
+    pick = _build_pick("roundtrip", 7.1)
+    grader_store.ensure_storage_writable()
+    assert grader_store.persist_pick(pick, "2026-02-03") is True
+
+    loaded = grader_store.load_predictions("2026-02-03")
+    assert any(p.get("pick_id") == pick["pick_id"] for p in loaded)
+
+
+def test_auto_grader_uses_et_aware_comparisons():
+    """Auto-grader should normalize timestamps to ET before comparisons."""
+    with open("auto_grader.py", "r") as f:
+        text = f.read()
+
+    assert "now_et()" in text, "auto_grader must use now_et() for ET-aware comparisons"
+    assert "fromisoformat" in text and "tzinfo is None" in text, "auto_grader must normalize naive timestamps"
+
+
 def test_scoring_path_does_not_adjust_weights():
     with open("live_data_router.py", "r") as f:
         text = f.read()

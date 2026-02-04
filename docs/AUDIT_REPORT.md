@@ -1,7 +1,7 @@
 # Backend Audit Report — Option A / Integrations / Persistence / Live Betting
 
 Date: 2026-02-04
-Git SHA: f590006a90dc66bf18909f2e4de4a4d055256c1a
+Git SHA: (set at commit)
 
 ## 1) Executive Summary (PASS/FAIL Matrix)
 
@@ -26,10 +26,11 @@ Local checks (run here):
 **Canonical formula (Option A):**
 - BASE_4 = AI*0.25 + Research*0.35 + Esoteric*0.20 + Jarvis*0.20
 - CONTEXT_MODIFIER_CAP = 0.35 (context is a bounded modifier, not a weighted engine)
-- FINAL = min(10, BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment)
+- FINAL = min(10, BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + live_adjustment)
 
 **Proof (local):**
 - `tests/test_option_a_scoring_guard.py` asserts no context engine weight, no BASE_5, and checks formula shape.
+- `tests/test_scoring_invariants_phase1.py` asserts Option A math with explicit post-base adjustments.
 - `scripts/option_a_drift_scan.sh` checks runtime paths for forbidden patterns.
 - `core/scoring_contract.py` defines ENGINE_WEIGHTS (4 engines only) and caps.
 
@@ -45,6 +46,7 @@ Local checks (run here):
 | jason_sim_boost | `jason_sim_confluence.py` | `JASON_SIM_BOOST_CAP` | Yes | Can be negative | 
 | serp_boost | `alt_data_sources/serp_intelligence.py` | `SERP_BOOST_CAP_TOTAL` | Yes | Total SERP cap | 
 | ensemble_adjustment | `utils/ensemble_adjustment.py` | `ENSEMBLE_ADJUSTMENT_STEP` | Yes | +0.5/-0.5 step | 
+| live_adjustment | `alt_data_sources/live_signals.py` (applied to research_score) | `LIVE_ADJUSTMENT_CAP` (internal) | Yes | Applied when in-play | 
 | harmonic_boost | `live_data_router.py` | (internal) | No (folded into confluence) | Not additive to final | 
 | glitch_adjustment | `live_data_router.py` | (internal) | No (folded into esoteric) | Not additive to final | 
 
@@ -64,8 +66,24 @@ Required fields in `/live/best-bets/{sport}?debug=1`:
 - status fields: `msrf_status`, `serp_status`, `jason_status`
 
 **Local run:** SKIPPED due to network/DNS in this environment.
+**Report:** `docs/ENDPOINT_MATRIX_REPORT.md`
 
-## 6) Performance Audit
+## 6) Paid API Telemetry (Debug-Only)
+
+**Debug telemetry added:**
+- `debug.integration_calls` includes called/status/latency/cache_hit (best-effort).
+- `debug.integration_impact` includes nonzero boost counts + reasons counts.
+- `debug.integration_totals` includes calls_made + cache_hit_rate.
+
+**Daily rollup (Railway volume):**
+- `RAILWAY_VOLUME_MOUNT_PATH/telemetry/daily_YYYY-MM-DD.json`
+
+## 7) Signal Coverage
+
+**Script:** `scripts/signal_coverage_report.py`  
+**Outputs:** `docs/SIGNAL_COVERAGE_REPORT.md`, `artifacts/signal_coverage.json`
+
+## 8) Performance Audit
 
 **Script:** `scripts/perf_audit_best_bets.sh`
 - Collects `debug_timings` (P50/P95) per sport.
@@ -76,7 +94,7 @@ Required fields in `/live/best-bets/{sport}?debug=1`:
 - NHL p50 ≈ 53.2s (full pipeline)
 - NFL/MLB/NCAAB: no games/off‑season
 
-## 7) Persistence + Storage
+## 9) Persistence + Storage
 
 **Requirements:** All persistent data must be under `RAILWAY_VOLUME_MOUNT_PATH`.
 
@@ -125,3 +143,6 @@ bash scripts/env_drift_scan.sh
 ALLOW_EMPTY=1 bash scripts/learning_sanity_check.sh
 ALLOW_EMPTY=1 bash scripts/learning_loop_sanity.sh
 ```
+## 10) Learning Loop Audit
+
+**Report:** `docs/LEARNING_LOOP_AUDIT.md`

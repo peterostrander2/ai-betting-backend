@@ -140,7 +140,7 @@ except ImportError:
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
 from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP
 from core.scoring_pipeline import compute_final_score_option_a, compute_harmonic_boost
-from core.telemetry import apply_used_integrations_debug
+from core.telemetry import apply_used_integrations_debug, attach_integration_telemetry_debug, record_daily_integration_rollup
 
 # Import Time ET - SINGLE SOURCE OF TRUTH for ET timezone
 try:
@@ -2671,10 +2671,65 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                            max_events=12, max_props=10, max_games=10):
     sport_upper = sport.upper()
     used_integrations = set()
+    integration_calls = {}
+    integration_impact = {}
+    usage_snapshot_before = {}
+
+    try:
+        from integration_registry import get_usage_snapshot
+        usage_snapshot_before = get_usage_snapshot()
+    except Exception:
+        usage_snapshot_before = {}
+
+    def _ensure_integration_entry(name: str) -> Dict[str, Any]:
+        entry = integration_calls.get(name)
+        if entry is None:
+            entry = {
+                "called": 0,
+                "status": None,
+                "latency_total_ms": 0.0,
+                "latency_samples": 0,
+                "cache_hit": None,
+                "cache_hits": 0,
+                "cache_samples": 0,
+            }
+            integration_calls[name] = entry
+        return entry
+
+    def _record_integration_call(name: str, status: str | None = None, latency_ms: float | None = None, cache_hit: bool | None = None) -> None:
+        entry = _ensure_integration_entry(name)
+        entry["called"] += 1
+        if status is not None:
+            entry["status"] = status
+        if latency_ms is not None:
+            entry["latency_total_ms"] += float(latency_ms)
+            entry["latency_samples"] += 1
+        if cache_hit is not None:
+            entry["cache_hit"] = bool(cache_hit)
+            entry["cache_samples"] += 1
+            if cache_hit:
+                entry["cache_hits"] += 1
+
+    def _record_integration_impact(name: str, nonzero_boost: bool = False, reasons_count: int = 0, affected_ranking: bool | None = None) -> None:
+        entry = integration_impact.get(name)
+        if entry is None:
+            entry = {"nonzero_boost": 0, "reasons_count": 0, "affected_ranking": 0}
+            integration_impact[name] = entry
+        if nonzero_boost:
+            entry["nonzero_boost"] += 1
+        entry["reasons_count"] += int(reasons_count)
+        if affected_ranking:
+            entry["affected_ranking"] += 1
+
+    # Initialize paid integrations with default entries for debug visibility
+    for _name in ("odds_api", "playbook_api", "balldontlie", "serpapi"):
+        _ensure_integration_entry(_name)
+        integration_impact.setdefault(_name, {"nonzero_boost": 0, "reasons_count": 0, "affected_ranking": 0})
 
     def _mark_integration_used(name: str) -> None:
         """Track integration usage for this run + update last_used_at."""
         used_integrations.add(name)
+        _record_integration_call(name, status="OK")
         try:
             from integration_registry import mark_integration_used
             mark_integration_used(name)
@@ -2707,7 +2762,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     daily_energy = get_daily_energy()
 
     # Fetch sharp money for both categories
+    _sharp_start = time.time()
     sharp_data = await get_sharp_money(sport)
+    _sharp_latency_ms = (time.time() - _sharp_start) * 1000.0
+    _sharp_source = (sharp_data.get("source") or "").lower() if isinstance(sharp_data, dict) else ""
+    if "playbook" in _sharp_source:
+        _record_integration_call("playbook_api", status="OK", latency_ms=_sharp_latency_ms)
+    if "odds_api" in _sharp_source:
+        _record_integration_call("odds_api", status="OK", latency_ms=_sharp_latency_ms)
     sharp_lookup = {}
     for signal in sharp_data.get("data", []):
         game_key = f"{signal.get('away_team')}@{signal.get('home_team')}"
@@ -3593,6 +3655,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             f"Research: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + ESPN:{espn_odds_boost} + Liquidity:{liquidity_boost} + Base:{base_research})"
         )
 
+        if (sharp_boost + public_boost + liquidity_boost) > 0:
+            _record_integration_impact(
+                "playbook_api",
+                nonzero_boost=True,
+                reasons_count=len(research_reasons),
+            )
+        if line_boost > 0 or espn_odds_boost > 0:
+            _record_integration_impact(
+                "odds_api",
+                nonzero_boost=True,
+                reasons_count=1,
+            )
+
         # ===== WEATHER IMPACT ON RESEARCH (v17.9) =====
         weather_adj = 0.0
         if sport.upper() in ("NFL", "MLB", "NCAAF") and weather_data and weather_data.get("available"):
@@ -4341,6 +4416,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         if SERP_INTEL_AVAILABLE and is_serp_available():
             try:
+                _serp_start = time.time()
                 if player_name:
                     # Prop bets - use prop intelligence
                     serp_intel = get_serp_prop_intelligence(
@@ -4385,6 +4461,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                         serp_intel["boosts_raw"].get("esoteric", 0),
                                         serp_intel["boosts_raw"].get("jarvis", 0),
                                         serp_intel["boosts_raw"].get("context", 0))
+                _record_integration_call("serpapi", status=serp_status, latency_ms=(time.time() - _serp_start) * 1000.0)
             except Exception as e:
                 logger.debug("SERP intelligence failed: %s", e)
                 serp_status = "ERROR"
@@ -4395,6 +4472,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         else:
             serp_status = "UNAVAILABLE"
             serp_reasons.append("SERP module not available")
+
+        _record_integration_impact(
+            "serpapi",
+            nonzero_boost=serp_boost_total != 0.0,
+            reasons_count=len(serp_reasons),
+        )
 
         # ===== v17.9 GEMATRIA TWITTER INTELLIGENCE =====
         # Community consensus signals from gematria Twitter accounts
@@ -6869,6 +6952,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         "_timed_out_components": _timed_out_components if _timed_out_components else None,
     }
 
+    try:
+        from integration_registry import get_usage_snapshot
+        usage_snapshot_after = get_usage_snapshot()
+        for name in ("odds_api", "playbook_api", "balldontlie", "serpapi"):
+            before = usage_snapshot_before.get(name, {}).get("used_count", 0)
+            after = usage_snapshot_after.get(name, {}).get("used_count", 0)
+            if after > before:
+                entry = integration_calls.get(name, {"called": 0})
+                if entry.get("called", 0) == 0:
+                    _record_integration_call(name, status="OK")
+    except Exception:
+        pass
+
     # === DEBUG MODE: Return top 25 candidates with full engine breakdown ===
     if debug_mode:
         def _debug_pick(p):
@@ -7050,9 +7146,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             },
         }
         apply_used_integrations_debug(result, used_integrations, debug_mode)
+        attach_integration_telemetry_debug(result, integration_calls, integration_impact, debug_mode)
+        record_daily_integration_rollup(date_et, integration_calls, integration_impact)
         # Don't cache debug responses
         return result
 
+    record_daily_integration_rollup(date_et, integration_calls, integration_impact)
     if cache_key:
         api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
     return result
@@ -7359,6 +7458,19 @@ async def debug_pick_breakdown(sport: str):
         # Research score: Sum of pillars normalized to 0-10
         research_score = min(10.0, base_research + sharp_boost + line_boost + public_boost)
         research_reasons.append(f"Total: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + Base:{base_research})")
+
+        if (sharp_boost + public_boost) > 0:
+            _record_integration_impact(
+                "playbook_api",
+                nonzero_boost=True,
+                reasons_count=len(research_reasons),
+            )
+        if line_boost > 0:
+            _record_integration_impact(
+                "odds_api",
+                nonzero_boost=True,
+                reasons_count=1,
+            )
 
         # Pillar score for backwards compatibility
         pillar_score = sharp_boost + line_boost + public_boost

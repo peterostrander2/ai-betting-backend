@@ -891,6 +891,18 @@ def mark_integration_used(name: str):
     INTEGRATION_USAGE[name]["used_count"] = INTEGRATION_USAGE[name].get("used_count", 0) + 1
 
 
+def get_usage_snapshot() -> Dict[str, Dict[str, Any]]:
+    """Return a snapshot of integration usage counts."""
+    _ensure_usage_registry()
+    snapshot: Dict[str, Dict[str, Any]] = {}
+    for name, usage in INTEGRATION_USAGE.items():
+        snapshot[name] = {
+            "used_count": usage.get("used_count", 0),
+            "last_used_at": usage.get("last_used_at"),
+        }
+    return snapshot
+
+
 def get_health_check_loud() -> Dict[str, Any]:
     """
     LOUD health check - clearly shows all failures.
