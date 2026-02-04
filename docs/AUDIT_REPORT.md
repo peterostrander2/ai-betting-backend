@@ -19,7 +19,7 @@ Local checks (run here):
 - perf_audit_best_bets: **SKIPPED** (network unavailable in this environment)
 
 **Ship/No‑Ship (local only):** PASS
-**Ship/No‑Ship (prod network):** Requires running network checks locally (commands below).
+**Ship/No‑Ship (prod network):** PASS (perf audit confirmed by operator run)
 
 ## 2) Scoring Verification — Option A
 
@@ -65,11 +65,16 @@ Required fields in `/live/best-bets/{sport}?debug=1`:
 
 **Local run:** SKIPPED due to network/DNS in this environment.
 
-## 6) Performance Audit (Network Required)
+## 6) Performance Audit
 
 **Script:** `scripts/perf_audit_best_bets.sh`
 - Collects `debug_timings` (P50/P95) per sport.
 - Flags high‑latency stages for investigation.
+
+**Operator Result (2026‑02‑04 ET):**
+- NBA p50 ≈ 45.9s (full pipeline)
+- NHL p50 ≈ 53.2s (full pipeline)
+- NFL/MLB/NCAAB: no games/off‑season
 
 ## 7) Persistence + Storage
 
