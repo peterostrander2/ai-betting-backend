@@ -65,7 +65,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 
-### Lessons Learned (39 Total) - Key Categories
+### Lessons Learned (40 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -76,8 +76,9 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 29-31 | Datetime | Timezone awareness, variable initialization |
 | 32-38 | **v20.x Learning Loop** | Grader weights, SHARP/MONEYLINE grading, OVER/UNDER calibration |
 | 39 | **Frontend Sync** | Option A tooltip alignment (weights must match scoring_contract.py) |
+| 40 | **Shell/Python** | Export variables for Python subprocesses (`export VAR=value`) |
 
-### NEVER DO Sections (16 Categories)
+### NEVER DO Sections (17 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -94,6 +95,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.3 Grading Pipeline (rules 118-124)
 - v20.4 Go/No-Go Scripts (rules 125-131)
 - v20.4 Frontend/Backend Sync (rules 132-137)
+- Shell/Python Subprocesses (rules 138-141)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -5437,6 +5439,54 @@ grep -A5 "ENGINE_WEIGHTS" core/scoring_contract.py
 
 **Fixed in:** v20.4 (Feb 4, 2026)
 
+### Lesson 40: Shell Variable Export for Python Subprocesses (v20.4)
+**Problem:** `perf_audit_best_bets.sh` was trying to connect to `None` as a hostname:
+```
+curl: (6) Could not resolve host: None
+```
+
+**Root Cause:** Shell variables are NOT automatically inherited by Python subprocesses. The script set `BASE_URL` as a shell variable, but Python's `os.environ.get("BASE_URL")` returned `None`:
+
+```bash
+# BUG - Python subprocess doesn't see this variable
+BASE_URL="${BASE_URL:-https://web-production-7b2a.up.railway.app}"
+
+# Inside Python heredoc:
+base_url = os.environ.get("BASE_URL")  # Returns None!
+```
+
+**The Fix:**
+```bash
+# CORRECT - 'export' makes variable available to subprocesses
+export BASE_URL="${BASE_URL:-https://web-production-7b2a.up.railway.app}"
+export API_KEY="${API_KEY:-}"
+```
+
+**Prevention:**
+- When shell scripts call Python (via heredoc, subprocess, or exec), variables MUST be exported
+- Use `export VAR=value` not just `VAR=value`
+- Test scripts by checking what Python actually sees: `python3 -c "import os; print(os.environ.get('VAR'))"`
+
+**Shell Variable Scope Rules:**
+| Pattern | Scope | Python sees it? |
+|---------|-------|-----------------|
+| `VAR=value` | Current shell only | ❌ No |
+| `export VAR=value` | Current shell + children | ✅ Yes |
+| `VAR=value command` | Command only | ✅ Yes (for that command) |
+
+**Files Modified:**
+- `scripts/perf_audit_best_bets.sh` - Added `export` to BASE_URL and API_KEY
+
+**Verification:**
+```bash
+# Test that Python inherits the variable
+export TEST_VAR="hello"
+python3 -c "import os; print(os.environ.get('TEST_VAR'))"
+# Should print: hello
+```
+
+**Fixed in:** v20.4 (Feb 4, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -5934,6 +5984,24 @@ ENGINE_WEIGHTS = {
     "jarvis": 0.20,    # 20% - Gematria, sacred triggers
 }
 CONTEXT_MODIFIER_CAP = 0.35  # ±0.35 (NOT a weighted engine!)
+```
+
+## 🚫 NEVER DO THESE (Shell Scripts with Python Subprocesses)
+
+138. **NEVER** use `VAR=value` when Python subprocesses need the variable - use `export VAR=value`
+139. **NEVER** assume shell variables are inherited by child processes - they must be explicitly exported
+140. **NEVER** debug "Could not resolve host: None" without checking if env vars are exported
+141. **NEVER** write shell scripts that call Python without verifying variable visibility with `os.environ.get()`
+
+**Shell Variable Scope Quick Reference:**
+```bash
+# ❌ WRONG - Python subprocess can't see this
+BASE_URL="https://example.com"
+python3 -c "import os; print(os.environ.get('BASE_URL'))"  # None
+
+# ✅ CORRECT - 'export' makes it visible to children
+export BASE_URL="https://example.com"
+python3 -c "import os; print(os.environ.get('BASE_URL'))"  # https://example.com
 ```
 
 ---

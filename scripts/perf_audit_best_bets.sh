@@ -3,8 +3,8 @@
 
 set -e
 
-BASE_URL="${BASE_URL:-https://web-production-7b2a.up.railway.app}"
-API_KEY="${API_KEY:-}"
+export BASE_URL="${BASE_URL:-https://web-production-7b2a.up.railway.app}"
+export API_KEY="${API_KEY:-}"
 SPORTS="${SPORTS:-NBA NFL NHL MLB NCAAB}"
 RUNS="${RUNS:-3}"
 SKIP_NETWORK="${SKIP_NETWORK:-0}"
