@@ -5802,3 +5802,4 @@ python3 -c 'import socket; print(socket.gethostbyname("github.com"))'
 1) Ensure guard tests run in CI (e.g., `tests/test_option_a_scoring_guard.py`).
 2) Keep a one-line invariant in this file: Option A is canonical and context is modifier-only.
 3) Add a drift-scan to `scripts/ci_sanity_check.sh` to block `BASE_5` / context-weighted strings.
+# 1770205770
