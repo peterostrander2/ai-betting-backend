@@ -3835,6 +3835,41 @@ Scoring Integration:
 
 **Rule:** ALL functions in this table MUST return dicts, NOT JSONResponse. FastAPI auto-serializes.
 
+### Go/No-Go Sanity Scripts (v20.4)
+| Script | Purpose | Key Checks |
+|--------|---------|------------|
+| `scripts/prod_go_nogo.sh` | Master orchestrator | Runs all 9 checks, fails fast |
+| `scripts/option_a_drift_scan.sh` | Scoring formula guard | No BASE_5, no context-as-engine |
+| `scripts/audit_drift_scan.sh` | Unauthorized boost guard | No literal +/-0.5 outside ensemble |
+| `scripts/endpoint_matrix_sanity.sh` | Endpoint contract | All sports, required fields, math check |
+| `scripts/docs_contract_scan.sh` | Documentation sync | Required fields documented |
+| `scripts/env_drift_scan.sh` | Environment config | Required env vars set |
+| `scripts/learning_loop_sanity.sh` | Auto grader health | Grader available, weights loaded |
+| `scripts/learning_sanity_check.sh` | Weights initialized | All stat types have weights |
+| `scripts/live_sanity_check.sh` | Best-bets health | Returns valid JSON structure |
+| `scripts/api_proof_check.sh` | Production API | API responding with 200 |
+
+**Critical Line Number Filters (audit_drift_scan.sh):**
+```bash
+# Allowed ensemble adjustment lines in live_data_router.py:
+# - 4753-4754: ensemble_reasons extend
+# - 4756-4757: boost (+0.5) fallback
+# - 4760-4762: penalty (-0.5) fallback
+rg -v "live_data_router.py:475[34]" | \
+rg -v "live_data_router.py:475[67]" | \
+rg -v "live_data_router.py:476[012]"
+```
+
+**Math Formula (endpoint_matrix_sanity.sh line 93-97):**
+```jq
+($p.base_4_score + $p.context_modifier + $p.confluence_boost +
+ $p.msrf_boost + $p.jason_sim_boost + $p.serp_boost +
+ ($p.ensemble_adjustment // 0) + ($p.live_adjustment // 0)) as $raw |
+($raw | if . > 10 then 10 else . end) as $capped |
+($p.final_score - $capped) | abs
+# Must be < 0.02
+```
+
 ### Key Debugging Locations
 | Location | Line | Purpose |
 |----------|------|---------|
@@ -5016,6 +5051,110 @@ curl -s -X POST "/live/grader/run-audit" -H "X-API-Key: KEY" \
 
 **Fixed in:** v20.3 (Feb 4, 2026)
 
+### Lesson 36: Audit Drift Scan Line Number Filters (v20.4)
+**Problem:** Go/no-go check failed with `audit_drift` error because the line number filter in `audit_drift_scan.sh` didn't match actual code locations.
+
+**Root Cause:** The ensemble adjustment fallback code shifted from lines 4753-4757 to lines 4757-4763. The filter pattern `live_data_router.py:475[67]` allowed line 4757 but NOT line 4761 (the penalty code).
+
+**The Failure:**
+```
+Found additive final_score +/-0.5 outside allowed ensemble adjustment:
+live_data_router.py:4761:                            final_score = max(0.0, final_score - 0.5)
+ERROR: Unexpected literal +/-0.5 applied to final_score
+```
+
+**The Fix:**
+```bash
+# OLD filter (incomplete)
+rg -v "live_data_router.py:475[34]" | \
+rg -v "live_data_router.py:475[67]" || true
+
+# NEW filter (includes lines 4760-4762)
+rg -v "live_data_router.py:475[34]" | \
+rg -v "live_data_router.py:475[67]" | \
+rg -v "live_data_router.py:476[012]" || true
+```
+
+**Prevention:**
+- When code shifts (refactoring, additions), line-based filters in sanity scripts break
+- After ANY change to `live_data_router.py`, re-run `audit_drift_scan.sh` locally
+- Use broader patterns when possible, or document exact line purposes
+- The filter comment now explains: "Lines 4757 (boost) and 4761 (penalty) are the fallback ensemble adjustments"
+
+**Verification:**
+```bash
+# Check current ensemble adjustment line numbers
+grep -n "final_score.*0\.5" live_data_router.py | grep -E "(min|max)"
+# Should show lines ~4757 and ~4761
+
+# Run audit_drift scan
+bash scripts/audit_drift_scan.sh
+# Should pass
+
+# Full go/no-go
+API_KEY="KEY" SKIP_NETWORK=0 SKIP_PYTEST=1 bash scripts/prod_go_nogo.sh
+```
+
+**Files Modified:**
+- `scripts/audit_drift_scan.sh:43-48` - Updated filter pattern with comment
+
+**Fixed in:** v20.4 (Feb 4, 2026)
+
+### Lesson 37: Endpoint Matrix Sanity Math Formula (v20.4)
+**Problem:** `endpoint_matrix_sanity.sh` final_score math check failed because the formula was missing `ensemble_adjustment`.
+
+**Root Cause:** The production API was returning `ensemble_adjustment: null` instead of `0.0` or an actual value, causing:
+- Computed sum: 9.443
+- Actual final_score: 9.94
+- Difference: 0.497 (exceeds 0.02 tolerance)
+
+**The Formula (must match scoring pipeline):**
+```jq
+($p.base_4_score + $p.context_modifier + $p.confluence_boost + $p.msrf_boost +
+ $p.jason_sim_boost + $p.serp_boost + ($p.ensemble_adjustment // 0) +
+ ($p.live_adjustment // 0)) as $raw |
+($raw | if . > 10 then 10 else . end) as $capped |
+($p.final_score - $capped) | abs
+```
+
+**Key Points:**
+- `ensemble_adjustment` is exposed at `live_data_router.py:4939,4952`
+- Default is `0.0` (line 4720), but can be `±0.5` based on ensemble model
+- `glitch_adjustment` is NOT added separately (already folded into `esoteric_score`)
+- The `// 0` jq syntax handles null values
+
+**Prevention:**
+- When adding new boosts to scoring, update BOTH:
+  1. `live_data_router.py` pick payload
+  2. `scripts/endpoint_matrix_sanity.sh` math formula
+- Document formula in CLAUDE.md INVARIANT 4 (already done)
+
+**Verification:**
+```bash
+# Check a pick's math manually
+curl -s "/live/best-bets/NBA?debug=1&max_games=1" -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {
+    base_4: .base_4_score,
+    context: .context_modifier,
+    confluence: .confluence_boost,
+    msrf: .msrf_boost,
+    jason_sim: .jason_sim_boost,
+    serp: .serp_boost,
+    ensemble: .ensemble_adjustment,
+    live: .live_adjustment,
+    computed: (.base_4_score + .context_modifier + .confluence_boost +
+               .msrf_boost + .jason_sim_boost + .serp_boost +
+               (.ensemble_adjustment // 0) + (.live_adjustment // 0)),
+    actual: .final_score,
+    diff: ((.base_4_score + .context_modifier + .confluence_boost +
+            .msrf_boost + .jason_sim_boost + .serp_boost +
+            (.ensemble_adjustment // 0) + (.live_adjustment // 0)) - .final_score) | fabs
+  }'
+# diff should be < 0.02
+```
+
+**Fixed in:** v20.4 (Feb 4, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -5484,6 +5623,59 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 122. **NEVER** forget to strip market suffixes like "_over_under", "_alternate" from stat types before lookup
 123. **NEVER** skip testing grading for ALL pick types after changes (SPREAD, TOTAL, MONEYLINE, SHARP, PROP)
 124. **NEVER** assume 0% hit rate means bad predictions - it might mean grading is broken (all PUSH)
+
+## 🚫 NEVER DO THESE (v20.4 - Go/No-Go & Sanity Scripts)
+
+125. **NEVER** use hardcoded line numbers in sanity script filters without documenting what they filter
+126. **NEVER** modify `live_data_router.py` without re-running `audit_drift_scan.sh` locally
+127. **NEVER** add a new boost to the scoring formula without updating `endpoint_matrix_sanity.sh` math check
+128. **NEVER** assume `ensemble_adjustment` is 0 - it can be `null`, `0.0`, `+0.5`, or `-0.5`
+129. **NEVER** skip the go/no-go check after changes to scoring, boosts, or sanity scripts
+130. **NEVER** commit code that fails `prod_go_nogo.sh` - all 9 checks must pass
+131. **NEVER** forget that `glitch_adjustment` is ALREADY in `esoteric_score` (not a separate additive)
+
+---
+
+## ✅ VERIFICATION CHECKLIST (Go/No-Go - REQUIRED BEFORE DEPLOY)
+
+Run this after ANY change to scoring, boosts, sanity scripts, or live_data_router.py:
+
+```bash
+# Full go/no-go (MUST PASS all 9 checks)
+API_KEY="bookie-prod-2026-xK9mP2nQ7vR4" SKIP_NETWORK=0 SKIP_PYTEST=1 ALLOW_EMPTY=1 \
+  bash scripts/prod_go_nogo.sh
+
+# Expected output: "Prod go/no-go: PASS"
+```
+
+**The 9 Checks:**
+| Check | Script | What It Validates |
+|-------|--------|-------------------|
+| option_a_drift | `option_a_drift_scan.sh` | No BASE_5 or context-as-engine |
+| audit_drift | `audit_drift_scan.sh` | No unauthorized +/-0.5 to final_score |
+| docs_contract | `docs_contract_scan.sh` | Required fields documented |
+| endpoint_matrix | `endpoint_matrix_sanity.sh` | All 5 sports, required fields, math check |
+| env_drift | `env_drift_scan.sh` | Required env vars configured |
+| learning_loop | `learning_loop_sanity.sh` | Auto grader operational |
+| learning_sanity | `learning_sanity_check.sh` | Weights initialized |
+| live_sanity | `live_sanity_check.sh` | Best-bets returns valid data |
+| api_proof | `api_proof_check.sh` | Production API responding |
+
+**If ANY check fails:**
+1. Read the artifact: `cat artifacts/{check_name}_YYYYMMDD_ET.json`
+2. Fix the issue
+3. Re-run go/no-go
+4. Do NOT deploy until all 9 pass
+
+**Common Failures:**
+| Failure | Likely Cause | Fix |
+|---------|--------------|-----|
+| `audit_drift` | Line numbers shifted | Update filter in `audit_drift_scan.sh` |
+| `endpoint_matrix` | Math mismatch | Update formula in `endpoint_matrix_sanity.sh` |
+| `option_a_drift` | BASE_5 introduced | Remove context-as-engine code |
+| `learning_loop` | Weights missing | Check `_initialize_weights()` |
+
+**Artifacts Location:** `artifacts/{check_name}_YYYYMMDD_ET.json`
 
 ---
 
