@@ -1045,18 +1045,29 @@ class AutoGrader:
         self._load_predictions_from_grader_store()
 
         results = {}
-        
-        stat_types = {
+
+        # v20.1: Separate stat types for PROP picks vs GAME picks
+        # PROP stat types (player-level predictions)
+        prop_stat_types = {
             "NBA": ["points", "rebounds", "assists"],
             "NFL": ["passing_yards", "rushing_yards", "receiving_yards"],
             "MLB": ["hits", "strikeouts", "total_bases"],
             "NHL": ["goals", "assists", "shots"],
             "NCAAB": ["points", "rebounds"]
         }
-        
+
+        # GAME stat types (game-level predictions - spread, total, moneyline)
+        game_stat_types = ["spread", "total", "moneyline", "sharp"]
+
         for sport in self.SUPPORTED_SPORTS:
             results[sport] = {}
-            for stat in stat_types.get(sport, ["points"]):
+            # Audit PROP picks
+            for stat in prop_stat_types.get(sport, ["points"]):
+                result = self.adjust_weights(sport, stat, days_back, apply_changes=True)
+                results[sport][stat] = result
+
+            # v20.1: Also audit GAME picks (spread, total, moneyline)
+            for stat in game_stat_types:
                 result = self.adjust_weights(sport, stat, days_back, apply_changes=True)
                 results[sport][stat] = result
         
