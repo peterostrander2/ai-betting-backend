@@ -97,7 +97,7 @@ Context Score: 7.2
 
 ---
 
-### Priority 4: MSRF Turn Date Resonance
+### Priority 4: MSRF Turn Date Resonance ✅ COMPLETE
 
 **Backend provides:**
 ```json
@@ -111,27 +111,17 @@ Context Score: 7.2
 }
 ```
 
-**Display suggestion:** Show when `msrf_boost > 0`:
-```jsx
-{pick.msrf_boost > 0 && (
-  <Badge color="gold">TURN DATE: {pick.msrf_metadata?.level}</Badge>
-)}
-```
+**Implementation:** Gold "TURN DATE" badge displays when `msrf_boost > 0` in both SmashList components (PropsSmashList:984, GameSmashList:721).
 
 ---
 
-### Priority 5: Officials Impact (When Available)
+### Priority 5: Officials Impact ✅ COMPLETE
 
 **Backend provides:** `context_layer.officials_adjustment`
 
 **Note:** Officials data comes from ESPN, may not be available for all games (refs assigned close to game time).
 
-**Display suggestion:** Show when non-zero:
-```jsx
-{pick.context_layer?.officials_adjustment !== 0 && (
-  <span>Ref Factor: {pick.context_layer.officials_adjustment > 0 ? '+' : ''}{pick.context_layer.officials_adjustment}</span>
-)}
-```
+**Implementation:** Shows "Refs: +/-X.XX" with color coding (green positive, red negative) in the expandable Context Details section when `officials_adjustment !== 0` (PropsSmashList:1052, GameSmashList:788).
 
 ---
 
@@ -261,8 +251,8 @@ done
 
 | File | Status |
 |------|--------|
-| `PropsSmashList.jsx` | ✅ context_score displayed with correct tooltip |
-| `GameSmashList.jsx` | ✅ context_score displayed with correct tooltip |
+| `PropsSmashList.jsx` | ✅ All 5 priorities implemented (context_score, context_layer, harmonic, MSRF, officials) |
+| `GameSmashList.jsx` | ✅ All 5 priorities implemented (context_score, context_layer, harmonic, MSRF, officials) |
 | `SmashSpotsPage.jsx` | ✅ Engine legend updated |
 | `CLAUDE.md` | ✅ Documentation updated with Option A weights |
 
@@ -273,7 +263,7 @@ done
 ### v20.4 (Feb 2026)
 - Fixed frontend tooltips to match Option A weights (AI 25%, Research 35%, Esoteric 20%, Jarvis 20%)
 - Clarified context_score is a modifier (±0.35 cap), not a weighted engine
-- Marked Priority 1-3 as COMPLETE
+- Marked Priority 1-5 as COMPLETE (all frontend integration work done)
 
 ### v17.3 (Feb 2026)
 - Added `context_score` (modifier, ±0.35 cap - displayed for transparency)
