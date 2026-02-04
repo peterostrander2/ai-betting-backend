@@ -1,6 +1,6 @@
 {
   "name": "audit_drift",
   "date_et": "20260204",
-  "status": "FAIL",
-  "output": "ERROR: Missing required fields in game_picks.picks[0]\n"
+  "status": "PASS",
+  "output": "Audit drift scan: PASS\n"
 }

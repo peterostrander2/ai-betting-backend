@@ -1,1 +1,0 @@
-ERROR: Missing required fields in game_picks.picks[0]

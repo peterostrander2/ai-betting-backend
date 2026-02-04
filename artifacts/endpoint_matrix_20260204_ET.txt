@@ -1,0 +1,3 @@
+Checking best-bets: NBA
+Best-bets NBA returned HTTP 502 without structured error.
+{"status":"error","code":502,"message":"Application failed to respond","request_id":"rPAQEEMCRCy7y09iwoOzXw"}ERROR: best-bets failed for NBA
