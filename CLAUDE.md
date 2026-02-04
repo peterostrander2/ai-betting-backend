@@ -65,7 +65,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 
-### Lessons Learned (38 Total) - Key Categories
+### Lessons Learned (39 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -75,8 +75,9 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 23-28 | Signals | Benford, officials, trap learning |
 | 29-31 | Datetime | Timezone awareness, variable initialization |
 | 32-38 | **v20.x Learning Loop** | Grader weights, SHARP/MONEYLINE grading, OVER/UNDER calibration |
+| 39 | **Frontend Sync** | Option A tooltip alignment (weights must match scoring_contract.py) |
 
-### NEVER DO Sections (15 Categories)
+### NEVER DO Sections (16 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -91,7 +92,8 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v18.2 Phase 8 Esoteric (rules 101-110)
 - v20.x Two Storage Systems (rules 111-117)
 - v20.3 Grading Pipeline (rules 118-124)
-- v20.4 Go/No-Go Scripts (rules 125+)
+- v20.4 Go/No-Go Scripts (rules 125-131)
+- v20.4 Frontend/Backend Sync (rules 132-137)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -124,6 +126,13 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - Lesson 36: Audit drift scan line number filters
 - Lesson 37: Endpoint matrix sanity math formula
 - Lesson 38: OVER/UNDER totals bias calibration (+0.75 Under, -0.75 Over)
+- Lesson 39: Frontend tooltip alignment (Option A weights must match scoring_contract.py)
+
+**Frontend Integration (Priority 1-3 COMPLETE):**
+- Context score displayed with correct tooltip (modifier ±0.35)
+- Harmonic Convergence badge (purple) when Research + Esoteric ≥7.5
+- MSRF Turn Date badge when msrf_boost > 0
+- Context Layer expandable details (def_rank, pace, vacuum, officials)
 
 **Active Calibration:**
 ```python
@@ -5367,6 +5376,67 @@ curl -s "/live/picks/grading-summary?date=$(date +%Y-%m-%d)" -H "X-API-Key: KEY"
 
 **Fixed in:** v20.4 (Feb 4, 2026)
 
+### Lesson 39: Frontend Tooltip Alignment with Option A Weights (v20.4)
+
+**Problem:** Frontend tooltips in `PropsSmashList.jsx` and `GameSmashList.jsx` showed incorrect engine weights that didn't match the backend `scoring_contract.py`:
+
+| Engine | Frontend (Wrong) | Backend (Correct) |
+|--------|------------------|-------------------|
+| AI | 15% | **25%** |
+| Research | 20% | **35%** |
+| Esoteric | 15% | **20%** |
+| Jarvis | 10% | **20%** |
+| Context | 30% weighted | **±0.35 modifier** |
+
+**Root Cause:** Frontend documentation and tooltips were written for an outdated scoring architecture. When Option A (4-engine base + context modifier) was implemented, the frontend wasn't updated to reflect that:
+1. Context is NOT a weighted engine - it's a bounded modifier (±0.35 cap)
+2. The 4 engine weights sum to 100% (25+35+20+20)
+3. Context modifier is applied AFTER the weighted base score
+
+**The Fix (v20.4):**
+
+1. Updated `bookie-member-app/PropsSmashList.jsx` tooltips:
+```jsx
+// Option A: 4 weighted engines + context modifier
+<ScoreBadge label="AI" tooltip="8 AI models (25% weight)" />
+<ScoreBadge label="Research" tooltip="Sharp money, line variance (35% weight)" />
+<ScoreBadge label="Esoteric" tooltip="Numerology, astro, fibonacci (20% weight)" />
+<ScoreBadge label="Jarvis" tooltip="Gematria triggers (20% weight)" />
+<ScoreBadge label="Context" tooltip="Defense rank, pace, vacuum (modifier ±0.35)" />
+```
+
+2. Updated `bookie-member-app/GameSmashList.jsx` with same corrections
+
+3. Updated `bookie-member-app/CLAUDE.md` documentation in 3 sections
+
+4. Updated `ai-betting-backend/docs/FRONTEND_INTEGRATION.md`:
+   - Marked Priority 1-3 as COMPLETE
+   - Fixed weight comments in API response structure
+
+**Prevention:**
+- ALWAYS check `core/scoring_contract.py` for authoritative weights
+- When changing backend scoring, IMMEDIATELY update frontend tooltips
+- Add drift scan for frontend/backend weight synchronization
+
+**Files Modified:**
+- `bookie-member-app/PropsSmashList.jsx`
+- `bookie-member-app/GameSmashList.jsx`
+- `bookie-member-app/CLAUDE.md`
+- `ai-betting-backend/docs/FRONTEND_INTEGRATION.md`
+
+**Verification:**
+```bash
+# Check frontend tooltips match backend weights
+grep -n "25% weight\|35% weight\|20% weight\|modifier.*0.35" \
+  /Users/apple/bookie-member-app/PropsSmashList.jsx \
+  /Users/apple/bookie-member-app/GameSmashList.jsx
+
+# Check backend scoring_contract.py for truth
+grep -A5 "ENGINE_WEIGHTS" core/scoring_contract.py
+```
+
+**Fixed in:** v20.4 (Feb 4, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -5845,6 +5915,26 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 129. **NEVER** skip the go/no-go check after changes to scoring, boosts, or sanity scripts
 130. **NEVER** commit code that fails `prod_go_nogo.sh` - all 9 checks must pass
 131. **NEVER** forget that `glitch_adjustment` is ALREADY in `esoteric_score` (not a separate additive)
+
+## 🚫 NEVER DO THESE (v20.4 - Frontend/Backend Synchronization)
+
+132. **NEVER** change engine weights in `scoring_contract.py` without updating frontend tooltips
+133. **NEVER** assume frontend documentation matches backend - verify against `scoring_contract.py`
+134. **NEVER** describe context_score as a "weighted engine" - it's a bounded modifier (±0.35)
+135. **NEVER** use old weight percentages (AI 15%, Research 20%, Esoteric 15%, Jarvis 10%, Context 30%)
+136. **NEVER** skip updating `docs/FRONTEND_INTEGRATION.md` when backend scoring changes
+137. **ALWAYS** verify frontend tooltips show: AI 25%, Research 35%, Esoteric 20%, Jarvis 20%, Context ±0.35
+
+**Correct Option A Weights (authoritative source: `core/scoring_contract.py`):**
+```python
+ENGINE_WEIGHTS = {
+    "ai": 0.25,        # 25% - 8 AI models
+    "research": 0.35,  # 35% - Sharp money, splits, variance (LARGEST)
+    "esoteric": 0.20,  # 20% - Numerology, astro, fib, vortex
+    "jarvis": 0.20,    # 20% - Gematria, sacred triggers
+}
+CONTEXT_MODIFIER_CAP = 0.35  # ±0.35 (NOT a weighted engine!)
+```
 
 ---
 
