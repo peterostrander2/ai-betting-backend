@@ -14,6 +14,8 @@ Local checks (run here):
 - learning_sanity_check: **PASS** (warnings due to missing local files)
 - learning_loop_sanity: **PASS** (warnings due to missing local files)
 - endpoint_matrix_sanity: **PASS** (operator run 2026‑02‑04 ET)
+- prod_endpoint_matrix: **PASS** (operator run 2026‑02‑04 ET)
+- signal_coverage_report: **PASS** (operator run 2026‑02‑04 ET)
 - live_sanity_check: **PASS** (operator run 2026‑02‑04 ET)
 - api_proof_check: **PASS** (operator run 2026‑02‑04 ET)
 - perf_audit_best_bets: **PASS** (operator run 2026‑02‑04 ET)

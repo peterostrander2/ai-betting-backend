@@ -57,6 +57,8 @@ run_and_capture "learning_loop" env ALLOW_EMPTY="$ALLOW_EMPTY" bash scripts/lear
 
 if [ "$SKIP_NETWORK" != "1" ]; then
   run_and_capture "endpoint_matrix" bash scripts/endpoint_matrix_sanity.sh
+  run_and_capture "prod_endpoint_matrix" bash scripts/prod_endpoint_matrix.sh
+  run_and_capture "signal_coverage" python3 scripts/signal_coverage_report.py
   run_and_capture "api_proof" bash scripts/api_proof_check.sh
   run_and_capture "live_sanity" bash scripts/live_sanity_check.sh
   run_and_capture "perf_audit_best_bets" bash scripts/perf_audit_best_bets.sh
@@ -66,6 +68,24 @@ else
 import json
 print(json.dumps({
   "name": "endpoint_matrix",
+  "date_et": "$ET_DATE",
+  "status": "SKIPPED",
+  "reason": "SKIP_NETWORK=1"
+}, indent=2))
+PY
+  python3 - <<PY >"$ARTIFACTS_DIR/prod_endpoint_matrix_${ET_DATE}_ET.json"
+import json
+print(json.dumps({
+  "name": "prod_endpoint_matrix",
+  "date_et": "$ET_DATE",
+  "status": "SKIPPED",
+  "reason": "SKIP_NETWORK=1"
+}, indent=2))
+PY
+  python3 - <<PY >"$ARTIFACTS_DIR/signal_coverage_${ET_DATE}_ET.json"
+import json
+print(json.dumps({
+  "name": "signal_coverage",
   "date_et": "$ET_DATE",
   "status": "SKIPPED",
   "reason": "SKIP_NETWORK=1"
