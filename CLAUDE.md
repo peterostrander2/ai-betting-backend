@@ -322,6 +322,69 @@ FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_bo
 - Must be **included in docs contract scan**
 - Must be **included in endpoint sanity math checks**
 
+---
+
+## Canonical Scoring Contract (Option A)
+
+**Base (4 engines only):**
+```
+BASE_4 = (AI * 0.25) + (Research * 0.35) + (Esoteric * 0.20) + (Jarvis * 0.20)
+```
+
+**Context (modifier only):**
+```
+CONTEXT_MODIFIER_CAP = 0.35
+context_modifier ∈ [-0.35, +0.35]
+```
+
+**Final score (clamped):**
+```
+FINAL = min(10, BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment)
+```
+
+**Ensemble adjustment:**
+- Uses `ENSEMBLE_ADJUSTMENT_STEP` (no magic ±0.5 literals).
+
+---
+
+## Boost Inventory (Source + Cap)
+
+| Boost | Source | Cap | Notes |
+|---|---|---|---|
+| confluence_boost | `live_data_router.py` | `CONFLUENCE_BOOST_CAP` | Derived from confluence levels |
+| msrf_boost | `signals/msrf_resonance.py` | `MSRF_BOOST_CAP` | 0.0 / 0.25 / 0.5 / 1.0 |
+| jason_sim_boost | `jason_sim_confluence.py` | `JASON_SIM_BOOST_CAP` | Can be negative (block rules) |
+| serp_boost | `alt_data_sources/serp_intelligence.py` | `SERP_BOOST_CAP_TOTAL` | Total SERP capped |
+| ensemble_adjustment | `utils/ensemble_adjustment.py` | `ENSEMBLE_ADJUSTMENT_STEP` | +0.5 / -0.5 step |
+
+---
+
+## Go/No-Go Checklist (Run Exactly)
+
+```
+python3 -m pytest -q
+bash scripts/option_a_drift_scan.sh
+bash scripts/audit_drift_scan.sh
+bash scripts/docs_contract_scan.sh
+bash scripts/env_drift_scan.sh
+ALLOW_EMPTY=1 bash scripts/learning_sanity_check.sh
+ALLOW_EMPTY=1 bash scripts/learning_loop_sanity.sh
+API_KEY=YOUR_KEY bash scripts/endpoint_matrix_sanity.sh
+API_KEY=YOUR_KEY bash scripts/live_sanity_check.sh
+API_KEY=YOUR_KEY bash scripts/api_proof_check.sh
+API_KEY=YOUR_KEY bash scripts/perf_audit_best_bets.sh
+```
+
+---
+
+## Integration Registry Expectations
+
+- **Validated**: env vars set + connectivity OK.
+- **Configured**: env vars set but connectivity not verified.
+- **Unreachable**: env vars set but API unreachable (fail‑loud).
+- **Not configured**: missing required env vars (fail‑loud).
+- `last_used_at` must update on **both cache hits and live fetches** for all paid integrations.
+
 **Engine Separation Rules:**
 1. **Research Engine** - ALL market signals ONLY (sharp, splits, variance, public fade)
    - Public Fade lives ONLY here, NOT in Jarvis or Esoteric

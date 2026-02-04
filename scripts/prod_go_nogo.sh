@@ -59,6 +59,7 @@ if [ "$SKIP_NETWORK" != "1" ]; then
   run_and_capture "endpoint_matrix" bash scripts/endpoint_matrix_sanity.sh
   run_and_capture "api_proof" bash scripts/api_proof_check.sh
   run_and_capture "live_sanity" bash scripts/live_sanity_check.sh
+  run_and_capture "perf_audit_best_bets" bash scripts/perf_audit_best_bets.sh
 else
   echo "SKIP_NETWORK=1 set; skipping networked checks."
   python3 - <<PY >"$ARTIFACTS_DIR/endpoint_matrix_${ET_DATE}_ET.json"

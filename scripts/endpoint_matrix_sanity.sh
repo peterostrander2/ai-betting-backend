@@ -65,7 +65,7 @@ check_best_bets() {
   fi
 
   # Check required fields if picks exist
-  local req='["base_4_score","context_modifier","confluence_boost","msrf_boost","jason_sim_boost","serp_boost","final_score","serp_status","msrf_status","context_reasons","confluence_reasons"]'
+  local req='["base_4_score","context_modifier","confluence_boost","msrf_boost","jason_sim_boost","serp_boost","ensemble_adjustment","live_adjustment","final_score","serp_status","msrf_status","context_reasons","confluence_reasons"]'
   local game_count
   game_count=$(jq -r '.game_picks.picks | length' "$resp_file" 2>/dev/null || echo 0)
   if [ "$game_count" -gt 0 ]; then

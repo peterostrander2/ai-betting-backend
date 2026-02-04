@@ -15,6 +15,7 @@ All pick payloads returned by best-bets or live endpoints must include the follo
 - `jason_sim_boost`
 - `serp_boost`
 - `final_score`
+- `ensemble_adjustment` (0.0 when not applied)
 - `context_reasons` (array)
 - `confluence_reasons` (array)
 - `msrf_status`
