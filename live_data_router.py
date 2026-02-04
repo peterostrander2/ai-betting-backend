@@ -4717,6 +4717,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # Use trained ensemble model to predict hit probability for game picks
         # Game pick types: SPREAD, TOTAL, MONEYLINE, SHARP (not "GAME" - that's the default)
         ensemble_metadata = None
+        ensemble_adjustment = 0.0
         _GAME_PICK_TYPES = {"SPREAD", "TOTAL", "MONEYLINE", "SHARP", "GAME"}
 
         if pick_type in _GAME_PICK_TYPES and ENSEMBLE_AVAILABLE and ML_INTEGRATION_AVAILABLE:
@@ -4746,15 +4747,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     # Adjust final score based on ensemble prediction
                     try:
                         from utils.ensemble_adjustment import apply_ensemble_adjustment
+                        _pre_ensemble = final_score
                         final_score, ensemble_reasons = apply_ensemble_adjustment(final_score, hit_prob)
+                        ensemble_adjustment = round(final_score - _pre_ensemble, 3)
                         ai_reasons.extend(ensemble_reasons)
                     except Exception:
                         # Fallback to inline adjustments if helper unavailable
                         if hit_prob > 0.6:
                             final_score = min(10.0, final_score + 0.5)
+                            ensemble_adjustment = 0.5
                             ai_reasons.append("Ensemble boost: +0.5 (prob > 60%)")
                         elif hit_prob < 0.4:
                             final_score = max(0.0, final_score - 0.5)
+                            ensemble_adjustment = -0.5
                             ai_reasons.append("Ensemble penalty: -0.5 (prob < 40%)")
             except Exception as e:
                 logger.debug(f"Ensemble prediction unavailable: {e}")
@@ -4931,6 +4936,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "live_adjustment": round(live_boost, 2),
             "live_reasons": live_reasons,
             "base_4_score": round(base_score, 2),
+            "ensemble_adjustment": round(ensemble_adjustment, 3),
             # Detailed breakdowns
             "scoring_breakdown": {
                 "research_score": round(research_score, 2),
@@ -4943,6 +4949,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "confluence_boost": confluence_boost,
                 "msrf_boost": msrf_boost,
                 "serp_boost": serp_boost_total,
+                "ensemble_adjustment": round(ensemble_adjustment, 3),
                 "live_adjustment": round(live_boost, 2),
                 "alignment_pct": confluence.get("alignment_pct", 0),
                 "gold_star_gates": _gold_gates,

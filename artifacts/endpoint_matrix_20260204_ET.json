@@ -1,6 +1,6 @@
 {
   "name": "endpoint_matrix",
   "date_et": "20260204",
-  "status": "SKIPPED",
-  "reason": "SKIP_NETWORK=1"
+  "status": "FAIL",
+  "output": "Checking best-bets: NBA\n"
 }

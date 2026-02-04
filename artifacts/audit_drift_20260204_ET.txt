@@ -1,1 +1,1 @@
-SKIP_NETWORK=1 set; skipping payload checks.
+Audit drift scan: PASS
