@@ -1066,14 +1066,14 @@ class AutoGrader:
 
         results = {}
 
-        # v20.1: Separate stat types for PROP picks vs GAME picks
-        # PROP stat types (player-level predictions)
+        # v20.3: Separate stat types for PROP picks vs GAME picks
+        # PROP stat types - MUST MATCH _initialize_weights() to audit all prop types
         prop_stat_types = {
-            "NBA": ["points", "rebounds", "assists"],
-            "NFL": ["passing_yards", "rushing_yards", "receiving_yards"],
-            "MLB": ["hits", "strikeouts", "total_bases"],
-            "NHL": ["goals", "assists", "shots"],
-            "NCAAB": ["points", "rebounds"]
+            "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "pra"],
+            "NFL": ["passing_yards", "rushing_yards", "receiving_yards", "receptions", "touchdowns"],
+            "MLB": ["hits", "runs", "rbis", "strikeouts", "total_bases", "walks"],
+            "NHL": ["goals", "assists", "points", "shots", "saves", "blocks"],
+            "NCAAB": ["points", "rebounds", "assists", "threes"]
         }
 
         # GAME stat types (game-level predictions - spread, total, moneyline)

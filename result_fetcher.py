@@ -78,7 +78,7 @@ ODDS_API_SPORTS = {
 
 # Stat type mappings for grading
 STAT_TYPE_MAP = {
-    # NBA
+    # NBA - Odds API format (player_X)
     "player_points": "points",
     "player_rebounds": "rebounds",
     "player_assists": "assists",
@@ -90,17 +90,38 @@ STAT_TYPE_MAP = {
     "player_points_rebounds": "pr",
     "player_points_assists": "pa",
     "player_rebounds_assists": "ra",
-    # NHL
+    # NBA - Direct format (used in our stat_type field)
+    "points": "points",
+    "rebounds": "rebounds",
+    "assists": "assists",
+    "threes": "three_pointers_made",  # v20.3: "threes" → "three_pointers_made"
+    "3pt": "three_pointers_made",
+    "steals": "steals",
+    "blocks": "blocks",
+    "turnovers": "turnovers",
+    "pra": "pra",
+    "pts+reb+ast": "pra",
+    # NHL - Odds API format
     "player_goals": "goals",
     "player_shots": "shots",
     "player_saves": "saves",
-    # NFL
+    # NHL - Direct format
+    "goals": "goals",
+    "shots": "shots",
+    "saves": "saves",
+    # NFL - Odds API format
     "player_pass_yds": "passing_yards",
     "player_rush_yds": "rushing_yards",
     "player_rec_yds": "receiving_yards",
     "player_pass_tds": "passing_touchdowns",
     "player_rush_tds": "rushing_touchdowns",
     "player_receptions": "receptions",
+    # NFL - Direct format
+    "passing_yards": "passing_yards",
+    "rushing_yards": "rushing_yards",
+    "receiving_yards": "receiving_yards",
+    "receptions": "receptions",
+    "touchdowns": "touchdowns",
 }
 
 
@@ -762,18 +783,43 @@ def match_player_stats(
     Returns:
         Actual stat value or None if not found
     """
+    if not player_name or not all_stats:
+        return None
+
     normalized_name = normalize_player_name(player_name)
-    stat_key = STAT_TYPE_MAP.get(stat_type, stat_type.replace("player_", ""))
+
+    # v20.3: Clean up stat_type - handle formats like "player_points_over_under"
+    # Strip trailing _over, _under, _alternate from market keys
+    clean_stat_type = stat_type.lower() if stat_type else ""
+    for suffix in ["_over_under", "_over", "_under", "_alternate", "_line"]:
+        clean_stat_type = clean_stat_type.replace(suffix, "")
+
+    # Now look up in STAT_TYPE_MAP or use cleaned version
+    stat_key = STAT_TYPE_MAP.get(clean_stat_type, clean_stat_type.replace("player_", ""))
+
+    # Also try the original stat_type in case it's already correct
+    stat_key_original = STAT_TYPE_MAP.get(stat_type, stat_type.replace("player_", "") if stat_type else "")
 
     for statline in all_stats:
         if normalize_player_name(statline.player_name) == normalized_name:
-            # Check if we have this stat
-            if stat_key in statline.stats:
-                return statline.stats[stat_key]
-            # Try direct attribute
-            if hasattr(statline, stat_key):
-                return getattr(statline, stat_key, None)
+            # Check if we have this stat - try cleaned key first, then original
+            for key in [stat_key, stat_key_original]:
+                if key in statline.stats:
+                    logger.debug("Matched %s stat '%s' = %s", player_name, key, statline.stats[key])
+                    return statline.stats[key]
+                # Try direct attribute
+                if hasattr(statline, key) and getattr(statline, key, None) is not None:
+                    val = getattr(statline, key)
+                    logger.debug("Matched %s attr '%s' = %s", player_name, key, val)
+                    return val
 
+            # Log what keys are available for debugging
+            logger.debug("Stats available for %s: %s (wanted: %s/%s)",
+                        player_name, list(statline.stats.keys()), stat_key, stat_key_original)
+            return None  # Player found but stat not available
+
+    # Player not found in stats
+    logger.debug("Player %s not found in %d statlines", player_name, len(all_stats))
     return None
 
 
@@ -880,6 +926,32 @@ def grade_game_pick(
             return ("WIN" if home_score > away_score else "LOSS"), float(spread)
         else:
             return ("WIN" if away_score > home_score else "LOSS"), float(-spread)
+
+    elif "sharp" in pick_type_lower:
+        # v20.3: SHARP picks - grade based on the underlying bet
+        # Sharp signal picks typically have a line (spread) or are moneyline style
+        picked_home = normalize_player_name(picked_team) in normalize_player_name(home_team)
+
+        # If there's a line, treat as spread bet
+        if line and line != 0:
+            if picked_home:
+                adjusted = home_score + line
+                if adjusted == away_score:
+                    return "PUSH", float(spread)
+                return ("WIN" if adjusted > away_score else "LOSS"), float(spread)
+            else:
+                adjusted = away_score + line
+                if adjusted == home_score:
+                    return "PUSH", float(-spread)
+                return ("WIN" if adjusted > home_score else "LOSS"), float(-spread)
+        else:
+            # No line = moneyline style
+            if home_score == away_score:
+                return "PUSH", float(spread)
+            if picked_home:
+                return ("WIN" if home_score > away_score else "LOSS"), float(spread)
+            else:
+                return ("WIN" if away_score > home_score else "LOSS"), float(-spread)
 
     return "PUSH", 0.0
 
@@ -1038,6 +1110,14 @@ async def auto_grade_picks(
 
                 # Grade the game pick
                 pick_type = pick.get("pick_type") or pick.get("market", "")
+                # v20.3: Extract picked team for spread/moneyline grading
+                # Try multiple field names where the selected team might be stored
+                picked_team = (
+                    pick.get("selection") or
+                    pick.get("picked_team") or
+                    pick.get("team") or
+                    pick.get("side", "")  # side sometimes contains team name
+                )
                 result, actual_value = grade_game_pick(
                     pick_type=pick_type,
                     pick_side=pick.get("side", ""),
@@ -1045,7 +1125,8 @@ async def auto_grade_picks(
                     home_score=matched_game.home_score,
                     away_score=matched_game.away_score,
                     home_team=matched_game.home_team,
-                    away_team=matched_game.away_team
+                    away_team=matched_game.away_team,
+                    picked_team=picked_team
                 )
 
                 # v18.0: Record outcome for officials tracking

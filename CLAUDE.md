@@ -4967,6 +4967,55 @@ curl -s "/live/grader/bias/NBA?stat_type=spread&days_back=1" -H "X-API-Key: KEY"
   }'
 ```
 
+### Lesson 35: Grading Pipeline Missing SHARP/MONEYLINE/PROP Handling (v20.3)
+**Problem:** Investigation revealed:
+- **SHARP**: 18 picks, 0% hit rate (all graded as PUSH)
+- **MONEYLINE**: 1 sample in 7 days
+- **PROPS**: 0 samples in learning loop
+
+**Root Causes Found:**
+
+1. **SHARP picks graded as PUSH** (`result_fetcher.py:842-884`)
+   - `grade_game_pick()` checked for "total", "spread", "moneyline" in pick_type
+   - SHARP picks have `pick_type="SHARP"` which matched NONE of these
+   - Fell through to `return "PUSH", 0.0` - never WIN or LOSS
+
+2. **`picked_team` not passed** (`result_fetcher.py:1067-1075`)
+   - Call to `grade_game_pick()` didn't include `picked_team` parameter
+   - For spreads/moneylines, couldn't determine which team was picked
+
+3. **`run_daily_audit()` prop_stat_types incomplete** (`auto_grader.py:1071-1077`)
+   - Only audited: points, rebounds, assists
+   - Missing: threes, steals, blocks, pra (4 prop types not analyzed)
+
+4. **Prop stat lookup failures** (`result_fetcher.py:770-798`)
+   - STAT_TYPE_MAP didn't include direct formats like "threes"
+   - Market keys like "player_points_over_under" not cleaned
+
+**Fixes Applied (v20.3):**
+
+| Bug | Fix | File:Lines |
+|-----|-----|------------|
+| SHARP grading | Added `elif "sharp" in pick_type_lower` handling | `result_fetcher.py:893-916` |
+| picked_team | Extract from selection/picked_team/team/side fields | `result_fetcher.py:1066-1074` |
+| prop_stat_types | Synced with `_initialize_weights()` (7 NBA, 5 NFL, etc.) | `auto_grader.py:1071-1077` |
+| STAT_TYPE_MAP | Added direct formats + market suffix stripping | `result_fetcher.py:80-125` |
+
+**Verification Commands:**
+```bash
+# After next grading cycle, verify SHARP picks have WIN/LOSS (not all PUSH)
+curl -s "/live/picks/grading-summary?date=$(date +%Y-%m-%d)" -H "X-API-Key: KEY" | \
+  jq '[.graded_picks[] | select(.pick_type == "SHARP")] | group_by(.result) | map({result: .[0].result, count: length})'
+
+# Verify prop stat types being audited
+curl -s -X POST "/live/grader/run-audit" -H "X-API-Key: KEY" \
+  -H "Content-Type: application/json" -d '{"days_back": 1}' | \
+  jq '.results.results.NBA | keys'
+# Should include: points, rebounds, assists, threes, steals, blocks, pra, spread, total, moneyline, sharp
+```
+
+**Fixed in:** v20.3 (Feb 4, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -5425,6 +5474,16 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 115. **NEVER** skip checking `factor_bias` in bias response - it shows what signals are being tracked for learning
 116. **NEVER** assume the daily lesson generated correctly - verify with `/live/grader/daily-lesson/latest`
 117. **NEVER** forget to verify correlation tracking for all 28 signals (pace, vacuum, officials, glitch, esoteric)
+
+## 🚫 NEVER DO THESE (v20.3 - Grading Pipeline)
+
+118. **NEVER** add a new pick_type without adding handling in `grade_game_pick()` - it will grade as PUSH
+119. **NEVER** forget to pass `picked_team` to `grade_game_pick()` for spread/moneyline grading accuracy
+120. **NEVER** have mismatched stat type lists between `_initialize_weights()` and `run_daily_audit()` - both must match
+121. **NEVER** assume STAT_TYPE_MAP covers all formats - check for direct formats ("points") AND Odds API formats ("player_points")
+122. **NEVER** forget to strip market suffixes like "_over_under", "_alternate" from stat types before lookup
+123. **NEVER** skip testing grading for ALL pick types after changes (SPREAD, TOTAL, MONEYLINE, SHARP, PROP)
+124. **NEVER** assume 0% hit rate means bad predictions - it might mean grading is broken (all PUSH)
 
 ---
 
