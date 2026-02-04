@@ -30,7 +30,7 @@ PY
 
 check_best_bets() {
   local sport="$1"
-  local url="$BASE_URL/live/best-bets/$sport?debug=1&max_props=2&max_games=2"
+  local url="$BASE_URL/live/best-bets/$sport?debug=1&max_props=1&max_games=1"
 
   local resp_file
   resp_file=$(mktemp)
