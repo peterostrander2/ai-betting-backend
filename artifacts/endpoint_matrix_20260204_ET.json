@@ -1,6 +1,6 @@
 {
   "name": "endpoint_matrix",
   "date_et": "20260204",
-  "status": "FAIL",
-  "output": "Checking best-bets: NBA\n"
+  "status": "PASS",
+  "output": "Checking best-bets: NBA\nChecking live endpoints: NBA\nLive endpoint /in-game/NBA not found (404) \u2014 SKIPPED\nOK: NBA\n----\nChecking best-bets: NFL\nChecking live endpoints: NFL\nLive endpoint /in-game/NFL not found (404) \u2014 SKIPPED\nOK: NFL\n----\nChecking best-bets: NHL\nChecking live endpoints: NHL\nLive endpoint /in-game/NHL not found (404) \u2014 SKIPPED\nOK: NHL\n----\nChecking best-bets: MLB\nChecking live endpoints: MLB\nLive endpoint /in-game/MLB not found (404) \u2014 SKIPPED\nOK: MLB\n----\nChecking best-bets: NCAAB\nChecking live endpoints: NCAAB\nLive endpoint /in-game/NCAAB not found (404) \u2014 SKIPPED\nOK: NCAAB\n----\nEndpoint matrix sanity: PASS\n"
 }

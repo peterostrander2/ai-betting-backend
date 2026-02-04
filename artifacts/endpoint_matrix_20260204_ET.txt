@@ -9,3 +9,18 @@ Live endpoint /in-game/NFL not found (404) — SKIPPED
 OK: NFL
 ----
 Checking best-bets: NHL
+Checking live endpoints: NHL
+Live endpoint /in-game/NHL not found (404) — SKIPPED
+OK: NHL
+----
+Checking best-bets: MLB
+Checking live endpoints: MLB
+Live endpoint /in-game/MLB not found (404) — SKIPPED
+OK: MLB
+----
+Checking best-bets: NCAAB
+Checking live endpoints: NCAAB
+Live endpoint /in-game/NCAAB not found (404) — SKIPPED
+OK: NCAAB
+----
+Endpoint matrix sanity: PASS
