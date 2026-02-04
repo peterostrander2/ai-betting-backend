@@ -3589,13 +3589,31 @@ class TrapDefinition:
     status: str = "ACTIVE"          # ACTIVE, PAUSED, RETIRED
 ```
 
-### Complete Learning System Files (v19.1)
+### Complete Learning System Files (v20.2)
 | File | Purpose | Key Functions/Classes |
 |------|---------|----------------------|
-| `auto_grader.py` | Statistical learning (6:00 AM ET) | `AutoGrader`, `PredictionRecord`, `calculate_bias()`, `adjust_weights_with_reconciliation()`, `check_trap_reconciliation()` |
+| `auto_grader.py` | Statistical learning (6:00 AM ET) | `AutoGrader`, `PredictionRecord`, `calculate_bias()`, `adjust_weights_with_reconciliation()`, `check_trap_reconciliation()`, `_initialize_weights()`, `_convert_pick_to_record()` |
 | `trap_learning_loop.py` | Hypothesis learning (6:15 AM ET) | `TrapLearningLoop`, `has_recent_trap_adjustment()`, `get_recent_parameter_adjustments()` |
 | `grader_store.py` | Pick persistence | `persist_pick()`, `load_predictions()` |
 | `live_data_router.py` | Signal extraction for learning | Lines 4887-4899 (glitch_signals), Lines 6390-6420 (pick persistence) |
+
+**Critical auto_grader.py Lines (v20.2):**
+| Line Range | Function | Purpose |
+|------------|----------|---------|
+| 173-210 | `_initialize_weights()` | **MUST include game_stat_types (spread, total, moneyline, sharp)** |
+| 261-318 | `_convert_pick_to_record()` | Sets `stat_type = pick_type.lower()` for game picks |
+| 534-634 | `calculate_bias()` | Filters by `record.stat_type == stat_type` (exact match) |
+| 787-866 | `adjust_weights()` | Falls back to "points" if stat_type missing (line 802-803) |
+| 1035-1078 | `run_daily_audit()` | Iterates over game_stat_types = ["spread", "total", "moneyline", "sharp"] |
+
+**stat_type Mapping (v20.2):**
+| Pick Type | stat_type Value | Source |
+|-----------|-----------------|--------|
+| PROP | "points", "rebounds", etc. | `pick.get("stat_type", ...)` |
+| SPREAD | "spread" | `pick_type.lower()` |
+| TOTAL | "total" | `pick_type.lower()` |
+| MONEYLINE | "moneyline" | `pick_type.lower()` |
+| SHARP | "sharp" | `pick_type.lower()` |
 
 **PredictionRecord Signal Tracking (28 signals - 100% coverage):**
 ```python
@@ -4796,6 +4814,93 @@ if weather_data:  # Safe - weather_data is always defined
 
 **Fixed in:** v18.2 (Feb 2026) - `weather_data = None` initialization at line 3345
 
+### Lesson 32: Auto Grader Weights Must Include All Stat Types (v20.2)
+**Problem:** Auto grader returned "No graded predictions found" for ALL game picks (spread, total, moneyline, sharp) even though 242 graded picks existed.
+
+**Root Cause:** The `_initialize_weights()` method only created `WeightConfig` entries for PROP stat types (points, rebounds, assists, etc.) but NOT for GAME stat types (spread, total, moneyline, sharp).
+
+```python
+# BUG - Only PROP stat types initialized
+stat_types = {
+    "NBA": ["points", "rebounds", "assists", "threes", ...],  # PROP only
+    ...
+}
+for stat in stat_types.get(sport, ["points"]):
+    self.weights[sport][stat] = WeightConfig()
+# Missing: spread, total, moneyline, sharp
+```
+
+**The Bug Flow:**
+1. `run_daily_audit()` called `adjust_weights(sport, "spread")`
+2. `adjust_weights()` checked if "spread" was in `weights[sport]` → **NO**
+3. Line 802-803 defaulted to `stat_type = "points"` as fallback
+4. `calculate_bias()` filtered for records where `record.stat_type == "points"`
+5. Game picks have `stat_type` like "spread", "total" → **NO MATCH**
+6. → "No graded predictions found" for ALL game picks
+
+**Solution (v20.2):**
+```python
+# FIXED - Both PROP and GAME stat types initialized
+prop_stat_types = {
+    "NBA": ["points", "rebounds", "assists", ...],
+    ...
+}
+game_stat_types = ["spread", "total", "moneyline", "sharp"]
+
+for sport in self.SUPPORTED_SPORTS:
+    self.weights[sport] = {}
+    # Initialize PROP stat types
+    for stat in prop_stat_types.get(sport, ["points"]):
+        self.weights[sport][stat] = WeightConfig()
+    # Initialize GAME stat types
+    for stat in game_stat_types:
+        self.weights[sport][stat] = WeightConfig()
+```
+
+**Prevention:**
+- When adding new pick types (market types), ensure weights are initialized for them
+- The `stat_type` field in `PredictionRecord` comes from `pick_type.lower()` for game picks
+- Verify with: `curl /live/grader/bias/NBA?stat_type=spread` - should return sample_size > 0
+- The NEVER DO rules 108-111 enforce this
+
+**Verification Commands:**
+```bash
+# Check all game stat types have weights
+for stat in spread total moneyline sharp; do
+  echo "=== $stat ==="
+  curl -s "/live/grader/bias/NBA?stat_type=$stat&days_back=1" -H "X-API-Key: KEY" | \
+    jq '{stat_type: .stat_type, sample_size: .bias.sample_size, hit_rate: .bias.overall.hit_rate}'
+done
+# All should show sample_size > 0 (if graded picks exist)
+```
+
+**Fixed in:** v20.2 (Feb 2026) - Commit `ac25a59`
+
+### Lesson 33: OVER Bet Performance Tracking (v20.2 Analysis)
+**Problem:** Feb 3, 2026 analysis revealed severe OVER bias - 19.1% win rate on OVER bets vs 81.6% on UNDER bets.
+
+**Performance Data (Feb 3, 2026):**
+| Market | Record | Win Rate | Assessment |
+|--------|--------|----------|------------|
+| SPREAD | 96-21-40 | 82.1% | Excellent |
+| UNDER | 31-7 | 81.6% | Excellent |
+| OVER | 9-38 | 19.1% | **Critical Problem** |
+
+**Root Cause:** The system was overvaluing OVER bets. 38 of 66 total losses (57.6%) came from OVER picks.
+
+**Learning Loop Impact:**
+- With v20.2 fix, the auto grader can now properly analyze this data
+- `calculate_bias()` for "total" stat_type will detect the OVER bias
+- Weights will be adjusted to reduce OVER confidence
+- The esoteric/context signals that pushed OVER need recalibration
+
+**Prevention:**
+- Monitor OVER/UNDER split in daily grading reports
+- Auto grader bias analysis now properly includes totals picks
+- Consider market-type-specific confidence adjustments
+
+**Action:** The v20.2 fix enables the learning loop to automatically adjust based on this performance data.
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -5241,6 +5346,70 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 105. **NEVER** return a pick without all required boost fields (value + status + reasons)
 106. **NEVER** omit `msrf_boost`, `jason_sim_boost`, or `serp_boost` from pick payloads - even if 0.0
 107. **NEVER** skip tracking integration usage on cache hits - call `mark_integration_used()` for both cache and live
+
+## 🚫 NEVER DO THESE (v20.2 - Auto Grader Weights)
+
+108. **NEVER** add a new pick type (market type) without initializing weights for it in `_initialize_weights()`
+109. **NEVER** assume `adjust_weights()` fallback to "points" is correct - it masks missing stat_type configurations
+110. **NEVER** forget that game picks use `stat_type = pick_type.lower()` (spread, total, moneyline, sharp)
+111. **NEVER** skip verifying `calculate_bias()` returns sample_size > 0 for new stat types
+112. **NEVER** assume the auto grader "just works" - test with `/live/grader/bias/{sport}?stat_type=X` for all types
+113. **NEVER** add new market types to `run_daily_audit()` without adding corresponding weights
+
+---
+
+## ✅ VERIFICATION CHECKLIST (v20.2 - Auto Grader)
+
+Run these after ANY change to auto_grader.py or grading logic:
+
+```bash
+# 1. Syntax check auto_grader
+python -m py_compile auto_grader.py
+
+# 2. Verify weights exist for ALL stat types (PROP + GAME)
+curl -s "/live/grader/weights/NBA" -H "X-API-Key: KEY" | jq 'keys'
+# Should include: points, rebounds, assists, spread, total, moneyline, sharp
+
+# 3. Test bias calculation for GAME stat types
+for stat in spread total moneyline sharp; do
+  echo "=== $stat ==="
+  curl -s "/live/grader/bias/NBA?stat_type=$stat&days_back=1" -H "X-API-Key: KEY" | \
+    jq '{stat_type: .stat_type, sample_size: .bias.sample_size, error: .bias.error}'
+done
+# All should show sample_size > 0 OR "No graded predictions found" (not a crash)
+
+# 4. Run full audit and verify game picks processed
+curl -s -X POST "/live/grader/run-audit" -H "X-API-Key: KEY" \
+  -H "Content-Type: application/json" -d '{"days_back": 1}' | \
+  jq '.results.results.NBA | {spread: .spread.bias_analysis.sample_size, total: .total.bias_analysis.sample_size}'
+# Should show sample_size > 0 for spread and total
+
+# 5. Verify grading summary has graded picks
+curl -s "/live/picks/grading-summary?date=$(date -v-1d +%Y-%m-%d)" -H "X-API-Key: KEY" | \
+  jq '{total: .total_picks, graded: (.graded_picks | length)}'
+# graded should be > 0
+
+# 6. Check OVER/UNDER performance split (for bias monitoring)
+curl -s "/live/picks/grading-summary?date=$(date -v-1d +%Y-%m-%d)" -H "X-API-Key: KEY" | \
+  jq '{
+    over: {wins: [.graded_picks[] | select(.side == "Over" and .result == "WIN")] | length,
+           losses: [.graded_picks[] | select(.side == "Over" and .result == "LOSS")] | length},
+    under: {wins: [.graded_picks[] | select(.side == "Under" and .result == "WIN")] | length,
+            losses: [.graded_picks[] | select(.side == "Under" and .result == "LOSS")] | length}
+  }'
+# Monitor for severe bias (e.g., OVER 19% vs UNDER 82%)
+
+# 7. Test all 5 sports audit
+curl -s -X POST "/live/grader/run-audit" -H "X-API-Key: KEY" \
+  -H "Content-Type: application/json" -d '{"days_back": 1}' | \
+  jq '[.results.results | to_entries[] | {sport: .key, spread_samples: .value.spread.bias_analysis.sample_size}]'
+```
+
+**Critical Invariants (ALWAYS verify these):**
+- `_initialize_weights()` includes BOTH prop_stat_types AND game_stat_types
+- Game picks use `stat_type = pick_type.lower()` (from `_convert_pick_to_record()`)
+- `adjust_weights()` should NOT fall back to "points" for valid game stat types
+- `calculate_bias()` filters by `record.stat_type == stat_type` (exact match)
 
 ---
 
@@ -5735,16 +5904,51 @@ grep -n "function_name" live_data_router.py
 - **Daily audit job (6 AM ET):** grades, audits bias, adjusts weights, triggers retrain.
 - **Daily lesson writer:** generates a short lesson summary from audit results.
 
+### v20.2 Stat Types Audited
+The audit now processes BOTH prop picks AND game picks:
+
+**PROP Stat Types (per sport):**
+- NBA: points, rebounds, assists, threes, steals, blocks, pra
+- NFL: passing_yards, rushing_yards, receiving_yards, receptions, touchdowns
+- MLB: hits, runs, rbis, strikeouts, total_bases, walks
+- NHL: goals, assists, points, shots, saves, blocks
+- NCAAB: points, rebounds, assists, threes
+
+**GAME Stat Types (all sports):**
+- spread, total, moneyline, sharp
+
 ### Files + outputs (source of truth)
 - Scheduler + audit flow: `daily_scheduler.py`
 - Audit logs: `/data/grader_data/audit_logs/audit_YYYY-MM-DD.json`
 - Daily lesson (single day): `/data/grader_data/audit_logs/lesson_YYYY-MM-DD.json`
 - Daily lessons log (append-only): `/data/grader_data/audit_logs/lessons.jsonl`
 
-### API endpoint
-- `GET /live/grader/daily-lesson`
-- `GET /live/grader/daily-lesson/latest`
-- `GET /live/grader/daily-lesson?days_back=1`
+### API endpoints
+- `GET /live/grader/daily-lesson` - Get today's lesson
+- `GET /live/grader/daily-lesson/latest` - Get most recent lesson
+- `GET /live/grader/daily-lesson?days_back=1` - Get lesson from N days ago
+- `GET /live/grader/bias/{sport}?stat_type=X` - Get bias for specific stat type
+- `POST /live/grader/run-audit` - Manually trigger audit
+
+### Performance Monitoring (v20.2)
+Monitor OVER/UNDER bias in daily performance:
+```bash
+# Check OVER/UNDER split for yesterday
+curl -s "/live/picks/grading-summary?date=$(date -v-1d +%Y-%m-%d)" -H "X-API-Key: KEY" | \
+  jq '{
+    over: {wins: [.graded_picks[] | select(.side == "Over" and .result == "WIN")] | length,
+           losses: [.graded_picks[] | select(.side == "Over" and .result == "LOSS")] | length},
+    under: {wins: [.graded_picks[] | select(.side == "Under" and .result == "WIN")] | length,
+            losses: [.graded_picks[] | select(.side == "Under" and .result == "LOSS")] | length}
+  }'
+```
+
+**Feb 3, 2026 Benchmark:**
+| Market | Win Rate | Status |
+|--------|----------|--------|
+| SPREAD | 82.1% | ✅ Target |
+| UNDER | 81.6% | ✅ Target |
+| OVER | 19.1% | ⚠️ Needs recalibration |
 
 ### Verification (post-deploy gate)
 ```bash
@@ -5753,13 +5957,20 @@ API_BASE=https://web-production-7b2a.up.railway.app \
 API_KEY=YOUR_KEY \
 bash scripts/verify_autograder_e2e.sh --mode pre
 
-# Check today’s lesson (may 404 before 6AM ET)
+# Check today's lesson (may 404 before 6AM ET)
 curl -s "$API_BASE/live/grader/daily-lesson" -H "X-API-Key: $API_KEY"
+
+# Verify game stat types are being audited (v20.2)
+curl -s -X POST "$API_BASE/live/grader/run-audit" -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" -d '{"days_back": 1}' | \
+  jq '.results.results.NBA | {spread: .spread.bias_analysis.sample_size, total: .total.bias_analysis.sample_size}'
+# Both should show sample_size > 0
 ```
 
 ### Failure policy
 - If lesson file missing before 6 AM ET: return **404** (expected).
 - After 6 AM ET: lesson should exist for the day.
+- If game stat types show "No graded predictions found" but picks exist: Check `_initialize_weights()` includes game_stat_types (see Lesson 32)
 
 ---
 
