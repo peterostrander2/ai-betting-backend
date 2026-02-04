@@ -5297,3 +5297,125 @@ curl "https://web-production-7b2a.up.railway.app/live/debug/integrations?quick=t
 
 ---
 
+
+## Session Log: February 4, 2026 - Tech Debt Cleanup & Health Check
+
+### Summary
+
+Completed technical debt review, cleanup, and system health verification.
+
+---
+
+### Work Completed
+
+#### 1. Frontend Integration Complete ✅
+
+All 5 frontend integration priorities marked complete:
+
+| Priority | Feature | Status |
+|----------|---------|--------|
+| 1 | Context Score Display | ✅ Complete |
+| 2 | Context Layer Details | ✅ Complete |
+| 3 | Harmonic Convergence Badge | ✅ Complete |
+| 4 | MSRF Turn Date Resonance | ✅ Complete |
+| 5 | Officials Impact | ✅ Complete |
+
+**Commit:** `e0ff9e7` - docs: mark Priority 4-5 complete
+
+---
+
+#### 2. Technical Debt Cleanup ✅
+
+Reviewed all 3 tech debt items from `tasks/todo.md`:
+
+| Item | Finding | Action |
+|------|---------|--------|
+| Consolidate Titanium logic | Already consolidated - `tiering.check_titanium_rule()` calls `core/titanium.evaluate_titanium()` | N/A |
+| Clean up services/ directory | Both files actively used in v18.x (`officials_tracker.py`, `ml_data_pipeline.py`) | N/A |
+| Remove `new_endpoints.py` | Deprecated, not imported anywhere | **Deleted** |
+
+**Deleted:** `legacy/new_endpoints.py` (~370 lines of dead code)
+
+**Commit:** `8c9629d` - chore: clean up tech debt - remove deprecated new_endpoints.py
+
+---
+
+#### 3. System Health Check ✅
+
+**API Usage (Feb 4, 2026):**
+
+| API | Used | Limit | % Used | Status |
+|-----|------|-------|--------|--------|
+| Playbook | 11,047 | 25,000 | 44.2% | 🟢 Healthy |
+| Odds API | 13,705 | 100,000 | 13.7% | ✅ Healthy |
+
+**Grader Status:**
+
+| Metric | Value |
+|--------|-------|
+| Total Predictions | 635 |
+| Today's Picks | 116 |
+| Pending to Grade | 69 |
+| Graded Today | 47 |
+| Weight Learning | Active (5 sports) |
+
+**NBA Learned Weights (spread market):**
+
+| Factor | Weight | Change |
+|--------|--------|--------|
+| LSTM | 0.200 | baseline |
+| Vacuum | 0.179 | ↑ increased |
+| Defense | 0.150 | baseline |
+| Pace | 0.116 | ↓ decreased |
+| Park Factor | 0.100 | baseline |
+| Officials | 0.067 | ↓ decreased |
+
+Learning loop actively adjusting weights based on graded results.
+
+---
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `legacy/new_endpoints.py` | Deleted |
+| `legacy/README.md` | Updated to reflect deletion |
+| `tasks/todo.md` | Marked all tech debt resolved |
+| `docs/FRONTEND_INTEGRATION.md` | Marked Priority 4-5 complete |
+
+---
+
+### Production Status
+
+```
+Version: v20.4
+Build: 8c9629d
+Status: FROZEN (production-ready)
+All 14 integrations: Configured ✅
+Storage: 4.7 MB predictions
+Redis: Connected ✅
+Scheduler: Running ✅
+```
+
+---
+
+### Verification Commands
+
+```bash
+# Health check
+curl "https://web-production-7b2a.up.railway.app/health"
+
+# API usage
+curl "https://web-production-7b2a.up.railway.app/live/api-usage" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+
+# Grader status
+curl "https://web-production-7b2a.up.railway.app/live/grader/status" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+
+# Learned weights
+curl "https://web-production-7b2a.up.railway.app/live/grader/weights/NBA" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+```
+
+---
