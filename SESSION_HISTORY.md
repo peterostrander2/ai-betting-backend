@@ -5542,3 +5542,46 @@ fbe077c fix: grader endpoints datetime/pytz errors
 **v20.5** - All grader bugs fixed, SHARP picks now grading correctly.
 
 ---
+
+#### Bug 5: `/grader/performance/{sport}` Datetime Comparison Error
+
+**Symptom:** `Internal Server Error` on performance endpoint
+
+**Root Cause:** Same naive vs aware datetime comparison bug:
+```python
+cutoff = datetime.now() - timedelta(days=days_back)
+datetime.fromisoformat(p.timestamp) >= cutoff  # Fails if timestamp is TZ-aware
+```
+
+**Fix:** Use `now_et()` and handle mixed timezone timestamps (same pattern as daily-report fix).
+
+**File:** `live_data_router.py` lines 8933-8944
+
+**Commit:** `78a9609`
+
+---
+
+### Updated Commits List
+
+```
+2b517a0 fix(grader): SHARP picks grade as moneyline, not line_variance
+fbe077c fix: grader endpoints datetime/pytz errors
+453a035 fix(grader): daily-report date window was 2 days instead of 1
+5f08ca6 docs: add session log for grader bug fixes (v20.5)
+78a9609 fix(grader): performance endpoint datetime comparison error
+```
+
+---
+
+### All Grader Endpoints Verified Working
+
+| Endpoint | Status |
+|----------|--------|
+| `/grader/status` | ✅ |
+| `/grader/queue` | ✅ |
+| `/grader/daily-report` | ✅ |
+| `/grader/performance/{sport}` | ✅ |
+| `/grader/bias/{sport}` | ✅ |
+| `/grader/weights/{sport}` | ✅ |
+
+---
