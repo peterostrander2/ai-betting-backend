@@ -72,6 +72,12 @@ if [ $curl_rc -ne 0 ]; then
   exit 20
 fi
 
+if [ "$http_code" != "200" ]; then
+  echo "HTTP $http_code returned from best-bets endpoint"
+  cat "$resp_file" 2>/dev/null || true
+  fail "Best-bets endpoint returned HTTP $http_code"
+fi
+
 RESP="$(cat "$resp_file")"
 if [ -z "$RESP" ]; then
   fail "Empty response from best-bets endpoint (HTTP $http_code)"
