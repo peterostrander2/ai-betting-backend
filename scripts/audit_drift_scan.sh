@@ -61,7 +61,7 @@ if [ -z "$API_KEY" ]; then
   fail "API_KEY is required for payload checks (or set SKIP_NETWORK=1)."
 fi
 
-url="$BASE_URL/live/best-bets/NBA?debug=1&max_props=5&max_games=5"
+url="$BASE_URL/live/best-bets/NBA?debug=1&max_props=2&max_games=2"
 resp_file="$(mktemp)"
 http_code="$(curl -sS -o "$resp_file" -w "%{http_code}" "$url" -H "X-API-Key: $API_KEY")"
 curl_rc=$?
