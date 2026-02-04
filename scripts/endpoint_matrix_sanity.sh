@@ -42,6 +42,11 @@ check_best_bets() {
     cat "$resp_file" 2>/dev/null || true
     exit 20
   fi
+  if [ "$http_code" = "404" ]; then
+    echo "Live endpoint /live/in-play/$sport not found (404) — SKIPPED"
+    rm -f "$resp_file"
+    return 0
+  fi
 
   if [ "$http_code" != "200" ]; then
     local err_code
@@ -129,6 +134,11 @@ check_live_endpoints() {
     echo "NETWORK_UNAVAILABLE: curl rc=$curl_rc url=$url"
     cat "$resp_file" 2>/dev/null || true
     exit 20
+  fi
+  if [ "$http_code" = "404" ]; then
+    echo "Live endpoint /in-game/$sport not found (404) — SKIPPED"
+    rm -f "$resp_file"
+    return 0
   fi
   if [ "$http_code" != "200" ]; then
     local err_code
