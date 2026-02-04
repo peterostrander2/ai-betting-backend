@@ -13,13 +13,13 @@ Local checks (run here):
 - env_drift_scan: **PASS**
 - learning_sanity_check: **PASS** (warnings due to missing local files)
 - learning_loop_sanity: **PASS** (warnings due to missing local files)
-- endpoint_matrix_sanity: **SKIPPED** (network unavailable in this environment)
-- live_sanity_check: **SKIPPED** (network unavailable in this environment)
-- api_proof_check: **SKIPPED** (network unavailable in this environment)
-- perf_audit_best_bets: **SKIPPED** (network unavailable in this environment)
+- endpoint_matrix_sanity: **PASS** (operator run 2026‑02‑04 ET)
+- live_sanity_check: **PASS** (operator run 2026‑02‑04 ET)
+- api_proof_check: **PASS** (operator run 2026‑02‑04 ET)
+- perf_audit_best_bets: **PASS** (operator run 2026‑02‑04 ET)
 
 **Ship/No‑Ship (local only):** PASS
-**Ship/No‑Ship (prod network):** PASS (perf audit confirmed by operator run)
+**Ship/No‑Ship (prod network):** PASS (operator network checks confirmed)
 
 ## 2) Scoring Verification — Option A
 
@@ -101,7 +101,7 @@ Required fields in `/live/best-bets/{sport}?debug=1`:
 
 ## 10) Action Items (Ranked)
 
-1) Run full network checks locally (endpoint_matrix, live_sanity, api_proof, perf audit) and attach artifacts.
+1) Monitor best‑bets performance; consider precompute/caching if p95 grows.
 2) Monitor best-bets performance (P95 timings) and tune time budget if needed.
 3) Confirm integration `last_used_at` updates on cache hits for paid APIs.
 
