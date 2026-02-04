@@ -41,7 +41,7 @@ import json
 import os
 import logging
 import fcntl
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict, field
 from collections import defaultdict
@@ -53,6 +53,15 @@ try:
     GRADER_STORE_AVAILABLE = True
 except ImportError:
     GRADER_STORE_AVAILABLE = False
+
+# v20.1: Import ET timezone helpers for consistent datetime handling
+try:
+    from core.time_et import now_et, ET
+    TIME_ET_AVAILABLE = True
+except ImportError:
+    TIME_ET_AVAILABLE = False
+    from zoneinfo import ZoneInfo
+    ET = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -543,7 +552,12 @@ class AutoGrader:
         Returns bias metrics per adjustment factor.
         """
         sport = sport.upper()
-        cutoff = datetime.now() - timedelta(days=days_back)
+        # v20.1: Use ET timezone for consistent datetime handling
+        if TIME_ET_AVAILABLE:
+            now = now_et()
+        else:
+            now = datetime.now(timezone.utc).astimezone(ET)
+        cutoff = now - timedelta(days=days_back)
 
         # Filter relevant predictions
         relevant = []
@@ -552,7 +566,14 @@ class AutoGrader:
             if record.actual_value is None:
                 continue
 
+            # v20.1: Parse timestamp, handling both aware and naive formats
             record_date = datetime.fromisoformat(record.timestamp)
+            if record_date.tzinfo is None:
+                # If timestamp is naive, assume UTC then convert to ET
+                record_date = record_date.replace(tzinfo=timezone.utc).astimezone(ET)
+            else:
+                # Convert to ET for consistent comparison
+                record_date = record_date.astimezone(ET)
             if record_date < cutoff:
                 continue
 
@@ -567,7 +588,7 @@ class AutoGrader:
 
             # GAP 5 fix: Confidence decay - older picks weighted less
             if apply_confidence_decay:
-                days_old = (datetime.now() - record_date).days
+                days_old = (now - record_date).days
                 weight = 0.7 ** days_old  # 70% decay per day (1.0 today, 0.7 yesterday, 0.49 2 days ago)
                 weights.append(weight)
             else:
@@ -1239,15 +1260,28 @@ class AutoGrader:
         Called by DailyScheduler after grading.
         """
         sport = sport.upper()
-        cutoff = datetime.now() - timedelta(days=days_back)
+        # v20.1: Use ET timezone for consistent datetime handling
+        if TIME_ET_AVAILABLE:
+            now = now_et()
+        else:
+            now = datetime.now(timezone.utc).astimezone(ET)
+        cutoff = now - timedelta(days=days_back)
 
         predictions = self.predictions.get(sport, [])
 
         # Filter to recent predictions
-        recent = [
-            p for p in predictions
-            if datetime.fromisoformat(p.timestamp) >= cutoff
-        ]
+        recent = []
+        for p in predictions:
+            # v20.1: Parse timestamp, handling both aware and naive formats
+            record_date = datetime.fromisoformat(p.timestamp)
+            if record_date.tzinfo is None:
+                # If timestamp is naive, assume UTC then convert to ET
+                record_date = record_date.replace(tzinfo=timezone.utc).astimezone(ET)
+            else:
+                # Convert to ET for consistent comparison
+                record_date = record_date.astimezone(ET)
+            if record_date >= cutoff:
+                recent.append(p)
 
         # Count graded predictions
         graded = [p for p in recent if p.actual_value is not None]
