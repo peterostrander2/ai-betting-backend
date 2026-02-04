@@ -1035,9 +1035,15 @@ class AutoGrader:
     def run_daily_audit(self, days_back: int = 1) -> Dict:
         """
         Run full audit across all sports and stat types.
-        
+
         Call this daily after games complete.
         """
+        # v20.1: Reload predictions from grader_store to get freshly graded picks
+        # This is critical because picks are graded by result_fetcher AFTER auto_grader startup
+        logger.info("Reloading predictions from grader_store before audit...")
+        self.predictions.clear()
+        self._load_predictions_from_grader_store()
+
         results = {}
         
         stat_types = {
