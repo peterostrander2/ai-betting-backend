@@ -33,6 +33,109 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 
 ---
 
+## 📚 MASTER INDEX (Quick Reference)
+
+### Critical Invariants (25 Total)
+| # | Name | Summary |
+|---|------|---------|
+| 1 | Storage Persistence | ALL data under `RAILWAY_VOLUME_MOUNT_PATH=/data` |
+| 2 | Titanium 3-of-4 Rule | `titanium=true` ONLY when ≥3 of 4 engines ≥8.0 |
+| 3 | ET Today-Only Gating | ALL picks for games in today's ET window ONLY |
+| 4 | Option A Scoring | 4-engine base (AI 25%, Research 35%, Esoteric 20%, Jarvis 20%) + context modifier |
+| 5 | Jarvis Additive | Jarvis is weighted engine, NOT separate boost |
+| 6 | Output Filtering | `final_score >= 6.5` required for output |
+| 7 | Contradiction Gate | Never output both Over AND Under on same line |
+| 8 | Best-Bets Contract | Response MUST have `props.picks[]` and `game_picks.picks[]` |
+| 9 | Pick Persistence | Picks logged to grader_store for learning loop |
+| 9.1 | Two Storage Systems | grader_store (picks) + weights.json (learning) |
+| 10 | Frontend-Ready | Human-readable times, no internal IDs |
+| 11 | Integration Contract | ESPN/Playbook field mapping |
+| 12 | Logging Visibility | Keep INFO telemetry for debugging |
+| 13 | PickContract v1 | Frontend-proof picks with all required fields |
+| 14 | ML Model Activation | LSTM + Ensemble models active |
+| 15 | GLITCH Protocol | 6 signals: void_moon, mercury_retro, eclipse, kp_index, schumann, solar_wind |
+| 16 | 17-Pillar Scoring | All 17 pillars active (see detailed list) |
+| 17 | Harmonic Convergence | +1.5 boost when Research AND Esoteric ≥7.5 |
+| 18 | Secret Redaction | API keys never in logs |
+| 19 | Demo Data Hard Gate | Block demo/test data in production |
+| 20 | MSRF Boost | ±1.0 cap on MSRF adjustments |
+| 21 | Dual-Use Functions | Must return dicts (not Response objects) |
+| 22 | ESPN Integration | Injuries, officials, lineups from ESPN |
+| 23 | SERP Intelligence | Web search boost capped at 4.3 |
+| 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
+| 25 | Complete Learning | End-to-end grading → bias → weight updates |
+
+### Lessons Learned (38 Total) - Key Categories
+| Range | Category | Examples |
+|-------|----------|----------|
+| 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
+| 6-7 | Security | Secret leakage, demo data |
+| 8-15 | Integration | MSRF, ESPN, API mismatches |
+| 16-22 | Team/Data | NHL accents, NCAAB expansion, pick_type values |
+| 23-28 | Signals | Benford, officials, trap learning |
+| 29-31 | Datetime | Timezone awareness, variable initialization |
+| 32-38 | **v20.x Learning Loop** | Grader weights, SHARP/MONEYLINE grading, OVER/UNDER calibration |
+
+### NEVER DO Sections (15 Categories)
+- ML & GLITCH (rules 1-10)
+- MSRF (rules 11-14)
+- Security (rules 15-19)
+- FastAPI & Functions (rules 20-25)
+- Nested Functions (rules 26-30)
+- API & Data (rules 31-40)
+- ESPN Integration (rules 41-55)
+- SERP Intelligence (rules 56-65)
+- Esoteric/Phase 1 (rules 66-80)
+- v17.6 Vortex & Benford (rules 81-90)
+- v19.0 Trap Learning (rules 91-100)
+- v18.2 Phase 8 Esoteric (rules 101-110)
+- v20.x Two Storage Systems (rules 111-117)
+- v20.3 Grading Pipeline (rules 118-124)
+- v20.4 Go/No-Go Scripts (rules 125+)
+
+### Deployment Gates (REQUIRED BEFORE DEPLOY)
+```bash
+# 1. Option A drift scan (blocks BASE_5, context-weighted patterns)
+./scripts/option_a_drift_scan.sh
+
+# 2. Audit drift scan (verifies scoring formula)
+./scripts/audit_drift_scan.sh
+
+# 3. Full CI sanity check
+./scripts/ci_sanity_check.sh
+
+# 4. Production Go/No-Go
+./scripts/prod_go_nogo.sh
+```
+
+### Key Files Reference
+| File | Purpose |
+|------|---------|
+| `core/scoring_contract.py` | Scoring constants (Option A weights, thresholds, calibration) |
+| `core/scoring_pipeline.py` | Score calculation (single source of truth) |
+| `live_data_router.py` | Main API endpoints, pick scoring |
+| `auto_grader.py` | Learning loop, bias calculation, weight updates |
+| `result_fetcher.py` | Game result fetching, pick grading |
+| `grader_store.py` | Pick persistence (predictions.jsonl) |
+| `utils/contradiction_gate.py` | Prevents opposite side picks |
+
+### Current Version: v20.4 (Feb 4, 2026)
+**Latest Fixes:**
+- Lesson 36: Audit drift scan line number filters
+- Lesson 37: Endpoint matrix sanity math formula
+- Lesson 38: OVER/UNDER totals bias calibration (+0.75 Under, -0.75 Over)
+
+**Active Calibration:**
+```python
+TOTALS_SIDE_CALIBRATION = {
+    "enabled": True,
+    "over_penalty": -0.75,
+    "under_boost": 0.75,
+}
+```
+
+---
+
 ## Code Style & Simplification Rules
 
 **Apply these automatically when writing or modifying code:**
