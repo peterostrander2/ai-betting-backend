@@ -1,0 +1,6 @@
+{
+  "name": "learning_loop",
+  "date_et": "20260204",
+  "status": "PASS",
+  "output": "WARN: predictions file missing: /tmp/railway_test/grader/predictions.jsonl\nWARN: weights file missing: /tmp/railway_test/grader_data/weights.json\nWARN: predictions file missing\nLearning loop sanity: PASS\n"
+}
