@@ -89,7 +89,7 @@ REQUIRED_FIELDS='["base_4_score","context_modifier","confluence_boost","msrf_boo
 GAME_COUNT=$(echo "$RESP" | jq -r '.game_picks.picks | length' 2>/dev/null || echo 0)
 if [ "$GAME_COUNT" -gt 0 ]; then
   GAME_OK=$(echo "$RESP" | jq -r --argjson req "$REQUIRED_FIELDS" '
-    .game_picks.picks[0] as $p | ($req | all($p | has(.)))
+    .game_picks.picks[0] as $p | [$req[] | . as $key | $p | has($key)] | all
   ' 2>/dev/null || echo false)
   if [ "$GAME_OK" != "true" ]; then
     fail "Missing required fields in game_picks.picks[0]"
@@ -100,7 +100,7 @@ fi
 PROP_COUNT=$(echo "$RESP" | jq -r '.props.picks | length' 2>/dev/null || echo 0)
 if [ "$PROP_COUNT" -gt 0 ]; then
   PROP_OK=$(echo "$RESP" | jq -r --argjson req "$REQUIRED_FIELDS" '
-    .props.picks[0] as $p | ($req | all($p | has(.)))
+    .props.picks[0] as $p | [$req[] | . as $key | $p | has($key)] | all
   ' 2>/dev/null || echo false)
   if [ "$PROP_OK" != "true" ]; then
     fail "Missing required fields in props.picks[0]"
