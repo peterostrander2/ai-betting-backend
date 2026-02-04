@@ -6069,7 +6069,7 @@ API_KEY="bookie-prod-2026-xK9mP2nQ7vR4" SKIP_NETWORK=0 SKIP_PYTEST=1 ALLOW_EMPTY
 # Expected output: "Prod go/no-go: PASS"
 ```
 
-**The 9 Checks:**
+**The 10 Checks:**
 | Check | Script | What It Validates |
 |-------|--------|-------------------|
 | option_a_drift | `option_a_drift_scan.sh` | No BASE_5 or context-as-engine |
@@ -6081,12 +6081,13 @@ API_KEY="bookie-prod-2026-xK9mP2nQ7vR4" SKIP_NETWORK=0 SKIP_PYTEST=1 ALLOW_EMPTY
 | learning_sanity | `learning_sanity_check.sh` | Weights initialized |
 | live_sanity | `live_sanity_check.sh` | Best-bets returns valid data |
 | api_proof | `api_proof_check.sh` | Production API responding |
+| perf_audit | `perf_audit_best_bets.sh` | Response times within benchmarks |
 
 **If ANY check fails:**
 1. Read the artifact: `cat artifacts/{check_name}_YYYYMMDD_ET.json`
 2. Fix the issue
 3. Re-run go/no-go
-4. Do NOT deploy until all 9 pass
+4. Do NOT deploy until all 10 pass
 
 **Common Failures:**
 | Failure | Likely Cause | Fix |
@@ -6097,6 +6098,87 @@ API_KEY="bookie-prod-2026-xK9mP2nQ7vR4" SKIP_NETWORK=0 SKIP_PYTEST=1 ALLOW_EMPTY
 | `learning_loop` | Weights missing | Check `_initialize_weights()` |
 
 **Artifacts Location:** `artifacts/{check_name}_YYYYMMDD_ET.json`
+
+---
+
+## 📊 PERFORMANCE BENCHMARKS (Feb 4, 2026)
+
+**Perf Audit Results (perf_audit_best_bets.sh):**
+
+| Sport | Game Scoring (p50) | Game Scoring (p95) | Parallel Fetch (p50) | Status |
+|-------|-------------------|-------------------|---------------------|--------|
+| NBA | 45.9s | 49.1s | 0.2s | ✅ Baseline |
+| NFL | 0s | 0s | 0.1s | ✅ Off-season |
+| NHL | 53.2s | 53.8s | 0.3s | ✅ Baseline |
+| MLB | - | - | - | ✅ Off-season |
+| NCAAB | - | - | - | ✅ No games |
+
+**Component Timing Breakdown (NBA p50):**
+| Component | Time (s) | Notes |
+|-----------|----------|-------|
+| init_engines | 0.002 | Fast after first run (cached) |
+| game_context | 0.004 | Context layer setup |
+| parallel_fetch | 0.206 | Odds API + Playbook + ESPN |
+| et_filter | 0.002 | ET timezone filtering |
+| player_resolution | 0.935 | BallDontLie player lookups |
+| game_picks_scoring | 45.944 | Full 4-engine + boosts pipeline |
+| props_scoring | 0.0 | No props today |
+| pick_logging | 0.0 | Persistence to JSONL |
+
+**Performance Notes:**
+- Game scoring (45-53s) is the bottleneck - this is the full 4-engine pipeline with GLITCH, MSRF, Jason Sim, SERP, etc.
+- First run is slower (engine initialization ~0.6s), subsequent runs faster (~0.002s)
+- Parallel fetch is efficient (~0.2s for 3 API sources)
+- ET filtering is negligible (<0.02s)
+
+**Acceptable Ranges:**
+| Metric | Acceptable | Warning | Critical |
+|--------|------------|---------|----------|
+| game_picks_scoring | <60s | 60-90s | >90s |
+| parallel_fetch | <2s | 2-5s | >5s |
+| player_resolution | <3s | 3-5s | >5s |
+| Total endpoint response | <90s | 90-120s | >120s |
+
+---
+
+## ✅ VERIFICATION CHECKLIST (Perf Audit)
+
+Run the perf audit after ANY change to scoring pipeline, API integrations, or parallel fetch:
+
+```bash
+# Run perf audit (requires API_KEY)
+API_KEY="bookie-prod-2026-xK9mP2nQ7vR4" bash scripts/perf_audit_best_bets.sh
+
+# Check specific sport
+API_KEY="KEY" SPORTS="NBA" bash scripts/perf_audit_best_bets.sh
+
+# More runs for better p50/p95 accuracy
+API_KEY="KEY" RUNS=5 bash scripts/perf_audit_best_bets.sh
+```
+
+**What to Check:**
+1. **game_picks_scoring p50 < 60s** - Main scoring pipeline
+2. **parallel_fetch p50 < 2s** - API fetches
+3. **No empty timings** for sports with active games
+4. **init_engines fast after first run** (<0.1s on subsequent runs)
+
+**Troubleshooting Slow Performance:**
+| Symptom | Likely Cause | Fix |
+|---------|--------------|-----|
+| parallel_fetch > 5s | API timeout or rate limit | Check Odds API quota |
+| game_picks_scoring > 90s | Too many boosts enabled | Review SERP/MSRF/GLITCH |
+| player_resolution > 5s | BallDontLie slow | Check BDL API health |
+| init_engines > 1s every run | Engines not caching | Check singleton patterns |
+
+**Shell Variable Export (Critical):**
+The script uses Python heredocs. Variables MUST be exported:
+```bash
+# ❌ WRONG - Python can't see this
+BASE_URL="https://example.com"
+
+# ✅ CORRECT - Python inherits via os.environ
+export BASE_URL="https://example.com"
+```
 
 ---
 
