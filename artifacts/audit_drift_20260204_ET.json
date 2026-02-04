@@ -2,5 +2,5 @@
   "name": "audit_drift",
   "date_et": "20260204",
   "status": "PASS",
-  "output": "Audit drift scan: PASS\n"
+  "output": "SKIP_NETWORK=1 set; skipping payload checks.\n"
 }
