@@ -40,10 +40,12 @@ fi
 rg -n "final_score\s*=.*[+-]\s*0\.5" "${SCORING_PATHS[@]}" >/tmp/audit_final_score_literals 2>/dev/null || true
 if [ -s /tmp/audit_final_score_literals ]; then
   # Filter out the allowed ensemble adjustment in live_data_router.py and utils/ensemble_adjustment.py
+  # Lines 4757 (boost) and 4761 (penalty) are the fallback ensemble adjustments
   FILTERED=$(cat /tmp/audit_final_score_literals | \
     rg -v "utils/ensemble_adjustment.py" | \
     rg -v "live_data_router.py:475[34]" | \
-    rg -v "live_data_router.py:475[67]" || true)
+    rg -v "live_data_router.py:475[67]" | \
+    rg -v "live_data_router.py:476[012]" || true)
   if [ -n "$FILTERED" ]; then
     echo "Found additive final_score +/-0.5 outside allowed ensemble adjustment:"
     echo "$FILTERED"

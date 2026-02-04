@@ -1,1 +1,11 @@
 Checking best-bets: NBA
+Checking live endpoints: NBA
+Live endpoint /in-game/NBA not found (404) — SKIPPED
+OK: NBA
+----
+Checking best-bets: NFL
+Checking live endpoints: NFL
+Live endpoint /in-game/NFL not found (404) — SKIPPED
+OK: NFL
+----
+Checking best-bets: NHL
