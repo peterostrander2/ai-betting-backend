@@ -8935,13 +8935,25 @@ async def get_grader_performance(sport: str, days_back: int = 7):
     sport_upper = sport.upper()
     predictions = grader.predictions.get(sport_upper, [])
 
+    # v20.5: Use timezone-aware datetime for comparison
+    from core.time_et import now_et
+    from zoneinfo import ZoneInfo
+    et_tz = ZoneInfo("America/New_York")
+    cutoff = now_et() - timedelta(days=days_back)
+
     # Filter to graded predictions within timeframe
-    cutoff = datetime.now() - timedelta(days=days_back)
-    graded = [
-        p for p in predictions
-        if p.actual_value is not None and
-        datetime.fromisoformat(p.timestamp) >= cutoff
-    ]
+    graded = []
+    for p in predictions:
+        if p.actual_value is None:
+            continue
+        try:
+            ts = datetime.fromisoformat(p.timestamp)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=et_tz)
+            if ts >= cutoff:
+                graded.append(p)
+        except (ValueError, TypeError):
+            continue
 
     if not graded:
         return {
