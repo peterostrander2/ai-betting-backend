@@ -65,7 +65,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 
-### Lessons Learned (40 Total) - Key Categories
+### Lessons Learned (41 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -77,6 +77,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 32-38 | **v20.x Learning Loop** | Grader weights, SHARP/MONEYLINE grading, OVER/UNDER calibration |
 | 39 | **Frontend Sync** | Option A tooltip alignment (weights must match scoring_contract.py) |
 | 40 | **Shell/Python** | Export variables for Python subprocesses (`export VAR=value`) |
+| 41 | **Grading Bug** | SHARP picks: line_variance ≠ actual spread (grade as moneyline) |
 
 ### NEVER DO Sections (17 Categories)
 - ML & GLITCH (rules 1-10)
@@ -123,12 +124,12 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | `grader_store.py` | Pick persistence (predictions.jsonl) |
 | `utils/contradiction_gate.py` | Prevents opposite side picks |
 
-### Current Version: v20.4 (Feb 4, 2026)
+### Current Version: v20.5 (Feb 4, 2026)
 **Latest Fixes:**
-- Lesson 36: Audit drift scan line number filters
-- Lesson 37: Endpoint matrix sanity math formula
 - Lesson 38: OVER/UNDER totals bias calibration (+0.75 Under, -0.75 Over)
 - Lesson 39: Frontend tooltip alignment (Option A weights must match scoring_contract.py)
+- Lesson 40: Shell variable export for Python subprocesses
+- Lesson 41: SHARP pick grading fix (grade as moneyline, not line_variance)
 
 **Frontend Integration (Priority 1-3 COMPLETE):**
 - Context score displayed with correct tooltip (modifier ±0.35)
@@ -5486,6 +5487,56 @@ python3 -c "import os; print(os.environ.get('TEST_VAR'))"
 ```
 
 **Fixed in:** v20.4 (Feb 4, 2026)
+
+### Lesson 41: SHARP Pick Grading - line_variance vs Actual Spread (v20.5)
+**Problem:** SHARP picks showing 0% hit rate across all sports (NBA 0/14, NHL 0/8, NCAAB 0/7).
+
+**Root Cause:** SHARP picks were being graded incorrectly because the `line` field contained `line_variance` (the movement amount) instead of the actual spread:
+
+```python
+# In live_data_router.py - SHARP pick creation
+"line": signal.get("line_variance", 0),  # BUG: This is 0.5, 1.5, etc.
+
+# In result_fetcher.py - Grading logic treated it as spread
+if line and line != 0:
+    adjusted = home_score + line  # WRONG: using line_variance as spread
+```
+
+**Example of the bug:**
+- Sharp signal: "sharps on Lakers" for Lakers (-5.5) vs Celtics
+- `line_variance` = 1.5 (line moved 1.5 points)
+- Pick logged with `"line": 1.5`
+- Grading treated as "Lakers +1.5 spread"
+- Lakers win by 4 → graded as WIN (should be LOSS, didn't cover -5.5)
+
+**The Fix:** Grade SHARP picks as moneyline only (who won), ignoring the `line` field:
+
+```python
+# v20.5 fix in result_fetcher.py
+elif "sharp" in pick_type_lower:
+    # ALWAYS grade as moneyline - line field is line_variance, not actual spread
+    if home_score == away_score:
+        return "PUSH", 0.0
+    if picked_home:
+        return ("WIN" if home_score > away_score else "LOSS"), 0.0
+    else:
+        return ("WIN" if away_score > home_score else "LOSS"), 0.0
+```
+
+**Why moneyline is correct:**
+- Sharp signals indicate "sharps are betting HOME/AWAY"
+- Without the actual spread line, we can only grade on straight-up winner
+- This is semantically accurate: "sharp side won" = their team won
+
+**Prevention:**
+- Never assume a field contains what its name suggests - trace data flow
+- `line_variance` ≠ `line` (spread)
+- Always verify grading logic with actual data examples
+
+**Files Modified:**
+- `result_fetcher.py` - Fixed `grade_game_pick()` SHARP case (lines 930-943)
+
+**Fixed in:** v20.5 (Feb 4, 2026)
 
 ---
 

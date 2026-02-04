@@ -928,30 +928,21 @@ def grade_game_pick(
             return ("WIN" if away_score > home_score else "LOSS"), float(-spread)
 
     elif "sharp" in pick_type_lower:
-        # v20.3: SHARP picks - grade based on the underlying bet
-        # Sharp signal picks typically have a line (spread) or are moneyline style
+        # v20.5: SHARP picks - ALWAYS grade as moneyline (who won)
+        # BUG FIX: The `line` field contains line_variance (movement amount like 1.5),
+        # NOT the actual spread. Grading as spread with line_variance is incorrect.
+        # Sharp signals indicate "sharps bet on HOME/AWAY" - grade on straight-up winner.
         picked_home = normalize_player_name(picked_team) in normalize_player_name(home_team)
 
-        # If there's a line, treat as spread bet
-        if line and line != 0:
-            if picked_home:
-                adjusted = home_score + line
-                if adjusted == away_score:
-                    return "PUSH", float(spread)
-                return ("WIN" if adjusted > away_score else "LOSS"), float(spread)
-            else:
-                adjusted = away_score + line
-                if adjusted == home_score:
-                    return "PUSH", float(-spread)
-                return ("WIN" if adjusted > home_score else "LOSS"), float(-spread)
+        # Tie = PUSH
+        if home_score == away_score:
+            return "PUSH", 0.0
+
+        # Grade as moneyline - did the sharp side win?
+        if picked_home:
+            return ("WIN" if home_score > away_score else "LOSS"), 0.0
         else:
-            # No line = moneyline style
-            if home_score == away_score:
-                return "PUSH", float(spread)
-            if picked_home:
-                return ("WIN" if home_score > away_score else "LOSS"), float(spread)
-            else:
-                return ("WIN" if away_score > home_score else "LOSS"), float(-spread)
+            return ("WIN" if away_score > home_score else "LOSS"), 0.0
 
     return "PUSH", 0.0
 
