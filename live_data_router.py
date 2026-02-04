@@ -9029,11 +9029,15 @@ async def get_daily_community_report(days_back: int = 1):
 
         for sport in ["NBA", "NFL", "MLB", "NHL"]:
             predictions = grader.predictions.get(sport, [])
-            cutoff = now - timedelta(days=days_back + 1)
-            end_cutoff = now - timedelta(days=days_back - 1)
 
-            # Filter to yesterday's graded predictions
-            # v20.5: Handle both timezone-aware and naive timestamps
+            # v20.5: Fix date window - should be exactly 1 day, not 2
+            # For days_back=1 (yesterday): 00:00 yesterday to 00:00 today
+            from zoneinfo import ZoneInfo
+            et_tz = ZoneInfo("America/New_York")
+            report_day_start = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
+            report_day_end = report_day_start + timedelta(days=1)
+
+            # Filter to report day's graded predictions
             graded = []
             for p in predictions:
                 if p.actual_value is None:
@@ -9042,9 +9046,8 @@ async def get_daily_community_report(days_back: int = 1):
                     ts = datetime.fromisoformat(p.timestamp)
                     # Make timezone-aware if naive
                     if ts.tzinfo is None:
-                        from zoneinfo import ZoneInfo
-                        ts = ts.replace(tzinfo=ZoneInfo("America/New_York"))
-                    if cutoff <= ts <= end_cutoff:
+                        ts = ts.replace(tzinfo=et_tz)
+                    if report_day_start <= ts < report_day_end:
                         graded.append(p)
                 except (ValueError, TypeError):
                     continue
