@@ -5419,3 +5419,126 @@ curl "https://web-production-7b2a.up.railway.app/live/grader/weights/NBA" \
 ```
 
 ---
+
+## Session Log: February 4, 2026 - Grader Bug Fixes & Performance Analysis
+
+### Summary
+
+Investigated pick performance, found and fixed 4 bugs in grading system.
+
+---
+
+### Bugs Found & Fixed
+
+#### Bug 1: SHARP Picks 0% Hit Rate (v20.5)
+
+**Symptom:** SHARP picks showing 0% hit rate across all sports (NBA 0/14, NHL 0/8, NCAAB 0/7)
+
+**Root Cause:** SHARP picks stored `line_variance` (movement amount like 1.5) in the `line` field, but grading logic treated it as actual spread.
+
+**Fix:** Grade SHARP picks as moneyline only (who won), ignoring incorrect `line` field.
+
+**File:** `result_fetcher.py` lines 930-943
+
+**Commit:** `2b517a0`
+
+---
+
+#### Bug 2: `/grader/queue` PYTZ_AVAILABLE Undefined
+
+**Symptom:** `{"detail":"name 'PYTZ_AVAILABLE' is not defined"}`
+
+**Root Cause:** Variable `PYTZ_AVAILABLE` used but never defined.
+
+**Fix:** Replace with `core.time_et.now_et()` (single source of truth for ET time).
+
+**File:** `live_data_router.py` line 9213
+
+**Commit:** `fbe077c`
+
+---
+
+#### Bug 3: `/grader/daily-report` Datetime Comparison Error
+
+**Symptom:** `{"detail":"can't compare offset-naive and offset-aware datetimes"}`
+
+**Root Cause:** `datetime.now()` (naive) compared with stored timestamps (potentially aware).
+
+**Fix:** Use `core.time_et.now_et()` and handle both naive/aware timestamps.
+
+**File:** `live_data_router.py` lines 9016-9050
+
+**Commit:** `fbe077c`
+
+---
+
+#### Bug 4: Daily Report Counting 2 Days Instead of 1
+
+**Symptom:** Daily report showing ~290 picks for "yesterday" (should be ~150)
+
+**Root Cause:** Date filter logic was wrong:
+```python
+cutoff = now - timedelta(days=days_back + 1)  # 2 days ago (WRONG)
+end_cutoff = now - timedelta(days=days_back - 1)  # today
+```
+
+**Fix:** Use exact day boundaries:
+```python
+report_day_start = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0)
+report_day_end = report_day_start + timedelta(days=1)
+```
+
+**File:** `live_data_router.py` lines 9030-9050
+
+**Commit:** `453a035`
+
+---
+
+### Performance After Fixes
+
+**Pick Performance (1 day sample):**
+
+| Type | Count | Hit Rate | Notes |
+|------|-------|----------|-------|
+| SPREAD | 46 | 73.9% | Excellent |
+| TOTAL | 36 | 50.0% | Break-even |
+| MONEYLINE | 7 | 14.3% | Small sample |
+| SHARP | 21 | 19.0% | Was 0% before fix |
+
+**API Health:**
+- Playbook: 44.2% used (healthy)
+- Odds API: 13.7% used (healthy)
+
+---
+
+### Lessons Added
+
+- **Lesson 41:** SHARP pick grading - line_variance ≠ actual spread
+
+---
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `result_fetcher.py` | SHARP grading fix (moneyline only) |
+| `live_data_router.py` | PYTZ fix, datetime fix, date window fix |
+| `CLAUDE.md` | Added Lesson 41, updated to v20.5 |
+
+---
+
+### Commits
+
+```
+2b517a0 fix(grader): SHARP picks grade as moneyline, not line_variance
+fbe077c fix: grader endpoints datetime/pytz errors
+453a035 fix(grader): daily-report date window was 2 days instead of 1
+```
+
+---
+
+### Version
+
+**v20.5** - All grader bugs fixed, SHARP picks now grading correctly.
+
+---
