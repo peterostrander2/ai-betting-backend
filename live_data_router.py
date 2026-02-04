@@ -138,7 +138,7 @@ except ImportError:
     logger.warning("tiering module not available - using legacy tier logic")
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
-from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL
+from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP
 from core.scoring_pipeline import compute_final_score_option_a, compute_harmonic_boost
 from core.telemetry import apply_used_integrations_debug
 
@@ -4575,6 +4575,23 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             serp_boost=serp_boost_total,
         )
 
+        # ===== v20.4 TOTALS SIDE CALIBRATION =====
+        # Apply learned bias correction for OVER/UNDER picks
+        # Based on data: OVER 19.1% vs UNDER 81.6% hit rate
+        totals_calibration_adj = 0.0
+        if pick_type == "TOTAL" and TOTALS_SIDE_CALIBRATION.get("enabled", False):
+            pick_side_lower = (pick_side or "").lower()
+            if "over" in pick_side_lower:
+                totals_calibration_adj = TOTALS_SIDE_CALIBRATION.get("over_penalty", 0.0)
+                context_reasons.append(f"TOTALS_CALIBRATION: OVER penalty ({totals_calibration_adj:+.2f})")
+            elif "under" in pick_side_lower:
+                totals_calibration_adj = TOTALS_SIDE_CALIBRATION.get("under_boost", 0.0)
+                context_reasons.append(f"TOTALS_CALIBRATION: UNDER boost ({totals_calibration_adj:+.2f})")
+            if totals_calibration_adj != 0.0:
+                final_score = max(0.0, min(10.0, final_score + totals_calibration_adj))
+                logger.debug("TOTALS_CALIBRATION[%s]: side=%s, adj=%.2f, new_score=%.2f",
+                           game_str[:30], pick_side, totals_calibration_adj, final_score)
+
         # ===== v17.8 PILLAR 16: OFFICIALS TENDENCY INTEGRATION =====
         # Referee/Umpire tendencies impact totals, spreads, and props
         # v17.8: Now uses real referee tendency database (officials_data.py)
@@ -4754,12 +4771,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     except Exception:
                         # Fallback to inline adjustments if helper unavailable
                         if hit_prob > 0.6:
-                            final_score = min(10.0, final_score + 0.5)
-                            ensemble_adjustment = 0.5
+                            final_score = min(10.0, final_score + ENSEMBLE_ADJUSTMENT_STEP)
+                            ensemble_adjustment = ENSEMBLE_ADJUSTMENT_STEP
                             ai_reasons.append("Ensemble boost: +0.5 (prob > 60%)")
                         elif hit_prob < 0.4:
-                            final_score = max(0.0, final_score - 0.5)
-                            ensemble_adjustment = -0.5
+                            final_score = max(0.0, final_score - ENSEMBLE_ADJUSTMENT_STEP)
+                            ensemble_adjustment = -ENSEMBLE_ADJUSTMENT_STEP
                             ai_reasons.append("Ensemble penalty: -0.5 (prob < 40%)")
             except Exception as e:
                 logger.debug(f"Ensemble prediction unavailable: {e}")

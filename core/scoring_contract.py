@@ -60,6 +60,19 @@ CONFLUENCE_BOOST_CAP = max(CONFLUENCE_LEVELS.values())
 MSRF_BOOST_CAP = 1.0  # MSRF boosts are 0.0, 0.25, 0.5, 1.0
 SERP_BOOST_CAP_TOTAL = 4.3  # Must match core/serp_guardrails.py SERP_TOTAL_CAP
 JASON_SIM_BOOST_CAP = 1.5  # Max absolute Jason boost/downgrade
+# Ensemble adjustment step (post-base)
+ENSEMBLE_ADJUSTMENT_STEP = 0.5
+
+# v20.4: Totals Side Calibration (OVER/UNDER bias correction)
+# Based on learning loop data: OVER 19.1% vs UNDER 81.6% hit rate
+# Applies score adjustment to correct observed bias toward OVER picks
+TOTALS_SIDE_CALIBRATION = {
+    "enabled": True,
+    "over_penalty": -0.75,   # Penalty applied to OVER picks
+    "under_boost": 0.75,     # Boost applied to UNDER picks
+    "min_samples_required": 50,  # Min samples before calibration kicks in
+    "last_updated": "2026-02-04",
+}
 
 # Status enums used in outputs (must be deterministic)
 WEATHER_STATUS = ["APPLIED", "NOT_RELEVANT", "UNAVAILABLE", "ERROR"]
