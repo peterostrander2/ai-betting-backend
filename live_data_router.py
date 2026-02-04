@@ -9013,8 +9013,12 @@ async def get_daily_community_report(days_back: int = 1):
     try:
         grader = get_grader()  # Use singleton
 
-        report_date = (datetime.now() - timedelta(days=days_back)).strftime("%B %d, %Y")
-        today = datetime.now().strftime("%B %d, %Y")
+        # v20.5: Use timezone-aware datetimes to avoid comparison errors
+        from core.time_et import now_et
+        now = now_et()
+
+        report_date = (now - timedelta(days=days_back)).strftime("%B %d, %Y")
+        today = now.strftime("%B %d, %Y")
 
         # Collect performance across all sports
         sports_data = {}
@@ -9025,15 +9029,25 @@ async def get_daily_community_report(days_back: int = 1):
 
         for sport in ["NBA", "NFL", "MLB", "NHL"]:
             predictions = grader.predictions.get(sport, [])
-            cutoff = datetime.now() - timedelta(days=days_back + 1)
-            end_cutoff = datetime.now() - timedelta(days=days_back - 1)
+            cutoff = now - timedelta(days=days_back + 1)
+            end_cutoff = now - timedelta(days=days_back - 1)
 
             # Filter to yesterday's graded predictions
-            graded = [
-                p for p in predictions
-                if p.actual_value is not None and
-                cutoff <= datetime.fromisoformat(p.timestamp) <= end_cutoff
-            ]
+            # v20.5: Handle both timezone-aware and naive timestamps
+            graded = []
+            for p in predictions:
+                if p.actual_value is None:
+                    continue
+                try:
+                    ts = datetime.fromisoformat(p.timestamp)
+                    # Make timezone-aware if naive
+                    if ts.tzinfo is None:
+                        from zoneinfo import ZoneInfo
+                        ts = ts.replace(tzinfo=ZoneInfo("America/New_York"))
+                    if cutoff <= ts <= end_cutoff:
+                        graded.append(p)
+                except (ValueError, TypeError):
+                    continue
 
             if graded:
                 hits = sum(1 for p in graded if p.hit)
@@ -9208,13 +9222,10 @@ async def get_grader_queue(
         raise HTTPException(status_code=503, detail="Pick logger not available")
 
     try:
-        # Get date in ET
+        # Get date in ET (use core.time_et single source of truth)
         if not date:
-            if PYTZ_AVAILABLE:
-                ET_TZ = pytz.timezone("America/New_York")
-                date = datetime.now(ET_TZ).strftime("%Y-%m-%d")
-            else:
-                date = datetime.now().strftime("%Y-%m-%d")
+            from core.time_et import now_et
+            date = now_et().strftime("%Y-%m-%d")
 
         pick_logger = get_pick_logger()
         picks = pick_logger.get_picks_for_date(date)
