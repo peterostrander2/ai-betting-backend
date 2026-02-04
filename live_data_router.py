@@ -6172,10 +6172,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _props_scoring_error = False
     invalid_injury_count = 0
     try:
+        _props_deadline_hit = False
         for game in prop_games:
             if _past_deadline():
                 _timed_out_components.append("props_scoring")
                 logger.warning("TIME BUDGET: Props scoring hit deadline after %d picks (%.1fs)", len(props_picks), _elapsed())
+                _props_deadline_hit = True
                 break
             home_team = game.get("home_team", "")
             away_team = game.get("away_team", "")
@@ -6254,6 +6256,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             _prop_book_count = len(_prop_books_all)
 
             for prop in _props_list:
+                if _past_deadline():
+                    _timed_out_components.append("props_scoring")
+                    logger.warning("TIME BUDGET: Props scoring hit deadline after %d picks (%.1fs)", len(props_picks), _elapsed())
+                    _props_deadline_hit = True
+                    break
                 player = prop.get("player", "Unknown")
                 market = prop.get("market", "")
                 line = prop.get("line", 0)
@@ -6293,6 +6300,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     event_id=game.get("id"),
                     game_status=_prop_game_status  # v20.0: Pass for live signals
                 )
+            if _props_deadline_hit:
+                break
 
                 # Lineup confirmation guard (props only)
                 lineup_guard = _lineup_risk_guard(commence_time, injury_status)
