@@ -5155,6 +5155,52 @@ curl -s "/live/best-bets/NBA?debug=1&max_games=1" -H "X-API-Key: KEY" | \
 
 **Fixed in:** v20.4 (Feb 4, 2026)
 
+### Lesson 38: OVER/UNDER Totals Bias Calibration (v20.4)
+**Problem:** Learning loop revealed massive OVER vs UNDER imbalance:
+- **OVER**: 9W / 38L = 19.1% hit rate (terrible)
+- **UNDER**: 31W / 7L = 81.6% hit rate (excellent)
+
+The contradiction gate was keeping whichever side scored higher. OVER picks consistently scored higher but lost more often.
+
+**Root Cause:** No mechanism to apply learned bias corrections to totals scoring. Both Over and Under were scored identically with no calibration based on historical performance.
+
+**The Fix (v20.4):**
+
+1. Added `TOTALS_SIDE_CALIBRATION` to `core/scoring_contract.py`:
+```python
+TOTALS_SIDE_CALIBRATION = {
+    "enabled": True,
+    "over_penalty": -0.75,   # Penalty applied to OVER picks
+    "under_boost": 0.75,     # Boost applied to UNDER picks
+    "min_samples_required": 50,
+    "last_updated": "2026-02-04",
+}
+```
+
+2. Applied calibration in `live_data_router.py:4577-4592`:
+   - When `pick_type == "TOTAL"`, check side
+   - Apply over_penalty (-0.75) to Over picks
+   - Apply under_boost (+0.75) to Under picks
+   - Log adjustment for tracking
+
+**Expected Outcome:**
+- UNDER picks gain +0.75, more likely to win contradiction gate
+- OVER picks penalized -0.75, less likely to be selected
+- Learning loop should show improved total hit rates
+
+**Verification:**
+```bash
+# Check OVER/UNDER split after next grading cycle
+curl -s "/live/picks/grading-summary?date=$(date +%Y-%m-%d)" -H "X-API-Key: KEY" | jq '{
+  over: {wins: [.graded_picks[] | select(.side == "Over" and .result == "WIN")] | length,
+         losses: [.graded_picks[] | select(.side == "Over" and .result == "LOSS")] | length},
+  under: {wins: [.graded_picks[] | select(.side == "Under" and .result == "WIN")] | length,
+          losses: [.graded_picks[] | select(.side == "Under" and .result == "LOSS")] | length}
+}'
+```
+
+**Fixed in:** v20.4 (Feb 4, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
