@@ -33,6 +33,42 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 
 ---
 
+## Code Style & Simplification Rules
+
+**Apply these automatically when writing or modifying code:**
+
+### Preserve Functionality
+- Never change what code does - only how it does it
+- All original features, outputs, and behaviors must remain intact
+
+### Clarity Over Brevity
+- **AVOID** nested ternary operators - use if/else or switch statements
+- **AVOID** dense one-liners that sacrifice readability
+- **PREFER** explicit, readable code over clever compact solutions
+- **PREFER** clear variable/function names over comments explaining bad names
+
+### Simplification Guidelines
+- Reduce unnecessary complexity and nesting
+- Eliminate redundant code and abstractions
+- Consolidate related logic
+- Remove comments that describe obvious code
+- Don't combine too many concerns into single functions
+
+### Python-Specific (This Project)
+- Use type hints for function signatures
+- Use f-strings for string formatting
+- Use `logging` module, not print statements
+- Handle errors gracefully with proper logging
+- Follow existing patterns in the codebase
+
+### What NOT to Do
+- Don't over-simplify to the point of reducing clarity
+- Don't create "clever" solutions that are hard to understand
+- Don't remove helpful abstractions that improve organization
+- Don't prioritize "fewer lines" over maintainability
+
+---
+
 ## 🚨 MASTER SYSTEM INVARIANTS (NEVER VIOLATE) 🚨
 
 **READ THIS FIRST BEFORE TOUCHING ANYTHING**
