@@ -344,3 +344,77 @@ Daily 6 AM audit → auto_grader.grade_prediction() → /data/grader_data/weight
 **Lesson:**
 - Key takeaway for future development
 ```
+
+---
+
+### 10. v20.5 Datetime/Timezone Bugs (Feb 4, 2026)
+
+**What happened:**
+- `/grader/queue` returned `name 'PYTZ_AVAILABLE' is not defined`
+- `/grader/daily-report` returned `can't compare offset-naive and offset-aware datetimes`
+- `/grader/performance/{sport}` returned `Internal Server Error` (same datetime bug)
+- Daily report showed ~290 picks for "yesterday" instead of ~150 (2-day window bug)
+
+**Impact:** All grader endpoints broken, performance analysis unavailable
+
+**Root cause (4 bugs):**
+1. `PYTZ_AVAILABLE` variable used but never defined
+2. `datetime.now()` (naive) compared with `datetime.fromisoformat(timestamp)` (potentially aware)
+3. Same naive vs aware bug copy-pasted to multiple endpoints
+4. Date window math: `days_back + 1` and `days_back - 1` created 2-day window
+
+**Fix:**
+1. Replace `PYTZ_AVAILABLE` with `core.time_et.now_et()`
+2. Use timezone-aware datetime and handle both naive/aware stored timestamps:
+   ```python
+   from core.time_et import now_et
+   from zoneinfo import ZoneInfo
+   et_tz = ZoneInfo("America/New_York")
+   cutoff = now_et() - timedelta(days=days_back)
+   
+   ts = datetime.fromisoformat(p.timestamp)
+   if ts.tzinfo is None:
+       ts = ts.replace(tzinfo=et_tz)
+   ```
+3. Use exact day boundaries with `.replace(hour=0, minute=0, second=0, microsecond=0)`
+
+**Lesson:**
+- NEVER use `datetime.now()` in grader code - use `now_et()` from `core.time_et`
+- NEVER use `pytz` - use `core.time_et` (single source of truth) or `zoneinfo`
+- ALWAYS handle both naive and aware timestamps when parsing stored data
+- NEVER use `days_back + 1` math - use exact day boundaries with `.replace()`
+- When fixing a datetime bug, grep the entire codebase for the same pattern
+- Run `grep -n "datetime.now()" *.py | grep fromisoformat` after datetime fixes
+
+---
+
+### 11. SHARP Picks 0% Hit Rate (Feb 4, 2026)
+
+**What happened:**
+- SHARP picks showing 0% hit rate across all sports (NBA 0/14, NHL 0/8, NCAAB 0/7)
+- Made the sharp signal feature appear broken
+
+**Impact:** SHARP picks incorrectly graded, learning loop getting bad data
+
+**Root cause:**
+- SHARP picks stored `line_variance` (movement amount like 1.5) in the `line` field
+- Grading logic treated `line` as actual spread
+- Example: line_variance=1.5 meant "Lakers +1.5 spread" instead of actual spread
+
+**Fix:**
+- Grade SHARP picks as moneyline only (who won the game)
+- Ignore the `line` field since it contains variance, not actual spread:
+  ```python
+  elif "sharp" in pick_type_lower:
+      # ALWAYS grade as moneyline - line field is line_variance
+      if picked_home:
+          return ("WIN" if home_score > away_score else "LOSS"), 0.0
+  ```
+
+**Lesson:**
+- NEVER store `line_variance` in a field named `line` - they have different meanings
+- NEVER assume a field contains what its name suggests - trace data flow
+- Always verify grading logic with actual data examples
+- When pick types behave unexpectedly, check what data is actually stored
+
+---

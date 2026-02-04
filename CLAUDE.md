@@ -65,7 +65,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 
-### Lessons Learned (41 Total) - Key Categories
+### Lessons Learned (45 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -78,8 +78,9 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 39 | **Frontend Sync** | Option A tooltip alignment (weights must match scoring_contract.py) |
 | 40 | **Shell/Python** | Export variables for Python subprocesses (`export VAR=value`) |
 | 41 | **Grading Bug** | SHARP picks: line_variance ≠ actual spread (grade as moneyline) |
+| 42-45 | **v20.5 Datetime/Grader** | Naive vs aware datetime, PYTZ undefined, date window math |
 
-### NEVER DO Sections (17 Categories)
+### NEVER DO Sections (18 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -97,6 +98,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.4 Go/No-Go Scripts (rules 125-131)
 - v20.4 Frontend/Backend Sync (rules 132-137)
 - Shell/Python Subprocesses (rules 138-141)
+- v20.5 Datetime/Timezone (rules 142-150)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -125,13 +127,22 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | `utils/contradiction_gate.py` | Prevents opposite side picks |
 
 ### Current Version: v20.5 (Feb 4, 2026)
-**Latest Fixes:**
-- Lesson 38: OVER/UNDER totals bias calibration (+0.75 Under, -0.75 Over)
-- Lesson 39: Frontend tooltip alignment (Option A weights must match scoring_contract.py)
-- Lesson 40: Shell variable export for Python subprocesses
+**Latest Fixes (v20.5):**
 - Lesson 41: SHARP pick grading fix (grade as moneyline, not line_variance)
+- Lesson 42: PYTZ_AVAILABLE undefined in `/grader/queue`
+- Lesson 43: Naive vs aware datetime in `/grader/daily-report`
+- Lesson 44: Date window math error (2-day instead of 1-day)
+- Lesson 45: Same datetime bug in `/grader/performance`
 
-**Frontend Integration (Priority 1-3 COMPLETE):**
+**All Grader Endpoints Verified Working:**
+- `/grader/status` ✅
+- `/grader/queue` ✅
+- `/grader/daily-report` ✅
+- `/grader/performance/{sport}` ✅
+- `/grader/bias/{sport}` ✅
+- `/grader/weights/{sport}` ✅
+
+**Frontend Integration (Priority 1-5 COMPLETE):**
 - Context score displayed with correct tooltip (modifier ±0.35)
 - Harmonic Convergence badge (purple) when Research + Esoteric ≥7.5
 - MSRF Turn Date badge when msrf_boost > 0
@@ -5538,6 +5549,111 @@ elif "sharp" in pick_type_lower:
 
 **Fixed in:** v20.5 (Feb 4, 2026)
 
+### Lesson 42: Undefined PYTZ_AVAILABLE Variable (v20.5)
+**Problem:** `/grader/queue` endpoint returning `{"detail":"name 'PYTZ_AVAILABLE' is not defined"}`
+
+**Root Cause:** Code referenced `PYTZ_AVAILABLE` variable that was never defined:
+```python
+if PYTZ_AVAILABLE:  # NameError - never defined!
+    ET_TZ = pytz.timezone("America/New_York")
+```
+
+**The Fix:** Use `core.time_et.now_et()` - the single source of truth for ET timezone:
+```python
+from core.time_et import now_et
+date = now_et().strftime("%Y-%m-%d")
+```
+
+**Prevention:**
+- NEVER use `pytz` in new code - use `core.time_et` or `zoneinfo`
+- NEVER reference variables without importing/defining them
+- All ET timezone logic MUST go through `core.time_et`
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 43: Naive vs Aware Datetime Comparison (v20.5)
+**Problem:** `/grader/daily-report` returning `{"detail":"can't compare offset-naive and offset-aware datetimes"}`
+
+**Root Cause:** Comparing `datetime.now()` (naive) with stored timestamps that may be timezone-aware:
+```python
+cutoff = datetime.now() - timedelta(days=1)  # Naive
+ts = datetime.fromisoformat(p.timestamp)      # May be aware
+if ts >= cutoff:  # TypeError!
+```
+
+**The Fix:** Use timezone-aware datetime and handle both naive/aware timestamps:
+```python
+from core.time_et import now_et
+from zoneinfo import ZoneInfo
+et_tz = ZoneInfo("America/New_York")
+
+cutoff = now_et() - timedelta(days=1)  # Aware
+
+ts = datetime.fromisoformat(p.timestamp)
+if ts.tzinfo is None:
+    ts = ts.replace(tzinfo=et_tz)  # Make aware if naive
+if ts >= cutoff:  # Safe comparison
+```
+
+**Prevention:**
+- NEVER use `datetime.now()` in grader code - use `now_et()`
+- ALWAYS handle both naive and aware timestamps when parsing stored data
+- Test with both timezone-aware and naive timestamp data
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 44: Date Window Math Error (v20.5)
+**Problem:** Daily report showing ~290 picks for "yesterday" when actual count was ~150
+
+**Root Cause:** Wrong date window calculation created 2-day window instead of 1:
+```python
+# For days_back=1 (yesterday), this creates a 2-day window:
+cutoff = now - timedelta(days=days_back + 1)      # 2 days ago (WRONG)
+end_cutoff = now - timedelta(days=days_back - 1)  # today
+```
+
+**The Fix:** Use exact day boundaries:
+```python
+# Correct: exactly one day
+day_start = (now - timedelta(days=days_back)).replace(
+    hour=0, minute=0, second=0, microsecond=0
+)
+day_end = day_start + timedelta(days=1)
+
+if day_start <= ts < day_end:  # Exclusive end bound
+```
+
+**Prevention:**
+- NEVER use `days_back + 1` / `days_back - 1` math for date windows
+- ALWAYS use `.replace(hour=0, ...)` for day boundaries
+- Use exclusive end bounds (`<` not `<=`) to avoid overlap
+- Test date window logic with specific date examples
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 45: Grader Performance Endpoint Same Bug (v20.5)
+**Problem:** `/grader/performance/{sport}` returning `Internal Server Error`
+
+**Root Cause:** Same naive vs aware datetime bug as Lesson 43 - copy-paste pattern:
+```python
+cutoff = datetime.now() - timedelta(days=days_back)
+datetime.fromisoformat(p.timestamp) >= cutoff  # Same error
+```
+
+**The Fix:** Apply same fix as Lesson 43 - use `now_et()` and handle mixed timestamps.
+
+**Prevention:**
+- When fixing a bug, grep the entire codebase for the same pattern
+- `/grader/daily-report` and `/grader/performance` had identical bugs
+- Run `grep -n "datetime.now()" *.py | grep fromisoformat` after datetime fixes
+
+**Files Modified (v20.5 datetime fixes):**
+- `live_data_router.py` lines 8933-8944 (performance endpoint)
+- `live_data_router.py` lines 9016-9058 (daily-report endpoint)
+- `live_data_router.py` lines 9210-9215 (queue endpoint)
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -6053,6 +6169,50 @@ python3 -c "import os; print(os.environ.get('BASE_URL'))"  # None
 # ✅ CORRECT - 'export' makes it visible to children
 export BASE_URL="https://example.com"
 python3 -c "import os; print(os.environ.get('BASE_URL'))"  # https://example.com
+```
+
+---
+
+## 🚫 NEVER DO THESE (Datetime/Timezone - v20.5)
+
+142. **NEVER** compare `datetime.now()` with `datetime.fromisoformat(timestamp)` - one may be naive, other aware
+143. **NEVER** use undefined variables like `PYTZ_AVAILABLE` - use `core.time_et.now_et()` instead
+144. **NEVER** use `pytz` for new code - use `core.time_et` (single source of truth) or `zoneinfo`
+145. **NEVER** calculate date windows with wrong math like `days_back + 1` for start (creates 2-day window)
+146. **NEVER** assume stored timestamps have the same timezone awareness as runtime datetime
+147. **NEVER** store `line_variance` in a field named `line` - they have different meanings
+148. **NEVER** grade SHARP picks using `line` field - it contains variance, not actual spread
+149. **NEVER** add new datetime handling code without testing timezone-aware vs naive comparison
+150. **NEVER** use `datetime.now()` in grader code - always use `now_et()` from `core.time_et`
+
+**Datetime Comparison Quick Reference:**
+```python
+# ❌ WRONG - Will crash if timestamp is timezone-aware
+cutoff = datetime.now() - timedelta(days=7)
+if datetime.fromisoformat(p.timestamp) >= cutoff:  # Error!
+
+# ✅ CORRECT - Use timezone-aware datetime and handle both cases
+from core.time_et import now_et
+from zoneinfo import ZoneInfo
+et_tz = ZoneInfo("America/New_York")
+cutoff = now_et() - timedelta(days=7)
+
+ts = datetime.fromisoformat(p.timestamp)
+if ts.tzinfo is None:
+    ts = ts.replace(tzinfo=et_tz)  # Make aware if naive
+if ts >= cutoff:  # Now safe to compare
+```
+
+**Date Window Calculation:**
+```python
+# ❌ WRONG - Creates 2-day window for days_back=1
+cutoff = now - timedelta(days=days_back + 1)      # 2 days ago
+end_cutoff = now - timedelta(days=days_back - 1)  # today
+
+# ✅ CORRECT - Exact day boundaries
+day_start = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
+day_end = day_start + timedelta(days=1)
+if day_start <= ts < day_end:  # Exclusive end
 ```
 
 ---
