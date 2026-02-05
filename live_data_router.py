@@ -138,7 +138,7 @@ except ImportError:
     logger.warning("tiering module not available - using legacy tier logic")
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
-from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP
+from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS
 from core.scoring_pipeline import compute_final_score_option_a, compute_harmonic_boost
 from core.telemetry import apply_used_integrations_debug, attach_integration_telemetry_debug, record_daily_integration_rollup
 
@@ -5333,6 +5333,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         logger.debug("Injuries fetch failed in parallel: %s", injuries_data)
         injuries_data = {"data": []}
 
+    # Record when odds data was fetched (for live endpoint staleness checks)
+    _odds_fetched_at = now_et().isoformat() if TIME_ET_AVAILABLE else datetime.now().isoformat()
+
     # Integration usage telemetry (best-bets scoring cycle, request-scoped)
     if isinstance(props_data, dict):
         src = props_data.get("source", "")
@@ -6940,7 +6943,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "status": games_status,
             "picks": top_game_picks
         },
-        "meta": {},  # FIX: Required by best-bets response contract
+        "meta": {
+            "odds_fetched_at": _odds_fetched_at,
+        },
         "esoteric": {
             "daily_energy": daily_energy,
             "astro_status": astro_status,
@@ -7180,8 +7185,34 @@ async def get_live_bets(sport: str):
     # Get best bets first
     best_bets_response = await get_best_bets(sport)
 
+    # Odds staleness check
+    odds_fetched_at_str = best_bets_response.get("meta", {}).get("odds_fetched_at")
+    odds_age_seconds = None
+    staleness_status = "UNKNOWN"
+    try:
+        if odds_fetched_at_str and TIME_ET_AVAILABLE:
+            from datetime import datetime as _dt
+            _fetched = _dt.fromisoformat(odds_fetched_at_str)
+            _now = now_et()
+            if _fetched.tzinfo is None:
+                from zoneinfo import ZoneInfo
+                _fetched = _fetched.replace(tzinfo=ZoneInfo("America/New_York"))
+            odds_age_seconds = (_now - _fetched).total_seconds()
+            staleness_status = "STALE" if odds_age_seconds > ODDS_STALENESS_THRESHOLD_SECONDS else "FRESH"
+    except Exception:
+        pass
+
     # Filter to only live/started games
     live_picks = []
+    market_suspended_count = 0
+
+    def _detect_market_status(pick):
+        """Check if market appears suspended (no active bookmaker lines)."""
+        odds = pick.get("odds_american")
+        book = pick.get("book")
+        if odds is None and not book:
+            return "suspended", "No active bookmaker lines"
+        return "open", None
 
     # Process props
     for pick in best_bets_response.get("props", {}).get("picks", []):
@@ -7195,6 +7226,16 @@ async def get_live_bets(sport: str):
                     pick["status"] = "LIVE"
                     pick["started_at"] = started_at
                     pick["live_bet_eligible"] = True
+                    pick["staleness_status"] = staleness_status
+                    pick["odds_age_seconds"] = odds_age_seconds
+                    mkt_status, mkt_reason = _detect_market_status(pick)
+                    pick["market_status"] = mkt_status
+                    if mkt_reason:
+                        pick["market_suspended_reason"] = mkt_reason
+                    if mkt_status == "suspended":
+                        market_suspended_count += 1
+                    if staleness_status == "STALE":
+                        pick["live_adjustment"] = 0
                     live_picks.append(pick)
 
     # Process game picks
@@ -7208,7 +7249,20 @@ async def get_live_bets(sport: str):
                     pick["status"] = "LIVE"
                     pick["started_at"] = started_at
                     pick["live_bet_eligible"] = True
+                    pick["staleness_status"] = staleness_status
+                    pick["odds_age_seconds"] = odds_age_seconds
+                    mkt_status, mkt_reason = _detect_market_status(pick)
+                    pick["market_status"] = mkt_status
+                    if mkt_reason:
+                        pick["market_suspended_reason"] = mkt_reason
+                    if mkt_status == "suspended":
+                        market_suspended_count += 1
+                    if staleness_status == "STALE":
+                        pick["live_adjustment"] = 0
                     live_picks.append(pick)
+
+    if market_suspended_count > 0:
+        logger.info("LIVE IN-PLAY: %d picks with suspended markets detected", market_suspended_count)
 
     # Sort by final_score descending
     live_picks.sort(key=_stable_pick_sort_key)
@@ -7219,6 +7273,12 @@ async def get_live_bets(sport: str):
         "picks": live_picks,
         "live_games_count": len(live_picks),
         "community_threshold": 6.5,
+        "market_suspended_count": market_suspended_count,
+        "odds_staleness": {
+            "status": staleness_status,
+            "odds_age_seconds": round(odds_age_seconds, 1) if odds_age_seconds is not None else None,
+            "threshold_seconds": ODDS_STALENESS_THRESHOLD_SECONDS,
+        },
         "timestamp": datetime.now().isoformat()
     }
 
@@ -7254,6 +7314,23 @@ async def get_in_game_picks(sport: str):
     # Get best-bets and filter to MISSED_START picks
     best_bets_result = await get_best_bets(sport)
 
+    # Odds staleness check
+    odds_fetched_at_str = best_bets_result.get("meta", {}).get("odds_fetched_at")
+    odds_age_seconds = None
+    staleness_status = "UNKNOWN"
+    try:
+        if odds_fetched_at_str and TIME_ET_AVAILABLE:
+            from datetime import datetime as _dt
+            _fetched = _dt.fromisoformat(odds_fetched_at_str)
+            _now = now_et()
+            if _fetched.tzinfo is None:
+                from zoneinfo import ZoneInfo
+                _fetched = _fetched.replace(tzinfo=ZoneInfo("America/New_York"))
+            odds_age_seconds = (_now - _fetched).total_seconds()
+            staleness_status = "STALE" if odds_age_seconds > ODDS_STALENESS_THRESHOLD_SECONDS else "FRESH"
+    except Exception:
+        pass
+
     # Filter props and game picks to only MISSED_START
     live_props = [
         p for p in best_bets_result.get("props", {}).get("picks", [])
@@ -7263,6 +7340,26 @@ async def get_in_game_picks(sport: str):
         p for p in best_bets_result.get("game_picks", {}).get("picks", [])
         if p.get("game_status") == "MISSED_START"
     ]
+
+    # Annotate live picks with staleness and market status info
+    market_suspended_count = 0
+    for pick in live_props + live_game_picks:
+        pick["staleness_status"] = staleness_status
+        pick["odds_age_seconds"] = odds_age_seconds
+        if staleness_status == "STALE":
+            pick["live_adjustment"] = 0
+        # Market status detection
+        odds = pick.get("odds_american")
+        book = pick.get("book")
+        if odds is None and not book:
+            pick["market_status"] = "suspended"
+            pick["market_suspended_reason"] = "No active bookmaker lines"
+            market_suspended_count += 1
+        else:
+            pick["market_status"] = "open"
+
+    if market_suspended_count > 0:
+        logger.info("IN-GAME: %d picks with suspended markets detected", market_suspended_count)
 
     # Get BallDontLie context for NBA
     bdl_context = None
@@ -7298,6 +7395,12 @@ async def get_in_game_picks(sport: str):
         "trigger_windows": {
             "games_in_window": len(trigger_games),
             "games": trigger_games
+        },
+        "market_suspended_count": market_suspended_count,
+        "odds_staleness": {
+            "status": staleness_status,
+            "odds_age_seconds": round(odds_age_seconds, 1) if odds_age_seconds is not None else None,
+            "threshold_seconds": ODDS_STALENESS_THRESHOLD_SECONDS,
         },
         "bdl_context": bdl_context,
         "bdl_configured": bdl_context is not None and bdl_context.get("available", False),
@@ -8397,12 +8500,38 @@ async def grader_status():
     try:
         if AUTO_GRADER_AVAILABLE:
             grader = get_grader()  # Use singleton - CRITICAL for data persistence!
+
+            # Weight version hash for tracking which weights are loaded
+            weights_version_hash = None
+            weights_file_exists = False
+            weights_last_modified_et = None
+            try:
+                import hashlib as _hashlib
+                from storage_paths import get_weights_file as _get_weights_file
+                _wf = _get_weights_file()
+                weights_file_exists = os.path.exists(_wf)
+                if weights_file_exists:
+                    with open(_wf, 'rb') as _f:
+                        weights_version_hash = _hashlib.sha256(_f.read()).hexdigest()[:12]
+                    weights_last_modified_et = datetime.fromtimestamp(
+                        os.path.getmtime(_wf)
+                    ).isoformat()
+            except Exception:
+                pass
+
+            # Training drop stats (if available from last load)
+            training_drops = getattr(grader, 'last_drop_stats', None)
+
             result["weight_learning"] = {
                 "available": True,
                 "supported_sports": grader.SUPPORTED_SPORTS,
                 "predictions_logged": sum(len(p) for p in grader.predictions.values()),
                 "weights_loaded": bool(grader.weights),
+                "weights_version_hash": weights_version_hash,
+                "weights_file_exists": weights_file_exists,
+                "weights_last_modified_et": weights_last_modified_et,
                 "storage_path": grader.storage_path,
+                "training_drops": training_drops,
                 "note": "Use /grader/weights/{sport} to see learned weights"
             }
         else:

@@ -482,3 +482,38 @@ Daily 6 AM audit → auto_grader.grade_prediction() → /data/grader_data/weight
 - Test heredoc scripts by running them directly: `bash scripts/script_name.sh`
 
 ---
+
+### 15. Technical Debt Cleanup: 5-Item Audit Resolution (Feb 4, 2026)
+
+**What happened:**
+- Learning Audit Report identified 5 technical debt items across storage, observability, and live betting
+- All 5 items resolved in a single coordinated cleanup
+
+**Items resolved:**
+
+1. **mark_graded() append-only violation (HIGH)** — `grader_store.py` was rewriting entire `predictions.jsonl` on every grade. Now grades are appended to a separate `graded_picks.jsonl` file; `predictions.jsonl` is never modified. `load_predictions()` merges grade records at read time. Corrupted partial writes are skipped gracefully.
+
+2. **Odds staleness guard (MEDIUM)** — Added `ODDS_STALENESS_THRESHOLD_SECONDS = 120` to `scoring_contract.py`. Live endpoints now track `odds_fetched_at` and compute `odds_age_seconds`. Stale odds are flagged and `live_adjustment` is suppressed.
+
+3. **Market suspended detection (MEDIUM)** — Live endpoints now detect suspended markets using the heuristic: if `odds_american` is None AND `book` is falsy, the market is suspended. Each live pick includes a `market_status` field.
+
+4. **Training drop telemetry (LOW)** — `auto_grader.py` now tracks drop reasons in `last_drop_stats` dict (unsupported_sport, below_score_threshold, duplicate_id, missing_pick_id, conversion_failed). Exposed via `/grader/status`.
+
+5. **Weight version hash (LOW)** — `/grader/status` now includes `weights_version_hash` (SHA256[:12] of weights.json content), `weights_file_exists`, and `weights_last_modified_et`.
+
+**Files modified:**
+- `storage_paths.py` — Added `get_graded_picks_file()`
+- `grader_store.py` — Rewrote `mark_graded()`, updated `load_predictions()` to merge grades
+- `core/scoring_contract.py` — Added `ODDS_STALENESS_THRESHOLD_SECONDS`
+- `auto_grader.py` — Added `last_drop_stats` tracking
+- `main.py` — Added weight hash + drop stats to `/grader/status`
+- `live_data_router.py` — Added odds staleness + market status to live endpoints
+- `tests/test_tech_debt_cleanup.py` — 19 tests covering all 5 items
+
+**Lesson:**
+- Append-only storage patterns are safer than read-modify-write for crash resilience
+- Always separate mutable data (grades) from immutable data (predictions)
+- Telemetry for dropped training data helps diagnose learning loop issues
+- When fixing multiple related items, coordinate in a single pass to avoid drift
+
+---

@@ -74,6 +74,10 @@ TOTALS_SIDE_CALIBRATION = {
     "last_updated": "2026-02-04",
 }
 
+# Odds staleness threshold for live betting endpoints (seconds)
+# If odds data is older than this, live picks are marked STALE and live_adjustment is suppressed
+ODDS_STALENESS_THRESHOLD_SECONDS = 120
+
 # Status enums used in outputs (must be deterministic)
 WEATHER_STATUS = ["APPLIED", "NOT_RELEVANT", "UNAVAILABLE", "ERROR"]
 

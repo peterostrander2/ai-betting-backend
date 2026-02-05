@@ -255,16 +255,29 @@ class AutoGrader:
             raw_predictions = grader_store_load_predictions()
             count = 0
             seen_ids = set()
+            drop_stats = {
+                "unsupported_sport": 0,
+                "below_score_threshold": 0,
+                "duplicate_id": 0,
+                "missing_pick_id": 0,
+                "conversion_failed": 0,
+            }
 
             for pick in raw_predictions:
                 sport = pick.get("sport", "").upper()
                 if sport not in self.SUPPORTED_SPORTS:
+                    drop_stats["unsupported_sport"] += 1
                     continue
                 score = pick.get("final_score", 0.0)
                 if isinstance(score, (int, float)) and score < MIN_FINAL_SCORE:
+                    drop_stats["below_score_threshold"] += 1
                     continue
                 pick_id = pick.get("pick_id", "")
-                if not pick_id or pick_id in seen_ids:
+                if not pick_id:
+                    drop_stats["missing_pick_id"] += 1
+                    continue
+                if pick_id in seen_ids:
+                    drop_stats["duplicate_id"] += 1
                     continue
                 seen_ids.add(pick_id)
 
@@ -273,8 +286,14 @@ class AutoGrader:
                 if record:
                     self.predictions[sport].append(record)
                     count += 1
+                else:
+                    drop_stats["conversion_failed"] += 1
 
-            logger.info("Loaded %d predictions from grader_store", count)
+            self.last_drop_stats = drop_stats
+            total_dropped = sum(drop_stats.values())
+            logger.info("Loaded %d predictions from grader_store (dropped %d: %s)",
+                        count, total_dropped,
+                        {k: v for k, v in drop_stats.items() if v > 0})
         except Exception as e:
             logger.exception("Failed to load from grader_store: %s", e)
 
