@@ -66,7 +66,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 3.5 |
 
-### Lessons Learned (54 Total) - Key Categories
+### Lessons Learned (55 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -84,8 +84,9 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 49-52 | **v20.6 Production Fixes** | Props timeout, empty descriptions, score inflation (total boost cap), Jarvis baseline |
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
+| 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
 
-### NEVER DO Sections (24 Categories)
+### NEVER DO Sections (25 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -110,6 +111,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.6 Boost Caps & Production (rules 156-163)
 - v20.7 Parallel Pre-Fetch & Performance (rules 164-172)
 - v20.8 Props Indentation & Code Placement (rules 173-177)
+- v20.9 Frontend/Backend Endpoint Contract (rules 178-181)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -139,8 +141,13 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | `utils/contradiction_gate.py` | Prevents opposite side picks |
 | `integration_registry.py` | Env var registry, integration config |
 
-### Current Version: v20.8 (Feb 5, 2026)
-**Latest Fix (v20.8):**
+### Current Version: v20.9 (Feb 5, 2026)
+**Latest Fix (v20.9):**
+- Lesson 55: Frontend Grading page called `GET /live/picks/graded` but endpoint didn't exist — frontend fell back to MOCK_PICKS silently
+- Root cause: `api.js` had `getGradedPicks()` calling a non-existent endpoint; backend only had `POST /picks/grade` and `GET /picks/grading-summary`
+- Fix: Added `GET /picks/graded` endpoint using `grader_store.load_predictions()`, updated `Grading.jsx` to remove mock fallback, fixed `pick_id` usage
+
+**Previous Fix (v20.8):**
 - Lesson 54: CRITICAL — Props indentation bug made `props_picks.append()` unreachable dead code; ALL sports returned 0 props
 - Root cause: `if _props_deadline_hit: break` placed BETWEEN `calculate_pick_score()` and prop processing code
 - Fix: Moved deadline check AFTER `props_picks.append()` so each prop is fully processed before checking the deadline
@@ -170,6 +177,9 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - `/grader/performance/{sport}` ✅
 - `/grader/bias/{sport}` ✅
 - `/grader/weights/{sport}` ✅
+- `/picks/graded` ✅ (v20.9 — frontend Grading page)
+- `/picks/grade` ✅ (POST — grade a single pick)
+- `/picks/grading-summary` ✅ (stats by tier)
 
 **Frontend Integration (Priority 1-5 COMPLETE):**
 - Context score displayed with correct tooltip (modifier ±0.35)
@@ -6111,6 +6121,36 @@ done
 
 **Fixed in:** v20.9 (Feb 2026)
 
+### Lesson 55: Missing GET Endpoint — Frontend Calling Non-Existent Backend Route (v20.9)
+**Problem:** Frontend `Grading.jsx` called `GET /live/picks/graded` but the backend had no such endpoint. The backend only had `POST /live/picks/grade` (grade a pick) and `GET /live/picks/grading-summary` (stats). The missing GET endpoint caused the frontend to fall back to hardcoded MOCK_PICKS, making the Grading page show fake data instead of real picks.
+
+**Root Cause:** The frontend `api.js` was written with `getGradedPicks()` calling `GET /live/picks/graded`, but the backend endpoint was never implemented. The frontend silently fell back to MOCK_PICKS on the 404 error, masking the problem completely — no error shown to users, no console warnings, just fake data displayed as if it were real.
+
+**The Fix:**
+1. Added `GET /picks/graded` endpoint to `live_data_router.py` using `grader_store.load_predictions()` with grade records merged
+2. Maps internal pick fields to frontend format: `id`, `pick_id`, `player`, `team`, `opponent`, `stat`, `line`, `recommendation`, `graded` (boolean), `result`, `actual`
+3. Supports `?date=` and `?sport=` query params, defaults to today ET
+4. Updated `Grading.jsx`: removed MOCK_PICKS fallback, fixed `pick_id` usage for grade calls, handled game picks alongside props
+5. Added try-catch to `api.getGradedPicks()` (Invariant 11)
+
+**Why This Was Hard to Find:**
+- No errors, no crashes — frontend had a MOCK_PICKS fallback that silently activated
+- The page looked functional with mock data, so the broken backend connection was invisible
+- The similar endpoint names (`/picks/grade` POST vs `/picks/graded` GET) made it easy to assume the GET existed
+
+**Prevention:**
+1. **NEVER add a frontend API method without verifying the backend endpoint exists** — check `live_data_router.py` for the route before writing `api.js` methods
+2. **NEVER use mock/fallback data that looks like real data** — fallbacks should show an empty state or error banner, not realistic fake picks that mask broken connections
+3. **When adding a new GET endpoint, add it to the same section as related POST endpoints** — keeps the contract discoverable
+4. **Add backend endpoint existence checks to the frontend CI** — the `verify-backend.sh` pre-commit hook should validate all `api.js` endpoints exist
+
+**Files Modified:**
+- `live_data_router.py` — Added `GET /picks/graded` endpoint (grader_store integration)
+- `bookie-member-app/Grading.jsx` — Removed MOCK_PICKS, fixed pick_id, improved pick rendering
+- `bookie-member-app/api.js` — Added try-catch to `getGradedPicks()`
+
+**Fixed in:** v20.9 (Feb 5, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -6748,6 +6788,13 @@ for pick in candidates:
 175. **NEVER** assume "0 props returned" is a timeout or data issue without checking the props scoring loop's control flow first — structural dead code is invisible (no errors, no crashes, no stack traces)
 176. **NEVER** edit code near deeply nested loops without reading the surrounding 50+ lines to verify scope isn't broken — Python's indentation scoping means a single edit can silently disable entire code blocks
 177. **NEVER** leave `props_picks.append()` unreachable after refactoring the props scoring loop — always verify the append executes by checking `props.count > 0` in production output
+
+## 🚫 NEVER DO THESE (v20.9 - Frontend/Backend Endpoint Contract)
+
+178. **NEVER** add an `api.js` method calling a backend endpoint without first verifying that endpoint exists in `live_data_router.py` — a missing endpoint returns 404, and if the frontend has fallback data, the broken connection is completely invisible
+179. **NEVER** use realistic mock/fallback data (MOCK_PICKS, sample arrays) that silently activates on API failure — fallbacks must show empty state or error banners so broken connections are immediately visible
+180. **NEVER** assume similar endpoint names mean the endpoint exists — `POST /picks/grade` and `GET /picks/graded` are completely different routes; always verify the HTTP method AND path
+181. **NEVER** add a frontend page that depends on a backend endpoint without adding the endpoint to the "Key Endpoints" section in CLAUDE.md — undocumented endpoints get lost and forgotten
 
 **Indentation Bug Quick Reference:**
 ```python
