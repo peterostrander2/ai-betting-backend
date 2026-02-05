@@ -83,7 +83,7 @@ for sport in sports:
     )
 
 # Write report
-report_path = os.path.join(os.path.dirname(__file__), "..", "docs", "ENDPOINT_MATRIX_REPORT.md")
+report_path = os.path.join("docs", "ENDPOINT_MATRIX_REPORT.md")
 with open(report_path, "w") as f:
     f.write("# Endpoint Matrix Report\n\n")
     f.write(f"Date ET: {report['date_et']}\n\n")
