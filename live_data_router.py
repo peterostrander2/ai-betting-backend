@@ -4418,7 +4418,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             try:
                 _serp_start = time.time()
                 if player_name:
-                    # Prop bets - use prop intelligence
+                    # Prop bets - use prop intelligence (not pre-fetched)
                     serp_intel = get_serp_prop_intelligence(
                         sport=sport_upper,
                         player_name=player_name,
@@ -4428,13 +4428,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         prop_line=prop_line
                     )
                 else:
-                    # Game bets - use game intelligence
-                    serp_intel = get_serp_betting_intelligence(
-                        sport=sport_upper,
-                        home_team=home_team,
-                        away_team=away_team,
-                        pick_side=pick_side,
-                    )
+                    # Game bets - check pre-fetch cache first (v20.7)
+                    _serp_target = pick_side if pick_side in [home_team, away_team] else home_team
+                    _serp_cache_key = (home_team.lower(), away_team.lower(), _serp_target.lower())
+                    if _serp_cache_key in _serp_game_cache:
+                        serp_intel = _serp_game_cache[_serp_cache_key]
+                    else:
+                        serp_intel = get_serp_betting_intelligence(
+                            sport=sport_upper,
+                            home_team=home_team,
+                            away_team=away_team,
+                            pick_side=pick_side,
+                        )
 
                 if serp_intel and serp_intel.get("available"):
                     serp_status = "OK"
@@ -5843,6 +5848,85 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 _resolve_attempted, _resolve_succeeded, _resolve_timed_out, _timings.get("player_resolution", 0))
 
     # ============================================
+    # SERP PRE-FETCH: Parallel game-level SERP intelligence (v20.7)
+    # Reduces ~107 sequential SerpAPI calls (~17s) to parallel (~2-3s)
+    # Results cached in _serp_game_cache for use in calculate_pick_score()
+    # ============================================
+    _s = time.time()
+    _serp_game_cache: Dict[tuple, Dict[str, Any]] = {}
+    _serp_prefetch_count = 0
+
+    if SERP_INTEL_AVAILABLE and is_serp_available() and not _past_deadline():
+        # Extract unique (home_team, away_team) pairs from games + props
+        _unique_serp_games: set = set()
+        if raw_games:
+            for _g in raw_games:
+                _ht = _g.get("home_team", "")
+                _at = _g.get("away_team", "")
+                if _ht and _at:
+                    _unique_serp_games.add((_ht, _at))
+        if prop_games:
+            for _g in prop_games:
+                _ht = _g.get("home_team", "")
+                _at = _g.get("away_team", "")
+                if _ht and _at:
+                    _unique_serp_games.add((_ht, _at))
+
+        if _unique_serp_games:
+            import concurrent.futures
+
+            def _prefetch_serp_game(home: str, away: str, target: str) -> tuple:
+                """Fetch SERP intel for one game+target combination."""
+                try:
+                    result = get_serp_betting_intelligence(
+                        sport=sport_upper,
+                        home_team=home,
+                        away_team=away,
+                        pick_side=target,
+                    )
+                    return (home.lower(), away.lower(), target.lower()), result
+                except Exception as e:
+                    logger.debug("SERP prefetch error %s@%s target=%s: %s", away, home, target, e)
+                    return (home.lower(), away.lower(), target.lower()), None
+
+            # Build task list: both home and away targets for each game
+            _serp_prefetch_tasks = []
+            for _ht, _at in _unique_serp_games:
+                _serp_prefetch_tasks.append((_ht, _at, _ht))   # home as target
+                _serp_prefetch_tasks.append((_ht, _at, _at))   # away as target
+
+            # Run all in parallel threads (each call makes ~9 sequential SerpAPI calls internally)
+            _max_workers = min(16, len(_serp_prefetch_tasks))
+            _loop = asyncio.get_event_loop()
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=_max_workers) as _executor:
+                    _futs = [
+                        _loop.run_in_executor(_executor, _prefetch_serp_game, h, a, t)
+                        for h, a, t in _serp_prefetch_tasks
+                    ]
+                    _serp_results = await asyncio.wait_for(
+                        asyncio.gather(*_futs, return_exceptions=True),
+                        timeout=12.0
+                    )
+                    for _sr in _serp_results:
+                        if isinstance(_sr, Exception):
+                            continue
+                        _key, _val = _sr
+                        if _val is not None:
+                            _serp_game_cache[_key] = _val
+                            _serp_prefetch_count += 1
+            except asyncio.TimeoutError:
+                logger.warning("SERP PREFETCH: timed out after 12s (%d cached)", _serp_prefetch_count)
+                _timed_out_components.append("serp_prefetch")
+            except Exception as e:
+                logger.warning("SERP PREFETCH: failed: %s", e)
+
+        logger.info("SERP PREFETCH: %d results cached for %d unique games in %.2fs",
+                     _serp_prefetch_count, len(_unique_serp_games), time.time() - _s)
+
+    _record("serp_prefetch", _s)
+
+    # ============================================
     # CATEGORY 1: GAME PICKS (Spreads, Totals, ML) — runs FIRST (fast, no player resolution)
     # ============================================
     _s = time.time()
@@ -7142,6 +7226,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "shadow_mode": SERP_SHADOW_MODE if SERP_INTEL_AVAILABLE else True,
                 "mode": "shadow" if (SERP_INTEL_AVAILABLE and SERP_SHADOW_MODE) else ("live" if SERP_INTEL_AVAILABLE else "disabled"),
                 "status": get_serp_status() if (SERP_INTEL_AVAILABLE and callable(get_serp_status)) else {"error": "serp_intel_unavailable"},
+                "prefetch_cached": _serp_prefetch_count,
+                "prefetch_games": len(_serp_game_cache) if _serp_game_cache else 0,
             },
             # v17.3 ESPN Integration telemetry
             "espn": {
