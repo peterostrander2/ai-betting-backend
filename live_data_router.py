@@ -6499,8 +6499,6 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     event_id=game.get("id"),
                     game_status=_prop_game_status  # v20.0: Pass for live signals
                 )
-            if _props_deadline_hit:
-                break
 
                 # Lineup confirmation guard (props only)
                 lineup_guard = _lineup_risk_guard(commence_time, injury_status)
@@ -6661,6 +6659,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "home_away": _ctx_mods.get("home_away"),
                     "vacuum_score": _ctx_mods.get("vacuum_score"),
                 })
+            if _props_deadline_hit:
+                break
     except HTTPException:
         _props_scoring_error = True
         logger.warning("Props fetch failed for %s", sport)
