@@ -7,6 +7,7 @@ SKIP_NETWORK="${SKIP_NETWORK:-0}"
 SKIP_PYTEST="${SKIP_PYTEST:-0}"
 ALLOW_EMPTY="${ALLOW_EMPTY:-0}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-artifacts}"
+NETWORK_TIMEOUT_S="${NETWORK_TIMEOUT_S:-180}"
 
 ET_DATE=$(python3 - <<'PY'
 from datetime import datetime
@@ -20,6 +21,31 @@ mkdir -p "$ARTIFACTS_DIR"
 run() {
   echo "Running: $*"
   "$@"
+}
+
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$seconds" "$@"
+    return $?
+  fi
+  if command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$seconds" "$@"
+    return $?
+  fi
+  python3 - "$seconds" "$@" <<'PY'
+import subprocess
+import sys
+
+timeout_s = int(sys.argv[1])
+cmd = sys.argv[2:]
+try:
+    result = subprocess.run(cmd, timeout=timeout_s)
+    raise SystemExit(result.returncode)
+except subprocess.TimeoutExpired:
+    raise SystemExit(124)
+PY
 }
 
 run_and_capture() {
@@ -56,12 +82,12 @@ run_and_capture "learning_sanity" env ALLOW_EMPTY="$ALLOW_EMPTY" bash scripts/le
 run_and_capture "learning_loop" env ALLOW_EMPTY="$ALLOW_EMPTY" bash scripts/learning_loop_sanity.sh
 
 if [ "$SKIP_NETWORK" != "1" ]; then
-  run_and_capture "endpoint_matrix" bash scripts/endpoint_matrix_sanity.sh
-  run_and_capture "prod_endpoint_matrix" bash scripts/prod_endpoint_matrix.sh
-  run_and_capture "signal_coverage" python3 scripts/signal_coverage_report.py
-  run_and_capture "api_proof" bash scripts/api_proof_check.sh
-  run_and_capture "live_sanity" bash scripts/live_sanity_check.sh
-  run_and_capture "perf_audit_best_bets" bash scripts/perf_audit_best_bets.sh
+  run_and_capture "endpoint_matrix" run_with_timeout "$NETWORK_TIMEOUT_S" bash scripts/endpoint_matrix_sanity.sh
+  run_and_capture "prod_endpoint_matrix" run_with_timeout "$NETWORK_TIMEOUT_S" bash scripts/prod_endpoint_matrix.sh
+  run_and_capture "signal_coverage" run_with_timeout "$NETWORK_TIMEOUT_S" python3 scripts/signal_coverage_report.py
+  run_and_capture "api_proof" run_with_timeout "$NETWORK_TIMEOUT_S" bash scripts/api_proof_check.sh
+  run_and_capture "live_sanity" run_with_timeout "$NETWORK_TIMEOUT_S" bash scripts/live_sanity_check.sh
+  run_and_capture "perf_audit_best_bets" run_with_timeout "$NETWORK_TIMEOUT_S" bash scripts/perf_audit_best_bets.sh
 else
   echo "SKIP_NETWORK=1 set; skipping networked checks."
   python3 - <<PY >"$ARTIFACTS_DIR/endpoint_matrix_${ET_DATE}_ET.json"
