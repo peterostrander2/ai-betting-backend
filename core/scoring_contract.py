@@ -40,13 +40,15 @@ GOLD_STAR_GATES = {
 # Confluence boost levels (must match production implementation)
 # v17.0: Added HARMONIC_CONVERGENCE for Math+Magic alignment
 # v17.3: Lowered HARMONIC_CONVERGENCE threshold from 8.0 to 7.5 for more triggers
+# v20.10: Rescaled proportionally to work with TOTAL_BOOST_CAP=2.0
+# Prevents score saturation (all picks hitting 10.0) and makes SERP differentiation visible
 CONFLUENCE_LEVELS = {
-    "IMMORTAL": 10.0,
-    "JARVIS_PERFECT": 7.0,
-    "PERFECT": 5.0,
-    "HARMONIC_CONVERGENCE": 4.5,  # Research + Esoteric both >= threshold
-    "STRONG": 3.0,
-    "MODERATE": 1.0,
+    "IMMORTAL": 2.0,
+    "JARVIS_PERFECT": 2.0,
+    "PERFECT": 2.0,
+    "HARMONIC_CONVERGENCE": 2.0,  # Research + Esoteric both >= threshold
+    "STRONG": 1.5,
+    "MODERATE": 0.5,
     "DIVERGENT": 0.0,
 }
 
@@ -62,7 +64,7 @@ SERP_BOOST_CAP_TOTAL = 4.3  # Must match core/serp_guardrails.py SERP_TOTAL_CAP
 JASON_SIM_BOOST_CAP = 1.5  # Max absolute Jason boost/downgrade
 # Total boost cap (sum of confluence + msrf + jason_sim + serp, excluding context modifier)
 # Prevents score inflation from stacking multiple boosts on a mediocre base score.
-TOTAL_BOOST_CAP = 3.5
+TOTAL_BOOST_CAP = 2.0
 # Ensemble adjustment step (post-base)
 ENSEMBLE_ADJUSTMENT_STEP = 0.5
 

@@ -64,7 +64,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 23 | SERP Intelligence | Web search boost capped at 4.3 |
 | 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
-| 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 3.5 |
+| 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 2.0 |
 
 ### Lessons Learned (55 Total) - Key Categories
 | Range | Category | Examples |
@@ -85,8 +85,11 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
+| 56 | **v20.10 Contradiction Gate** | Totals Over/Under at different lines not caught — line_str included in key prevented grouping |
+| 57 | **v20.10 Score Clustering** | Post-hoc ensemble+totals_cal bypassed TOTAL_BOOST_CAP — all scores clustered at 10.0 |
+| 58 | **v20.10 Grader Dedup** | book_key in pick ID caused same bet from 5 sportsbooks to create 5 grader entries |
 
-### NEVER DO Sections (25 Categories)
+### NEVER DO Sections (26 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -112,6 +115,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.7 Parallel Pre-Fetch & Performance (rules 164-172)
 - v20.8 Props Indentation & Code Placement (rules 173-177)
 - v20.9 Frontend/Backend Endpoint Contract (rules 178-181)
+- v20.10 Scoring Cap & Dedup (rules 182-188)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -141,8 +145,14 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | `utils/contradiction_gate.py` | Prevents opposite side picks |
 | `integration_registry.py` | Env var registry, integration config |
 
-### Current Version: v20.9 (Feb 5, 2026)
-**Latest Fix (v20.9):**
+### Current Version: v20.10 (Feb 5, 2026)
+**Latest Fixes (v20.10):**
+- Lesson 56: Contradiction gate Over/Under at different lines not caught — used `line_str = "ANY"` for TOTAL market
+- Lesson 57: Score 10.0 clustering — `ensemble_adjustment` and `totals_calibration_adj` applied OUTSIDE `TOTAL_BOOST_CAP`, now moved inside
+- Lesson 58: Grader duplicate counting — `book_key` in pick ID caused 5x inflation, removed from `_make_pick_id()`
+- All 6 additive boosts now compete within `TOTAL_BOOST_CAP` (2.0) in `compute_final_score_option_a()`
+
+**Previous Fix (v20.9):**
 - Lesson 55: Frontend Grading page called `GET /live/picks/graded` but endpoint didn't exist — frontend fell back to MOCK_PICKS silently
 - Root cause: `api.js` had `getGradedPicks()` calling a non-existent endpoint; backend only had `POST /picks/grade` and `GET /picks/grading-summary`
 - Fix: Added `GET /picks/graded` endpoint using `grader_store.load_predictions()`, updated `Grading.jsx` to remove mock fallback, fixed `pick_id` usage
@@ -159,7 +169,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 **Previous Fixes (v20.6):**
 - Lesson 49: Props timeout — TIME_BUDGET_S configurable, increased 40→55s default
 - Lesson 50: Empty description fields — auto-generated in `normalize_pick()`
-- Lesson 51: Score inflation — TOTAL_BOOST_CAP = 3.5 prevents boost stacking to 10.0
+- Lesson 51: Score inflation — TOTAL_BOOST_CAP = 2.0 prevents boost stacking to 10.0 (v20.10 recalibrated from 3.5)
 - Lesson 52: Jarvis baseline misconception — 4.5 baseline is by design (sacred triggers are rare)
 - Invariant 26: Total Boost Cap enforcement in `compute_final_score_option_a()`
 
@@ -368,15 +378,18 @@ CONTEXT_MODIFIER_CAP = 0.35  # Context is a bounded modifier, NOT an engine
 **Scoring Formula (EXACT):**
 ```python
 BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
-FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + live_adjustment + totals_calibration_adj
+total_boosts = min(TOTAL_BOOST_CAP, confluence + msrf + jason_sim + serp + ensemble_adjustment + totals_calibration_adj)
+FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + live_adjustment)
 ```
 
 **Boosts are additive (NOT engines):**
 - `msrf_boost` and `serp_boost` must remain separate (do NOT fold into confluence).
 - Each boost must be present in payloads with status + reasons (even when 0.0 / unavailable).
-- `ensemble_adjustment` is applied post-base for game picks when the ensemble model is available
-  (+0.5 if hit_prob > 0.60, -0.5 if hit_prob < 0.40, else 0.0). Currently surfaced via `ai_reasons`.
+- `ensemble_adjustment` and `totals_calibration_adj` are **INSIDE** `TOTAL_BOOST_CAP` (v20.10 fix).
+  They compete with confluence/msrf/jason/serp for the same 2.0 cap budget.
+- `ensemble_adjustment`: +0.5 if hit_prob > 0.60, -0.5 if hit_prob < 0.40, else 0.0. Surfaced via `ai_reasons`.
 - Live in-game adjustment: `live_adjustment` (bounded ±0.50) applied to **research_score** when game_status is LIVE.
+  `live_adjustment` is the only boost OUTSIDE the cap (applied directly to research_score, not additive post-base).
 
 **Non-negotiable rule for any NEW final_score adjustment:**
 - Must be **bounded**
@@ -401,10 +414,14 @@ context_modifier ∈ [-0.35, +0.35]
 
 **Final score (clamped):**
 ```
-total_boosts = min(TOTAL_BOOST_CAP, confluence_boost + msrf_boost + jason_sim_boost + serp_boost)
-FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + ensemble_adjustment + live_adjustment + totals_calibration_adj)
+total_boosts = min(TOTAL_BOOST_CAP, confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + totals_calibration_adj)
+FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + live_adjustment)
 ```
-**TOTAL_BOOST_CAP = 3.5** — prevents score inflation from stacking multiple boosts (Invariant 26)
+**TOTAL_BOOST_CAP = 2.0** — prevents score inflation from stacking multiple boosts (Invariant 26, v20.10 recalibrated from 3.5)
+
+**All 6 additive boosts inside the cap (v20.10):**
+- `confluence_boost`, `msrf_boost`, `jason_sim_boost`, `serp_boost`, `ensemble_adjustment`, `totals_calibration_adj`
+- Previously `ensemble_adjustment` and `totals_calibration_adj` were applied OUTSIDE the cap, causing scores to cluster at 10.0 (Lesson 57)
 
 **Ensemble adjustment:**
 - Uses `ENSEMBLE_ADJUSTMENT_STEP` (no magic ±0.5 literals).
@@ -415,14 +432,14 @@ FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + ensemble_adjustm
 
 | Boost | Source | Cap | Notes |
 |---|---|---|---|
-| confluence_boost | `live_data_router.py` | `CONFLUENCE_BOOST_CAP` (10.0) | Derived from confluence levels |
+| confluence_boost | `live_data_router.py` | `CONFLUENCE_BOOST_CAP` (2.0) | Derived from confluence levels (v20.10 rescaled) |
 | msrf_boost | `signals/msrf_resonance.py` | `MSRF_BOOST_CAP` (1.0) | 0.0 / 0.25 / 0.5 / 1.0 |
 | jason_sim_boost | `jason_sim_confluence.py` | `JASON_SIM_BOOST_CAP` (1.5) | Can be negative (block rules) |
 | serp_boost | `alt_data_sources/serp_intelligence.py` | `SERP_BOOST_CAP_TOTAL` (4.3) | Total SERP capped |
-| **SUM of above 4** | `core/scoring_pipeline.py` | **`TOTAL_BOOST_CAP` (3.5)** | **Prevents score inflation (Inv. 26)** |
-| ensemble_adjustment | `utils/ensemble_adjustment.py` | `ENSEMBLE_ADJUSTMENT_STEP` (0.5) | +0.5 / -0.5 step |
-| live_adjustment | `live_data_router.py` | ±0.50 | In-game adjustment to research_score |
-| totals_calibration_adj | `live_data_router.py` | ±0.75 | OVER penalty / UNDER boost from `TOTALS_SIDE_CALIBRATION` |
+| ensemble_adjustment | `live_data_router.py` | `ENSEMBLE_ADJUSTMENT_STEP` (0.5) | +0.5 / -0.5 step **(v20.10: inside cap)** |
+| totals_calibration_adj | `live_data_router.py` | ±0.75 | OVER penalty / UNDER boost **(v20.10: inside cap)** |
+| **SUM of above 6** | `core/scoring_pipeline.py` | **`TOTAL_BOOST_CAP` (2.0)** | **All 6 boosts compete within same cap (Inv. 26, v20.10)** |
+| live_adjustment | `live_data_router.py` | ±0.50 | In-game adjustment to research_score **(OUTSIDE cap)** |
 
 ---
 
@@ -490,7 +507,7 @@ API_KEY=YOUR_KEY bash scripts/perf_audit_best_bets.sh
     "context_modifier": float,   # bounded modifier (authoritative)
     "context_score": float,      # backward-compat only (do not use for weighting)
     "base_score": float,         # Weighted sum before boosts
-    "confluence_boost": float,   # STRONG (+3), MODERATE (+1), DIVERGENT (+0), HARMONIC_CONVERGENCE (+4.5)
+    "confluence_boost": float,   # STRONG (+1.5), MODERATE (+0.5), DIVERGENT (+0), HARMONIC_CONVERGENCE (+2.0)
     "jason_sim_boost": float,    # Can be negative
     "final_score": float,        # BASE + confluence + jason_sim
 
@@ -2430,13 +2447,13 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 
 ### Confluence (Option A — STRONG gate + HARMONIC_CONVERGENCE)
 - Alignment = `1 - abs(research - esoteric) / 10`
-- **HARMONIC_CONVERGENCE (+4.5)**: Research ≥ 8.0 AND Esoteric ≥ 8.0 ("Golden Boost" when Math+Magic align)
-- **STRONG (+3)**: alignment ≥ 80% **AND** at least one active signal (`jarvis_active`, `research_sharp_present`, or `jason_sim_boost != 0`). If alignment ≥70% but no active signal, downgrades to MODERATE.
-- MODERATE (+1): alignment ≥ 60%
+- **HARMONIC_CONVERGENCE (+2.0)**: Research ≥ 7.5 AND Esoteric ≥ 7.5 ("Golden Boost" when Math+Magic align)
+- **STRONG (+1.5)**: alignment ≥ 80% **AND** at least one active signal (`jarvis_active`, `research_sharp_present`, or `jason_sim_boost != 0`). If alignment ≥70% but no active signal, downgrades to MODERATE.
+- MODERATE (+0.5): alignment ≥ 60%
 - DIVERGENT (+0): below 60%
-- PERFECT/IMMORTAL: both ≥7.5 + jarvis ≥7.5 + alignment ≥80%
+- PERFECT/JARVIS_PERFECT/IMMORTAL (+2.0): both ≥7.5 + jarvis ≥7.5 + alignment ≥80% (capped at TOTAL_BOOST_CAP)
 
-**Why the gate**: Without it, two engines that are both mediocre (e.g., R=4.0, E=4.0) get 100% alignment and STRONG +3 boost for free, inflating scores without real conviction.
+**Why the gate**: Without it, two engines that are both mediocre (e.g., R=4.0, E=4.0) get 100% alignment and STRONG +1.5 boost for free, inflating scores without real conviction.
 
 **HARMONIC_CONVERGENCE**: When both Research (market signals) and Esoteric (cosmic signals) score ≥8.0, it represents exceptional alignment between analytical and intuitive sources. This adds +1.5 scaled boost (equivalent to +15 on 100-point).
 
@@ -3598,10 +3615,10 @@ curl /live/grader/bias/NBA?days_back=7 -H "X-API-Key: KEY" | jq '.pick_type_brea
 
 ### INVARIANT 26: Total Boost Cap (v20.6)
 
-**RULE:** The sum of all additive boosts (confluence + msrf + jason_sim + serp) MUST be capped at `TOTAL_BOOST_CAP` (3.5) before being added to `base_score`. Context modifier is excluded from this cap.
+**RULE:** The sum of all additive boosts (confluence + msrf + jason_sim + serp) MUST be capped at `TOTAL_BOOST_CAP` (2.0) before being added to `base_score`. Context modifier is excluded from this cap.
 
 **Why This Exists:**
-Individual boost caps (confluence 10.0, msrf 1.0, jason_sim 1.5, serp 4.3) allowed a theoretical max of 16.8 additional points. In practice, picks with mediocre base scores (~6.5) were being inflated to 10.0 through boost stacking, eliminating score differentiation. TOTAL_BOOST_CAP ensures boosts improve good picks but can't rescue bad ones.
+v20.10 recalibrated from 3.5 to 2.0 to fix score saturation (all picks hitting 10.0). Confluence levels were proportionally rescaled (STRONG from 3.0→1.5, MODERATE from 1.0→0.5, top tiers capped at 2.0). This creates visible score differentiation (picks spread across 7.5-10.0 instead of clustering at 10.0) and makes SERP's +0.5 contribution meaningful as a tiebreaker.
 
 **Implementation:**
 ```python
@@ -3614,9 +3631,9 @@ final_score = max(0.0, min(10.0, final_score))
 ```
 
 **Constants (core/scoring_contract.py):**
-- `TOTAL_BOOST_CAP = 3.5` — max sum of 4 boosts
+- `TOTAL_BOOST_CAP = 2.0` — max sum of 4 boosts (v20.10: recalibrated from 3.5)
 - `SERP_BOOST_CAP_TOTAL = 4.3` — individual SERP cap (still applies first)
-- `CONFLUENCE_BOOST_CAP = 10.0` — individual confluence cap
+- `CONFLUENCE_BOOST_CAP = 2.0` — individual confluence cap (v20.10: rescaled from 10.0)
 - `MSRF_BOOST_CAP = 1.0` — individual MSRF cap
 - `JASON_SIM_BOOST_CAP = 1.5` — individual Jason cap
 
@@ -5864,7 +5881,7 @@ datetime.fromisoformat(p.timestamp) >= cutoff  # Same error
 **Root Cause:** Individual boost caps existed (confluence 10.0, msrf 1.0, jason_sim 1.5, serp 4.3) but NO cap on their SUM. Theoretical max boost was 16.8 points. In practice, confluence 3.0 + msrf 1.0 + serp 2.0 + jason 0.5 = 6.5 boosts on a 6.5 base = 13.0 → clamped to 10.0.
 
 **The Fix:**
-1. Added `TOTAL_BOOST_CAP = 3.5` in `core/scoring_contract.py`
+1. Added `TOTAL_BOOST_CAP = 3.5` in `core/scoring_contract.py` (later recalibrated to 2.0 in v20.10)
 2. In `compute_final_score_option_a()`: sum of confluence+msrf+jason_sim+serp capped to `TOTAL_BOOST_CAP` before adding to base_score
 3. Context modifier is excluded from the cap (it's a bounded modifier, not a boost)
 4. Updated `test_option_a_scoring_guard.py` to test new cap behavior
@@ -6150,6 +6167,65 @@ done
 - `bookie-member-app/api.js` — Added try-catch to `getGradedPicks()`
 
 **Fixed in:** v20.9 (Feb 5, 2026)
+
+---
+
+### Lesson 56: Contradiction Gate — Over/Under at Different Lines Not Caught (v20.10)
+**Problem:** The contradiction gate was supposed to prevent recommending both Over AND Under on the same game total, but picks like "Over 226.5" and "Under 224.5" on the same game were both getting through. The gate only blocked exact-line contradictions (e.g., Over 226.5 vs Under 226.5).
+
+**Root Cause:** `make_unique_key()` in `utils/contradiction_gate.py` included `{line_str}` in the key for TOTAL markets. Over 226.5 produced key `NBA|...|TOTAL|...|226.5` and Under 224.5 produced `NBA|...|TOTAL|...|224.5` — two different keys. Since they never grouped together, `is_opposite_side()` was never called to detect the Over/Under conflict.
+
+**The Fix:**
+1. Changed `make_unique_key()` to use `line_str = "ANY"` for TOTAL/TOTALS markets instead of the actual line value
+2. This ensures all totals on the same game produce the SAME key regardless of line value
+3. `is_opposite_side()` already correctly detects Over vs Under — it just needed the keys to match first
+
+**Key Insight:** The contradiction detection logic (`is_opposite_side()`) was correct. The bug was in the grouping logic (`make_unique_key()`) — picks that should have been compared were never grouped together because the key was too specific.
+
+**Files Modified:**
+- `utils/contradiction_gate.py` — Changed line_str for TOTAL market from `f"{line:.1f}"` to `"ANY"`
+
+**Fixed in:** v20.10 (Feb 5, 2026)
+
+---
+
+### Lesson 57: Score 10.0 Clustering — Post-Hoc Adjustments Bypass Boost Cap (v20.10)
+**Problem:** Nearly every Under pick was scoring exactly 10.0, making it impossible to rank or differentiate picks. The "best bets" endpoint was returning a wall of identical 10.0-scored picks with no meaningful ordering.
+
+**Root Cause:** `ensemble_adjustment` (+0.5) and `totals_calibration_adj` (+0.75 for Under) were being applied AFTER `compute_final_score_option_a()` returned — completely bypassing `TOTAL_BOOST_CAP` (2.0). The math: base ~5.3 + context ~0.1 + capped boosts 2.0 + ensemble 0.5 + totals_cal 0.75 = 8.65, but with higher confluence/MSRF the raw total_boosts could be 3.5+ before capping, so: 5.3 + 0.1 + 2.0 + 0.5 + 0.75 = 8.65 minimum, and stronger picks easily hit 10.0. The clamp to 10.0 destroyed all differentiation.
+
+**The Fix:**
+1. Added `ensemble_adjustment` and `totals_calibration_adj` as parameters to `compute_final_score_option_a()` in `core/scoring_pipeline.py`
+2. Included both in `total_boosts` BEFORE applying `TOTAL_BOOST_CAP`: `total_boosts = confluence + msrf + jason_sim + serp + ensemble_adjustment + totals_calibration_adj`
+3. Removed the post-hoc additions from `live_data_router.py` — no more adding to final_score after compute returns
+4. Now all 6 additive boosts compete within the same cap, producing real differentiation (e.g., 7.2, 8.1, 9.3 instead of all 10.0)
+
+**Key Insight:** The single-source-of-truth principle (Invariant 4) was violated. `compute_final_score_option_a()` was supposed to be the ONLY place final_score math happens, but adjustments were being added outside it in the caller. Any additive adjustment to final_score MUST go through the scoring function to respect the cap.
+
+**Files Modified:**
+- `core/scoring_pipeline.py` — Added `ensemble_adjustment` and `totals_calibration_adj` parameters, included in `total_boosts`
+- `live_data_router.py` — Pass ensemble/totals_cal into `compute_final_score_option_a()` instead of adding post-hoc
+
+**Fixed in:** v20.10 (Feb 5, 2026)
+
+---
+
+### Lesson 58: Duplicate Pick Counting — book_key in Grader Pick ID (v20.10)
+**Problem:** The grading summary was showing inflated records (e.g., 25-10 when the real record was 5-2). The same logical bet (e.g., "Knicks Under 226.5") appeared as 5 separate graded picks because it came from 5 different sportsbooks.
+
+**Root Cause:** `grader_store.py:_make_pick_id()` included `book_key` in the deterministic pick ID hash. The key was `{sport}|{event_id}|{market}|{subject}|{line}|{book}|{date_et}`, so the same pick from DraftKings, FanDuel, BetMGM, Caesars, and PointsBet each got unique IDs. The grading-summary endpoint counted all of them, inflating wins and losses by the number of sportsbooks.
+
+**The Fix:**
+1. Removed `book_key` from `_make_pick_id()` key string in `grader_store.py`
+2. New key: `{sport}|{event_id}|{market}|{subject}|{line}|{date_et}` — same logical bet from any book produces the same ID
+3. This matches the dedup logic already used in `live_data_router.py`'s local `_make_pick_id()`
+
+**Key Insight:** Dedup IDs must be based on the LOGICAL bet (what was bet on), not the SOURCE (where it came from). Including book_key means "Knicks Under 226.5 at DraftKings" and "Knicks Under 226.5 at FanDuel" are treated as different bets, which inflates every metric.
+
+**Files Modified:**
+- `grader_store.py` — Removed `book_key` from `_make_pick_id()` key
+
+**Fixed in:** v20.10 (Feb 5, 2026)
 
 ---
 
@@ -6746,7 +6822,7 @@ if day_start <= ts < day_end:  # Exclusive end
 
 ## 🚫 NEVER DO THESE (v20.6 - Boost Caps & Production)
 
-156. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (3.5) — this causes score inflation and clustering at 10.0
+156. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (2.0) — this causes score inflation and clustering at 10.0
 157. **NEVER** add a new additive boost without updating `TOTAL_BOOST_CAP` logic in `compute_final_score_option_a()` — uncapped boosts compound silently
 158. **NEVER** hardcode timeout values in API endpoints — always use `os.getenv()` with a sensible default and register in `integration_registry.py`
 159. **NEVER** assume `TIME_BUDGET_S` only needs to cover game scoring — props scoring shares the same budget and needs time too
@@ -6813,6 +6889,16 @@ for pick in candidates:
             if deadline:       # Check AFTER append
                 break
 ```
+
+## 🚫 NEVER DO THESE (v20.10 - Scoring Cap & Dedup)
+
+182. **NEVER** apply additive adjustments (ensemble, totals_calibration, or any future boost) to `final_score` AFTER `compute_final_score_option_a()` returns — all additive boosts MUST be passed as parameters so they compete within `TOTAL_BOOST_CAP`; post-hoc additions bypass the cap and cause score clustering at 10.0 (Lesson 57)
+183. **NEVER** add a new boost/adjustment without adding it to `total_boosts` inside `compute_final_score_option_a()` — the scoring function is the single source of truth for final_score math (Invariant 4); anything outside it is a cap bypass
+184. **NEVER** include `book_key` (sportsbook name) in pick dedup/grader IDs — the same logical bet from different books is ONE pick, not N picks; including book inflates all grading metrics by the number of sportsbooks (Lesson 58)
+185. **NEVER** include the line value in contradiction gate keys for TOTAL markets — Over 226.5 and Under 224.5 on the same game are contradictions; use `line_str = "ANY"` for totals so all lines group together (Lesson 56)
+186. **NEVER** assume contradiction gate is working just because exact-line contradictions are caught — test with DIFFERENT lines on the same game total to verify grouping
+187. **NEVER** add post-hoc `final_score += X` in `live_data_router.py` or any caller — if you need to adjust the score, add a parameter to `compute_final_score_option_a()` and include it in `total_boosts`
+188. **NEVER** assume scores are well-distributed without checking — if most picks score 10.0, look for adjustments applied outside the boost cap
 
 ---
 

@@ -138,7 +138,7 @@ except ImportError:
     logger.warning("tiering module not available - using legacy tier logic")
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
-from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS
+from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS, CONFLUENCE_LEVELS
 from core.scoring_pipeline import compute_final_score_option_a, compute_harmonic_boost
 from core.telemetry import apply_used_integrations_debug, attach_integration_telemetry_debug, record_daily_integration_rollup
 
@@ -4330,22 +4330,22 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             both_high = research_score >= 7.5 and esoteric_score >= 7.5
             jarvis_high = jarvis_rs is not None and jarvis_rs >= 7.5
             if immortal_detected and both_high and jarvis_high and alignment_pct >= 80:
-                confluence = {"level": "IMMORTAL", "boost": 10, "alignment_pct": alignment_pct}
+                confluence = {"level": "IMMORTAL", "boost": CONFLUENCE_LEVELS["IMMORTAL"], "alignment_pct": alignment_pct}
             elif jarvis_triggered and both_high and jarvis_high and alignment_pct >= 80:
-                confluence = {"level": "JARVIS_PERFECT", "boost": 7, "alignment_pct": alignment_pct}
+                confluence = {"level": "JARVIS_PERFECT", "boost": CONFLUENCE_LEVELS["JARVIS_PERFECT"], "alignment_pct": alignment_pct}
             elif both_high and jarvis_high and alignment_pct >= 80:
-                confluence = {"level": "PERFECT", "boost": 5, "alignment_pct": alignment_pct}
+                confluence = {"level": "PERFECT", "boost": CONFLUENCE_LEVELS["PERFECT"], "alignment_pct": alignment_pct}
             elif alignment_pct >= 70:
                 # v15.3: STRONG requires alignment >= 80% AND active signal
                 _strong_ok = alignment_pct >= 80 and (jarvis_active or _research_sharp_present)
                 if _strong_ok:
-                    confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
+                    confluence = {"level": "STRONG", "boost": CONFLUENCE_LEVELS["STRONG"], "alignment_pct": alignment_pct}
                 else:
-                    confluence = {"level": "MODERATE", "boost": 1, "alignment_pct": alignment_pct}
+                    confluence = {"level": "MODERATE", "boost": CONFLUENCE_LEVELS["MODERATE"], "alignment_pct": alignment_pct}
             elif alignment_pct >= 60:
-                confluence = {"level": "MODERATE", "boost": 1, "alignment_pct": alignment_pct}
+                confluence = {"level": "MODERATE", "boost": CONFLUENCE_LEVELS["MODERATE"], "alignment_pct": alignment_pct}
             else:
-                confluence = {"level": "DIVERGENT", "boost": 0, "alignment_pct": alignment_pct}
+                confluence = {"level": "DIVERGENT", "boost": CONFLUENCE_LEVELS["DIVERGENT"], "alignment_pct": alignment_pct}
 
         # ===== v17.3 HARMONIC CONVERGENCE CHECK =====
         # "Golden Boost" when Math (Research) + Magic (Esoteric) both exceed threshold
@@ -7787,11 +7787,11 @@ async def debug_pick_breakdown(sport: str):
             alignment = 1 - abs(research_score - esoteric_score) / 10
             alignment_pct = alignment * 100
             if alignment_pct >= 80 and research_score >= 7.5 and esoteric_score >= 7.5:
-                confluence = {"level": "PERFECT", "boost": 5, "alignment_pct": alignment_pct}
+                confluence = {"level": "PERFECT", "boost": CONFLUENCE_LEVELS["PERFECT"], "alignment_pct": alignment_pct}
             elif alignment_pct >= 70:
-                confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
+                confluence = {"level": "STRONG", "boost": CONFLUENCE_LEVELS["STRONG"], "alignment_pct": alignment_pct}
             else:
-                confluence = {"level": "DIVERGENT", "boost": 0, "alignment_pct": alignment_pct}
+                confluence = {"level": "DIVERGENT", "boost": CONFLUENCE_LEVELS["DIVERGENT"], "alignment_pct": alignment_pct}
 
         confluence_boost = confluence.get("boost", 0)
 

@@ -67,6 +67,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
 from collections import defaultdict
 import hashlib
+from core.scoring_contract import CONFLUENCE_LEVELS
 
 # Import Tiering module - SINGLE SOURCE OF TRUTH for tier configs (v11.08)
 try:
@@ -692,12 +693,12 @@ class JarvisSavantEngine:
         v10.1 Spec Formula:
         Alignment = 1 - |research - esoteric| / 10
 
-        CONFLUENCE LEVELS:
-        - IMMORTAL (+10): 2178 + both ≥7.5 + alignment ≥80%
-        - JARVIS_PERFECT (+7): Trigger + both ≥7.5 + alignment ≥80%
-        - PERFECT (+5): both ≥7.5 + alignment ≥80%
-        - STRONG (+3): Both high OR aligned ≥70%
-        - MODERATE (+1): Aligned ≥60%
+        CONFLUENCE LEVELS (v20.10 — from scoring_contract.py):
+        - IMMORTAL (+2.0): 2178 + both ≥7.5 + alignment ≥80%
+        - JARVIS_PERFECT (+2.0): Trigger + both ≥7.5 + alignment ≥80%
+        - PERFECT (+2.0): both ≥7.5 + alignment ≥80%
+        - STRONG (+1.5): Both high OR aligned ≥70%
+        - MODERATE (+0.5): Aligned ≥60%
         - DIVERGENT (+0): Models disagree
         """
         # Calculate alignment percentage (0-100%)
@@ -712,19 +713,20 @@ class JarvisSavantEngine:
         aligned_60 = alignment_pct >= 60
 
         # Determine confluence level based on v10.1 spec
+        # v20.10: Boost values from CONFLUENCE_LEVELS (scoring_contract.py) — single source of truth
         if immortal_detected and both_high and aligned_80:
             level = "IMMORTAL"
-            boost = 10
+            boost = CONFLUENCE_LEVELS["IMMORTAL"]
             color = "rainbow"
             action = "IMMORTAL CONFLUENCE - MAXIMUM SMASH"
         elif jarvis_triggered and both_high and aligned_80:
             level = "JARVIS_PERFECT"
-            boost = 7
+            boost = CONFLUENCE_LEVELS["JARVIS_PERFECT"]
             color = "gold"
             action = "JARVIS PERFECT - STRONG SMASH"
         elif both_high and aligned_80:
             level = "PERFECT"
-            boost = 5
+            boost = CONFLUENCE_LEVELS["PERFECT"]
             color = "purple"
             action = "PERFECT CONFLUENCE - PLAY"
         elif aligned_70:
@@ -735,23 +737,23 @@ class JarvisSavantEngine:
             )
             if _strong_eligible:
                 level = "STRONG"
-                boost = 3
+                boost = CONFLUENCE_LEVELS["STRONG"]
                 color = "green"
                 action = "STRONG CONFLUENCE - LEAN"
             else:
                 # Downgrade: high alignment but no active signals backing it
                 level = "MODERATE"
-                boost = 1
+                boost = CONFLUENCE_LEVELS["MODERATE"]
                 color = "blue"
                 action = "MODERATE - MONITOR (STRONG downgraded: missing active signal)"
         elif aligned_60:
             level = "MODERATE"
-            boost = 1
+            boost = CONFLUENCE_LEVELS["MODERATE"]
             color = "blue"
             action = "MODERATE - MONITOR"
         else:
             level = "DIVERGENT"
-            boost = 0
+            boost = CONFLUENCE_LEVELS["DIVERGENT"]
             color = "red"
             action = "DIVERGENT - PASS"
 
