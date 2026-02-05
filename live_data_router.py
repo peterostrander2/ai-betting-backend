@@ -6278,6 +6278,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # ============================================
     # CATEGORY 2: PLAYER PROPS (uses pre-resolved player cache — instant lookups)
     # ============================================
+    # Reset deadline for props — game scoring consumed the shared budget,
+    # so props get their own dedicated time window (Lesson 49).
+    PROPS_TIME_BUDGET_S = float(os.getenv("BEST_BETS_PROPS_TIME_BUDGET_S", "30"))
+    _deadline = time.time() + PROPS_TIME_BUDGET_S
     _s = time.time()
     props_picks = []
     _props_scoring_error = False
@@ -7037,6 +7041,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "total_elapsed_s": round(_elapsed(), 2),
             "timed_out_components": _timed_out_components,
             "time_budget_s": TIME_BUDGET_S,
+            "props_time_budget_s": PROPS_TIME_BUDGET_S,
             "max_events": max_events,
             "max_props": max_props,
             "max_games": max_games,

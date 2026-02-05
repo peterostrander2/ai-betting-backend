@@ -136,10 +136,10 @@ def score_candidate(
     context: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
-    Score a single candidate (game or prop pick).
+    LEGACY/UNUSED — Score a single candidate (game or prop pick).
 
-    This is the ONLY function that should compute final_score.
-    All other code should call this function, not duplicate the math.
+    NOT called in production. Production uses compute_final_score_option_a()
+    for the final score math and live_data_router.py for engine scoring.
 
     Args:
         candidate: Normalized candidate dict with required fields:

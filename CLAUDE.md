@@ -35,7 +35,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 
 ## 📚 MASTER INDEX (Quick Reference)
 
-### Critical Invariants (25 Total)
+### Critical Invariants (26 Total)
 | # | Name | Summary |
 |---|------|---------|
 | 1 | Storage Persistence | ALL data under `RAILWAY_VOLUME_MOUNT_PATH=/data` |
@@ -64,8 +64,9 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 23 | SERP Intelligence | Web search boost capped at 4.3 |
 | 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
+| 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 3.5 |
 
-### Lessons Learned (45 Total) - Key Categories
+### Lessons Learned (52 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -79,8 +80,10 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 40 | **Shell/Python** | Export variables for Python subprocesses (`export VAR=value`) |
 | 41 | **Grading Bug** | SHARP picks: line_variance ≠ actual spread (grade as moneyline) |
 | 42-45 | **v20.5 Datetime/Grader** | Naive vs aware datetime, PYTZ undefined, date window math |
+| 46-48 | **v20.5 Scoring/Scripts** | Unsurfaced adjustments, env var registry, heredoc __file__ |
+| 49-52 | **v20.6 Production Fixes** | Props timeout, empty descriptions, score inflation (total boost cap), Jarvis baseline |
 
-### NEVER DO Sections (18 Categories)
+### NEVER DO Sections (19 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -98,7 +101,8 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.4 Go/No-Go Scripts (rules 125-131)
 - v20.4 Frontend/Backend Sync (rules 132-137)
 - Shell/Python Subprocesses (rules 138-141)
-- v20.5 Datetime/Timezone (rules 142-150)
+- v20.5 Datetime/Timezone (rules 142-155)
+- v20.6 Boost Caps & Production (rules 156-163)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -118,16 +122,25 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 ### Key Files Reference
 | File | Purpose |
 |------|---------|
-| `core/scoring_contract.py` | Scoring constants (Option A weights, thresholds, calibration) |
+| `core/scoring_contract.py` | Scoring constants (Option A weights, thresholds, boost caps, calibration) |
 | `core/scoring_pipeline.py` | Score calculation (single source of truth) |
 | `live_data_router.py` | Main API endpoints, pick scoring |
+| `utils/pick_normalizer.py` | Pick contract normalization (single source for all pick fields) |
 | `auto_grader.py` | Learning loop, bias calculation, weight updates |
 | `result_fetcher.py` | Game result fetching, pick grading |
 | `grader_store.py` | Pick persistence (predictions.jsonl) |
 | `utils/contradiction_gate.py` | Prevents opposite side picks |
+| `integration_registry.py` | Env var registry, integration config |
 
-### Current Version: v20.5 (Feb 4, 2026)
-**Latest Fixes (v20.5):**
+### Current Version: v20.6 (Feb 4, 2026)
+**Latest Fixes (v20.6):**
+- Lesson 49: Props timeout — TIME_BUDGET_S configurable, increased 40→55s default
+- Lesson 50: Empty description fields — auto-generated in `normalize_pick()`
+- Lesson 51: Score inflation — TOTAL_BOOST_CAP = 3.5 prevents boost stacking to 10.0
+- Lesson 52: Jarvis baseline misconception — 4.5 baseline is by design (sacred triggers are rare)
+- Invariant 26: Total Boost Cap enforcement in `compute_final_score_option_a()`
+
+**Previous Fixes (v20.5):**
 - Lesson 41: SHARP pick grading fix (grade as moneyline, not line_variance)
 - Lesson 42: PYTZ_AVAILABLE undefined in `/grader/queue`
 - Lesson 43: Naive vs aware datetime in `/grader/daily-report`
@@ -362,8 +375,10 @@ context_modifier ∈ [-0.35, +0.35]
 
 **Final score (clamped):**
 ```
-FINAL = min(10, BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + live_adjustment + totals_calibration_adj)
+total_boosts = min(TOTAL_BOOST_CAP, confluence_boost + msrf_boost + jason_sim_boost + serp_boost)
+FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + ensemble_adjustment + live_adjustment + totals_calibration_adj)
 ```
+**TOTAL_BOOST_CAP = 3.5** — prevents score inflation from stacking multiple boosts (Invariant 26)
 
 **Ensemble adjustment:**
 - Uses `ENSEMBLE_ADJUSTMENT_STEP` (no magic ±0.5 literals).
@@ -374,11 +389,12 @@ FINAL = min(10, BASE_4 + context_modifier + confluence_boost + msrf_boost + jaso
 
 | Boost | Source | Cap | Notes |
 |---|---|---|---|
-| confluence_boost | `live_data_router.py` | `CONFLUENCE_BOOST_CAP` | Derived from confluence levels |
-| msrf_boost | `signals/msrf_resonance.py` | `MSRF_BOOST_CAP` | 0.0 / 0.25 / 0.5 / 1.0 |
-| jason_sim_boost | `jason_sim_confluence.py` | `JASON_SIM_BOOST_CAP` | Can be negative (block rules) |
-| serp_boost | `alt_data_sources/serp_intelligence.py` | `SERP_BOOST_CAP_TOTAL` | Total SERP capped |
-| ensemble_adjustment | `utils/ensemble_adjustment.py` | `ENSEMBLE_ADJUSTMENT_STEP` | +0.5 / -0.5 step |
+| confluence_boost | `live_data_router.py` | `CONFLUENCE_BOOST_CAP` (10.0) | Derived from confluence levels |
+| msrf_boost | `signals/msrf_resonance.py` | `MSRF_BOOST_CAP` (1.0) | 0.0 / 0.25 / 0.5 / 1.0 |
+| jason_sim_boost | `jason_sim_confluence.py` | `JASON_SIM_BOOST_CAP` (1.5) | Can be negative (block rules) |
+| serp_boost | `alt_data_sources/serp_intelligence.py` | `SERP_BOOST_CAP_TOTAL` (4.3) | Total SERP capped |
+| **SUM of above 4** | `core/scoring_pipeline.py` | **`TOTAL_BOOST_CAP` (3.5)** | **Prevents score inflation (Inv. 26)** |
+| ensemble_adjustment | `utils/ensemble_adjustment.py` | `ENSEMBLE_ADJUSTMENT_STEP` (0.5) | +0.5 / -0.5 step |
 | live_adjustment | `live_data_router.py` | ±0.50 | In-game adjustment to research_score |
 | totals_calibration_adj | `live_data_router.py` | ±0.75 | OVER penalty / UNDER boost from `TOTALS_SIDE_CALIBRATION` |
 
@@ -3547,6 +3563,37 @@ curl /live/grader/bias/NBA?days_back=7 -H "X-API-Key: KEY" | jq '.pick_type_brea
 | `live_data_router.py` | 4887-4899 | Added glitch_signals, esoteric_contributions to scoring result |
 | `live_data_router.py` | 6390-6420 | Updated pick persistence with all signal fields |
 
+### INVARIANT 26: Total Boost Cap (v20.6)
+
+**RULE:** The sum of all additive boosts (confluence + msrf + jason_sim + serp) MUST be capped at `TOTAL_BOOST_CAP` (3.5) before being added to `base_score`. Context modifier is excluded from this cap.
+
+**Why This Exists:**
+Individual boost caps (confluence 10.0, msrf 1.0, jason_sim 1.5, serp 4.3) allowed a theoretical max of 16.8 additional points. In practice, picks with mediocre base scores (~6.5) were being inflated to 10.0 through boost stacking, eliminating score differentiation. TOTAL_BOOST_CAP ensures boosts improve good picks but can't rescue bad ones.
+
+**Implementation:**
+```python
+# In core/scoring_pipeline.py:compute_final_score_option_a()
+total_boosts = confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+if total_boosts > TOTAL_BOOST_CAP:
+    total_boosts = TOTAL_BOOST_CAP
+final_score = base_score + context_modifier + total_boosts
+final_score = max(0.0, min(10.0, final_score))
+```
+
+**Constants (core/scoring_contract.py):**
+- `TOTAL_BOOST_CAP = 3.5` — max sum of 4 boosts
+- `SERP_BOOST_CAP_TOTAL = 4.3` — individual SERP cap (still applies first)
+- `CONFLUENCE_BOOST_CAP = 10.0` — individual confluence cap
+- `MSRF_BOOST_CAP = 1.0` — individual MSRF cap
+- `JASON_SIM_BOOST_CAP = 1.5` — individual Jason cap
+
+**Test Guard:** `tests/test_option_a_scoring_guard.py:test_compute_final_score_caps_serp_and_clamps_final`
+
+**NEVER:**
+- Remove or increase `TOTAL_BOOST_CAP` without analyzing production score distributions
+- Include context_modifier in the total boost cap (it's a bounded modifier, not a boost)
+- Add a new boost component without including it in the total cap sum
+
 ---
 
 ## 📚 MASTER FILE INDEX (ML & GLITCH)
@@ -5723,6 +5770,98 @@ datetime.fromisoformat(p.timestamp) >= cutoff  # Same error
 
 **Fixed in:** v20.5 (Feb 4, 2026)
 
+### Lesson 49: Props Timeout — Shared Time Budget Starvation (v20.6)
+**Problem:** `/live/best-bets/NBA` returned 0 props despite game picks working. Props section showed `"picks": []`.
+
+**Root Cause:** `TIME_BUDGET_S = 40.0` was hardcoded in `live_data_router.py:2741`. Game scoring consumed the full budget, leaving 0 seconds for props scoring. The timeout wasn't configurable.
+
+**The Fix:**
+1. Changed `TIME_BUDGET_S` from hardcoded `40.0` to `float(os.getenv("BEST_BETS_TIME_BUDGET_S", "55"))` — configurable with higher default
+2. Registered `BEST_BETS_TIME_BUDGET_S` in `integration_registry.py` `RUNTIME_ENV_VARS`
+
+**Prevention:**
+- Any shared time budget must leave enough headroom for ALL consumers (games + props)
+- All timeout/budget values should be env-configurable, not hardcoded
+- Always register new env vars in `integration_registry.py` (see Lesson 47)
+
+**Files Modified:**
+- `live_data_router.py` (line 2741)
+- `integration_registry.py` (RUNTIME_ENV_VARS)
+
+**Fixed in:** v20.6 (Feb 4, 2026)
+
+### Lesson 50: Empty Description Fields in Pick Payload (v20.6)
+**Problem:** All picks returned `"description": ""` in the best-bets response. Frontend had no human-readable summary of each pick.
+
+**Root Cause:** `compute_description()` existed in `models/pick_converter.py` but it used object attribute access (`.player_name`, `.matchup`) — only works for database model objects. The live scoring path uses plain dicts through `normalize_pick()`, so `compute_description()` was never called.
+
+**The Fix:** Added dict-based description generation directly in `utils/pick_normalizer.py` `normalize_pick()`, covering:
+- Player props: `"LeBron James Points Over 25.5"`
+- Moneyline: `"LAL @ BOS — Lakers ML +150"`
+- Spreads/totals: `"LAL @ BOS — Spread Away -3.5"`
+- Fallback: matchup string
+
+**Prevention:**
+- When adding a new field to the pick contract, verify it's populated in ALL paths (normalize_pick is the single source)
+- `normalize_pick()` is the ONLY place to set pick fields — never set them in individual scoring functions
+
+**Files Modified:**
+- `utils/pick_normalizer.py` (added ~15 lines in normalize_pick)
+
+**Fixed in:** v20.6 (Feb 4, 2026)
+
+### Lesson 51: Score Inflation from Unbounded Boost Stacking (v20.6)
+**Problem:** Multiple picks had `final_score = 10.0` despite mediocre base scores (~6.5). Picks clustered at the max, eliminating score differentiation.
+
+**Root Cause:** Individual boost caps existed (confluence 10.0, msrf 1.0, jason_sim 1.5, serp 4.3) but NO cap on their SUM. Theoretical max boost was 16.8 points. In practice, confluence 3.0 + msrf 1.0 + serp 2.0 + jason 0.5 = 6.5 boosts on a 6.5 base = 13.0 → clamped to 10.0.
+
+**The Fix:**
+1. Added `TOTAL_BOOST_CAP = 3.5` in `core/scoring_contract.py`
+2. In `compute_final_score_option_a()`: sum of confluence+msrf+jason_sim+serp capped to `TOTAL_BOOST_CAP` before adding to base_score
+3. Context modifier is excluded from the cap (it's a bounded modifier, not a boost)
+4. Updated `test_option_a_scoring_guard.py` to test new cap behavior
+
+**Prevention:**
+- Every additive boost system needs BOTH individual caps AND a total cap
+- Monitor production score distributions — clustering at boundaries is a red flag
+- Added Invariant 26 to prevent regression
+
+**Files Modified:**
+- `core/scoring_contract.py` (TOTAL_BOOST_CAP constant)
+- `core/scoring_pipeline.py` (cap enforcement in compute_final_score_option_a)
+- `tests/test_option_a_scoring_guard.py` (updated tests for new cap)
+
+**Fixed in:** v20.6 (Feb 4, 2026)
+
+### Lesson 52: Jarvis Baseline Is Not a Bug — Sacred Triggers Are Rare By Design (v20.6)
+**Problem:** Report claimed `jarvis_score = 5.0` hardcoded at `core/scoring_pipeline.py:280` made Jarvis "dead code."
+
+**Investigation Found:** The hardcoded 5.0 is in `score_candidate()` which is dormant demo code — NOT the production path. Production Jarvis scoring is in `live_data_router.py:calculate_jarvis_engine_score()` (lines 2819-3037), fully wired with real triggers.
+
+**Why Jarvis Stays at 4.5 Baseline:**
+- Sacred number triggers (2178, 201, 33, 93, 322, 666, 888, 369) fire on gematria sums of player+team names
+- Simple gematria (a=1..z=26) produces sums typically in the 100-400 range
+- Sacred numbers are statistically rare — most matchups don't trigger ANY
+- This is intentional: Jarvis should ONLY boost when genuine sacred number alignment exists
+- GOLD_STAR gate requires `jarvis_rs >= 6.5` — needs at minimum a +2.0 trigger (33, 93, or 322)
+
+**Prevention:**
+- Before reporting "dead code," trace the actual production call path (imports, function calls)
+- `core/scoring_pipeline.py:score_candidate()` is NOT used in production — only `compute_final_score_option_a()` and `compute_harmonic_boost()` are imported
+- A low/constant score from an engine is not necessarily a bug — check if triggers are designed to be rare
+
+**Production Jarvis flow:**
+```
+get_jarvis_savant() → JarvisSavantEngine singleton
+  → calculate_jarvis_engine_score()
+    ├── check_jarvis_trigger() for sacred numbers
+    ├── calculate_gematria_signal() for name sums
+    └── mid-spread goldilocks for spreads 4.0-9.0
+  → jarvis_rs = 4.5 + triggers + gematria + goldilocks
+```
+
+**Fixed in:** v20.6 (Feb 4, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -6291,6 +6430,17 @@ day_start = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0
 day_end = day_start + timedelta(days=1)
 if day_start <= ts < day_end:  # Exclusive end
 ```
+
+## 🚫 NEVER DO THESE (v20.6 - Boost Caps & Production)
+
+156. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (3.5) — this causes score inflation and clustering at 10.0
+157. **NEVER** add a new additive boost without updating `TOTAL_BOOST_CAP` logic in `compute_final_score_option_a()` — uncapped boosts compound silently
+158. **NEVER** hardcode timeout values in API endpoints — always use `os.getenv()` with a sensible default and register in `integration_registry.py`
+159. **NEVER** assume `TIME_BUDGET_S` only needs to cover game scoring — props scoring shares the same budget and needs time too
+160. **NEVER** set pick contract fields (description, side_label, etc.) outside `normalize_pick()` — it is the single source of truth for the pick payload
+161. **NEVER** use `models/pick_converter.py:compute_description()` for dict-based picks — it uses object attributes (`.player_name`) not dict keys (`["player_name"]`)
+162. **NEVER** assume a consistently low engine score (like jarvis_rs=4.5) means the engine is dead code — check the production call path and whether triggers are designed to be rare
+163. **NEVER** report a function as "dead code" without tracing which modules actually import it — `score_candidate()` in scoring_pipeline.py is dormant but `compute_final_score_option_a()` is active
 
 ---
 
