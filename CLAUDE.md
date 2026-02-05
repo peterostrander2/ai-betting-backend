@@ -329,7 +329,7 @@ CONTEXT_MODIFIER_CAP = 0.35  # Context is a bounded modifier, NOT an engine
 **Scoring Formula (EXACT):**
 ```python
 BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
-FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + live_adjustment + totals_calibration_adj
 ```
 
 **Boosts are additive (NOT engines):**
@@ -362,7 +362,7 @@ context_modifier ∈ [-0.35, +0.35]
 
 **Final score (clamped):**
 ```
-FINAL = min(10, BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment)
+FINAL = min(10, BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + live_adjustment + totals_calibration_adj)
 ```
 
 **Ensemble adjustment:**
@@ -379,24 +379,34 @@ FINAL = min(10, BASE_4 + context_modifier + confluence_boost + msrf_boost + jaso
 | jason_sim_boost | `jason_sim_confluence.py` | `JASON_SIM_BOOST_CAP` | Can be negative (block rules) |
 | serp_boost | `alt_data_sources/serp_intelligence.py` | `SERP_BOOST_CAP_TOTAL` | Total SERP capped |
 | ensemble_adjustment | `utils/ensemble_adjustment.py` | `ENSEMBLE_ADJUSTMENT_STEP` | +0.5 / -0.5 step |
+| live_adjustment | `live_data_router.py` | ±0.50 | In-game adjustment to research_score |
+| totals_calibration_adj | `live_data_router.py` | ±0.75 | OVER penalty / UNDER boost from `TOTALS_SIDE_CALIBRATION` |
 
 ---
 
 ## Go/No-Go Checklist (Run Exactly)
 
-```
-python3 -m pytest -q
+```bash
+# Full go/no-go (all 12 checks + optional pytest must pass)
+API_KEY="YOUR_KEY" SKIP_NETWORK=0 SKIP_PYTEST=0 ALLOW_EMPTY=1 \
+  bash scripts/prod_go_nogo.sh
+
+# Or run individual checks:
 bash scripts/option_a_drift_scan.sh
 bash scripts/audit_drift_scan.sh
-bash scripts/docs_contract_scan.sh
 bash scripts/env_drift_scan.sh
+bash scripts/docs_contract_scan.sh
 ALLOW_EMPTY=1 bash scripts/learning_sanity_check.sh
 ALLOW_EMPTY=1 bash scripts/learning_loop_sanity.sh
 API_KEY=YOUR_KEY bash scripts/endpoint_matrix_sanity.sh
-API_KEY=YOUR_KEY bash scripts/live_sanity_check.sh
+API_KEY=YOUR_KEY bash scripts/prod_endpoint_matrix.sh
+API_KEY=YOUR_KEY python3 scripts/signal_coverage_report.py
 API_KEY=YOUR_KEY bash scripts/api_proof_check.sh
+API_KEY=YOUR_KEY bash scripts/live_sanity_check.sh
 API_KEY=YOUR_KEY bash scripts/perf_audit_best_bets.sh
 ```
+
+**IMPORTANT:** Always use `ALLOW_EMPTY=1` for local runs (dev doesn't have production prediction/weight files).
 
 ---
 
@@ -4027,7 +4037,7 @@ Scoring Integration:
 ### Go/No-Go Sanity Scripts (v20.4)
 | Script | Purpose | Key Checks |
 |--------|---------|------------|
-| `scripts/prod_go_nogo.sh` | Master orchestrator | Runs all 9 checks, fails fast |
+| `scripts/prod_go_nogo.sh` | Master orchestrator | Runs all 12 checks, fails fast |
 | `scripts/option_a_drift_scan.sh` | Scoring formula guard | No BASE_5, no context-as-engine |
 | `scripts/audit_drift_scan.sh` | Unauthorized boost guard | No literal +/-0.5 outside ensemble |
 | `scripts/endpoint_matrix_sanity.sh` | Endpoint contract | All sports, required fields, math check |
@@ -4053,11 +4063,13 @@ rg -v "live_data_router.py:476[012]"
 ```jq
 ($p.base_4_score + $p.context_modifier + $p.confluence_boost +
  $p.msrf_boost + $p.jason_sim_boost + $p.serp_boost +
- ($p.ensemble_adjustment // 0) + ($p.live_adjustment // 0)) as $raw |
+ ($p.ensemble_adjustment // 0) + ($p.live_adjustment // 0) +
+ ($p.totals_calibration_adj // 0)) as $raw |
 ($raw | if . > 10 then 10 else . end) as $capped |
 ($p.final_score - $capped) | abs
 # Must be < 0.02
 ```
+**Every field that adjusts final_score MUST appear in this formula.** If you add a new adjustment to the scoring pipeline, you MUST: (1) surface it as its own field in the pick payload, (2) add it to this formula with `// 0` null handling.
 
 ### Key Debugging Locations
 | Location | Line | Purpose |
@@ -5301,7 +5313,7 @@ API_KEY="KEY" SKIP_NETWORK=0 SKIP_PYTEST=1 bash scripts/prod_go_nogo.sh
 ```jq
 ($p.base_4_score + $p.context_modifier + $p.confluence_boost + $p.msrf_boost +
  $p.jason_sim_boost + $p.serp_boost + ($p.ensemble_adjustment // 0) +
- ($p.live_adjustment // 0)) as $raw |
+ ($p.live_adjustment // 0) + ($p.totals_calibration_adj // 0)) as $raw |
 ($raw | if . > 10 then 10 else . end) as $capped |
 ($p.final_score - $capped) | abs
 ```
@@ -5309,13 +5321,16 @@ API_KEY="KEY" SKIP_NETWORK=0 SKIP_PYTEST=1 bash scripts/prod_go_nogo.sh
 **Key Points:**
 - `ensemble_adjustment` is exposed at `live_data_router.py:4939,4952`
 - Default is `0.0` (line 4720), but can be `±0.5` based on ensemble model
+- `totals_calibration_adj` is ±0.75 from `TOTALS_SIDE_CALIBRATION` (v20.4) - surfaced in v20.5
 - `glitch_adjustment` is NOT added separately (already folded into `esoteric_score`)
 - The `// 0` jq syntax handles null values
+- **EVERY adjustment to final_score MUST be surfaced as a field** (Lesson 46)
 
 **Prevention:**
-- When adding new boosts to scoring, update BOTH:
-  1. `live_data_router.py` pick payload
-  2. `scripts/endpoint_matrix_sanity.sh` math formula
+- When adding new boosts/adjustments to scoring, update ALL THREE:
+  1. `live_data_router.py` pick payload (surface as a named field)
+  2. `scripts/endpoint_matrix_sanity.sh` math formula (add to jq sum)
+  3. `CLAUDE.md` Boost Inventory + canonical formula
 - Document formula in CLAUDE.md INVARIANT 4 (already done)
 
 **Verification:**
@@ -5331,13 +5346,16 @@ curl -s "/live/best-bets/NBA?debug=1&max_games=1" -H "X-API-Key: KEY" | \
     serp: .serp_boost,
     ensemble: .ensemble_adjustment,
     live: .live_adjustment,
+    totals_cal: .totals_calibration_adj,
     computed: (.base_4_score + .context_modifier + .confluence_boost +
                .msrf_boost + .jason_sim_boost + .serp_boost +
-               (.ensemble_adjustment // 0) + (.live_adjustment // 0)),
+               (.ensemble_adjustment // 0) + (.live_adjustment // 0) +
+               (.totals_calibration_adj // 0)),
     actual: .final_score,
     diff: ((.base_4_score + .context_modifier + .confluence_boost +
             .msrf_boost + .jason_sim_boost + .serp_boost +
-            (.ensemble_adjustment // 0) + (.live_adjustment // 0)) - .final_score) | fabs
+            (.ensemble_adjustment // 0) + (.live_adjustment // 0) +
+            (.totals_calibration_adj // 0)) - .final_score) | fabs
   }'
 # diff should be < 0.02
 ```
@@ -5651,6 +5669,57 @@ datetime.fromisoformat(p.timestamp) >= cutoff  # Same error
 - `live_data_router.py` lines 8933-8944 (performance endpoint)
 - `live_data_router.py` lines 9016-9058 (daily-report endpoint)
 - `live_data_router.py` lines 9210-9215 (queue endpoint)
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 46: Unsurfaced Scoring Adjustments Break Sanity Math (v20.5)
+**Problem:** `endpoint_matrix_sanity.sh` math check showed diff=0.748 because `totals_calibration_adj` (±0.75) was applied to `final_score` but NOT surfaced as a field in the pick payload.
+
+**Root Cause:** `TOTALS_SIDE_CALIBRATION` (v20.4) adjusted `final_score` directly via a local variable `totals_calibration_adj`, but this value was never included in the pick output dict. The sanity script recomputes `final_score` from surfaced fields, so the hidden adjustment caused a mismatch.
+
+**The Fix:**
+1. Added `"totals_calibration_adj": round(totals_calibration_adj, 3)` to pick output dict in `live_data_router.py`
+2. Updated jq formula in `endpoint_matrix_sanity.sh` to include `+ ($p.totals_calibration_adj // 0)`
+
+**Prevention:**
+- **INVARIANT:** Every adjustment to `final_score` MUST be surfaced as its own field in the pick payload
+- When adding a new scoring adjustment: (1) add to pick dict, (2) add to sanity formula, (3) add to CLAUDE.md Boost Inventory, (4) add to canonical formula
+- The endpoint matrix math check exists precisely to catch this class of bug
+
+**Files Modified:**
+- `live_data_router.py` (pick output dict)
+- `scripts/endpoint_matrix_sanity.sh` (jq formula)
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 47: Script-Only Env Vars Must Be in RUNTIME_ENV_VARS (v20.5)
+**Problem:** `env_drift_scan.sh` failed because `MAX_GAMES`, `MAX_PROPS`, and `RUNS` were used in scripts but not registered in `RUNTIME_ENV_VARS` in `integration_registry.py`.
+
+**Root Cause:** The env drift scan greps all `.sh` and `.py` files for `os.environ` / `${}` references, then checks them against the `RUNTIME_ENV_VARS` list. Script-only variables were not registered because they seemed "not important enough."
+
+**The Fix:** Added `MAX_GAMES`, `MAX_PROPS`, and `RUNS` to `RUNTIME_ENV_VARS` in `integration_registry.py` in alphabetical position.
+
+**Prevention:**
+- ANY env var referenced in ANY script or Python file must be in either `INTEGRATION_CONTRACTS` or `RUNTIME_ENV_VARS`
+- Run `bash scripts/env_drift_scan.sh` after adding new env vars to scripts
+- The scan is intentionally aggressive - false positives are better than missed drift
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 48: Python Heredoc `__file__` Path Resolution Bug (v20.5)
+**Problem:** `prod_endpoint_matrix.sh` failed with `FileNotFoundError: [Errno 2] No such file or directory: '../docs/ENDPOINT_MATRIX_REPORT.md'`
+
+**Root Cause:** The script uses `python3 - <<'PY'` (Python heredoc). Inside a heredoc, `__file__` resolves to `"<stdin>"`, so `os.path.dirname(__file__)` returns an empty string. The path `os.path.join("", "..", "docs", "ENDPOINT_MATRIX_REPORT.md")` resolved to `../docs/ENDPOINT_MATRIX_REPORT.md` which doesn't exist.
+
+**The Fix:** Changed to project-relative path: `os.path.join("docs", "ENDPOINT_MATRIX_REPORT.md")` - works because the shell script runs from the project root.
+
+**Prevention:**
+- NEVER use `__file__`, `__dir__`, or `os.path.dirname(__file__)` inside Python heredocs
+- In heredocs, use project-relative paths (scripts always run from project root)
+- Test heredoc scripts directly: `bash scripts/script_name.sh`
+
+**Files Modified:**
+- `scripts/prod_endpoint_matrix.sh` (line 86)
 
 **Fixed in:** v20.5 (Feb 4, 2026)
 
@@ -6130,7 +6199,7 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 127. **NEVER** add a new boost to the scoring formula without updating `endpoint_matrix_sanity.sh` math check
 128. **NEVER** assume `ensemble_adjustment` is 0 - it can be `null`, `0.0`, `+0.5`, or `-0.5`
 129. **NEVER** skip the go/no-go check after changes to scoring, boosts, or sanity scripts
-130. **NEVER** commit code that fails `prod_go_nogo.sh` - all 9 checks must pass
+130. **NEVER** commit code that fails `prod_go_nogo.sh` - all 12 checks must pass
 131. **NEVER** forget that `glitch_adjustment` is ALREADY in `esoteric_score` (not a separate additive)
 
 ## 🚫 NEVER DO THESE (v20.4 - Frontend/Backend Synchronization)
@@ -6185,6 +6254,14 @@ python3 -c "import os; print(os.environ.get('BASE_URL'))"  # https://example.com
 149. **NEVER** add new datetime handling code without testing timezone-aware vs naive comparison
 150. **NEVER** use `datetime.now()` in grader code - always use `now_et()` from `core.time_et`
 
+## 🚫 NEVER DO THESE (v20.5 - Go/No-Go & Scoring Adjustments)
+
+151. **NEVER** apply a scoring adjustment to `final_score` without surfacing it as its own field in the pick payload - unsurfaced adjustments break sanity math checks
+152. **NEVER** use `os.path.dirname(__file__)` inside Python heredocs (`python3 - <<'PY'`) - `__file__` resolves to `<stdin>` and `dirname()` returns empty string; use project-relative paths instead
+153. **NEVER** run `prod_go_nogo.sh` locally without `ALLOW_EMPTY=1` - local dev doesn't have production prediction/weight files
+154. **NEVER** add script-only env vars (like `MAX_GAMES`, `MAX_PROPS`, `RUNS`) without registering them in `RUNTIME_ENV_VARS` in `integration_registry.py`
+155. **NEVER** expect sanity scripts that test production API to pass pre-deploy when the change adds new fields - deploy first, then verify (chicken-and-egg pattern)
+
 **Datetime Comparison Quick Reference:**
 ```python
 # ❌ WRONG - Will crash if timestamp is timezone-aware
@@ -6222,40 +6299,51 @@ if day_start <= ts < day_end:  # Exclusive end
 Run this after ANY change to scoring, boosts, sanity scripts, or live_data_router.py:
 
 ```bash
-# Full go/no-go (MUST PASS all 9 checks)
-API_KEY="bookie-prod-2026-xK9mP2nQ7vR4" SKIP_NETWORK=0 SKIP_PYTEST=1 ALLOW_EMPTY=1 \
+# Full go/no-go (MUST PASS all 12 checks)
+API_KEY="YOUR_KEY" SKIP_NETWORK=0 SKIP_PYTEST=0 ALLOW_EMPTY=1 \
   bash scripts/prod_go_nogo.sh
 
 # Expected output: "Prod go/no-go: PASS"
 ```
 
-**The 10 Checks:**
-| Check | Script | What It Validates |
-|-------|--------|-------------------|
-| option_a_drift | `option_a_drift_scan.sh` | No BASE_5 or context-as-engine |
-| audit_drift | `audit_drift_scan.sh` | No unauthorized +/-0.5 to final_score |
-| docs_contract | `docs_contract_scan.sh` | Required fields documented |
-| endpoint_matrix | `endpoint_matrix_sanity.sh` | All 5 sports, required fields, math check |
-| env_drift | `env_drift_scan.sh` | Required env vars configured |
-| learning_loop | `learning_loop_sanity.sh` | Auto grader operational |
-| learning_sanity | `learning_sanity_check.sh` | Weights initialized |
-| live_sanity | `live_sanity_check.sh` | Best-bets returns valid data |
-| api_proof | `api_proof_check.sh` | Production API responding |
-| perf_audit | `perf_audit_best_bets.sh` | Response times within benchmarks |
+**IMPORTANT:** Always use `ALLOW_EMPTY=1` for local runs (dev doesn't have production prediction/weight files).
+
+**The 12 Checks (+ optional pytest):**
+| # | Check | Script | What It Validates |
+|---|-------|--------|-------------------|
+| 1 | option_a_drift | `option_a_drift_scan.sh` | No BASE_5 or context-as-engine |
+| 2 | audit_drift | `audit_drift_scan.sh` | No unauthorized +/-0.5 to final_score |
+| 3 | env_drift | `env_drift_scan.sh` | Required env vars configured |
+| 4 | docs_contract | `docs_contract_scan.sh` | Required fields documented |
+| 5 | learning_sanity | `learning_sanity_check.sh` | Weights initialized |
+| 6 | learning_loop | `learning_loop_sanity.sh` | Auto grader operational |
+| 7 | endpoint_matrix | `endpoint_matrix_sanity.sh` | All 5 sports, required fields, math check |
+| 8 | prod_endpoint_matrix | `prod_endpoint_matrix.sh` | Production /health, /debug, /grader, best-bets |
+| 9 | signal_coverage | `signal_coverage_report.py` | Signal coverage across sports |
+| 10 | api_proof | `api_proof_check.sh` | Production API responding |
+| 11 | live_sanity | `live_sanity_check.sh` | Best-bets returns valid data |
+| 12 | perf_audit | `perf_audit_best_bets.sh` | Response times within benchmarks |
+
+Checks 1-6 are offline (no network needed). Checks 7-12 require `SKIP_NETWORK=0` and a valid `API_KEY`.
 
 **If ANY check fails:**
 1. Read the artifact: `cat artifacts/{check_name}_YYYYMMDD_ET.json`
 2. Fix the issue
 3. Re-run go/no-go
-4. Do NOT deploy until all 10 pass
+4. Do NOT deploy until all 12 pass
 
 **Common Failures:**
 | Failure | Likely Cause | Fix |
 |---------|--------------|-----|
 | `audit_drift` | Line numbers shifted | Update filter in `audit_drift_scan.sh` |
-| `endpoint_matrix` | Math mismatch | Update formula in `endpoint_matrix_sanity.sh` |
+| `endpoint_matrix` | Math mismatch (unsurfaced adjustment) | Surface the field + update jq formula in `endpoint_matrix_sanity.sh` |
+| `env_drift` | New env var not registered | Add to `RUNTIME_ENV_VARS` in `integration_registry.py` |
 | `option_a_drift` | BASE_5 introduced | Remove context-as-engine code |
 | `learning_loop` | Weights missing | Check `_initialize_weights()` |
+| `prod_endpoint_matrix` | Path bug or production down | Check `scripts/prod_endpoint_matrix.sh` paths, verify Railway deploy |
+| `learning_sanity` | Missing ALLOW_EMPTY | Set `ALLOW_EMPTY=1` for local runs |
+
+**Chicken-and-Egg Pattern:** When a code change adds new fields, `endpoint_matrix` (tests production) will fail pre-deploy because production doesn't have the field yet. In this case: deploy the code change first, then re-run go/no-go to verify.
 
 **Artifacts Location:** `artifacts/{check_name}_YYYYMMDD_ET.json`
 

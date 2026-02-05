@@ -452,6 +452,8 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 | Any session spec changes | `scripts/ci_sanity_check.sh` + spot check scripts | CI must fail on regression |
 | Pick output fields/format | `utils/pick_normalizer.py` + `docs/PICK_CONTRACT_V1.md` | Maintain frontend contract |
 | **Boost output fields** | `SCORING_LOGIC.md` (Boost Field Contract) | All boosts need value + status + reasons |
+| **New scoring adjustment** | Pick payload field + `endpoint_matrix_sanity.sh` formula + `CLAUDE.md` Boost Inventory + canonical formula | Every adjustment to final_score must be surfaced as a field (Lesson 46) |
+| **New script env var** | `RUNTIME_ENV_VARS` in `integration_registry.py` | env_drift_scan catches unregistered vars (Lesson 47) |
 | Pillar additions (13-17) | `context_layer.py`, `live_data_router.py`, docs | All 17 pillars must be documented |
 | Officials data (Pillar 16) | `officials_data.py`, `context_layer.py`, `live_data_router.py` | Referee tendency database + adjustment logic (v17.8) |
 | **Phase 8 signals (v18.2)** | `esoteric_engine.py`, `live_data_router.py`, `CLAUDE.md` | Lunar/Mercury/Rivalry/Streak/Solar (17/17 signals) |
@@ -515,6 +517,8 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 - `BACKEND_OPTIMIZATION_CHECKLIST.md` — sessions checklist + commands
 - `docs/AUDIT_MAP.md` — integration/env var mapping table (canonical)
 - `docs/PICK_CONTRACT_V1.md` — pick output format specification (PickContract v1)
+- `scripts/prod_go_nogo.sh` — 12-check go/no-go gate (must pass before deploy)
+- `tasks/lessons.md` — incident log with root causes and prevention rules
 
 ---
 

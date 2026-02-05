@@ -96,6 +96,10 @@ Watch for these patterns that have caused production issues:
 - [ ] Missing keys in API response structures
 - [ ] Titanium logic duplicated instead of using `core/titanium.py`
 - [ ] Storage paths hardcoded instead of using env vars
+- [ ] Scoring adjustments applied to `final_score` but NOT surfaced as a pick field
+- [ ] Env vars used in scripts but missing from `RUNTIME_ENV_VARS` in `integration_registry.py`
+- [ ] `__file__` or `os.path.dirname(__file__)` used inside Python heredocs (`python3 - <<'PY'`)
+- [ ] Go/no-go run locally without `ALLOW_EMPTY=1`
 
 ---
 
@@ -416,5 +420,65 @@ Daily 6 AM audit → auto_grader.grade_prediction() → /data/grader_data/weight
 - NEVER assume a field contains what its name suggests - trace data flow
 - Always verify grading logic with actual data examples
 - When pick types behave unexpectedly, check what data is actually stored
+
+---
+
+### 12. Unsurfaced Scoring Adjustments Break Sanity Math (Feb 4, 2026)
+
+**What happened:**
+- `endpoint_matrix_sanity.sh` math check showed diff=0.748 (threshold 0.02)
+- `totals_calibration_adj` (±0.75 from v20.4) was applied to `final_score` but NOT surfaced as a pick payload field
+- The sanity script recomputes final_score from surfaced fields, so the hidden adjustment caused a mismatch
+
+**Impact:** Go/no-go gate blocked, math check appeared broken
+
+**Root cause:** When `TOTALS_SIDE_CALIBRATION` was added (v20.4), the adjustment was applied to `final_score` via a local variable but never added to the pick output dict. The sanity formula couldn't account for it.
+
+**Fix:**
+1. Added `"totals_calibration_adj": round(totals_calibration_adj, 3)` to pick output dict in `live_data_router.py`
+2. Updated jq formula in `endpoint_matrix_sanity.sh` to include `+ ($p.totals_calibration_adj // 0)`
+
+**Lesson:**
+- **INVARIANT:** Every adjustment to `final_score` MUST be surfaced as its own named field in pick payloads
+- When adding a new scoring adjustment, update: (1) pick dict, (2) sanity formula, (3) CLAUDE.md Boost Inventory, (4) canonical formula
+- The endpoint matrix math check exists to catch exactly this class of bug
+
+---
+
+### 13. Script-Only Env Vars Need RUNTIME_ENV_VARS Registration (Feb 4, 2026)
+
+**What happened:**
+- `env_drift_scan.sh` failed because `MAX_GAMES`, `MAX_PROPS`, and `RUNS` were used in scripts but not registered in `RUNTIME_ENV_VARS`
+- These variables seemed "unimportant" because they were only used by test/sanity scripts
+
+**Impact:** Go/no-go gate blocked on env_drift check
+
+**Root cause:** The env drift scan intentionally scans ALL `.sh` and `.py` files for env var references. Any env var used anywhere must be registered.
+
+**Fix:** Added all three to `RUNTIME_ENV_VARS` in `integration_registry.py` in alphabetical order.
+
+**Lesson:**
+- ANY env var referenced in ANY file must be in either `INTEGRATION_CONTRACTS` or `RUNTIME_ENV_VARS`
+- Run `bash scripts/env_drift_scan.sh` after adding env vars to scripts
+- The scan is intentionally aggressive - register everything
+
+---
+
+### 14. Python Heredoc `__file__` Path Resolution Bug (Feb 4, 2026)
+
+**What happened:**
+- `prod_endpoint_matrix.sh` failed with `FileNotFoundError: ../docs/ENDPOINT_MATRIX_REPORT.md`
+- The script used `os.path.dirname(__file__)` inside a `python3 - <<'PY'` heredoc
+
+**Impact:** Go/no-go gate blocked (prod_endpoint_matrix check failed)
+
+**Root cause:** Inside Python heredocs, `__file__` resolves to `"<stdin>"`, so `os.path.dirname(__file__)` returns empty string `""`. The constructed path `os.path.join("", "..", "docs", ...)` resolved incorrectly.
+
+**Fix:** Changed to project-relative path: `os.path.join("docs", "ENDPOINT_MATRIX_REPORT.md")` - works because shell scripts run from project root.
+
+**Lesson:**
+- NEVER use `__file__`, `os.path.dirname(__file__)`, or `Path(__file__)` inside Python heredocs
+- In heredocs, always use project-relative paths
+- Test heredoc scripts by running them directly: `bash scripts/script_name.sh`
 
 ---
