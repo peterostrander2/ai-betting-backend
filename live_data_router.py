@@ -9942,6 +9942,86 @@ async def get_logged_picks_today(sport: Optional[str] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/picks/graded")
+async def get_graded_picks(date: Optional[str] = None, sport: Optional[str] = None):
+    """
+    Get all picks with grading status for the Grading page.
+
+    Returns both pending and graded picks from grader_store.
+    Frontend uses the 'graded' boolean to split into tabs.
+
+    Query params:
+    - date: Date filter (YYYY-MM-DD), defaults to today ET
+    - sport: Sport filter (NBA, NFL, etc.), defaults to all
+    """
+    if not GRADER_STORE_AVAILABLE:
+        return {"picks": [], "error": "Grader store not available"}
+
+    try:
+        # Default to today in ET
+        if not date:
+            from core.time_et import now_et
+            date = now_et().strftime("%Y-%m-%d")
+
+        # Load all predictions with grade records merged
+        all_picks = grader_store.load_predictions(date_et=date)
+
+        # Optional sport filter
+        if sport:
+            all_picks = [p for p in all_picks if p.get("sport", "").upper() == sport.upper()]
+
+        # Map to frontend format expected by Grading.jsx
+        picks_out = []
+        for p in all_picks:
+            is_graded = p.get("grade_status") == "GRADED"
+            side = p.get("side", "")
+            recommendation = side if side else ""
+            # Build recommendation string (OVER/UNDER for props)
+            if not recommendation and p.get("market", ""):
+                market = p.get("market", "").upper()
+                if "OVER" in market:
+                    recommendation = "OVER"
+                elif "UNDER" in market:
+                    recommendation = "UNDER"
+
+            picks_out.append({
+                "id": p.get("pick_id"),
+                "pick_id": p.get("pick_id"),
+                "player": p.get("player_name") or p.get("side") or "Game",
+                "team": p.get("home_team") or p.get("team", ""),
+                "opponent": p.get("away_team") or "",
+                "matchup": p.get("matchup", ""),
+                "sport": p.get("sport", ""),
+                "stat": p.get("stat_type") or p.get("market", ""),
+                "line": p.get("line"),
+                "projection": p.get("projection") or p.get("line"),
+                "edge": p.get("edge") or 0,
+                "recommendation": recommendation,
+                "final_score": p.get("final_score"),
+                "tier": p.get("tier", "STANDARD"),
+                "units": p.get("units", 1.0),
+                "graded": is_graded,
+                "result": p.get("result") if is_graded else None,
+                "actual": p.get("actual_value") if is_graded else None,
+                "graded_at": p.get("graded_at") if is_graded else None,
+                "date_et": p.get("date_et"),
+                "pick_type": p.get("pick_type", ""),
+            })
+
+        return {
+            "picks": picks_out,
+            "date": date,
+            "total": len(picks_out),
+            "graded_count": sum(1 for p in picks_out if p["graded"]),
+            "pending_count": sum(1 for p in picks_out if not p["graded"]),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.exception("Failed to get graded picks: %s", e)
+        return {"picks": [], "error": str(e)}
+
+
 @router.post("/picks/grade")
 async def grade_published_pick(grade_data: Dict[str, Any]):
     """
