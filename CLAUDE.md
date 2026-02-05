@@ -3173,6 +3173,7 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
 ```python
 SERP_SHADOW_MODE = False      # LIVE MODE by default (boosts applied)
 SERP_INTEL_ENABLED = True     # Feature flag
+SERP_PROPS_ENABLED = False    # v20.9: Props SERP disabled (saves ~60% daily quota)
 SERP_DAILY_QUOTA = 166        # 5000/30 days
 SERP_MONTHLY_QUOTA = 5000     # Monthly API calls
 SERP_TIMEOUT = 2.0            # Strict 2s timeout
@@ -6073,6 +6074,43 @@ done
 
 **Fixed in:** v20.8 (Feb 5, 2026)
 
+### Lesson 32: SERP Props Quota Optimization (v20.9)
+**Problem:** SERP daily quota (166/day) exhausted by a single best-bets request (~291 calls). Props alone consume ~220 calls (60% of budget) with near-zero cache hit rate because each player query is unique. When quota exhausts, SERP pre-fetch for game picks is disabled, causing game scoring to revert to sequential SERP (51s of 55s budget), and props time out entirely.
+
+**Production Data (Feb 5, 2026):**
+- NBA: 3/55 props analyzed (TIMED_OUT)
+- NHL: 0/59 props analyzed (TIMED_OUT)
+- SERP: daily_used=176, daily_limit=166, daily_remaining=-10
+- Pre-fetch skipped (quota exhausted)
+
+**Root Cause:** Per-prop SERP calls are unique per player (cache miss rate ~100%), while game SERP queries repeat across picks for the same game (high cache hit rate). Props get moderate boost impact (research cap 0.5, esoteric cap 0.6) vs game signals (sharp chatter 1.3, narrative 0.7).
+
+**Solution (v20.9):**
+1. Added `SERP_PROPS_ENABLED` env var in `core/serp_guardrails.py` (default: `False`)
+2. When disabled, props skip SERP entirely with `serp_status = "SKIPPED_PROPS"`
+3. Props still benefit from LSTM, context layer, GLITCH, Phase 8, and all other signals
+4. Game SERP signals remain active (high cache hit rate, higher impact)
+5. Re-enable with `SERP_PROPS_ENABLED=true` without code changes
+
+**Expected Impact:**
+| Metric | Before | After |
+|--------|--------|-------|
+| SERP daily calls | ~291 (exceeds 166 quota) | ~72 (within quota) |
+| Props completed | 3/55 NBA, 0/59 NHL | Full completion within budget |
+| Game pre-fetch | Disabled (quota exhausted) | Active (quota available) |
+
+**Prevention:**
+- Monitor SERP quota via `debug.serp.status.quota.daily_remaining`
+- Check `get_serp_status()["props_enabled"]` in debug output
+- If re-enabling props SERP, ensure daily quota is increased first
+
+**Files Modified:**
+- `core/serp_guardrails.py` - Added `SERP_PROPS_ENABLED` config + status reporting
+- `live_data_router.py` - Skip SERP for props when disabled
+- `integration_registry.py` - Documented `SERP_PROPS_ENABLED` in serpapi notes
+
+**Fixed in:** v20.9 (Feb 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -6472,6 +6510,7 @@ curl /live/best-bets/NBA -H "X-API-Key: KEY" | \
 54. **NEVER** forget to increment quota after successful API calls - use `increment_quota()` in serpapi.py
 55. **NEVER** hardcode sport-specific search queries inline - use `SPORT_QUERIES` template dict in serp_intelligence.py
 56. **NEVER** modify signal→engine mapping without updating INVARIANT 23 in CLAUDE.md
+57. **NEVER** re-enable SERP for props (`SERP_PROPS_ENABLED=true`) without first increasing `SERP_DAILY_QUOTA` — props consume ~220 calls/day with near-zero cache hit rate
 
 ## 🚫 NEVER DO THESE (Esoteric/Phase 1 Signals)
 

@@ -334,11 +334,13 @@ try:
         is_serp_available,
         get_serp_status,
         SERP_SHADOW_MODE,
+        SERP_PROPS_ENABLED,
     )
     SERP_INTEL_AVAILABLE = True
 except ImportError:
     SERP_INTEL_AVAILABLE = False
     SERP_SHADOW_MODE = True  # Default to shadow mode if module not available
+    SERP_PROPS_ENABLED = False
     print("[WARNING] serp_intelligence module not available - SERP signals disabled")
 
 # Import Gematria Twitter Intelligence for community consensus signals (v17.9)
@@ -4417,8 +4419,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         if SERP_INTEL_AVAILABLE and is_serp_available():
             try:
                 _serp_start = time.time()
-                if player_name:
-                    # Prop bets - use prop intelligence (not pre-fetched)
+                if player_name and not SERP_PROPS_ENABLED:
+                    # v20.9: Skip SERP for props — saves ~60% of daily quota
+                    # Props rely on LSTM, context layer, GLITCH, Phase 8 signals instead
+                    # Per-player SERP queries are unique (near-zero cache hit rate)
+                    # Re-enable with SERP_PROPS_ENABLED=true env var
+                    serp_status = "SKIPPED_PROPS"
+                    serp_reasons.append("SERP: Skipped for props (quota optimization)")
+                elif player_name:
+                    # Prop bets - use prop intelligence (SERP_PROPS_ENABLED=true)
                     serp_intel = get_serp_prop_intelligence(
                         sport=sport_upper,
                         player_name=player_name,

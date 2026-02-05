@@ -295,7 +295,10 @@ register_integration(
     endpoints=["/live/esoteric-edge", "/live/best-bets/{sport}"],
     jobs=[],
     validate_fn="validate_serpapi",
-    notes="News/trending analysis. Fail soft on endpoints, loud on health check."
+    notes="News/trending analysis. Fail soft on endpoints, loud on health check. "
+          "v20.9: SERP_PROPS_ENABLED=false (default) skips SERP for props to save quota. "
+          "Runtime config: SERP_SHADOW_MODE, SERP_INTEL_ENABLED, SERP_PROPS_ENABLED, "
+          "SERP_DAILY_QUOTA, SERP_MONTHLY_QUOTA, SERP_TIMEOUT, SERP_CACHE_TTL."
 )
 
 register_integration(
