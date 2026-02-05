@@ -66,10 +66,12 @@ def compute_final_score_option_a(
     jason_sim_boost: float,
     serp_boost: float,
     cap: Optional[float] = None,
+    ensemble_adjustment: float = 0.0,
+    totals_calibration_adj: float = 0.0,
 ) -> Tuple[float, float]:
     """
     Option A final score formula:
-    FINAL = BASE_4 + CONTEXT_MOD + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+    FINAL = BASE_4 + CONTEXT_MOD + capped(confluence + msrf + jason_sim + serp + ensemble + totals_cal)
     """
     context_modifier = clamp_context_modifier(context_modifier, cap=cap)
     try:
@@ -79,8 +81,8 @@ def compute_final_score_option_a(
         jason_sim_boost = max(-JASON_SIM_BOOST_CAP, min(JASON_SIM_BOOST_CAP, jason_sim_boost))
     except Exception:
         pass
-    # Cap total boosts (confluence + msrf + jason_sim + serp) to prevent score inflation
-    total_boosts = confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+    # Cap total boosts (confluence + msrf + jason_sim + serp + ensemble + totals_cal) to prevent score inflation
+    total_boosts = confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + totals_calibration_adj
     try:
         from core.scoring_contract import TOTAL_BOOST_CAP
         if total_boosts > TOTAL_BOOST_CAP:

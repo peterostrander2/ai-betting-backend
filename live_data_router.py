@@ -4661,20 +4661,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "base_score": base_score
             }
 
-        # FINAL = BASE_4 + CONTEXT_MOD + CONFLUENCE + MSRF + JASON + SERP
+        # FINAL = BASE_4 + CONTEXT_MOD + CONFLUENCE + MSRF + JASON + SERP + ENSEMBLE + TOTALS_CAL
         jason_sim_boost = jason_output.get("jason_sim_boost", 0.0)
-        final_score, context_modifier = compute_final_score_option_a(
-            base_score=base_score,
-            context_modifier=context_modifier,
-            confluence_boost=confluence_boost,
-            msrf_boost=msrf_boost,
-            jason_sim_boost=jason_sim_boost,
-            serp_boost=serp_boost_total,
-        )
 
-        # ===== v20.4 TOTALS SIDE CALIBRATION =====
-        # Apply learned bias correction for OVER/UNDER picks
-        # Based on data: OVER 19.1% vs UNDER 81.6% hit rate
+        # ===== v20.4 TOTALS SIDE CALIBRATION (computed before final score) =====
+        # Applied INSIDE TOTAL_BOOST_CAP to prevent score clustering at 10.0
         totals_calibration_adj = 0.0
         if pick_type == "TOTAL" and TOTALS_SIDE_CALIBRATION.get("enabled", False):
             pick_side_lower = (pick_side or "").lower()
@@ -4685,9 +4676,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 totals_calibration_adj = TOTALS_SIDE_CALIBRATION.get("under_boost", 0.0)
                 context_reasons.append(f"TOTALS_CALIBRATION: UNDER boost ({totals_calibration_adj:+.2f})")
             if totals_calibration_adj != 0.0:
-                final_score = max(0.0, min(10.0, final_score + totals_calibration_adj))
-                logger.debug("TOTALS_CALIBRATION[%s]: side=%s, adj=%.2f, new_score=%.2f",
-                           game_str[:30], pick_side, totals_calibration_adj, final_score)
+                logger.debug("TOTALS_CALIBRATION[%s]: side=%s, adj=%.2f",
+                           game_str[:30], pick_side, totals_calibration_adj)
+
+        final_score, context_modifier = compute_final_score_option_a(
+            base_score=base_score,
+            context_modifier=context_modifier,
+            confluence_boost=confluence_boost,
+            msrf_boost=msrf_boost,
+            jason_sim_boost=jason_sim_boost,
+            serp_boost=serp_boost_total,
+            totals_calibration_adj=totals_calibration_adj,
+        )
 
         # ===== v17.8 PILLAR 16: OFFICIALS TENDENCY INTEGRATION =====
         # Referee/Umpire tendencies impact totals, spreads, and props
@@ -4858,23 +4858,26 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     ensemble_confidence = ensemble_metadata.get("confidence", 0)
                     ai_reasons.append(f"Ensemble hit prob: {hit_prob:.1%} (conf: {ensemble_confidence:.0f}%)")
 
-                    # Adjust final score based on ensemble prediction
-                    try:
-                        from utils.ensemble_adjustment import apply_ensemble_adjustment
-                        _pre_ensemble = final_score
-                        final_score, ensemble_reasons = apply_ensemble_adjustment(final_score, hit_prob)
-                        ensemble_adjustment = round(final_score - _pre_ensemble, 3)
-                        ai_reasons.extend(ensemble_reasons)
-                    except Exception:
-                        # Fallback to inline adjustments if helper unavailable
-                        if hit_prob > 0.6:
-                            final_score = min(10.0, final_score + ENSEMBLE_ADJUSTMENT_STEP)
-                            ensemble_adjustment = ENSEMBLE_ADJUSTMENT_STEP
-                            ai_reasons.append("Ensemble boost: +0.5 (prob > 60%)")
-                        elif hit_prob < 0.4:
-                            final_score = max(0.0, final_score - ENSEMBLE_ADJUSTMENT_STEP)
-                            ensemble_adjustment = -ENSEMBLE_ADJUSTMENT_STEP
-                            ai_reasons.append("Ensemble penalty: -0.5 (prob < 40%)")
+                    # Determine ensemble adjustment value (applied INSIDE TOTAL_BOOST_CAP)
+                    if hit_prob > 0.6:
+                        ensemble_adjustment = ENSEMBLE_ADJUSTMENT_STEP
+                        ai_reasons.append(f"Ensemble boost: +{ENSEMBLE_ADJUSTMENT_STEP} (prob > 60%)")
+                    elif hit_prob < 0.4:
+                        ensemble_adjustment = -ENSEMBLE_ADJUSTMENT_STEP
+                        ai_reasons.append(f"Ensemble penalty: -{ENSEMBLE_ADJUSTMENT_STEP} (prob < 40%)")
+
+                    # Recompute final_score with ensemble_adjustment inside the cap
+                    if ensemble_adjustment != 0.0:
+                        final_score, context_modifier = compute_final_score_option_a(
+                            base_score=base_score,
+                            context_modifier=context_modifier,
+                            confluence_boost=confluence_boost,
+                            msrf_boost=msrf_boost,
+                            jason_sim_boost=jason_sim_boost,
+                            serp_boost=serp_boost_total,
+                            totals_calibration_adj=totals_calibration_adj,
+                            ensemble_adjustment=ensemble_adjustment,
+                        )
             except Exception as e:
                 logger.debug(f"Ensemble prediction unavailable: {e}")
 

@@ -53,6 +53,8 @@ def make_unique_key(pick) -> str:
     # Use absolute value of line for spreads so +1.5 and -1.5 create same key
     if market in ["SPREAD", "SPREADS"] and line != 0:
         line_str = f"{abs(line):.1f}"
+    elif market in ["TOTAL", "TOTALS"]:
+        line_str = "ANY"  # Group all totals on same game together
     else:
         line_str = f"{line:.1f}" if line else "0.0"
 
