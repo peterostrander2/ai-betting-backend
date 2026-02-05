@@ -92,7 +92,7 @@ PY
     local diff
     diff=$(jq -r '
       .game_picks.picks[0] as $p |
-      ($p.base_4_score + $p.context_modifier + $p.confluence_boost + $p.msrf_boost + $p.jason_sim_boost + $p.serp_boost + ($p.ensemble_adjustment // 0) + ($p.live_adjustment // 0)) as $raw |
+      ($p.base_4_score + $p.context_modifier + $p.confluence_boost + $p.msrf_boost + $p.jason_sim_boost + $p.serp_boost + ($p.ensemble_adjustment // 0) + ($p.live_adjustment // 0) + ($p.totals_calibration_adj // 0)) as $raw |
       ($raw | if . > 10 then 10 else . end) as $capped |
       ($p.final_score - $capped) | abs
     ' "$resp_file" 2>/dev/null || echo 0)

@@ -5037,6 +5037,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "live_reasons": live_reasons,
             "base_4_score": round(base_score, 2),
             "ensemble_adjustment": round(ensemble_adjustment, 3),
+            "totals_calibration_adj": round(totals_calibration_adj, 3),
             # Detailed breakdowns
             "scoring_breakdown": {
                 "research_score": round(research_score, 2),
