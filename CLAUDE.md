@@ -53,7 +53,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 12 | Logging Visibility | Keep INFO telemetry for debugging |
 | 13 | PickContract v1 | Frontend-proof picks with all required fields |
 | 14 | ML Model Activation | LSTM + Ensemble models active |
-| 15 | GLITCH Protocol | 6 signals: void_moon, mercury_retro, eclipse, kp_index, schumann, solar_wind |
+| 15 | GLITCH Protocol | 6 signals: chrome_resonance, void_moon, noosphere, hurst, kp_index, benford |
 | 16 | 17-Pillar Scoring | All 17 pillars active (see detailed list) |
 | 17 | Harmonic Convergence | +1.5 boost when Research AND Esoteric ≥7.5 |
 | 18 | Secret Redaction | API keys never in logs |
@@ -66,7 +66,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 3.5 |
 
-### Lessons Learned (53 Total) - Key Categories
+### Lessons Learned (54 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -85,7 +85,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 
-### NEVER DO Sections (20 Categories)
+### NEVER DO Sections (24 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -98,12 +98,15 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v17.6 Vortex & Benford (rules 81-90)
 - v19.0 Trap Learning (rules 91-100)
 - v18.2 Phase 8 Esoteric (rules 101-110)
+- Boost Field Contract (rules 105-107)
+- v20.2 Auto Grader Weights (rules 108-117)
 - v20.x Two Storage Systems (rules 111-117)
 - v20.3 Grading Pipeline (rules 118-124)
 - v20.4 Go/No-Go Scripts (rules 125-131)
 - v20.4 Frontend/Backend Sync (rules 132-137)
 - Shell/Python Subprocesses (rules 138-141)
-- v20.5 Datetime/Timezone (rules 142-155)
+- v20.5 Datetime/Timezone (rules 142-150)
+- v20.5 Go/No-Go & Scoring Adjustments (rules 151-155)
 - v20.6 Boost Caps & Production (rules 156-163)
 - v20.7 Parallel Pre-Fetch & Performance (rules 164-172)
 - v20.8 Props Indentation & Code Placement (rules 173-177)
