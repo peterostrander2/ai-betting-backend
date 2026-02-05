@@ -83,6 +83,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 46-48 | **v20.5 Scoring/Scripts** | Unsurfaced adjustments, env var registry, heredoc __file__ |
 | 49-52 | **v20.6 Production Fixes** | Props timeout, empty descriptions, score inflation (total boost cap), Jarvis baseline |
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
+| 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 
 ### NEVER DO Sections (20 Categories)
 - ML & GLITCH (rules 1-10)
@@ -105,6 +106,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.5 Datetime/Timezone (rules 142-155)
 - v20.6 Boost Caps & Production (rules 156-163)
 - v20.7 Parallel Pre-Fetch & Performance (rules 164-172)
+- v20.8 Props Indentation & Code Placement (rules 173-177)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -134,8 +136,13 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | `utils/contradiction_gate.py` | Prevents opposite side picks |
 | `integration_registry.py` | Env var registry, integration config |
 
-### Current Version: v20.7 (Feb 5, 2026)
-**Latest Fix (v20.7):**
+### Current Version: v20.8 (Feb 5, 2026)
+**Latest Fix (v20.8):**
+- Lesson 54: CRITICAL — Props indentation bug made `props_picks.append()` unreachable dead code; ALL sports returned 0 props
+- Root cause: `if _props_deadline_hit: break` placed BETWEEN `calculate_pick_score()` and prop processing code
+- Fix: Moved deadline check AFTER `props_picks.append()` so each prop is fully processed before checking the deadline
+
+**Previous Fix (v20.7):**
 - Lesson 53: SERP sequential bottleneck — parallel pre-fetch reduces ~17s to ~2-3s, fixes props returning 0 picks
 - Performance: `serp_prefetch` timing now in debug telemetry (`debug.serp.prefetch_cached`)
 
@@ -5974,6 +5981,89 @@ else:
 
 **Fixed in:** v20.7 (Feb 5, 2026)
 
+### Lesson 54: Props Indentation Bug — Dead Code from Misplaced Break (v20.8)
+**Problem:** ALL sports (NBA, NHL, NFL, MLB, NCAAB) returned 0 props despite game picks working correctly. Props were scored but never collected into the output.
+
+**Root Cause:** `if _props_deadline_hit: break` was positioned at game-loop indentation level (12 spaces) BETWEEN `calculate_pick_score()` and all prop processing code (16 spaces). Due to Python's indentation-sensitive scoping:
+
+```python
+# BUG — Lines 6499-6506 (before fix):
+                    game_status=_prop_game_status
+                )
+            if _props_deadline_hit:       # ← 12-space indent (game loop level)
+                break
+
+                # Lineup confirmation guard (props only)   # ← 16-space indent
+                lineup_guard = _lineup_risk_guard(...)      #    INSIDE the if block
+                ...
+                props_picks.append({...})                   #    ALSO INSIDE — UNREACHABLE
+```
+
+**How Python interpreted this:**
+- When `_props_deadline_hit = True`: `break` executes, everything after is unreachable
+- When `_props_deadline_hit = False`: the entire `if` block is skipped — BUT all code at 16-space indent was INSIDE the `if` block, so it was ALSO skipped
+- Result: `props_picks.append(...)` at line 6596 NEVER executes regardless of the flag's value
+
+**The Fix:**
+1. Removed `if _props_deadline_hit: break` from between `calculate_pick_score()` and prop processing (line 6502)
+2. Added `if _props_deadline_hit: break` AFTER `props_picks.append({...})` completes (line 6662)
+
+```python
+# FIXED — Each prop is fully processed before deadline check:
+                    game_status=_prop_game_status
+                )
+
+                # Lineup confirmation guard (props only)
+                lineup_guard = _lineup_risk_guard(...)
+                ...
+                props_picks.append({...})
+            if _props_deadline_hit:
+                break
+```
+
+**Why This Was Hard to Find:**
+- No errors, no crashes, no stack traces — the code simply never reached `append()`
+- Props status showed "OK" (scoring succeeded), but count was always 0
+- The bug was invisible in normal test output because Python's indentation scoping made the dead code syntactically valid
+- A 4-character indentation difference (12 vs 16 spaces) determined whether 160+ lines of code executed
+
+**Prevention:**
+1. **NEVER place control flow (`if/break/continue/return`) between a function call and the code that uses its result** — especially in deeply nested loops
+2. **When moving `break` statements, verify the indentation level matches the loop you intend to break from** — Python treats indentation as scope
+3. **After any edit near loop control flow, read the surrounding 50+ lines** to verify the intended scope isn't broken
+4. **If props return 0 picks but game picks work**, the first thing to check is the prop scoring loop's control flow — not timeouts, not data sources
+5. **Add integration tests that verify `props.count > 0`** when test data is available — a structural invariant test would have caught this immediately
+
+**Files Modified:**
+- `live_data_router.py` — 2 edits: remove misplaced break (line 6502), add break after append (line 6662)
+
+**Verification:**
+```bash
+# 1. Syntax check
+python3 -m py_compile live_data_router.py
+
+# 2. Scoring guard tests
+python3 -m pytest tests/test_option_a_scoring_guard.py -q
+
+# 3. Option A drift scan
+bash scripts/option_a_drift_scan.sh
+
+# 4. Verify props return picks in production
+curl /live/best-bets/NBA -H "X-API-Key: KEY" | jq '.props.count'
+# Should be > 0 when today's games exist
+
+# 5. Check all sports
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  curl -s "/live/best-bets/$sport" -H "X-API-Key: KEY" | \
+    jq '{sport: .sport, props: .props.count, games: .game_picks.count}'
+done
+```
+
+**Impact:** This was the root cause of the "props not pulling across sports" issue. Every sport (NBA, NHL, NFL, MLB, NCAAB) was affected since the bug was in the shared props scoring loop in `_best_bets_inner()`.
+
+**Fixed in:** v20.8 (Feb 5, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -6601,6 +6691,32 @@ with ThreadPoolExecutor(max_workers=16) as pool:
     cache = dict(pool.map(fetch_one, unique_inputs))
 for pick in candidates:
     result = cache.get(pick.key) or external_api_call(pick.team)  # Cache hit: ~0ms
+```
+
+## 🚫 NEVER DO THESE (v20.8 - Props Indentation & Code Placement)
+
+173. **NEVER** place `if/break/continue/return` between a function call and the code that processes its result — in Python, indentation determines scope, and a misplaced break can make 160+ lines of code unreachable
+174. **NEVER** insert loop control flow (`break`, `continue`) without verifying the indentation level matches the intended loop — a 4-space difference can silently change which loop you're breaking from
+175. **NEVER** assume "0 props returned" is a timeout or data issue without checking the props scoring loop's control flow first — structural dead code is invisible (no errors, no crashes, no stack traces)
+176. **NEVER** edit code near deeply nested loops without reading the surrounding 50+ lines to verify scope isn't broken — Python's indentation scoping means a single edit can silently disable entire code blocks
+177. **NEVER** leave `props_picks.append()` unreachable after refactoring the props scoring loop — always verify the append executes by checking `props.count > 0` in production output
+
+**Indentation Bug Quick Reference:**
+```python
+# ❌ CATASTROPHIC — break between calculate_pick_score() and processing code
+                score = calculate_pick_score(...)
+            if deadline:       # ← Wrong indent level (game loop, not prop loop)
+                break          # Skips ALL processing below
+                # Everything at 16-space indent is INSIDE the if block → DEAD CODE
+                process_result(score)
+                picks.append(result)  # NEVER EXECUTES
+
+# ✅ CORRECT — break AFTER processing is complete
+                score = calculate_pick_score(...)
+                process_result(score)
+                picks.append(result)  # Always executes
+            if deadline:       # Check AFTER append
+                break
 ```
 
 ---
