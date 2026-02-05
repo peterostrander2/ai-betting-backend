@@ -60,6 +60,9 @@ CONFLUENCE_BOOST_CAP = max(CONFLUENCE_LEVELS.values())
 MSRF_BOOST_CAP = 1.0  # MSRF boosts are 0.0, 0.25, 0.5, 1.0
 SERP_BOOST_CAP_TOTAL = 4.3  # Must match core/serp_guardrails.py SERP_TOTAL_CAP
 JASON_SIM_BOOST_CAP = 1.5  # Max absolute Jason boost/downgrade
+# Total boost cap (sum of confluence + msrf + jason_sim + serp, excluding context modifier)
+# Prevents score inflation from stacking multiple boosts on a mediocre base score.
+TOTAL_BOOST_CAP = 3.5
 # Ensemble adjustment step (post-base)
 ENSEMBLE_ADJUSTMENT_STEP = 0.5
 
@@ -97,5 +100,6 @@ SCORING_CONTRACT = {
         "msrf_boost_cap": MSRF_BOOST_CAP,
         "serp_boost_cap_total": SERP_BOOST_CAP_TOTAL,
         "jason_sim_boost_cap": JASON_SIM_BOOST_CAP,
+        "total_boost_cap": TOTAL_BOOST_CAP,
     },
 }

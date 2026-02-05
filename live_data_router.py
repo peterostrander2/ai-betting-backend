@@ -2738,7 +2738,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             pass
 
     # --- v16.0 PERFORMANCE: Time budget + per-stage timings ---
-    TIME_BUDGET_S = 40.0  # Increased to allow both games AND props scoring to complete
+    TIME_BUDGET_S = float(os.getenv("BEST_BETS_TIME_BUDGET_S", "55"))  # Configurable; increased default to allow both games AND props scoring to complete
     _t0 = time.time()
     _deadline = _t0 + TIME_BUDGET_S
     _timings = {}  # stage_name → elapsed_seconds

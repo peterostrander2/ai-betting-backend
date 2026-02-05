@@ -79,7 +79,15 @@ def compute_final_score_option_a(
         jason_sim_boost = max(-JASON_SIM_BOOST_CAP, min(JASON_SIM_BOOST_CAP, jason_sim_boost))
     except Exception:
         pass
-    final_score = base_score + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+    # Cap total boosts (confluence + msrf + jason_sim + serp) to prevent score inflation
+    total_boosts = confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+    try:
+        from core.scoring_contract import TOTAL_BOOST_CAP
+        if total_boosts > TOTAL_BOOST_CAP:
+            total_boosts = TOTAL_BOOST_CAP
+    except Exception:
+        pass
+    final_score = base_score + context_modifier + total_boosts
     # Clamp final score to [0, 10]
     final_score = max(0.0, min(10.0, final_score))
     return final_score, context_modifier

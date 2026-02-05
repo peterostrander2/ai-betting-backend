@@ -173,11 +173,11 @@ def test_context_modifier_clamped() -> None:
 
 
 def test_compute_final_score_caps_serp_and_clamps_final() -> None:
-    """SERP boost must be capped and final_score clamped to [0, 10]."""
+    """SERP boost must be capped, total boosts capped, and final_score clamped to [0, 10]."""
     from core.scoring_pipeline import compute_final_score_option_a
-    from core.scoring_contract import SERP_BOOST_CAP_TOTAL
+    from core.scoring_contract import SERP_BOOST_CAP_TOTAL, TOTAL_BOOST_CAP
 
-    # SERP cap
+    # SERP individually capped to 4.3, but total boosts also capped to TOTAL_BOOST_CAP
     final_score, _ = compute_final_score_option_a(
         base_score=1.0,
         context_modifier=0.0,
@@ -186,9 +186,20 @@ def test_compute_final_score_caps_serp_and_clamps_final() -> None:
         jason_sim_boost=0.0,
         serp_boost=10.0,
     )
-    assert final_score == 1.0 + SERP_BOOST_CAP_TOTAL
+    assert final_score == 1.0 + TOTAL_BOOST_CAP  # Total boost cap applies
 
-    # Final clamp
+    # SERP within total boost cap (no stacking, stays under cap)
+    final_score, _ = compute_final_score_option_a(
+        base_score=5.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=2.0,
+    )
+    assert final_score == 7.0  # 2.0 < TOTAL_BOOST_CAP, no cap applied
+
+    # Final clamp (stacked boosts hit total cap, then clamped to 10)
     final_score, _ = compute_final_score_option_a(
         base_score=9.9,
         context_modifier=0.35,

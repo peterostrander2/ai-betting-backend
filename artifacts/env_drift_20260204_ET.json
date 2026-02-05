@@ -2,5 +2,5 @@
   "name": "env_drift",
   "date_et": "20260204",
   "status": "PASS",
-  "output": "Env usage count: 70\nDocs/registry env count: 82\nEnv drift scan: PASS\n"
+  "output": "Env usage count: 74\nDocs/registry env count: 86\nEnv drift scan: PASS\n"
 }
