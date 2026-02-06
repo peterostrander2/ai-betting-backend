@@ -67,7 +67,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 (v20.11) |
 | 27 | Concentration Limits | max_per_matchup=2, max_props_per_player=1, max_per_sport=8 (v20.12) |
 
-### Lessons Learned (67 Total) - Key Categories
+### Lessons Learned (69 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -98,6 +98,8 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 65 | **v20.12 Market Status Detection** | If odds=None AND book=falsy, market is suspended — add market_status field to live picks |
 | 66 | **v20.12 Training Drop Telemetry** | last_drop_stats tracks why picks are dropped (unsupported_sport, duplicate_id, etc.) |
 | 67 | **v20.12 Weight Version Hash** | weights_version_hash (SHA256[:12]) in /grader/status for learning loop debugging |
+| 68 | **v20.12 PERSIST_TIERS** | Only EDGE_LEAN, GOLD_STAR, TITANIUM_SMASH saved to learning loop — MONITOR/PASS add noise |
+| 69 | **v20.11 Sport-Specific Totals** | NHL totals blocked (-4.0 penalty) due to 26% win rate; NCAAB penalized (-0.75) |
 
 ### NEVER DO Sections (29 Categories)
 - ML & GLITCH (rules 1-10)
@@ -191,7 +193,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 **Previous Fixes (v20.6):**
 - Lesson 49: Props timeout — TIME_BUDGET_S configurable, increased 40→55s default
 - Lesson 50: Empty description fields — auto-generated in `normalize_pick()`
-- Lesson 51: Score inflation — TOTAL_BOOST_CAP = 2.0 prevents boost stacking to 10.0 (v20.10 recalibrated from 3.5)
+- Lesson 51: Score inflation — TOTAL_BOOST_CAP = 1.5 prevents boost stacking to 10.0 (v20.10: 3.5→2.0, v20.11: 2.0→1.5)
 - Lesson 52: Jarvis baseline misconception — 4.5 baseline is by design (sacred triggers are rare)
 - Invariant 26: Total Boost Cap enforcement in `compute_final_score_option_a()`
 
@@ -439,7 +441,7 @@ context_modifier ∈ [-0.35, +0.35]
 total_boosts = min(TOTAL_BOOST_CAP, confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + totals_calibration_adj)
 FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + live_adjustment)
 ```
-**TOTAL_BOOST_CAP = 2.0** — prevents score inflation from stacking multiple boosts (Invariant 26, v20.10 recalibrated from 3.5)
+**TOTAL_BOOST_CAP = 1.5** — prevents score inflation from stacking multiple boosts (Invariant 26, v20.10: 3.5→2.0, v20.11: 2.0→1.5)
 
 **All 6 additive boosts inside the cap (v20.10):**
 - `confluence_boost`, `msrf_boost`, `jason_sim_boost`, `serp_boost`, `ensemble_adjustment`, `totals_calibration_adj`
@@ -460,7 +462,7 @@ FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + live_adjustment)
 | serp_boost | `alt_data_sources/serp_intelligence.py` | `SERP_BOOST_CAP_TOTAL` (4.3) | Total SERP capped |
 | ensemble_adjustment | `live_data_router.py` | `ENSEMBLE_ADJUSTMENT_STEP` (0.5) | +0.5 / -0.5 step **(v20.10: inside cap)** |
 | totals_calibration_adj | `live_data_router.py` | ±0.75 | OVER penalty / UNDER boost **(v20.10: inside cap)** |
-| **SUM of above 6** | `core/scoring_pipeline.py` | **`TOTAL_BOOST_CAP` (2.0)** | **All 6 boosts compete within same cap (Inv. 26, v20.10)** |
+| **SUM of above 6** | `core/scoring_pipeline.py` | **`TOTAL_BOOST_CAP` (1.5)** | **All 6 boosts compete within same cap (Inv. 26, v20.10)** |
 | live_adjustment | `live_data_router.py` | ±0.50 | In-game adjustment to research_score **(OUTSIDE cap)** |
 
 ---
@@ -594,7 +596,7 @@ API_KEY=YOUR_KEY bash scripts/perf_audit_best_bets.sh
 
 ---
 
-### INVARIANT 6: Output Filtering (6.5 MINIMUM)
+### INVARIANT 6: Output Filtering (7.0 MINIMUM)
 
 **RULE:** NEVER return any pick with `final_score < 6.5` to frontend
 
@@ -1530,7 +1532,7 @@ Check Cache (5-10 min TTL)
    - Confluence boost + MSRF/SERP (if enabled) + Jason Sim boost
    - Tier assignment (TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN)
          ↓
-4. FILTER: Score threshold (>= 6.5)
+4. FILTER: Score threshold (>= 7.0)
    - Drops: All picks with final_score < 6.5
          ↓
 5. FILTER: Contradiction gate
@@ -2446,7 +2448,7 @@ FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_bo
        + msrf_boost + serp_boost (if enabled)
 ```
 
-All engines score 0-10. Min output threshold: **6.5** (picks below this are filtered out).
+All engines score 0-10. Min output threshold: **7.0** (picks below this are filtered out, v20.12: raised from 6.5).
 
 ### Engine 1: AI Score (25%)
 - 8 AI Models (0-8 scaled to 0-10) - `advanced_ml_backend.py`
@@ -3644,7 +3646,7 @@ curl /live/grader/bias/NBA?days_back=7 -H "X-API-Key: KEY" | jq '.pick_type_brea
 
 ### INVARIANT 26: Total Boost Cap (v20.6)
 
-**RULE:** The sum of all additive boosts (confluence + msrf + jason_sim + serp) MUST be capped at `TOTAL_BOOST_CAP` (2.0) before being added to `base_score`. Context modifier is excluded from this cap.
+**RULE:** The sum of all additive boosts (confluence + msrf + jason_sim + serp) MUST be capped at `TOTAL_BOOST_CAP` (1.5) before being added to `base_score`. Context modifier is excluded from this cap.
 
 **Why This Exists:**
 v20.10 recalibrated from 3.5 to 2.0 to fix score saturation (all picks hitting 10.0). Confluence levels were proportionally rescaled (STRONG from 3.0→1.5, MODERATE from 1.0→0.5, top tiers capped at 2.0). This creates visible score differentiation (picks spread across 7.5-10.0 instead of clustering at 10.0) and makes SERP's +0.5 contribution meaningful as a tiebreaker.
@@ -3660,7 +3662,7 @@ final_score = max(0.0, min(10.0, final_score))
 ```
 
 **Constants (core/scoring_contract.py):**
-- `TOTAL_BOOST_CAP = 2.0` — max sum of 4 boosts (v20.10: recalibrated from 3.5)
+- `TOTAL_BOOST_CAP = 1.5` — max sum of all boosts (v20.10: 3.5→2.0, v20.11: 2.0→1.5)
 - `SERP_BOOST_CAP_TOTAL = 4.3` — individual SERP cap (still applies first)
 - `CONFLUENCE_BOOST_CAP = 2.0` — individual confluence cap (v20.10: rescaled from 10.0)
 - `MSRF_BOOST_CAP = 1.0` — individual MSRF cap
@@ -5920,7 +5922,7 @@ datetime.fromisoformat(p.timestamp) >= cutoff  # Same error
 **Root Cause:** Individual boost caps existed (confluence 10.0, msrf 1.0, jason_sim 1.5, serp 4.3) but NO cap on their SUM. Theoretical max boost was 16.8 points. In practice, confluence 3.0 + msrf 1.0 + serp 2.0 + jason 0.5 = 6.5 boosts on a 6.5 base = 13.0 → clamped to 10.0.
 
 **The Fix:**
-1. Added `TOTAL_BOOST_CAP = 3.5` in `core/scoring_contract.py` (later recalibrated to 2.0 in v20.10)
+1. Added `TOTAL_BOOST_CAP = 3.5` in `core/scoring_contract.py` (v20.10: 3.5→2.0, v20.11: 2.0→1.5 to prevent score saturation)
 2. In `compute_final_score_option_a()`: sum of confluence+msrf+jason_sim+serp capped to `TOTAL_BOOST_CAP` before adding to base_score
 3. Context modifier is excluded from the cap (it's a bounded modifier, not a boost)
 4. Updated `test_option_a_scoring_guard.py` to test new cap behavior
@@ -6231,7 +6233,7 @@ done
 ### Lesson 57: Score 10.0 Clustering — Post-Hoc Adjustments Bypass Boost Cap (v20.10)
 **Problem:** Nearly every Under pick was scoring exactly 10.0, making it impossible to rank or differentiate picks. The "best bets" endpoint was returning a wall of identical 10.0-scored picks with no meaningful ordering.
 
-**Root Cause:** `ensemble_adjustment` (+0.5) and `totals_calibration_adj` (+0.75 for Under) were being applied AFTER `compute_final_score_option_a()` returned — completely bypassing `TOTAL_BOOST_CAP` (2.0). The math: base ~5.3 + context ~0.1 + capped boosts 2.0 + ensemble 0.5 + totals_cal 0.75 = 8.65, but with higher confluence/MSRF the raw total_boosts could be 3.5+ before capping, so: 5.3 + 0.1 + 2.0 + 0.5 + 0.75 = 8.65 minimum, and stronger picks easily hit 10.0. The clamp to 10.0 destroyed all differentiation.
+**Root Cause:** `ensemble_adjustment` (+0.5) and `totals_calibration_adj` (+0.75 for Under) were being applied AFTER `compute_final_score_option_a()` returned — completely bypassing `TOTAL_BOOST_CAP` (1.5). The math: base ~5.3 + context ~0.1 + capped boosts 2.0 + ensemble 0.5 + totals_cal 0.75 = 8.65, but with higher confluence/MSRF the raw total_boosts could be 3.5+ before capping, so: 5.3 + 0.1 + 2.0 + 0.5 + 0.75 = 8.65 minimum, and stronger picks easily hit 10.0. The clamp to 10.0 destroyed all differentiation.
 
 **The Fix:**
 1. Added `ensemble_adjustment` and `totals_calibration_adj` as parameters to `compute_final_score_option_a()` in `core/scoring_pipeline.py`
@@ -6575,6 +6577,75 @@ curl /grader/status | jq '.weights_version_hash'
 - `main.py` — Added `weights_version_hash` to `/grader/status`
 
 **Fixed in:** Commit a9a5f8e (Feb 4, 2026)
+
+### Lesson 68: PERSIST_TIERS — Quality Tier Filtering for Learning Loop (v20.12)
+**Problem:** The learning loop was training on ALL picks including MONITOR and PASS tiers. These low-confidence picks add noise to weight learning without providing useful signal — they're below the output threshold for a reason.
+
+**Root Cause:** No tier filter existed before persistence. Every scored pick was saved to `grader_store`, diluting the training data with picks the system wasn't confident enough to show users.
+
+**The Fix:**
+1. Added `PERSIST_TIERS` constant to `scoring_contract.py`:
+```python
+PERSIST_TIERS = {"EDGE_LEAN", "GOLD_STAR", "TITANIUM_SMASH"}
+```
+2. Filter picks before `grader_store.persist_pick()` — only quality tiers are saved
+3. MONITOR and PASS tiers are still scored (for debugging) but NOT persisted
+
+**Why Quality Tiers Only:**
+- EDGE_LEAN (≥7.0): Above visibility threshold, real picks shown to users
+- GOLD_STAR (≥7.5): High-confidence picks that passed all gates
+- TITANIUM_SMASH: Multi-engine alignment (3/4 ≥ 8.0)
+- MONITOR (≥5.5): Below threshold, not actionable
+- PASS (<5.5): System explicitly recommends against
+
+**Key Insight:** Learning should focus on picks the system was confident enough to surface. Training on PASS picks teaches the model about noise, not signal.
+
+**Files Modified:**
+- `core/scoring_contract.py` — Added `PERSIST_TIERS`
+- `live_data_router.py` — Filter before persistence
+
+**Fixed in:** Commit 637e227 (Feb 6, 2026)
+
+### Lesson 69: Sport-Specific Totals Calibration — NHL Totals Blocking (v20.11)
+**Problem:** NHL totals had a catastrophic 26% win rate (6-17) in grading data. The model was consistently wrong on NHL over/under picks, destroying bankroll.
+
+**Grading Data Analysis (Feb 5, 2026):**
+| Sport | Totals Win Rate | Action |
+|-------|-----------------|--------|
+| NHL | 26% (6-17) | BLOCK — unacceptable |
+| NCAAB | 46% | Moderate penalty |
+| NBA | 52% | No change |
+
+**Root Cause:** `TOTALS_SIDE_CALIBRATION` (Lesson 38) applied the same Over/Under bias correction to ALL sports. But NHL totals have different dynamics — the model's edge doesn't exist there.
+
+**The Fix:**
+1. Added `SPORT_TOTALS_CALIBRATION` to `scoring_contract.py`:
+```python
+SPORT_TOTALS_CALIBRATION = {
+    "enabled": True,
+    "NHL": -4.0,    # BLOCK: 10.0 → 6.0 (below MIN_FINAL_SCORE 7.0)
+    "NCAAB": -0.75, # Penalty: 10.0 → 9.25
+    "NBA": 0.0,     # No change
+    "NFL": 0.0,     # No data yet
+    "MLB": 0.0,     # No data yet
+}
+```
+2. Penalty is applied to `final_score` BEFORE the MIN_FINAL_SCORE filter
+3. NHL totals with -4.0 penalty can't reach 7.0 threshold, effectively blocking them
+
+**Why Blocking vs Disabling:**
+- Blocking via penalty keeps the scoring pipeline intact
+- NHL totals are still scored (for monitoring recovery)
+- When NHL totals improve, reduce penalty gradually — no code changes needed
+- Feature flag approach would require code deployment to re-enable
+
+**Key Insight:** When a category has catastrophic win rate, don't just disable it — add a calibration penalty so it self-heals as performance improves.
+
+**Files Modified:**
+- `core/scoring_contract.py` — Added `SPORT_TOTALS_CALIBRATION`
+- `live_data_router.py` — Apply sport-specific penalty to totals
+
+**Fixed in:** Commit c712179 (Feb 5, 2026)
 
 ---
 
@@ -7171,7 +7242,7 @@ if day_start <= ts < day_end:  # Exclusive end
 
 ## 🚫 NEVER DO THESE (v20.6 - Boost Caps & Production)
 
-156. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (2.0) — this causes score inflation and clustering at 10.0
+156. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (1.5) — this causes score inflation and clustering at 10.0
 157. **NEVER** add a new additive boost without updating `TOTAL_BOOST_CAP` logic in `compute_final_score_option_a()` — uncapped boosts compound silently
 158. **NEVER** hardcode timeout values in API endpoints — always use `os.getenv()` with a sensible default and register in `integration_registry.py`
 159. **NEVER** assume `TIME_BUDGET_S` only needs to cover game scoring — props scoring shares the same budget and needs time too
@@ -7279,6 +7350,8 @@ for pick in candidates:
 208. **NEVER** treat null odds as valid picks — if `odds_american is None AND book is falsy`, the market is suspended; add `market_status` field (Lesson 65)
 209. **NEVER** silently drop picks in the learning loop — track drop reasons in `last_drop_stats` dict (unsupported_sport, duplicate_id, etc.) for debugging (Lesson 66)
 210. **NEVER** modify weights without a version hash — `weights_version_hash` (SHA256[:12]) must be tracked in `/grader/status` for debugging; any change produces a different hash (Lesson 67)
+211. **NEVER** persist MONITOR or PASS tier picks to the learning loop — only `PERSIST_TIERS` (EDGE_LEAN, GOLD_STAR, TITANIUM_SMASH) should be saved; low-confidence picks add noise, not signal (Lesson 68)
+212. **NEVER** surface NHL totals without checking `SPORT_TOTALS_CALIBRATION` penalty — NHL has 26% win rate and -4.0 penalty blocks them from reaching MIN_FINAL_SCORE threshold (Lesson 69)
 
 ---
 

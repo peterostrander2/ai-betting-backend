@@ -109,7 +109,7 @@ TOTALS_SIDE_CALIBRATION = {
 # - NBA Totals: 52% win rate - acceptable
 # - NCAAB Totals: 46% win rate - slightly below breakeven
 # Penalty is applied to ALL totals for that sport (before MIN_FINAL_SCORE filter)
-# A 10.0 score with -4.0 penalty = 6.0, which is below MIN_FINAL_SCORE (6.5)
+# A 10.0 score with -4.0 penalty = 6.0, which is below MIN_FINAL_SCORE (7.0)
 SPORT_TOTALS_CALIBRATION = {
     "enabled": True,
     "NHL": -4.0,    # BLOCK - 26% win rate is unacceptable, 10.0 → 6.0 (won't surface)
