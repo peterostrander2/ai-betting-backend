@@ -89,14 +89,6 @@ try:
 except ImportError:
     MASTER_PREDICTION_AVAILABLE = False
 
-# Import AI Engine v2.0 - 8 ML models for proper AI scoring
-try:
-    from ai_engine_v2 import calculate_ai_engine_score
-    AI_ENGINE_V2_AVAILABLE = True
-except ImportError as e:
-    AI_ENGINE_V2_AVAILABLE = False
-    logger.warning("ai_engine_v2 not available, using heuristic fallback: %s", e)
-
 # Import Playbook API utility
 try:
     from playbook_api import (
@@ -3224,73 +3216,6 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         ai_score = min(8.0, base_ai + _ai_boost)
         return ai_score, ai_reasons
 
-    # v20.0: AI Engine v2.0 wrapper - uses 8 ML models with fallback to heuristic
-    def _calculate_ai_engine_v2_score(
-        player_name: str,
-        home_team: str,
-        away_team: str,
-        spread: float,
-        total: float,
-        prop_line: float,
-        odds: int,
-        public_pct: float,
-        sharp_signal: Optional[Dict],
-        recent_games: Optional[List[float]],
-        rest_days_home: int,
-        rest_days_away: int,
-        injuries: Optional[List[Dict]],
-        sport: str,
-        base_ai: float = 5.0
-    ) -> tuple:
-        """
-        Calculate AI score using AI Engine v2.0 (8 ML models).
-        Falls back to heuristic if v2 unavailable.
-
-        Returns: (ai_score_0_to_8, ai_reasons_list)
-        """
-        if not AI_ENGINE_V2_AVAILABLE:
-            return _calculate_heuristic_ai_score(base_ai, sharp_signal, spread, player_name)
-
-        try:
-            result = calculate_ai_engine_score(
-                player_name=player_name,
-                home_team=home_team,
-                away_team=away_team,
-                spread=spread,
-                total=total,
-                prop_line=prop_line,
-                odds=odds,
-                public_pct=public_pct,
-                sharp_signal=sharp_signal,
-                recent_games=recent_games,
-                rest_days_home=rest_days_home,
-                rest_days_away=rest_days_away,
-                injuries=injuries,
-                sport=sport
-            )
-
-            # AI Engine v2 returns 0-10 scale, convert to 0-8 for compatibility
-            ai_score_10 = result.get("ai_score", 5.0)
-            ai_score_8 = ai_score_10 * 0.8  # Scale 0-10 to 0-8
-
-            ai_reasons = result.get("ai_reasons", ["AI Engine v2"])
-
-            # Add model breakdown to reasons
-            breakdown = result.get("ai_breakdown", {})
-            if breakdown:
-                models_summary = ", ".join([f"{k}:{v:.1f}" for k, v in breakdown.items()])
-                ai_reasons.append(f"Models: {models_summary}")
-
-            # Add prediction type
-            pred_type = result.get("ai_prediction_type", "UNKNOWN")
-            ai_reasons.append(f"AI Engine v2.0 ({pred_type})")
-
-            return ai_score_8, ai_reasons
-
-        except Exception as e:
-            logger.warning(f"AI Engine v2 failed, falling back to heuristic: {e}")
-            return _calculate_heuristic_ai_score(base_ai, sharp_signal, spread, player_name)
-
     # v17.0: Helper function to map prop market to defensive position category
     def _market_to_position(market: str, sport: str) -> str:
         """Map prop market to defensive position category for context layer lookup."""
@@ -3494,25 +3419,44 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             except Exception as e:
                 logger.debug(f"Context lookup failed, using defaults: {e}")
 
-        # v20.0: Use AI Engine v2.0 for all picks (props + games)
-        # AI Engine v2 includes 8 ML models with automatic fallback to heuristic
-        ai_score, ai_reasons = _calculate_ai_engine_v2_score(
-            player_name=player_name,
-            home_team=home_team,
-            away_team=away_team,
-            spread=spread,
-            total=total,
-            prop_line=prop_line,
-            odds=odds if odds else -110,
-            public_pct=sharp_signal.get("public_pct", 50) if sharp_signal else 50,
-            sharp_signal=sharp_signal,
-            recent_games=None,  # Would be populated from player stats if available
-            rest_days_home=1,  # Would be populated from team data if available
-            rest_days_away=1,
-            injuries=None,  # Would be populated from injury data if available
-            sport=sport_upper,
-            base_ai=base_ai
-        )
+        if pick_type == "PROP" and ML_INTEGRATION_AVAILABLE and market:
+            # Try LSTM-powered AI score for props
+            try:
+                lstm_ai_score, lstm_metadata = get_lstm_ai_score(
+                    sport=sport_upper,  # Use sport_upper from outer scope
+                    market=market,
+                    prop_line=prop_line,
+                    player_name=player_name,
+                    home_team=home_team,
+                    away_team=away_team,
+                    player_team=None,  # Could be passed if available
+                    player_stats=None,  # Could be enriched with player data
+                    game_data={"def_rank": _def_rank, "pace": _pace, "vacuum": _vacuum},
+                    base_ai=base_ai
+                )
+                if lstm_metadata.get("source") == "lstm":
+                    ai_score = lstm_ai_score
+                    ai_reasons.append(f"LSTM AI: {ai_score:.2f}/8 ({lstm_metadata.get('model_key', 'unknown')})")
+                    ai_reasons.append(f"LSTM confidence: {lstm_metadata.get('confidence', 0):.1f}%")
+                    if lstm_metadata.get("adjustment", 0) > 0:
+                        ai_reasons.append(f"LSTM lean: +{lstm_metadata.get('adjustment', 0):.2f}")
+                    elif lstm_metadata.get("adjustment", 0) < 0:
+                        ai_reasons.append(f"LSTM lean: {lstm_metadata.get('adjustment', 0):.2f}")
+                else:
+                    # Fallback to heuristic
+                    ai_score, ai_reasons = _calculate_heuristic_ai_score(
+                        base_ai, sharp_signal, spread, player_name
+                    )
+            except Exception as e:
+                logger.warning(f"LSTM prediction failed, using heuristic: {e}")
+                ai_score, ai_reasons = _calculate_heuristic_ai_score(
+                    base_ai, sharp_signal, spread, player_name
+                )
+        else:
+            # Games and non-prop picks use heuristic AI score
+            ai_score, ai_reasons = _calculate_heuristic_ai_score(
+                base_ai, sharp_signal, spread, player_name
+            )
 
         # Scale AI to 0-10 for use in base_score formula
         ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
