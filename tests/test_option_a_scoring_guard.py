@@ -189,15 +189,16 @@ def test_compute_final_score_caps_serp_and_clamps_final() -> None:
     assert final_score == 1.0 + TOTAL_BOOST_CAP  # Total boost cap applies
 
     # SERP within total boost cap (no stacking, stays under cap)
+    # v20.11: TOTAL_BOOST_CAP lowered from 2.0 to 1.5, use 1.0 serp to stay under cap
     final_score, _ = compute_final_score_option_a(
         base_score=5.0,
         context_modifier=0.0,
         confluence_boost=0.0,
         msrf_boost=0.0,
         jason_sim_boost=0.0,
-        serp_boost=2.0,
+        serp_boost=1.0,
     )
-    assert final_score == 7.0  # 2.0 < TOTAL_BOOST_CAP, no cap applied
+    assert final_score == 6.0  # 1.0 < TOTAL_BOOST_CAP (1.5), no cap applied
 
     # Final clamp (stacked boosts hit total cap, then clamped to 10)
     final_score, _ = compute_final_score_option_a(

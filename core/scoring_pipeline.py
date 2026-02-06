@@ -101,7 +101,7 @@ def compute_harmonic_boost(research_score: float, esoteric_score: float) -> floa
         from core.scoring_contract import HARMONIC_CONVERGENCE_THRESHOLD, HARMONIC_BOOST
     except Exception:
         HARMONIC_CONVERGENCE_THRESHOLD = 7.5
-        HARMONIC_BOOST = 1.5
+        HARMONIC_BOOST = 1.0  # v20.11: Lowered from 1.5 to match recalibration
     if research_score >= HARMONIC_CONVERGENCE_THRESHOLD and esoteric_score >= HARMONIC_CONVERGENCE_THRESHOLD:
         return HARMONIC_BOOST
     return 0.0
