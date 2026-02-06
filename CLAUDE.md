@@ -90,8 +90,11 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 57 | **v20.10 Score Clustering** | Post-hoc ensemble+totals_cal bypassed TOTAL_BOOST_CAP — all scores clustered at 10.0 |
 | 58 | **v20.10 Grader Dedup** | book_key in pick ID caused same bet from 5 sportsbooks to create 5 grader entries |
 | 59 | **v20.12 Concentration Limits** | Diversity filter enforces max_per_matchup=2 on ALL pick types (props + games) |
+| 60 | **v20.12 Spread+ML Redundancy** | Same-team spread + ML are ~90% correlated — both lose together; keep higher scorer |
+| 61 | **v20.12 Async Context** | Can't call asyncio.run() inside FastAPI — detect running loop first, graceful degradation |
+| 62 | **v20.12 Variable Name Typos** | base_4_score vs base_score caused NameError — Python doesn't catch at compile time |
 
-### NEVER DO Sections (27 Categories)
+### NEVER DO Sections (28 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -4381,10 +4384,20 @@ grep -n "get_sharp_money(" live_data_router.py
 # If called anywhere other than the decorator line, it's dual-use
 ```
 
-**Files Affected:**
-- `live_data_router.py:1758-1989` - `get_sharp_money()` fixed to return dict
+**ALL Dual-Use Functions (MUST return dict, not JSONResponse):**
+| Function | Commits Fixed | Internal Callers |
+|----------|---------------|------------------|
+| `get_sharp_money()` | d7279e9 | `_best_bets_inner()` |
+| `get_props()` | f1a0661 | `_best_bets_inner()` |
+| `get_lines()` | d1c4547 | `_best_bets_inner()`, grader |
+| `get_injuries()` | a9a75eb | `_best_bets_inner()`, context layer |
 
-**Fixed in:** Commit `d7279e9` (Feb 2026)
+**Before adding @router decorator to ANY function, ask:**
+1. Is this function called anywhere else in Python code?
+2. If yes, it MUST return dict (not JSONResponse)
+3. FastAPI auto-serializes dicts to JSON for HTTP responses
+
+**Fixed in:** Multiple commits (d7279e9, f1a0661, d1c4547, e5da153)
 
 ### Lesson 10: Undefined Variables in Nested Functions
 **Problem:** Multiple `NameError` and `TypeError` crashes in `calculate_pick_score()` due to undefined variables or None comparisons.
@@ -6309,6 +6322,65 @@ The unique key in `make_unique_key()` includes market type (SPREAD vs ML), so sp
 
 **Fixed in:** v20.12 (Feb 6, 2026)
 
+### Lesson 61: Async Context Detection — Can't Call asyncio.run() Inside FastAPI (v20.12)
+**Problem:** MSRF module crashed with `RuntimeError: cannot run event loop while another loop is running` when calling async BallDontLie functions from sync code inside FastAPI's async context.
+
+**Root Cause:** MSRF is a sync function that calls async `search_player()` and `get_player_game_stats()`. When MSRF is invoked from FastAPI (which already has an event loop running), `asyncio.run()` fails because you can't nest event loops.
+
+**The Pattern That Causes This:**
+```python
+# WRONG - crashes inside FastAPI
+def sync_msrf_function():
+    result = asyncio.run(async_balldontlie_call())  # RuntimeError!
+```
+
+**The Safe Async Wrapper Pattern:**
+```python
+def _run_async_safely(coro):
+    """Run async code from sync context, detecting if already in async loop."""
+    try:
+        loop = asyncio.get_running_loop()
+        # Already in async context (FastAPI) - can't nest, skip gracefully
+        return None
+    except RuntimeError:
+        # No loop running - safe to create one
+        try:
+            return asyncio.run(coro)
+        except Exception:
+            return None  # Graceful degradation
+```
+
+**Key Insight:** Sync functions that call async code MUST detect whether they're being called from an async context (FastAPI) or a sync context (tests, scripts). The fix is graceful degradation — if async call can't run, return None and continue with fallback data.
+
+**Files Modified:**
+- `signals/msrf_resonance.py` — Added `_run_async_safely()` wrapper (lines 407-433)
+
+**Commits:** 8217e33, 6d39f6d
+
+### Lesson 62: Variable Name Typos Cause Silent NameError Crashes (v20.12)
+**Problem:** Best-bets endpoint crashed with `NameError: name 'base_4_score' is not defined` because the variable was defined as `base_score` at line 4604 but referenced as `base_4_score` at line 4929.
+
+**Why This Is Insidious:**
+1. Python doesn't catch variable name typos at compile time
+2. The error only surfaces at runtime when the code path is hit
+3. Similar variable names (`base_score`, `base_4_score`, `base_4_engine_score`) are easy to confuse
+
+**Historical Variable Name Bugs (ALL in live_data_router.py):**
+| Wrong Name | Correct Name | Commit |
+|------------|--------------|--------|
+| `base_4_score` | `base_score` | cacc9d9 |
+| `game_date` | `_game_date_obj` | f52cfce |
+| `candidate` (closure) | `candidate` (param) | bcedd80 |
+| `mid_spread_mod` (uninitialized) | `mid_spread_mod = 0` | 31ed92a |
+
+**Prevention:**
+1. Use EXACT variable names - don't rely on "similar" names
+2. When renaming a variable, grep for ALL usages: `grep -n "old_name" *.py`
+3. Run `python3 -m py_compile <file>` after every edit (catches some issues)
+4. Test ALL code paths, not just the happy path
+
+**Fixed in:** Commit cacc9d9 (Feb 6, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -6994,6 +7066,16 @@ for pick in candidates:
 196. **NEVER** skip the diversity filter when processing game picks — both `filtered_props` and `filtered_games` must go through `apply_diversity_gate()`
 197. **NEVER** surface both spread AND moneyline on the same team — these are ~90% correlated bets that both lose together; the redundancy filter (`filter_redundant_same_side()`) keeps only the higher-scoring one (Lesson 60)
 198. **NEVER** confuse contradictions with redundancies — contradictions are OPPOSITE sides (Over/Under, Team A/Team B); redundancies are CORRELATED same-side bets (spread+ML on same team); they require different filters
+
+## 🚫 NEVER DO THESE (v20.12 - Recurring Bug Patterns)
+
+199. **NEVER** return `JSONResponse()` from functions that are BOTH endpoint handlers AND called internally — FastAPI auto-serializes dicts to JSON; internal callers need `.get()` method which JSONResponse doesn't have (Lesson 9)
+200. **NEVER** add `@router.get/post` decorator without checking if the function is called elsewhere — grep for function name to detect dual-use; dual-use functions MUST return dict
+201. **NEVER** call `asyncio.run()` from sync code that might be invoked from FastAPI — use `asyncio.get_running_loop()` first to detect if already in async context; return None for graceful degradation (Lesson 61)
+202. **NEVER** use similar variable names like `base_score`, `base_4_score`, `base_4_engine_score` without grep-checking all usages — Python doesn't catch name typos at compile time; NameError only surfaces at runtime (Lesson 62)
+203. **NEVER** rename a variable without grep-replacing ALL occurrences — `grep -n "old_name" live_data_router.py` must show 0 results after rename
+204. **NEVER** define a variable inside a try/if block if it's used outside that block — initialize ALL variables at function start, before any try blocks (Lesson 10, 31)
+205. **NEVER** assume `python3 -m py_compile` catches all bugs — it only checks syntax, not undefined variables or type errors; test all code paths manually
 
 ---
 
