@@ -44,7 +44,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 4 | Option A Scoring | 4-engine base (AI 25%, Research 35%, Esoteric 20%, Jarvis 20%) + context modifier |
 | 5 | Jarvis Additive | Jarvis is weighted engine, NOT separate boost |
 | 6 | Output Filtering | `final_score >= 7.0` required for output (v20.12) |
-| 7 | Contradiction Gate | Never output both Over AND Under on same line |
+| 7 | Contradiction Gate + Redundancy | No opposite sides (Over/Under) + no correlated same-side (spread+ML) |
 | 8 | Best-Bets Contract | Response MUST have `props.picks[]` and `game_picks.picks[]` |
 | 9 | Pick Persistence | Picks logged to grader_store for learning loop |
 | 9.1 | Two Storage Systems | grader_store (picks) + weights.json (learning) |
@@ -622,26 +622,33 @@ top_picks = no_contradictions[:max_picks]
 
 ---
 
-### INVARIANT 7: Contradiction Gate (MANDATORY)
+### INVARIANT 7: Contradiction Gate + Redundancy Filter (MANDATORY)
 
-**RULE:** NEVER return both sides of same bet (Over AND Under, Team A AND Team B)
+**RULE 1 (Contradictions):** NEVER return both sides of same bet (Over AND Under, Team A AND Team B)
 
-**Unique Key Format:**
+**RULE 2 (Redundancies):** NEVER return spread AND moneyline on same team (~90% correlated, both lose together)
+
+**Unique Key Format (Contradictions):**
 ```
 {sport}|{date_et}|{event_id}|{market}|{prop_type}|{player_id/team_id}|{line}
 ```
 
-**Detection Rules:**
+**Detection Rules (Contradictions):**
 1. **Totals/Props:** Detect Over vs Under on same line
 2. **Spreads:** Use `abs(line)` so +1.5 and -1.5 match
 3. **Moneylines:** Use "Game" as subject for both teams
 4. **Player Props:** Check markets with "PLAYER_" prefix (player_points, player_assists, etc.)
 
+**Detection Rules (Redundancies):**
+1. Group by `{event_id}|{side}` (ignoring market type)
+2. If group has both SPREAD and MONEYLINE, keep only highest-scoring pick
+3. Dropped picks are NOT contradictions — they're correlated exposure
+
 **Priority When Duplicates Found:**
 - Keep pick with higher `final_score`
 - Tiebreaker: Preferred book (draftkings > fanduel > betmgm > caesars > pinnacle)
 
-**Implementation:** `utils/contradiction_gate.py` → `apply_contradiction_gate(props, games)`
+**Implementation:** `utils/contradiction_gate.py` → `apply_contradiction_gate(props, games)` (calls both filters)
 
 **Tests:** 8 tests verify all cases (totals, props, spreads, player props)
 
@@ -6269,6 +6276,39 @@ done
 
 **Fixed in:** v20.12 (Feb 6, 2026)
 
+### Lesson 60: Same-Team Spread + ML Redundancy — Correlated Bets Both Lose Together (v20.12)
+**Problem:** When Southern Illinois +1.5 (spread) AND Southern Illinois ML both surfaced as picks on the same game, both lost together when the team lost. These are ~90% correlated bets — they're not contradictions (opposite sides), but they both depend on the same team winning.
+
+**Why This Wasn't Caught Before:** The contradiction gate (Invariant 7) only prevents OPPOSITE sides:
+- Over vs Under ✓ (caught)
+- Team A vs Team B ✓ (caught)
+- Team A spread + Team A ML ✗ (NOT caught — same side, different markets)
+
+The unique key in `make_unique_key()` includes market type (SPREAD vs ML), so spread and moneyline picks never group together for contradiction detection. This is correct behavior — they're not contradictions, they're REDUNDANCIES.
+
+**The Fix:**
+1. Added `filter_redundant_same_side()` in `utils/contradiction_gate.py`
+2. Groups by `event_id|side` (ignoring market type) to find spread+ML pairs
+3. Keeps only the higher-scoring pick when both spread AND ML exist for same team
+4. Called from `apply_contradiction_gate()` AFTER contradiction filtering
+
+**Key Insight:** Contradictions (opposite sides) and redundancies (correlated same-side) are DIFFERENT problems requiring DIFFERENT solutions:
+- **Contradiction Gate**: Prevents betting AGAINST yourself (Over AND Under)
+- **Redundancy Filter**: Prevents double-exposure to same outcome (spread + ML on same team)
+
+**The Correlation Math:**
+- If a team covers the spread, they usually win outright (~90% correlation)
+- If a team loses outright, they usually don't cover either
+- Betting both is essentially 2x exposure to the same outcome
+
+**Pipeline Order (updated):**
+1. Deduplication → 2. Score filter → 3. Contradiction gate → 3.5. Redundancy filter → 4. Diversity gate → 5. Final slice
+
+**Files Modified:**
+- `utils/contradiction_gate.py` — Added `filter_redundant_same_side()`, updated `apply_contradiction_gate()`
+
+**Fixed in:** v20.12 (Feb 6, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -6947,11 +6987,13 @@ for pick in candidates:
 189. **NEVER** define concentration limits (max_per_matchup, max_props_per_player, max_per_sport_per_day) anywhere except `scoring_contract.py:CONCENTRATION_LIMITS` — this is the single source of truth; all filters MUST import from there
 190. **NEVER** hardcode limit values (1, 2, 3, 8) in diversity filter code — always use `CONCENTRATION_LIMITS.get("key", default)` so changes propagate automatically
 191. **NEVER** assume game picks bypass concentration limits — v20.12 applies `max_per_matchup` to ALL pick types (props AND game picks like spread/total/moneyline)
-192. **NEVER** change the filtering pipeline order (Dedup → Score filter → Contradiction gate → Diversity gate → Final slice) — each stage depends on the previous stage's output
+192. **NEVER** change the filtering pipeline order (Dedup → Score filter → Contradiction gate → Redundancy filter → Diversity gate → Final slice) — each stage depends on the previous stage's output
 193. **NEVER** update test assertions for diversity filter without verifying against `CONCENTRATION_LIMITS` values in `scoring_contract.py` — test expectations must match the contract
 194. **NEVER** apply diversity limits BEFORE contradiction gate — contradictions must be removed first, then diversity limits applied to the remaining valid picks
 195. **NEVER** forget that `MAX_PICKS_PER_MATCHUP` is 2 (not 3) as of v20.12 — old tests expecting 3 per game will fail
 196. **NEVER** skip the diversity filter when processing game picks — both `filtered_props` and `filtered_games` must go through `apply_diversity_gate()`
+197. **NEVER** surface both spread AND moneyline on the same team — these are ~90% correlated bets that both lose together; the redundancy filter (`filter_redundant_same_side()`) keeps only the higher-scoring one (Lesson 60)
+198. **NEVER** confuse contradictions with redundancies — contradictions are OPPOSITE sides (Over/Under, Team A/Team B); redundancies are CORRELATED same-side bets (spread+ML on same team); they require different filters
 
 ---
 
