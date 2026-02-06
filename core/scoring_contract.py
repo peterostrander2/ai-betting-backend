@@ -76,12 +76,30 @@ ENSEMBLE_ADJUSTMENT_STEP = 0.5
 # v20.4: Totals Side Calibration (OVER/UNDER bias correction)
 # Based on learning loop data: OVER 19.1% vs UNDER 81.6% hit rate
 # Applies score adjustment to correct observed bias toward OVER picks
+# v20.11: DISABLED - Feb 5 data shows OVER 55% vs UNDER 44%, opposite of original data
 TOTALS_SIDE_CALIBRATION = {
-    "enabled": True,
+    "enabled": False,  # Disabled - data shows reverse bias now
     "over_penalty": -0.75,   # Penalty applied to OVER picks
     "under_boost": 0.75,     # Boost applied to UNDER picks
     "min_samples_required": 50,  # Min samples before calibration kicks in
-    "last_updated": "2026-02-04",
+    "last_updated": "2026-02-05",
+}
+
+# v20.11: Sport-Specific Totals Calibration
+# Based on Feb 5, 2026 grading data:
+# - NHL Totals: 6-17 (26% win rate) - CATASTROPHIC, model picks Under but games go Over
+# - NBA Totals: 52% win rate - acceptable
+# - NCAAB Totals: 46% win rate - slightly below breakeven
+# Penalty is applied to ALL totals for that sport (before MIN_FINAL_SCORE filter)
+# A 10.0 score with -4.0 penalty = 6.0, which is below MIN_FINAL_SCORE (6.5)
+SPORT_TOTALS_CALIBRATION = {
+    "enabled": True,
+    "NHL": -4.0,    # BLOCK - 26% win rate is unacceptable, 10.0 → 6.0 (won't surface)
+    "NCAAB": -0.75, # Moderate penalty - 46% win rate, 10.0 → 9.25
+    "NBA": 0.0,     # No penalty - 52% win rate is acceptable
+    "NFL": 0.0,     # No data yet
+    "MLB": 0.0,     # No data yet
+    "last_updated": "2026-02-05",
 }
 
 # Odds staleness threshold for live betting endpoints (seconds)
@@ -109,4 +127,6 @@ SCORING_CONTRACT = {
         "jason_sim_boost_cap": JASON_SIM_BOOST_CAP,
         "total_boost_cap": TOTAL_BOOST_CAP,
     },
+    "totals_side_calibration": TOTALS_SIDE_CALIBRATION,  # v20.4 (disabled v20.11)
+    "sport_totals_calibration": SPORT_TOTALS_CALIBRATION,  # v20.11
 }

@@ -138,7 +138,7 @@ except ImportError:
     logger.warning("tiering module not available - using legacy tier logic")
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
-from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS, CONFLUENCE_LEVELS
+from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, SPORT_TOTALS_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS, CONFLUENCE_LEVELS
 from core.scoring_pipeline import compute_final_score_option_a, compute_harmonic_boost
 from core.telemetry import apply_used_integrations_debug, attach_integration_telemetry_debug, record_daily_integration_rollup
 
@@ -4679,6 +4679,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 logger.debug("TOTALS_CALIBRATION[%s]: side=%s, adj=%.2f",
                            game_str[:30], pick_side, totals_calibration_adj)
 
+        # ===== v20.11 SPORT-SPECIFIC TOTALS CALIBRATION =====
+        # NHL Totals: 26% win rate (Feb 5 data) - needs severe penalty
+        # NCAAB Totals: 46% win rate - moderate penalty
+        sport_totals_adj = 0.0
+        if pick_type == "TOTAL" and SPORT_TOTALS_CALIBRATION.get("enabled", False):
+            sport_totals_adj = SPORT_TOTALS_CALIBRATION.get(sport_upper, 0.0)
+            if sport_totals_adj != 0.0:
+                totals_calibration_adj += sport_totals_adj
+                context_reasons.append(f"SPORT_TOTALS_CAL: {sport_upper} penalty ({sport_totals_adj:+.2f})")
+                logger.info("SPORT_TOTALS_CALIBRATION[%s]: sport=%s, adj=%.2f, total_adj=%.2f",
+                           game_str[:30], sport_upper, sport_totals_adj, totals_calibration_adj)
+
         final_score, context_modifier = compute_final_score_option_a(
             base_score=base_score,
             context_modifier=context_modifier,
@@ -5055,6 +5067,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "base_4_score": round(base_score, 2),
             "ensemble_adjustment": round(ensemble_adjustment, 3),
             "totals_calibration_adj": round(totals_calibration_adj, 3),
+            "sport_totals_adj": round(sport_totals_adj, 3),  # v20.11: Sport-specific totals penalty
             # Detailed breakdowns
             "scoring_breakdown": {
                 "research_score": round(research_score, 2),
