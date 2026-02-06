@@ -3,8 +3,12 @@ from pathlib import Path
 
 
 def test_option_a_formula_with_adjustments():
-    """Option A formula should include explicit post-base adjustments."""
+    """Option A formula should include explicit post-base adjustments.
+
+    v20.11: TOTAL_BOOST_CAP is now 1.5, so sum of confluence+msrf+jason+serp is capped.
+    """
     from core.scoring_pipeline import compute_final_score_option_a
+    from core.scoring_contract import TOTAL_BOOST_CAP
 
     base_score = 6.2
     context_modifier = 0.2
@@ -24,7 +28,10 @@ def test_option_a_formula_with_adjustments():
         serp_boost=serp_boost,
     )
 
-    expected = base_score + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+    # v20.11: Total boosts are capped at TOTAL_BOOST_CAP (1.5)
+    raw_boosts = confluence_boost + msrf_boost + jason_sim_boost + serp_boost  # 1.8
+    capped_boosts = min(TOTAL_BOOST_CAP, raw_boosts)  # 1.5
+    expected = base_score + context_modifier + capped_boosts
     expected = min(10.0, max(0.0, expected + ensemble_adjustment + live_adjustment))
 
     assert abs((final_score + ensemble_adjustment + live_adjustment) - expected) <= 0.02

@@ -19,7 +19,8 @@ def test_confluence_levels_strong_and_moderate():
         jason_sim_boost=0.0,
     )
     assert strong["level"] == "STRONG"
-    assert strong["boost"] == 3
+    # v20.11: STRONG boost rescaled from 3.0 to 1.0 for TOTAL_BOOST_CAP=1.5
+    assert strong["boost"] == 1.0
 
     # MODERATE: alignment >= 70 but no active signals
     moderate = jarvis.calculate_confluence(
@@ -30,7 +31,8 @@ def test_confluence_levels_strong_and_moderate():
         jason_sim_boost=0.0,
     )
     assert moderate["level"] == "MODERATE"
-    assert moderate["boost"] == 1
+    # v20.11: MODERATE boost rescaled from 1.0 to 0.3
+    assert moderate["boost"] == 0.3
 
 
 def test_harmonic_boost_threshold():

@@ -78,14 +78,21 @@ class TestTierThresholds:
         result = tier_from_score(6.4)
         assert result["tier"] == "MONITOR"
 
-    def test_score_6_5_is_edge_lean(self):
-        """Test score 6.5 is EDGE_LEAN tier."""
+    def test_score_6_5_is_monitor(self):
+        """Test score 6.5 is MONITOR tier (v20.12: MIN_FINAL_SCORE raised to 7.0)."""
         result = tier_from_score(6.5)
+        assert result["tier"] == "MONITOR"
+
+    def test_score_7_0_is_edge_lean(self):
+        """Test score 7.0 is EDGE_LEAN tier (v20.12: requires MODERATE confluence)."""
+        # v20.12: Must pass confluence to avoid DIVERGENT default which downgrades to MONITOR
+        result = tier_from_score(7.0, confluence={"level": "MODERATE"})
         assert result["tier"] == "EDGE_LEAN"
 
     def test_score_7_4_is_edge_lean(self):
-        """Test score 7.4 is still EDGE_LEAN tier."""
-        result = tier_from_score(7.4)
+        """Test score 7.4 is still EDGE_LEAN tier (v20.12: requires MODERATE confluence)."""
+        # v20.12: Must pass confluence to avoid DIVERGENT default which downgrades to MONITOR
+        result = tier_from_score(7.4, confluence={"level": "MODERATE"})
         assert result["tier"] == "EDGE_LEAN"
 
     def test_score_7_5_is_gold_star(self):
@@ -170,24 +177,24 @@ class TestTitaniumRule:
 class TestCommunityFilter:
     """Test community output filter."""
 
-    def test_community_min_score_is_6_5(self):
-        """Test COMMUNITY_MIN_SCORE is 6.5."""
-        assert COMMUNITY_MIN_SCORE == 6.5
+    def test_community_min_score_is_7_0(self):
+        """Test COMMUNITY_MIN_SCORE is 7.0 (v20.12: raised from 6.5)."""
+        assert COMMUNITY_MIN_SCORE == 7.0
 
-    def test_is_community_worthy_6_5(self):
-        """Test 6.5 is community worthy."""
-        assert is_community_worthy(6.5) == True
+    def test_is_community_worthy_7_0(self):
+        """Test 7.0 is community worthy (v20.12: threshold raised)."""
+        assert is_community_worthy(7.0) == True
 
-    def test_is_community_worthy_6_4(self):
-        """Test 6.4 is NOT community worthy."""
-        assert is_community_worthy(6.4) == False
+    def test_is_community_worthy_6_9(self):
+        """Test 6.9 is NOT community worthy (v20.12: threshold is 7.0)."""
+        assert is_community_worthy(6.9) == False
 
     def test_filter_for_community_removes_low_scores(self):
-        """Test filter_for_community removes picks below 6.5."""
+        """Test filter_for_community removes picks below 7.0 (v20.12)."""
         picks = [
             {"name": "Pick A", "final_score": 8.0},
-            {"name": "Pick B", "final_score": 6.5},
-            {"name": "Pick C", "final_score": 6.4},
+            {"name": "Pick B", "final_score": 7.0},
+            {"name": "Pick C", "final_score": 6.9},
             {"name": "Pick D", "final_score": 5.0},
         ]
 
