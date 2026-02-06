@@ -67,7 +67,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 (v20.11) |
 | 27 | Concentration Limits | max_per_matchup=2, max_props_per_player=1, max_per_sport=8 (v20.12) |
 
-### Lessons Learned (59 Total) - Key Categories
+### Lessons Learned (67 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -93,8 +93,13 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 60 | **v20.12 Spread+ML Redundancy** | Same-team spread + ML are ~90% correlated — both lose together; keep higher scorer |
 | 61 | **v20.12 Async Context** | Can't call asyncio.run() inside FastAPI — detect running loop first, graceful degradation |
 | 62 | **v20.12 Variable Name Typos** | base_4_score vs base_score caused NameError — Python doesn't catch at compile time |
+| 63 | **v20.12 Append-Only Grading** | mark_graded() was rewriting entire file — use separate graded_picks.jsonl for crash safety |
+| 64 | **v20.12 Odds Staleness Guard** | ODDS_STALENESS_THRESHOLD_SECONDS=120 — suppress live_adjustment when odds are stale |
+| 65 | **v20.12 Market Status Detection** | If odds=None AND book=falsy, market is suspended — add market_status field to live picks |
+| 66 | **v20.12 Training Drop Telemetry** | last_drop_stats tracks why picks are dropped (unsupported_sport, duplicate_id, etc.) |
+| 67 | **v20.12 Weight Version Hash** | weights_version_hash (SHA256[:12]) in /grader/status for learning loop debugging |
 
-### NEVER DO Sections (28 Categories)
+### NEVER DO Sections (29 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -122,6 +127,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.8 Props Indentation & Code Placement (rules 173-177)
 - v20.9 Frontend/Backend Endpoint Contract (rules 178-181)
 - v20.10 Scoring Cap & Dedup (rules 182-188)
+- **v20.12 Tech Debt Cleanup (rules 206-210)** — Append-only grading, staleness, market status, telemetry
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -6381,6 +6387,195 @@ def _run_async_safely(coro):
 
 **Fixed in:** Commit cacc9d9 (Feb 6, 2026)
 
+### Lesson 63: Append-Only Grading — mark_graded() Crash Safety (v20.12)
+**Problem:** `grader_store.mark_graded()` was rewriting the entire `predictions.jsonl` file on every grade operation. If the process crashed mid-write (OOM, deploy, power loss), the file could be corrupted, losing ALL historical predictions.
+
+**Root Cause:** The original implementation used read-modify-write pattern:
+1. Read entire `predictions.jsonl` into memory
+2. Find and update the matching pick
+3. Write entire file back
+This is NOT crash-safe — a partial write corrupts everything.
+
+**The Fix:**
+1. Created separate `graded_picks.jsonl` file for grade records (append-only)
+2. `mark_graded()` now APPENDS a grade record — never modifies `predictions.jsonl`
+3. `load_predictions()` merges grade records at read time
+4. Corrupted lines are skipped gracefully (JSON parse errors logged, not fatal)
+
+**Key Pattern — Append-Only Storage:**
+```python
+# WRONG - read-modify-write (crash-unsafe)
+predictions = json.load(f)
+predictions[i]["grade_status"] = "GRADED"
+json.dump(predictions, f)  # ❌ If crash here, file is corrupted
+
+# CORRECT - append-only (crash-safe)
+with open(graded_picks_file, 'a') as f:
+    f.write(json.dumps(grade_record) + '\n')  # ✅ Crash-safe
+```
+
+**Prevention:**
+- Always separate mutable data (grades) from immutable data (predictions)
+- Use append-only patterns for any data that accumulates over time
+- Merge records at read time, not write time
+
+**Files Modified:**
+- `storage_paths.py` — Added `get_graded_picks_file()`
+- `grader_store.py` — Rewrote `mark_graded()`, updated `load_predictions()` to merge grades
+
+**Fixed in:** Commit a9a5f8e (Feb 4, 2026)
+
+### Lesson 64: Odds Staleness Guard — Live Adjustment Suppression (v20.12)
+**Problem:** Live betting picks were applying `live_adjustment` based on odds that could be minutes old. Stale odds create false signals — the market may have already moved.
+
+**Root Cause:** No staleness check existed. Live endpoints would fetch odds, cache them, and apply adjustments even if the cache was minutes old.
+
+**The Fix:**
+1. Added `ODDS_STALENESS_THRESHOLD_SECONDS = 120` to `scoring_contract.py`
+2. Live endpoints now track `odds_fetched_at` timestamp
+3. Compute `odds_age_seconds = now - odds_fetched_at`
+4. If `odds_age_seconds > 120`, mark odds as STALE and suppress `live_adjustment`
+
+**Key Insight:** For live betting, data freshness IS quality. A 3-minute-old line might be 10 cents off — that's the entire edge.
+
+**Implementation Pattern:**
+```python
+from core.scoring_contract import ODDS_STALENESS_THRESHOLD_SECONDS
+
+odds_age = (datetime.now() - odds_fetched_at).total_seconds()
+if odds_age > ODDS_STALENESS_THRESHOLD_SECONDS:
+    live_adjustment = 0.0  # Suppress — data too old
+    pick["odds_stale"] = True
+```
+
+**Prevention:**
+- Any live/real-time endpoint MUST track data timestamps
+- Define staleness thresholds as constants in `scoring_contract.py`
+- Log staleness events for monitoring
+
+**Files Modified:**
+- `core/scoring_contract.py` — Added `ODDS_STALENESS_THRESHOLD_SECONDS`
+- `live_data_router.py` — Added staleness detection to live endpoints
+
+**Fixed in:** Commit a9a5f8e (Feb 4, 2026)
+
+### Lesson 65: Market Status Detection — Suspended Market Handling (v20.12)
+**Problem:** When markets are suspended (halftime, injury timeout, review), the API returns null/empty odds. The system was treating these as valid picks with "-110" default odds.
+
+**Root Cause:** No detection logic for suspended markets. The code assumed all returned markets were active.
+
+**The Fix:**
+1. Added `_detect_market_status()` function in `live_data_router.py`
+2. Heuristic: if `odds_american is None` AND `book` is falsy, market is suspended
+3. Each live pick now includes `market_status` field ("open" or "suspended")
+4. Suspended picks can be filtered or flagged in output
+
+**Detection Logic:**
+```python
+def _detect_market_status(pick: dict) -> str:
+    odds = pick.get("odds_american")
+    book = pick.get("book")
+    if odds is None and not book:
+        return "suspended"
+    return "open"
+```
+
+**Why Both Conditions:**
+- `odds is None` alone is not enough — some books don't report odds for certain markets
+- `book` being falsy indicates no book is offering the line
+- Both together strongly indicate market suspension
+
+**Prevention:**
+- When integrating betting APIs, always handle suspended/unavailable states
+- Add explicit status fields rather than inferring from missing data
+
+**Files Modified:**
+- `live_data_router.py` — Added `_detect_market_status()` (lines 7355-7401)
+
+**Fixed in:** Commit a9a5f8e (Feb 4, 2026)
+
+### Lesson 66: Training Drop Telemetry — Tracking Why Picks Are Dropped (v20.12)
+**Problem:** The learning loop was dropping picks during training data conversion, but there was no visibility into WHY. Could be unsupported sports, missing IDs, score thresholds — impossible to debug.
+
+**Root Cause:** `auto_grader.py` silently dropped picks without tracking reasons. When the learning loop showed poor results, there was no way to diagnose if the issue was data quality, filtering, or actual model performance.
+
+**The Fix:**
+1. Added `last_drop_stats` dict in `auto_grader.py` to track drop reasons
+2. Counters for: `unsupported_sport`, `below_score_threshold`, `duplicate_id`, `missing_pick_id`, `conversion_failed`
+3. Exposed via `/grader/status` endpoint for monitoring
+
+**Telemetry Structure:**
+```python
+last_drop_stats = {
+    "unsupported_sport": 0,      # Sport not in weights.json
+    "below_score_threshold": 0,  # Score < MIN_FINAL_SCORE
+    "duplicate_id": 0,           # Same pick_id already processed
+    "missing_pick_id": 0,        # No pick_id field
+    "conversion_failed": 0,      # Exception during conversion
+}
+```
+
+**Why This Matters:**
+- If 80% of picks are dropped for "unsupported_sport", weights.json needs more sports
+- If "duplicate_id" is high, deduplication upstream is failing
+- Telemetry enables data-driven debugging
+
+**Prevention:**
+- When filtering/dropping data, ALWAYS track why
+- Expose drop stats via health/status endpoints
+- Use counters, not just boolean flags
+
+**Files Modified:**
+- `auto_grader.py` — Added `last_drop_stats` tracking (line 292)
+- `main.py` — Added drop stats to `/grader/status`
+
+**Fixed in:** Commit a9a5f8e (Feb 4, 2026)
+
+### Lesson 67: Weight Version Hash — Learning Loop Debugging (v20.12)
+**Problem:** When debugging learning loop issues, it was impossible to know which version of `weights.json` was active. The file could be updated, but there was no version identifier.
+
+**Root Cause:** No versioning mechanism for weights. When weights drifted or caused issues, there was no way to correlate production behavior with a specific weights file state.
+
+**The Fix:**
+1. Compute SHA256 hash of `weights.json` content
+2. Use first 12 characters as `weights_version_hash`
+3. Expose in `/grader/status` along with `weights_file_exists` and `weights_last_modified_et`
+
+**Hash Computation:**
+```python
+import hashlib
+
+with open(weights_file, 'rb') as f:
+    content = f.read()
+weights_version_hash = hashlib.sha256(content).hexdigest()[:12]
+```
+
+**Why SHA256[:12]:**
+- Full SHA256 is 64 chars — too long for logs
+- 12 chars = 48 bits of entropy — sufficient for versioning
+- Any content change produces a different hash
+
+**Debugging Pattern:**
+```bash
+# Check current weights version
+curl /grader/status | jq '.weights_version_hash'
+# Returns: "a1b2c3d4e5f6"
+
+# Compare across environments/deploys
+# If hash differs, weights have changed
+```
+
+**Prevention:**
+- Any file that affects model behavior should have a version identifier
+- Use content hashes, not timestamps (more reliable)
+- Expose version info in status endpoints
+
+**Files Modified:**
+- `live_data_router.py` — Added hash computation (lines 8662-8687)
+- `main.py` — Added `weights_version_hash` to `/grader/status`
+
+**Fixed in:** Commit a9a5f8e (Feb 4, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -7076,6 +7271,14 @@ for pick in candidates:
 203. **NEVER** rename a variable without grep-replacing ALL occurrences — `grep -n "old_name" live_data_router.py` must show 0 results after rename
 204. **NEVER** define a variable inside a try/if block if it's used outside that block — initialize ALL variables at function start, before any try blocks (Lesson 10, 31)
 205. **NEVER** assume `python3 -m py_compile` catches all bugs — it only checks syntax, not undefined variables or type errors; test all code paths manually
+
+## 🚫 NEVER DO THESE (v20.12 - Tech Debt Cleanup)
+
+206. **NEVER** use read-modify-write for grading — `mark_graded()` MUST append to `graded_picks.jsonl`, never modify `predictions.jsonl`; read-modify-write is not crash-safe (Lesson 63)
+207. **NEVER** apply `live_adjustment` to stale odds — check `ODDS_STALENESS_THRESHOLD_SECONDS` (120s); if `odds_age > threshold`, suppress the adjustment (Lesson 64)
+208. **NEVER** treat null odds as valid picks — if `odds_american is None AND book is falsy`, the market is suspended; add `market_status` field (Lesson 65)
+209. **NEVER** silently drop picks in the learning loop — track drop reasons in `last_drop_stats` dict (unsupported_sport, duplicate_id, etc.) for debugging (Lesson 66)
+210. **NEVER** modify weights without a version hash — `weights_version_hash` (SHA256[:12]) must be tracked in `/grader/status` for debugging; any change produces a different hash (Lesson 67)
 
 ---
 
