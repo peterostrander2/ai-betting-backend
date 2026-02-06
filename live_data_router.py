@@ -4926,7 +4926,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 nhl_dog_protocol=False,
                 titanium_triggered=titanium_triggered,
                 # v20.12: Pass engine scores for quality gates
-                base_score=base_4_score,
+                base_score=base_score,
                 ai_score=ai_scaled,
                 research_score=research_score,
                 esoteric_score=esoteric_score,
