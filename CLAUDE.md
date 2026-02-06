@@ -35,7 +35,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 
 ## 📚 MASTER INDEX (Quick Reference)
 
-### Critical Invariants (26 Total)
+### Critical Invariants (27 Total)
 | # | Name | Summary |
 |---|------|---------|
 | 1 | Storage Persistence | ALL data under `RAILWAY_VOLUME_MOUNT_PATH=/data` |
@@ -43,7 +43,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 3 | ET Today-Only Gating | ALL picks for games in today's ET window ONLY |
 | 4 | Option A Scoring | 4-engine base (AI 25%, Research 35%, Esoteric 20%, Jarvis 20%) + context modifier |
 | 5 | Jarvis Additive | Jarvis is weighted engine, NOT separate boost |
-| 6 | Output Filtering | `final_score >= 6.5` required for output |
+| 6 | Output Filtering | `final_score >= 7.0` required for output (v20.12) |
 | 7 | Contradiction Gate | Never output both Over AND Under on same line |
 | 8 | Best-Bets Contract | Response MUST have `props.picks[]` and `game_picks.picks[]` |
 | 9 | Pick Persistence | Picks logged to grader_store for learning loop |
@@ -64,9 +64,10 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 23 | SERP Intelligence | Web search boost capped at 4.3 |
 | 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
-| 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 2.0 |
+| 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 (v20.11) |
+| 27 | Concentration Limits | max_per_matchup=2, max_props_per_player=1, max_per_sport=8 (v20.12) |
 
-### Lessons Learned (55 Total) - Key Categories
+### Lessons Learned (59 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -88,8 +89,9 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 56 | **v20.10 Contradiction Gate** | Totals Over/Under at different lines not caught — line_str included in key prevented grouping |
 | 57 | **v20.10 Score Clustering** | Post-hoc ensemble+totals_cal bypassed TOTAL_BOOST_CAP — all scores clustered at 10.0 |
 | 58 | **v20.10 Grader Dedup** | book_key in pick ID caused same bet from 5 sportsbooks to create 5 grader entries |
+| 59 | **v20.12 Concentration Limits** | Diversity filter enforces max_per_matchup=2 on ALL pick types (props + games) |
 
-### NEVER DO Sections (26 Categories)
+### NEVER DO Sections (27 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -98,6 +100,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - API & Data (rules 31-40)
 - ESPN Integration (rules 41-55)
 - SERP Intelligence (rules 56-65)
+- **v20.12 Concentration Limits (rules 189-196)** — Diversity filter, max_per_matchup
 - Esoteric/Phase 1 (rules 66-80)
 - v17.6 Vortex & Benford (rules 81-90)
 - v19.0 Trap Learning (rules 91-100)
@@ -135,22 +138,32 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 ### Key Files Reference
 | File | Purpose |
 |------|---------|
-| `core/scoring_contract.py` | Scoring constants (Option A weights, thresholds, boost caps, calibration) |
+| `core/scoring_contract.py` | Scoring constants (Option A weights, thresholds, boost caps, calibration, CONCENTRATION_LIMITS) |
 | `core/scoring_pipeline.py` | Score calculation (single source of truth) |
 | `live_data_router.py` | Main API endpoints, pick scoring |
 | `utils/pick_normalizer.py` | Pick contract normalization (single source for all pick fields) |
+| `utils/diversity_filter.py` | Concentration limits filter (max_per_matchup, max_props_per_player) |
+| `utils/contradiction_gate.py` | Prevents opposite side picks |
 | `auto_grader.py` | Learning loop, bias calculation, weight updates |
 | `result_fetcher.py` | Game result fetching, pick grading |
 | `grader_store.py` | Pick persistence (predictions.jsonl) |
-| `utils/contradiction_gate.py` | Prevents opposite side picks |
 | `integration_registry.py` | Env var registry, integration config |
 
-### Current Version: v20.10 (Feb 5, 2026)
-**Latest Fixes (v20.10):**
+### Current Version: v20.12 (Feb 6, 2026)
+**Latest Fixes (v20.12):**
+- Lesson 59: Concentration limits now apply to ALL pick types (props + game picks)
+- Invariant 27: CONCENTRATION_LIMITS in `scoring_contract.py` (max_per_matchup=2, max_props_per_player=1)
+- `utils/diversity_filter.py` imports limits from `scoring_contract.py` (single source of truth)
+- Game picks now subject to `max_per_matchup` limit (prevents 3 spread picks on same game)
+- MIN_FINAL_SCORE raised from 6.5 to 7.0 (quality over quantity)
+- TOTAL_BOOST_CAP lowered from 2.0 to 1.5 (prevents score saturation at 10.0)
+- All 35 diversity filter tests updated and passing
+
+**Previous Fixes (v20.10):**
 - Lesson 56: Contradiction gate Over/Under at different lines not caught — used `line_str = "ANY"` for TOTAL market
 - Lesson 57: Score 10.0 clustering — `ensemble_adjustment` and `totals_calibration_adj` applied OUTSIDE `TOTAL_BOOST_CAP`, now moved inside
 - Lesson 58: Grader duplicate counting — `book_key` in pick ID caused 5x inflation, removed from `_make_pick_id()`
-- All 6 additive boosts now compete within `TOTAL_BOOST_CAP` (2.0) in `compute_final_score_option_a()`
+- All 6 additive boosts now compete within `TOTAL_BOOST_CAP` in `compute_final_score_option_a()`
 
 **Previous Fix (v20.9):**
 - Lesson 55: Frontend Grading page called `GET /live/picks/graded` but endpoint didn't exist — frontend fell back to MOCK_PICKS silently
@@ -6229,6 +6242,35 @@ done
 
 ---
 
+### Lesson 59: Concentration Limits — Game Picks Now Subject to max_per_matchup (v20.12)
+**Problem:** The diversity filter was not applying `max_per_matchup` limits to game picks (spread, total, moneyline). This allowed 3+ picks on the same game to surface, violating the principle of quality over quantity.
+
+**Root Cause:** The original `apply_diversity_gate()` only applied player + game limits to props, but passed `max_per_player=999` for game picks, effectively bypassing concentration limits. The v20.12 behavioral change required game picks to also respect `max_per_matchup=2`.
+
+**The Fix:**
+1. Updated `apply_diversity_gate()` in `utils/diversity_filter.py` to apply `max_per_game=MAX_PICKS_PER_MATCHUP` to game picks
+2. Reduced `MAX_PICKS_PER_MATCHUP` from 3 to 2 in `scoring_contract.py:CONCENTRATION_LIMITS`
+3. Updated 5 tests in `tests/test_diversity_filter.py` to match new behavior:
+   - `test_game_limit_enforced`: expects 2 kept, 3 dropped (was 3/2)
+   - `test_game_picks_also_game_limited`: renamed from `test_non_prop_types_not_game_limited`
+   - `test_player_prop_market_types`: expects 2 kept (was 3)
+   - `test_mixed_players_and_games`: expects 4 props kept (was 5)
+   - `test_max_per_game_default`: verifies `MAX_PICKS_PER_MATCHUP == 2`
+
+**Key Insight:** Concentration limits exist in `scoring_contract.py` as the single source of truth. Any filter that enforces these limits MUST import from `CONCENTRATION_LIMITS`, not define its own constants. When the contract changes, all downstream code inherits the change automatically.
+
+**Pipeline Order (must be preserved):**
+1. Deduplication → 2. Score filter (MIN_FINAL_SCORE) → 3. Contradiction gate → 4. Diversity gate → 5. Final slice
+
+**Files Modified:**
+- `core/scoring_contract.py` — Added `CONCENTRATION_LIMITS` dict (max_per_matchup=2, max_props_per_player=1, max_per_sport_per_day=8)
+- `utils/diversity_filter.py` — Imports limits from scoring_contract, applies to ALL pick types
+- `tests/test_diversity_filter.py` — 5 tests updated for v20.12 behavior
+
+**Fixed in:** v20.12 (Feb 6, 2026)
+
+---
+
 ## ✅ VERIFICATION CHECKLIST (ESPN)
 
 Run these after ANY change to ESPN integration:
@@ -6899,6 +6941,56 @@ for pick in candidates:
 186. **NEVER** assume contradiction gate is working just because exact-line contradictions are caught — test with DIFFERENT lines on the same game total to verify grouping
 187. **NEVER** add post-hoc `final_score += X` in `live_data_router.py` or any caller — if you need to adjust the score, add a parameter to `compute_final_score_option_a()` and include it in `total_boosts`
 188. **NEVER** assume scores are well-distributed without checking — if most picks score 10.0, look for adjustments applied outside the boost cap
+
+## 🚫 NEVER DO THESE (v20.12 - Concentration Limits & Diversity Filter)
+
+189. **NEVER** define concentration limits (max_per_matchup, max_props_per_player, max_per_sport_per_day) anywhere except `scoring_contract.py:CONCENTRATION_LIMITS` — this is the single source of truth; all filters MUST import from there
+190. **NEVER** hardcode limit values (1, 2, 3, 8) in diversity filter code — always use `CONCENTRATION_LIMITS.get("key", default)` so changes propagate automatically
+191. **NEVER** assume game picks bypass concentration limits — v20.12 applies `max_per_matchup` to ALL pick types (props AND game picks like spread/total/moneyline)
+192. **NEVER** change the filtering pipeline order (Dedup → Score filter → Contradiction gate → Diversity gate → Final slice) — each stage depends on the previous stage's output
+193. **NEVER** update test assertions for diversity filter without verifying against `CONCENTRATION_LIMITS` values in `scoring_contract.py` — test expectations must match the contract
+194. **NEVER** apply diversity limits BEFORE contradiction gate — contradictions must be removed first, then diversity limits applied to the remaining valid picks
+195. **NEVER** forget that `MAX_PICKS_PER_MATCHUP` is 2 (not 3) as of v20.12 — old tests expecting 3 per game will fail
+196. **NEVER** skip the diversity filter when processing game picks — both `filtered_props` and `filtered_games` must go through `apply_diversity_gate()`
+
+---
+
+## ✅ VERIFICATION CHECKLIST (Diversity Filter)
+
+Run these after ANY change to diversity filter or concentration limits:
+
+```bash
+# 1. Run diversity filter unit tests
+pytest tests/test_diversity_filter.py -v
+
+# 2. Verify all 35 tests pass
+pytest tests/test_diversity_filter.py --tb=short 2>&1 | tail -5
+# Should show: "35 passed"
+
+# 3. Verify CONCENTRATION_LIMITS in contract
+python3 -c "from core.scoring_contract import CONCENTRATION_LIMITS; print(CONCENTRATION_LIMITS)"
+# Expected: {'max_per_matchup': 2, 'max_per_sport_per_day': 8, 'max_props_per_player': 1}
+
+# 4. Verify diversity_filter imports from contract
+grep -n "from core.scoring_contract import CONCENTRATION_LIMITS" utils/diversity_filter.py
+# Should show the import line
+
+# 5. Verify game picks use MAX_PICKS_PER_MATCHUP
+grep -n "MAX_PICKS_PER_MATCHUP" utils/diversity_filter.py
+# Should show usage in apply_diversity_gate()
+
+# 6. Test production endpoint (check diversity debug output)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug.diversity_filter // .debug.concentration_limits'
+# Should show limits applied
+```
+
+**Common Test Failures:**
+| Failure | Likely Cause | Fix |
+|---------|--------------|-----|
+| `test_game_limit_enforced` expects wrong count | max_per_matchup changed | Update test to expect 2 kept, not 3 |
+| `test_max_per_game_default` fails | MAX_PICKS_PER_MATCHUP != 2 | Check scoring_contract.py value |
+| Import error for CONCENTRATION_LIMITS | Missing from scoring_contract | Add dict to scoring_contract.py |
 
 ---
 

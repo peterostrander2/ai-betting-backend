@@ -18,7 +18,8 @@ CONTEXT_MODIFIER_CAP = 0.35
 
 
 # Output/visibility threshold (hard invariant)
-MIN_FINAL_SCORE = 6.5
+# v20.12: Raised from 6.5 to 7.0 to reduce pick volume and increase quality
+MIN_FINAL_SCORE = 7.0
 
 # Tier thresholds
 GOLD_STAR_THRESHOLD = 7.5
@@ -30,12 +31,29 @@ TITANIUM_RULE = {
 }
 
 # Gold Star hard gates (hard invariant)
+# v20.12: Raised research (5.5→6.5) and esoteric (4.0→5.5) to reduce pick volume
 GOLD_STAR_GATES = {
     "ai_score": 6.8,
-    "research_score": 5.5,
+    "research_score": 6.5,
     "jarvis_score": 6.5,
-    "esoteric_score": 4.0,
+    "esoteric_score": 5.5,
 }
+
+# v20.12: Quality gates for reduced pick volume
+# Base score gates (pre-boost quality check)
+BASE_SCORE_GATES = {
+    "edge_lean_min": 6.0,      # Minimum base_score for EDGE_LEAN (prevents boost-inflated weak picks)
+    "gold_star_min": 6.8,      # Minimum base_score for GOLD_STAR (ensures strong foundation)
+}
+
+# Engine alignment gate (prevents 1 great + 3 terrible engine picks)
+ENGINE_ALIGNMENT_GATE = {
+    "min_engines_above_threshold": 2,  # At least 2 of 4 engines must be >= threshold
+    "threshold": 6.5,                   # Engine minimum for alignment check
+}
+
+# Confluence minimum for EDGE_LEAN tier
+EDGE_LEAN_CONFLUENCE_MINIMUM = "MODERATE"  # Must be at least MODERATE (not DIVERGENT)
 
 # Confluence boost levels (must match production implementation)
 # v17.0: Added HARMONIC_CONVERGENCE for Math+Magic alignment
@@ -102,6 +120,14 @@ SPORT_TOTALS_CALIBRATION = {
     "last_updated": "2026-02-05",
 }
 
+# v20.12: Pick concentration limits (quality over quantity)
+# Prevents overexposure to single games/sports
+CONCENTRATION_LIMITS = {
+    "max_per_matchup": 2,         # Max picks per game (e.g., 2 picks for Lakers vs Celtics)
+    "max_per_sport_per_day": 8,   # Max total picks per sport per day
+    "max_props_per_player": 1,    # Max prop picks per individual player
+}
+
 # Odds staleness threshold for live betting endpoints (seconds)
 # If odds data is older than this, live picks are marked STALE and live_adjustment is suppressed
 ODDS_STALENESS_THRESHOLD_SECONDS = 120
@@ -129,4 +155,9 @@ SCORING_CONTRACT = {
     },
     "totals_side_calibration": TOTALS_SIDE_CALIBRATION,  # v20.4 (disabled v20.11)
     "sport_totals_calibration": SPORT_TOTALS_CALIBRATION,  # v20.11
+    # v20.12: Quality gates for reduced pick volume
+    "base_score_gates": BASE_SCORE_GATES,
+    "engine_alignment_gate": ENGINE_ALIGNMENT_GATE,
+    "edge_lean_confluence_minimum": EDGE_LEAN_CONFLUENCE_MINIMUM,
+    "concentration_limits": CONCENTRATION_LIMITS,
 }

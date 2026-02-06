@@ -5,7 +5,11 @@ Tests ensure:
 1. get_player_key() handles all canonical_player_id formats
 2. get_game_key() handles event_id and matchup fallbacks
 3. apply_diversity_limits() correctly filters by player and game limits
-4. apply_diversity_gate() passes game picks through unchanged
+4. apply_diversity_gate() filters BOTH props AND game picks (v20.12)
+
+v20.12: Updated to use CONCENTRATION_LIMITS from scoring_contract.py:
+- max_props_per_player: 1 (only best line per player)
+- max_per_matchup: 2 (applies to ALL pick types now, not just props)
 """
 import pytest
 from utils.diversity_filter import (
@@ -14,7 +18,7 @@ from utils.diversity_filter import (
     apply_diversity_limits,
     apply_diversity_gate,
     MAX_PROPS_PER_PLAYER,
-    MAX_PROPS_PER_GAME,
+    MAX_PICKS_PER_MATCHUP,
 )
 
 
@@ -176,11 +180,13 @@ class TestApplyDiversityLimits:
         assert debug["total_dropped"] == 3
 
     def test_different_players_all_kept(self):
-        """Different players are all kept (up to game limit)."""
+        """Different players from DIFFERENT games are all kept."""
+        # v20.12: max_per_matchup is now 2, so same-game picks are limited
+        # Use different games to test player-only filtering
         picks = [
             {"player_name": "Player A", "line": 20.5, "total_score": 8.0, "event_id": "game1", "pick_type": "PROP"},
-            {"player_name": "Player B", "line": 15.5, "total_score": 7.5, "event_id": "game1", "pick_type": "PROP"},
-            {"player_name": "Player C", "line": 10.5, "total_score": 7.0, "event_id": "game1", "pick_type": "PROP"},
+            {"player_name": "Player B", "line": 15.5, "total_score": 7.5, "event_id": "game2", "pick_type": "PROP"},
+            {"player_name": "Player C", "line": 10.5, "total_score": 7.0, "event_id": "game3", "pick_type": "PROP"},
         ]
         kept, debug = apply_diversity_limits(picks)
 
@@ -188,18 +194,18 @@ class TestApplyDiversityLimits:
         assert debug["total_dropped"] == 0
 
     def test_game_limit_enforced(self):
-        """Max 3 props per game (default)."""
+        """Max 2 props per game (v20.12 max_per_matchup)."""
         picks = [
             {"player_name": "Player A", "total_score": 8.0, "event_id": "game1", "pick_type": "PROP"},
             {"player_name": "Player B", "total_score": 7.5, "event_id": "game1", "pick_type": "PROP"},
-            {"player_name": "Player C", "total_score": 7.0, "event_id": "game1", "pick_type": "PROP"},
+            {"player_name": "Player C", "total_score": 7.0, "event_id": "game1", "pick_type": "PROP"},  # 3rd - dropped
             {"player_name": "Player D", "total_score": 6.5, "event_id": "game1", "pick_type": "PROP"},  # 4th - dropped
             {"player_name": "Player E", "total_score": 6.0, "event_id": "game1", "pick_type": "PROP"},  # 5th - dropped
         ]
         kept, debug = apply_diversity_limits(picks)
 
-        assert len(kept) == 3
-        assert debug["game_limited"] == 2
+        assert len(kept) == 2
+        assert debug["game_limited"] == 3
 
     def test_spreads_across_games(self):
         """Picks spread across games are not game-limited."""
@@ -234,18 +240,18 @@ class TestApplyDiversityLimits:
         assert len(kept) == 2
         assert debug["player_limited"] == 1
 
-    def test_non_prop_types_not_game_limited(self):
-        """Spread/total/ML picks don't count toward game limit."""
+    def test_game_picks_also_game_limited(self):
+        """v20.12: Spread/total/ML picks ARE now game limited (max_per_matchup applies to ALL)."""
         picks = [
             {"player_name": "", "total_score": 8.0, "event_id": "game1", "pick_type": "SPREAD"},
             {"player_name": "", "total_score": 7.5, "event_id": "game1", "pick_type": "TOTAL"},
-            {"player_name": "", "total_score": 7.0, "event_id": "game1", "pick_type": "MONEYLINE"},
-            {"player_name": "", "total_score": 6.5, "event_id": "game1", "pick_type": "SPREAD"},
+            {"player_name": "", "total_score": 7.0, "event_id": "game1", "pick_type": "MONEYLINE"},  # 3rd - dropped
+            {"player_name": "", "total_score": 6.5, "event_id": "game1", "pick_type": "SPREAD"},    # 4th - dropped
         ]
         kept, debug = apply_diversity_limits(picks)
 
-        assert len(kept) == 4  # All kept - no player key, non-prop types
-        assert debug["game_limited"] == 0
+        assert len(kept) == 2  # Only top 2 kept per max_per_matchup
+        assert debug["game_limited"] == 2
 
     def test_sorting_by_score(self):
         """Picks are sorted by score before filtering."""
@@ -283,17 +289,17 @@ class TestApplyDiversityLimits:
         assert debug["player_counts"]["player a"] == 1
 
     def test_player_prop_market_types(self):
-        """Various player prop market types are recognized."""
+        """v20.12: Various player prop market types are recognized, max 2 per game."""
         picks = [
             {"player_name": "Player A", "total_score": 8.0, "event_id": "game1", "market": "PLAYER_POINTS"},
             {"player_name": "Player B", "total_score": 7.5, "event_id": "game1", "market": "PLAYER_ASSISTS"},
-            {"player_name": "Player C", "total_score": 7.0, "event_id": "game1", "market": "PLAYER_REBOUNDS"},
-            {"player_name": "Player D", "total_score": 6.5, "event_id": "game1", "market": "PLAYER_THREES"},  # 4th
+            {"player_name": "Player C", "total_score": 7.0, "event_id": "game1", "market": "PLAYER_REBOUNDS"},  # 3rd - dropped
+            {"player_name": "Player D", "total_score": 6.5, "event_id": "game1", "market": "PLAYER_THREES"},    # 4th - dropped
         ]
         kept, debug = apply_diversity_limits(picks)
 
-        assert len(kept) == 3  # Game limit applied
-        assert debug["game_limited"] == 1
+        assert len(kept) == 2  # v20.12: max_per_matchup = 2
+        assert debug["game_limited"] == 2
 
 
 # =============================================================================
@@ -383,20 +389,20 @@ class TestDiversityFilterIntegration:
         assert debug["player_limited"] == 3
 
     def test_mixed_players_and_games(self):
-        """Real scenario with multiple players across multiple games."""
+        """Real scenario with multiple players across multiple games (v20.12)."""
         props = [
             # Game 1: 4 different players
             {"player_name": "Player A", "total_score": 8.5, "event_id": "game1", "pick_type": "PROP"},
             {"player_name": "Player B", "total_score": 8.0, "event_id": "game1", "pick_type": "PROP"},
-            {"player_name": "Player C", "total_score": 7.5, "event_id": "game1", "pick_type": "PROP"},
-            {"player_name": "Player D", "total_score": 7.0, "event_id": "game1", "pick_type": "PROP"},  # 4th from game1
+            {"player_name": "Player C", "total_score": 7.5, "event_id": "game1", "pick_type": "PROP"},  # 3rd from game1 - dropped
+            {"player_name": "Player D", "total_score": 7.0, "event_id": "game1", "pick_type": "PROP"},  # 4th from game1 - dropped
 
             # Game 2: 2 players
             {"player_name": "Player E", "total_score": 7.8, "event_id": "game2", "pick_type": "PROP"},
             {"player_name": "Player F", "total_score": 7.2, "event_id": "game2", "pick_type": "PROP"},
 
             # Player A again with different line
-            {"player_name": "Player A", "total_score": 7.6, "event_id": "game1", "pick_type": "PROP"},  # Dup
+            {"player_name": "Player A", "total_score": 7.6, "event_id": "game1", "pick_type": "PROP"},  # Dup - player limited
         ]
 
         games = [
@@ -406,14 +412,15 @@ class TestDiversityFilterIntegration:
 
         filtered_props, filtered_games, debug = apply_diversity_gate(props, games)
 
-        # Player A duplicate dropped (player limit)
-        # Player D dropped (game1 already has 3)
-        assert len(filtered_props) == 5
+        # v20.12: max_per_matchup = 2
+        # Player A duplicate dropped (player limit = 1)
+        # Player C, D dropped (game1 already has 2 after A, B)
+        assert len(filtered_props) == 4  # A, B from game1 + E, F from game2
         assert debug["props_player_limited"] == 1  # Player A duplicate
-        assert debug["props_game_limited"] == 1  # Player D (4th from game1)
+        assert debug["props_game_limited"] == 2  # Player C, D (3rd, 4th from game1)
 
-        # Games unchanged
-        assert len(filtered_games) == 2
+        # Games also game-limited now (v20.12)
+        assert len(filtered_games) == 2  # Both kept (different matchups)
 
 
 # =============================================================================
@@ -428,5 +435,5 @@ class TestDefaultConfiguration:
         assert MAX_PROPS_PER_PLAYER == 1
 
     def test_max_per_game_default(self):
-        """Default max per game is 3."""
-        assert MAX_PROPS_PER_GAME == 3
+        """v20.12: Default max per matchup is 2."""
+        assert MAX_PICKS_PER_MATCHUP == 2

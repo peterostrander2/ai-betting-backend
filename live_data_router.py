@@ -4924,7 +4924,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 final_score=final_score,
                 confluence=confluence,
                 nhl_dog_protocol=False,
-                titanium_triggered=titanium_triggered
+                titanium_triggered=titanium_triggered,
+                # v20.12: Pass engine scores for quality gates
+                base_score=base_4_score,
+                ai_score=ai_scaled,
+                research_score=research_score,
+                esoteric_score=esoteric_score,
+                jarvis_score=(jarvis_rs if jarvis_rs is not None else 0),
             )
         else:
             # Fallback tier determination (v12.0 thresholds)
@@ -6808,6 +6814,26 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     top_props = filtered_props_diverse[:max_props]
     top_game_picks = filtered_games_diverse[:max_games]
 
+    # v20.12: Apply max_per_sport_per_day concentration limit (quality over quantity)
+    # Limit total picks (props + games combined) to configured max
+    try:
+        from core.scoring_contract import CONCENTRATION_LIMITS
+        max_per_sport = CONCENTRATION_LIMITS.get("max_per_sport_per_day", 8)
+        total_picks = len(top_props) + len(top_game_picks)
+        if total_picks > max_per_sport:
+            # Keep best picks from combined pool, prioritizing by score
+            combined = [(p, "prop") for p in top_props] + [(g, "game") for g in top_game_picks]
+            combined.sort(key=lambda x: x[0].get("final_score", 0) or x[0].get("total_score", 0), reverse=True)
+            combined = combined[:max_per_sport]
+            top_props = [p for p, t in combined if t == "prop"]
+            top_game_picks = [p for p, t in combined if t == "game"]
+            _picks_dropped_sport_limit = total_picks - max_per_sport
+            logger.info("CONCENTRATION_LIMIT: Reduced %d picks to %d (max_per_sport_per_day=%d)",
+                       total_picks, max_per_sport, max_per_sport)
+    except Exception as e:
+        logger.warning("CONCENTRATION_LIMIT: Failed to apply sport limit: %s", e)
+        # Continue without enforcement
+
     # CRITICAL FIX: Enforce book_key defaults before API response (BOTH props and games)
     # Applied UNCONDITIONALLY - never allow empty book_key in response
     try:
@@ -7856,7 +7882,18 @@ async def debug_pick_breakdown(sport: str):
 
         # --- BET TIER ---
         if TIERING_AVAILABLE:
-            bet_tier = tier_from_score(final_score, confluence, titanium_triggered=titanium_triggered)
+            bet_tier = tier_from_score(
+                final_score=final_score,
+                confluence=confluence,
+                nhl_dog_protocol=False,
+                titanium_triggered=titanium_triggered,
+                # v20.12: Pass engine scores for quality gates
+                base_score=base_score,
+                ai_score=ai_scaled,
+                research_score=research_score,
+                esoteric_score=esoteric_score,
+                jarvis_score=jarvis_rs,
+            )
         else:
             # Fallback tier determination (v12.0 thresholds)
             if titanium_triggered:

@@ -1,14 +1,15 @@
 """
-Diversity Filter - Prevents props concentration on single players or games.
+Diversity Filter - Prevents picks concentration on single players or games.
 
 Ensures we don't recommend multiple props from the same player or flood
 picks from a single game.
 
 Fixes the recurring issue: "Svi Mykhailiuk 4 times" appearing in picks.
 
-Rules:
-- Max 1 prop per player (keeps highest score)
-- Max 3 props per game (spreads diversity across multiple games)
+v20.12: Now uses CONCENTRATION_LIMITS from scoring_contract.py:
+- max_props_per_player: 1 (only best line per player)
+- max_per_matchup: 2 (spreads picks across games - applies to ALL pick types)
+- max_per_sport_per_day: 8 (quality over quantity)
 """
 from typing import List, Dict, Tuple, Any
 from collections import defaultdict
@@ -17,9 +18,20 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Configuration
-MAX_PROPS_PER_PLAYER = 1  # Only best line per player
-MAX_PROPS_PER_GAME = 3    # Spread picks across games
+# v20.12: Import canonical limits from scoring contract
+try:
+    from core.scoring_contract import CONCENTRATION_LIMITS
+    MAX_PROPS_PER_PLAYER = CONCENTRATION_LIMITS.get("max_props_per_player", 1)
+    MAX_PICKS_PER_MATCHUP = CONCENTRATION_LIMITS.get("max_per_matchup", 2)
+    MAX_PICKS_PER_SPORT = CONCENTRATION_LIMITS.get("max_per_sport_per_day", 8)
+except ImportError:
+    # Fallback if scoring_contract not available
+    MAX_PROPS_PER_PLAYER = 1
+    MAX_PICKS_PER_MATCHUP = 2
+    MAX_PICKS_PER_SPORT = 8
+
+# Legacy alias for backwards compatibility
+MAX_PROPS_PER_GAME = MAX_PICKS_PER_MATCHUP
 
 
 def _normalize_name(value: str) -> str:
@@ -115,19 +127,18 @@ def apply_diversity_limits(
             })
             continue
 
-        # Skip if game already at limit (for props)
-        pick_type = (pick.get("pick_type") or pick.get("market") or "").upper()
-        if pick_type in ["PROP", "PLAYER_PROP", "PLAYER_POINTS", "PLAYER_ASSISTS",
-                         "PLAYER_REBOUNDS", "PLAYER_THREES", "PLAYER_PRA"]:
-            if game_key and game_counts[game_key] >= max_per_game:
-                dropped_by_game.append({
-                    "game": game_key,
-                    "player": player_key,
-                    "pick_id": pick.get("pick_id", ""),
-                    "score": pick.get("total_score", 0),
-                    "reason": f"Game limit ({max_per_game})"
-                })
-                continue
+        # v20.12: Apply game limit to ALL pick types (not just props)
+        # max_per_matchup prevents overexposure to single games
+        if game_key and game_counts[game_key] >= max_per_game:
+            dropped_by_game.append({
+                "game": game_key,
+                "player": player_key,
+                "pick_id": pick.get("pick_id", ""),
+                "score": pick.get("total_score", 0),
+                "pick_type": pick.get("pick_type", ""),
+                "reason": f"Game limit ({max_per_game})"
+            })
+            continue
 
         # Keep this pick
         kept_picks.append(pick)
@@ -179,8 +190,9 @@ def apply_diversity_gate(
     """
     Apply diversity gate to both props and game picks.
 
-    Only props get player-level limiting. Game picks are passed through unchanged
-    since spreads/totals/ML are inherently game-level (not player-level).
+    v20.12: Now applies concentration limits to BOTH props and game picks:
+    - Props: max_props_per_player + max_per_matchup
+    - Game picks: max_per_matchup (prevent multiple spread/total/ML on same game)
 
     Args:
         props: List of prop picks
@@ -190,21 +202,37 @@ def apply_diversity_gate(
     Returns:
         Tuple of (filtered_props, filtered_game_picks, combined_debug_info)
     """
-    # Apply diversity limits to props
-    filtered_props, props_debug = apply_diversity_limits(props, debug=debug)
+    # Apply diversity limits to props (player + game limits)
+    filtered_props, props_debug = apply_diversity_limits(
+        props,
+        max_per_player=MAX_PROPS_PER_PLAYER,
+        max_per_game=MAX_PICKS_PER_MATCHUP,
+        debug=debug
+    )
 
-    # Game picks don't need player-level filtering, but we still log
-    # Note: Could add max-per-game-for-game-picks in future if needed
+    # v20.12: Apply game limits to game picks too
+    # Game picks don't need player-level filtering, but DO need matchup limiting
+    # (prevents 3 spread picks on same game)
+    filtered_games, games_debug = apply_diversity_limits(
+        game_picks,
+        max_per_player=999,  # No player limit for game picks
+        max_per_game=MAX_PICKS_PER_MATCHUP,
+        debug=debug
+    )
 
     combined_debug = {
         "props_player_limited": props_debug["player_limited"],
         "props_game_limited": props_debug["game_limited"],
         "props_total_dropped": props_debug["total_dropped"],
-        "games_total_dropped": 0,  # No game pick filtering currently
-        "total_dropped": props_debug["total_dropped"]
+        "games_game_limited": games_debug["game_limited"],
+        "games_total_dropped": games_debug["total_dropped"],
+        "total_dropped": props_debug["total_dropped"] + games_debug["total_dropped"],
+        "max_per_matchup": MAX_PICKS_PER_MATCHUP,
+        "max_props_per_player": MAX_PROPS_PER_PLAYER,
     }
 
     if debug:
         combined_debug["props_debug"] = props_debug
+        combined_debug["games_debug"] = games_debug
 
-    return filtered_props, game_picks, combined_debug
+    return filtered_props, filtered_games, combined_debug
