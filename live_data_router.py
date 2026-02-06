@@ -138,7 +138,7 @@ except ImportError:
     logger.warning("tiering module not available - using legacy tier logic")
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
-from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, SPORT_TOTALS_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS, CONFLUENCE_LEVELS
+from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, SPORT_TOTALS_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS, CONFLUENCE_LEVELS, PERSIST_TIERS
 from core.scoring_pipeline import compute_final_score_option_a, compute_harmonic_boost
 from core.telemetry import apply_used_integrations_debug, attach_integration_telemetry_debug, record_daily_integration_rollup
 
@@ -6949,10 +6949,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         date_et_for_store = _start_et.date().isoformat()
 
         # Persist all picks (props + games)
-        all_picks_to_persist = top_props + top_game_picks
+        # v20.12: Filter to only quality tiers - uses PERSIST_TIERS from scoring_contract.py
+        # MONITOR and PASS tiers are filtered out - they don't provide value for the learning loop
+        all_candidates = top_props + top_game_picks
+        all_picks_to_persist = [p for p in all_candidates if p.get("tier", "").upper() in PERSIST_TIERS]
+        _tier_filtered_count = len(all_candidates) - len(all_picks_to_persist)
 
-        logger.info("GRADER_STORE: Attempting to persist %d picks (date_et=%s)",
-                    len(all_picks_to_persist), date_et_for_store)
+        logger.info("GRADER_STORE: Attempting to persist %d picks (date_et=%s), filtered %d non-quality tiers",
+                    len(all_picks_to_persist), date_et_for_store, _tier_filtered_count)
 
         for pick in all_picks_to_persist:
             # Ensure required fields for grading

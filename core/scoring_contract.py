@@ -128,6 +128,11 @@ CONCENTRATION_LIMITS = {
     "max_props_per_player": 1,    # Max prop picks per individual player
 }
 
+# v20.12: Tier filter for persistence (quality over quantity)
+# Only these tiers are worth persisting to the learning loop
+# MONITOR and PASS tiers don't provide value for weight learning
+PERSIST_TIERS = {"EDGE_LEAN", "GOLD_STAR", "TITANIUM_SMASH"}
+
 # Odds staleness threshold for live betting endpoints (seconds)
 # If odds data is older than this, live picks are marked STALE and live_adjustment is suppressed
 ODDS_STALENESS_THRESHOLD_SECONDS = 120
@@ -160,4 +165,5 @@ SCORING_CONTRACT = {
     "engine_alignment_gate": ENGINE_ALIGNMENT_GATE,
     "edge_lean_confluence_minimum": EDGE_LEAN_CONFLUENCE_MINIMUM,
     "concentration_limits": CONCENTRATION_LIMITS,
+    "persist_tiers": PERSIST_TIERS,  # v20.12: Only quality tiers saved to learning loop
 }
