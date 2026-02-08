@@ -108,12 +108,12 @@ check_json "/live/best-bets/NBA" "best-bets NBA contract" '([
   .props.picks[]?, .game_picks.picks[]?
 ] | all(
   (.bet_string // "") | length > 0
-  and .bet_string != "N/A"
+  and (.bet_string == "N/A" | not)
   and ((.selection // "") | length > 0)
   and ((.market_label // "") | length > 0)
   and (.odds_american != null)
   and (.recommended_units != null)
-  and (.pick_type != "moneyline" or (.line != null))
+  and ((.pick_type == "moneyline" | not) or (.line != null))
   and (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_modifier != null)
   and (.total_score != null and .final_score != null)
   and (.bet_tier != null)
@@ -122,12 +122,12 @@ check_json "/live/best-bets/NHL" "best-bets NHL contract" '([
   .props.picks[]?, .game_picks.picks[]?
 ] | all(
   (.bet_string // "") | length > 0
-  and .bet_string != "N/A"
+  and (.bet_string == "N/A" | not)
   and ((.selection // "") | length > 0)
   and ((.market_label // "") | length > 0)
   and (.odds_american != null)
   and (.recommended_units != null)
-  and (.pick_type != "moneyline" or (.line != null))
+  and ((.pick_type == "moneyline" | not) or (.line != null))
   and (.ai_score != null and .research_score != null and .esoteric_score != null and .jarvis_score != null and .context_modifier != null)
   and (.total_score != null and .final_score != null)
   and (.bet_tier != null)
