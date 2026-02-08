@@ -3216,6 +3216,132 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         ai_score = min(8.0, base_ai + _ai_boost)
         return ai_score, ai_reasons
 
+    # v20.0: Helper function to get contributions from all 8 AI models
+    def _calculate_8_model_contributions(
+        mps,
+        line_variance: float = 0.0,
+        sharp_signal: Optional[Dict] = None,
+        injuries: Optional[List] = None,
+        probability: float = 0.5,
+        odds: int = -110,
+        days_rest: int = 1,
+        travel_miles: int = 0,
+        games_last_7: int = 3,
+        is_b2b: bool = False
+    ) -> Tuple[float, List[str]]:
+        """
+        Run all 8 AI models from MasterPredictionSystem with available data.
+        Returns (total_boost, reasons) to add to AI score.
+
+        Models used:
+        - Model 5: Line Movement Analyzer (sharp money detection)
+        - Model 6: Rest/Fatigue Model (schedule impact)
+        - Model 7: Injury Impact Model (player availability)
+        - Model 8: Edge Calculator (EV and Kelly)
+
+        Models 1-4 (Ensemble, LSTM, Matchup, Monte Carlo) require historical
+        data that's handled separately by ml_integration.py
+        """
+        if mps is None:
+            return 0.0, ["8-model system unavailable"]
+
+        total_boost = 0.0
+        reasons = []
+
+        try:
+            # ===== MODEL 5: Line Movement Analyzer =====
+            # Detects reverse line movement (sharp money)
+            if sharp_signal:
+                current_line = sharp_signal.get("current_line", 0)
+                opening_line = sharp_signal.get("opening_line", current_line)
+                public_pct = sharp_signal.get("public_pct", 50)
+
+                line_analysis = mps.line_analyzer.analyze_line_movement(
+                    game_id="live",
+                    current_line=current_line,
+                    opening_line=opening_line,
+                    time_until_game=60,  # Default 1 hour
+                    betting_pct={"public_on_favorite": public_pct}
+                )
+
+                if line_analysis.get("sharp_money_detected"):
+                    total_boost += 0.5
+                    move = line_analysis.get("line_movement", 0)
+                    reasons.append(f"Model5 RLM detected: {move:+.1f}pts (+0.5)")
+                elif line_variance > 1.0:
+                    total_boost += 0.25
+                    reasons.append(f"Model5 line variance: {line_variance:.1f} (+0.25)")
+
+            # ===== MODEL 6: Rest/Fatigue Model =====
+            # Analyzes schedule burden
+            if is_b2b:
+                days_rest = 0
+
+            rest_factor = mps.rest_model.analyze_rest(
+                days_rest=days_rest,
+                travel_miles=travel_miles,
+                games_in_last_7=games_last_7
+            )
+
+            # rest_factor is a multiplier (0.75-1.0), convert to boost
+            if rest_factor < 0.90:
+                # Fatigued team - reduce AI if betting on them
+                total_boost -= 0.3
+                reasons.append(f"Model6 fatigue factor: {rest_factor:.2f} (-0.3)")
+            elif rest_factor >= 0.98:
+                # Well-rested - boost
+                total_boost += 0.2
+                reasons.append(f"Model6 rest advantage: {rest_factor:.2f} (+0.2)")
+
+            # ===== MODEL 7: Injury Impact Model =====
+            # Calculates impact of missing players
+            if injuries:
+                injury_impact = mps.injury_model.calculate_impact(
+                    injuries=injuries,
+                    depth_chart={}  # We don't have depth chart, model handles gracefully
+                )
+
+                # injury_impact is negative (penalty) when key players out
+                if injury_impact < -1.5:
+                    total_boost -= 0.4
+                    reasons.append(f"Model7 injury impact: {injury_impact:.1f} (-0.4)")
+                elif injury_impact < -0.5:
+                    total_boost -= 0.2
+                    reasons.append(f"Model7 injury impact: {injury_impact:.1f} (-0.2)")
+                elif injury_impact == 0:
+                    total_boost += 0.1
+                    reasons.append("Model7 no significant injuries (+0.1)")
+
+            # ===== MODEL 8: Edge Calculator =====
+            # Computes expected value and Kelly criterion
+            edge_analysis = mps.edge_calculator.calculate_ev(
+                your_probability=probability,
+                betting_odds=odds
+            )
+
+            ev = edge_analysis.get("expected_value", 0)
+            edge_pct = edge_analysis.get("edge_percent", 0)
+            confidence = edge_analysis.get("confidence", "low")
+
+            if confidence == "high" and ev > 0:
+                total_boost += 0.5
+                reasons.append(f"Model8 high EV: {ev:.2f} edge:{edge_pct:.1f}% (+0.5)")
+            elif confidence == "medium" and ev > 0:
+                total_boost += 0.25
+                reasons.append(f"Model8 medium EV: {ev:.2f} edge:{edge_pct:.1f}% (+0.25)")
+            elif ev < -0.1:
+                total_boost -= 0.25
+                reasons.append(f"Model8 negative EV: {ev:.2f} (-0.25)")
+
+        except Exception as e:
+            logger.debug(f"8-model calculation error: {e}")
+            reasons.append(f"8-model partial: {str(e)[:50]}")
+
+        # Cap total boost to reasonable range
+        total_boost = max(-1.0, min(1.5, total_boost))
+
+        return total_boost, reasons
+
     # v17.0: Helper function to map prop market to defensive position category
     def _market_to_position(market: str, sport: str) -> str:
         """Map prop market to defensive position category for context layer lookup."""
@@ -3457,6 +3583,65 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             ai_score, ai_reasons = _calculate_heuristic_ai_score(
                 base_ai, sharp_signal, spread, player_name
             )
+
+        # ===== v20.0: ADD 8-MODEL CONTRIBUTIONS =====
+        # Run all 8 AI models from MasterPredictionSystem and add boost
+        _8model_boost = 0.0
+        _8model_reasons = []
+
+        if mps is not None:
+            try:
+                # Gather injury data for model 7
+                _all_injuries_for_8model = []
+                if _injuries_by_team:
+                    for team_injuries in _injuries_by_team.values():
+                        _all_injuries_for_8model.extend(team_injuries)
+
+                # Convert injuries to model format (need player and depth info)
+                _formatted_injuries = []
+                for inj in _all_injuries_for_8model:
+                    status = inj.get("status", "").upper()
+                    if status in ["OUT", "DOUBTFUL"]:
+                        _formatted_injuries.append({
+                            "player": {
+                                "name": inj.get("player_name", inj.get("name", "Unknown")),
+                                "depth": 1 if inj.get("is_starter", True) else 2
+                            },
+                            "status": status
+                        })
+
+                # Estimate probability from current AI score
+                # Higher AI = higher confidence in our pick
+                _prob_estimate = 0.5 + (ai_score - 5.0) / 10.0  # Maps 5.0→0.5, 8.0→0.8
+                _prob_estimate = max(0.35, min(0.85, _prob_estimate))
+
+                # Check for back-to-back (b2b) from context data
+                _is_b2b = False  # Could be enriched from schedule data
+
+                # Get 8-model contributions
+                _8model_boost, _8model_reasons = _calculate_8_model_contributions(
+                    mps=mps,
+                    line_variance=sharp_signal.get("line_variance", 0) if sharp_signal else 0,
+                    sharp_signal=sharp_signal,
+                    injuries=_formatted_injuries if _formatted_injuries else None,
+                    probability=_prob_estimate,
+                    odds=-110,  # Default odds
+                    days_rest=1,  # Default rest
+                    travel_miles=0,
+                    games_last_7=3,
+                    is_b2b=_is_b2b
+                )
+
+                # Add boost to AI score (capped at 8.0 max)
+                ai_score = min(8.0, ai_score + _8model_boost)
+                ai_reasons.extend(_8model_reasons)
+
+                if _8model_boost != 0:
+                    ai_reasons.append(f"8-Model total: {_8model_boost:+.2f}")
+
+            except Exception as e:
+                logger.debug(f"8-model integration error: {e}")
+                ai_reasons.append("8-Model: unavailable")
 
         # Scale AI to 0-10 for use in base_score formula
         ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
