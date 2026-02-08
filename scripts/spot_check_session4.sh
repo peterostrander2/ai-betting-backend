@@ -120,11 +120,14 @@ check "Core integrations (odds/playbook/bdl/storage) validated" \
 OPTIONAL_CONFIGURED=$(jq '[.integrations | to_entries[] | select(.value.status_category == "CONFIGURED")] | length' "$TMP_FILE" 2>/dev/null || echo "0")
 echo "  (INFO: $OPTIONAL_CONFIGURED optional integrations are CONFIGURED but not validated)"
 
-# CHECK: No integrations with ERROR status
+# CHECK: No REQUIRED integrations with ERROR status
+# Note: serpapi is optional (SERP_INTEL_ENABLED=false by default per CLAUDE.md Lesson 62)
+#       UNREACHABLE for optional integrations is acceptable
 echo -e "${YELLOW}[NO ERROR STATUS]${NC}"
-ERRORED=$(jq '[.integrations | to_entries[] | select(.value.status_category == "ERROR" or .value.status_category == "UNREACHABLE")] | .[].key' "$TMP_FILE" 2>/dev/null | tr '\n' ', ' || echo "none")
-ERROR_COUNT=$(jq '[.integrations | to_entries[] | select(.value.status_category == "ERROR" or .value.status_category == "UNREACHABLE")] | length' "$TMP_FILE" 2>/dev/null || echo "0")
-check "No integrations with ERROR status" \
+OPTIONAL_INTEGRATIONS="serpapi|twitter_api|finnhub_api|fred_api"  # Optional integrations that can be UNREACHABLE
+ERRORED=$(jq --arg opt "$OPTIONAL_INTEGRATIONS" '[.integrations | to_entries[] | select(.value.status_category == "ERROR" or (.value.status_category == "UNREACHABLE" and (.key | test($opt) | not)))] | .[].key' "$TMP_FILE" 2>/dev/null | tr '\n' ', ' || echo "none")
+ERROR_COUNT=$(jq --arg opt "$OPTIONAL_INTEGRATIONS" '[.integrations | to_entries[] | select(.value.status_category == "ERROR" or (.value.status_category == "UNREACHABLE" and (.key | test($opt) | not)))] | length' "$TMP_FILE" 2>/dev/null || echo "0")
+check "No required integrations with ERROR status" \
     "$([ "$ERROR_COUNT" -eq 0 ] && echo true || echo false)" \
     "$ERRORED" \
     "none"

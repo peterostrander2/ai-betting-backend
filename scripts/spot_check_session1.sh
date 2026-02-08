@@ -58,13 +58,13 @@ echo "ET Start: $ET_START"
 echo "ET End: $ET_END"
 echo ""
 
-# CHECK 1: ET window starts at 00:01:00
+# CHECK 1: ET window starts at 00:00:00
 echo -e "${YELLOW}[CHECK 1] ET window start time${NC}"
 START_TIME=$(echo "$ET_START" | grep -oE 'T[0-9]{2}:[0-9]{2}:[0-9]{2}' | sed 's/T//')
-check "ET window starts at 00:01:00" \
-    "$([ "$START_TIME" = "00:01:00" ] && echo true || echo false)" \
+check "ET window starts at 00:00:00" \
+    "$([ "$START_TIME" = "00:00:00" ] && echo true || echo false)" \
     "$START_TIME" \
-    "00:01:00"
+    "00:00:00"
 
 # CHECK 2: ET window ends at next day 00:00:00 (exclusive)
 echo -e "${YELLOW}[CHECK 2] ET window end time${NC}"

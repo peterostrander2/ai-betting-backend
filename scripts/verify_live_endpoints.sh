@@ -107,30 +107,30 @@ check_json "/live/best-bets/NBA" "best-bets NBA" 'has("props") and has("game_pic
 check_json "/live/best-bets/NBA" "best-bets NBA contract" '([
   .props.picks[]?, .game_picks.picks[]?
 ] | all(
-  (.bet_string // "") | length > 0
-  and (.bet_string == "N/A" | not)
-  and ((.selection // "") | length > 0)
-  and ((.market_label // "") | length > 0)
-  and (.odds_american == null | not)
-  and (.recommended_units == null | not)
-  and ((.pick_type == "moneyline" | not) or (.line == null | not))
-  and ((.ai_score == null | not) and (.research_score == null | not) and (.esoteric_score == null | not) and (.jarvis_score == null | not) and (.context_modifier == null | not))
-  and ((.total_score == null | not) and (.final_score == null | not))
-  and (.bet_tier == null | not)
+  (((.bet_string // "") | length) > 0)
+  and ((.bet_string == "N/A") | not)
+  and (((.selection // "") | length) > 0)
+  and (((.market_label // "") | length) > 0)
+  and ((.odds_american == null) | not)
+  and ((.recommended_units == null) | not)
+  and (((.pick_type == "moneyline") | not) or ((.line == null) | not))
+  and (((.ai_score == null) | not) and ((.research_score == null) | not) and ((.esoteric_score == null) | not) and ((.jarvis_score == null) | not) and ((.context_modifier == null) | not))
+  and (((.total_score == null) | not) and ((.final_score == null) | not))
+  and ((.bet_tier == null) | not)
 ))' "X-API-Key"
 check_json "/live/best-bets/NHL" "best-bets NHL contract" '([
   .props.picks[]?, .game_picks.picks[]?
 ] | all(
-  (.bet_string // "") | length > 0
-  and (.bet_string == "N/A" | not)
-  and ((.selection // "") | length > 0)
-  and ((.market_label // "") | length > 0)
-  and (.odds_american == null | not)
-  and (.recommended_units == null | not)
-  and ((.pick_type == "moneyline" | not) or (.line == null | not))
-  and ((.ai_score == null | not) and (.research_score == null | not) and (.esoteric_score == null | not) and (.jarvis_score == null | not) and (.context_modifier == null | not))
-  and ((.total_score == null | not) and (.final_score == null | not))
-  and (.bet_tier == null | not)
+  (((.bet_string // "") | length) > 0)
+  and ((.bet_string == "N/A") | not)
+  and (((.selection // "") | length) > 0)
+  and (((.market_label // "") | length) > 0)
+  and ((.odds_american == null) | not)
+  and ((.recommended_units == null) | not)
+  and (((.pick_type == "moneyline") | not) or ((.line == null) | not))
+  and (((.ai_score == null) | not) and ((.research_score == null) | not) and ((.esoteric_score == null) | not) and ((.jarvis_score == null) | not) and ((.context_modifier == null) | not))
+  and (((.total_score == null) | not) and ((.final_score == null) | not))
+  and ((.bet_tier == null) | not)
 ))' "X-API-Key"
 check_json "/live/best-bets/NBA" "hard gate: final_score >= 6.5" '([
   .props.picks[]?, .game_picks.picks[]?
@@ -138,8 +138,8 @@ check_json "/live/best-bets/NBA" "hard gate: final_score >= 6.5" '([
 check_json "/live/best-bets/NBA" "hard gate: titanium 3-of-4" '([
   .props.picks[]?, .game_picks.picks[]?
 ] | all(
-  (.titanium_triggered == true | not)
-  or (([.ai_score, .research_score, .esoteric_score, .jarvis_score] | map(. >= 8.0) | add) >= 3)
+  ((.titanium_triggered == true) | not)
+  or (([.ai_score, .research_score, .esoteric_score, .jarvis_score] | map(select(. >= 8.0)) | length) >= 3)
 ))' "X-API-Key"
 check_json "/live/grader/status" "grader status" '.available == true' "X-API-Key"
 check_json "/live/debug/time" "debug time" 'has("et_date")' "X-API-Key"

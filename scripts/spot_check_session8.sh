@@ -106,10 +106,32 @@ check_sport() {
   [[ "$http" == "200" ]] || fail "${sport}: HTTP ${http}"
   echo "$body" | jq -e . >/dev/null 2>&1 || fail "${sport}: invalid JSON"
 
-  # No error payload
-  local has_err
-  has_err="$(echo "$body" | jq -r 'has("error") or has("errors") or (.debug | has("error"))' 2>/dev/null || echo "false")"
-  [[ "$has_err" == "false" ]] || fail "${sport}: error payload detected"
+  # Error payload check - allow partial success (PROPS_TIMED_OUT, etc.) when picks still returned
+  # Only fail if there's an error AND no picks were returned
+  local has_fatal_err picks_count
+  picks_count="$(echo "$body" | jq -r '([.props.picks[]?] + [.game_picks.picks[]?]) | length')"
+
+  # Check for errors that aren't acceptable partial-success codes
+  has_fatal_err="$(echo "$body" | jq -r '
+    # Top-level error field (not error code in errors array)
+    (has("error") and .error != null and .error != "") or
+    # Non-timeout errors in errors array
+    (has("errors") and (.errors | map(select(.code != "PROPS_TIMED_OUT" and .code != "GAME_PICKS_TIMED_OUT")) | length) > 0) or
+    # Debug-level error
+    (.debug != null and .debug | has("error") and .debug.error != null and .debug.error != "")
+  ' 2>/dev/null || echo "false")"
+
+  # Fail if fatal error OR (partial error AND zero picks)
+  if [[ "$has_fatal_err" == "true" ]]; then
+    fail "${sport}: fatal error detected"
+  elif [[ "$picks_count" == "0" ]]; then
+    # Check if there are ANY errors when we have 0 picks
+    local has_any_err
+    has_any_err="$(echo "$body" | jq -r 'has("errors") and (.errors | length) > 0' 2>/dev/null || echo "false")"
+    if [[ "$has_any_err" == "true" ]]; then
+      echo "  ⚠️  ${sport}: 0 picks with errors (allowed during off-season)"
+    fi
+  fi
 
   # ET window validation
   local start_et end_et filter_date

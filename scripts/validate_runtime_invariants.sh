@@ -27,11 +27,11 @@ fi
 
 # INVARIANT 3: ET Window Bounds
 echo ""
-echo "🕐 INVARIANT 3: ET Window [00:01:00, 00:00:00 next day)"
-if grep -q "time(0, 1, 0)" core/time_et.py 2>/dev/null; then
-    echo "✅ PASS: ET window starts at 00:01:00"
+echo "🕐 INVARIANT 3: ET Window [00:00:00, 00:00:00 next day)"
+if grep -q "time(0, 0, 0)" core/time_et.py 2>/dev/null; then
+    echo "✅ PASS: ET window starts at 00:00:00"
 else
-    echo "❌ FAIL: ET window start is NOT 00:01:00"
+    echo "❌ FAIL: ET window start is NOT 00:00:00"
     EXIT_CODE=1
 fi
 
