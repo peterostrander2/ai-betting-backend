@@ -7265,14 +7265,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         props_status = "TIMED_OUT"
     elif _props_scoring_error:
         props_status = "ERROR"
-    elif len(top_props) == 0:
+    elif not top_props:
         props_status = "EMPTY"
 
     if "game_picks_scoring" in _timed_out_components:
         games_status = "TIMED_OUT"
     elif _game_scoring_error:
         games_status = "ERROR"
-    elif len(top_game_picks) == 0:
+    elif not top_game_picks:
         games_status = "EMPTY"
 
     # Stable error codes for public response
@@ -8573,9 +8573,9 @@ async def debug_today_games(sport: str):
             "today_info": today_info,
             "games": game_analysis,
             "summary": {
-                "today_games": sum(1 for g in game_analysis if g.get("is_today") == True),
-                "not_today": sum(1 for g in game_analysis if g.get("is_today") == False),
-                "already_started": sum(1 for g in game_analysis if g.get("has_started") == True)
+                "today_games": sum(1 for g in game_analysis if g.get("is_today") is True),
+                "not_today": sum(1 for g in game_analysis if g.get("is_today") is False),
+                "already_started": sum(1 for g in game_analysis if g.get("has_started") is True)
             },
             "timestamp": datetime.now().isoformat()
         }

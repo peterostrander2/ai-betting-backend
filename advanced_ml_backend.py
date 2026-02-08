@@ -532,7 +532,7 @@ class LSTMModel:
     
     def _statistical_fallback(self, recent_games):
         """Fallback when LSTM not available"""
-        if len(recent_games) == 0:
+        if not recent_games:
             return 25.0
         
         recent_games = np.array(recent_games)

@@ -809,13 +809,13 @@ async def get_all_integrations_status() -> Dict[str, Any]:
     required_not_configured = [n for n in not_configured if INTEGRATIONS[n].required]
     required_unreachable = [n for n in unreachable if INTEGRATIONS[n].required]
 
-    if len(required_not_configured) > 0 or len(required_unreachable) > 0:
+    if required_not_configured or required_unreachable:
         overall_status = "CRITICAL"
         overall_message = f"Required integrations failing: {required_not_configured + required_unreachable}"
-    elif len(unreachable) > 0:
+    elif unreachable:
         overall_status = "DEGRADED"
         overall_message = f"Some integrations unreachable: {unreachable}"
-    elif len(not_configured) > 0:
+    elif not_configured:
         overall_status = "DEGRADED"
         overall_message = f"Some optional integrations not configured: {not_configured}"
     else:
@@ -938,7 +938,7 @@ def get_health_check_loud() -> Dict[str, Any]:
             errors.append(f"MISSING: {name} - Set one of: {integration.env_vars}")
 
     # Determine status
-    if len(missing) == 0:
+    if not missing:
         status = "HEALTHY"
         message = "All 14 integrations configured and ready"
     elif len(missing) <= 3:
