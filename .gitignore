@@ -45,3 +45,6 @@ pick_logs/
 grader_data/
 graded_picks/
 audit_logs/
+
+# Scan artifacts
+artifacts/
