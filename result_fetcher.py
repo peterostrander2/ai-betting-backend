@@ -770,7 +770,8 @@ def normalize_player_name(name: str) -> str:
 def match_player_stats(
     player_name: str,
     stat_type: str,
-    all_stats: List[PlayerStatline]
+    all_stats: List[PlayerStatline],
+    expected_teams: Optional[List[str]] = None
 ) -> Optional[float]:
     """
     Find a player's actual stat value from the statlines.
@@ -779,6 +780,7 @@ def match_player_stats(
         player_name: Player name to match
         stat_type: Stat type (player_points, player_assists, etc.)
         all_stats: List of all player statlines
+        expected_teams: Optional list of team names (home_team, away_team) to validate against
 
     Returns:
         Actual stat value or None if not found
@@ -800,20 +802,71 @@ def match_player_stats(
     # Also try the original stat_type in case it's already correct
     stat_key_original = STAT_TYPE_MAP.get(stat_type, stat_type.replace("player_", "") if stat_type else "")
 
+    # v20.11: Normalize expected teams for comparison
+    normalized_expected_teams = []
+    if expected_teams:
+        normalized_expected_teams = [normalize_player_name(t) for t in expected_teams if t]
+
+    # v20.11: Track matches with and without team validation
+    matches_with_team = []
+    matches_without_team = []
+
     for statline in all_stats:
         if normalize_player_name(statline.player_name) == normalized_name:
             # Check if we have this stat - try cleaned key first, then original
+            stat_value = None
+            matched_key = None
             for key in [stat_key, stat_key_original]:
                 if key in statline.stats:
-                    logger.debug("Matched %s stat '%s' = %s", player_name, key, statline.stats[key])
-                    return statline.stats[key]
+                    stat_value = statline.stats[key]
+                    matched_key = key
+                    break
                 # Try direct attribute
                 if hasattr(statline, key) and getattr(statline, key, None) is not None:
-                    val = getattr(statline, key)
-                    logger.debug("Matched %s attr '%s' = %s", player_name, key, val)
-                    return val
+                    stat_value = getattr(statline, key)
+                    matched_key = key
+                    break
 
-            # Log what keys are available for debugging
+            if stat_value is not None:
+                # v20.11: Check if statline team matches expected teams
+                statline_team_normalized = normalize_player_name(statline.team) if statline.team else ""
+                team_matches = False
+                if normalized_expected_teams:
+                    for exp_team in normalized_expected_teams:
+                        if exp_team and statline_team_normalized:
+                            # Check if either contains the other (handles "Orlando Magic" vs "Magic")
+                            if exp_team in statline_team_normalized or statline_team_normalized in exp_team:
+                                team_matches = True
+                                break
+                else:
+                    # No expected teams provided, consider it a match
+                    team_matches = True
+
+                if team_matches:
+                    matches_with_team.append((statline, stat_value, matched_key))
+                else:
+                    matches_without_team.append((statline, stat_value, matched_key))
+
+    # v20.11: Prefer matches where team validates
+    if matches_with_team:
+        statline, stat_value, matched_key = matches_with_team[0]
+        logger.debug("Matched %s stat '%s' = %s (team: %s)",
+                    player_name, matched_key, stat_value, statline.team)
+        return stat_value
+
+    # v20.11: Fall back to matches without team validation, but log warning
+    if matches_without_team:
+        statline, stat_value, matched_key = matches_without_team[0]
+        logger.warning(
+            "TEAM MISMATCH: Player %s found on team '%s' but expected one of %s. "
+            "Stat '%s' = %s. This may indicate a data quality issue.",
+            player_name, statline.team, expected_teams, matched_key, stat_value
+        )
+        return stat_value
+
+    # Check if player was found but stat wasn't available
+    for statline in all_stats:
+        if normalize_player_name(statline.player_name) == normalized_name:
             logger.debug("Stats available for %s: %s (wanted: %s/%s)",
                         player_name, list(statline.stats.keys()), stat_key, stat_key_original)
             return None  # Player found but stat not available
@@ -1062,10 +1115,17 @@ async def auto_grade_picks(
                 stats = all_player_stats.get(sport, [])
 
                 prop_type = pick.get("prop_type") or pick.get("stat_type") or pick.get("market", "")
+                # v20.11: Pass expected teams for team validation to prevent mismatches
+                expected_teams = [
+                    pick.get("home_team"),
+                    pick.get("away_team"),
+                    pick.get("player_team"),  # Also include player's team if available
+                ]
                 actual_value = match_player_stats(
                     player_name,
                     prop_type,
-                    stats
+                    stats,
+                    expected_teams=expected_teams
                 )
 
                 if actual_value is None:
