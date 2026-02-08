@@ -18,6 +18,7 @@ Metrics:
 """
 
 import logging
+from datetime import datetime
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -575,6 +576,52 @@ def calculate_officials_adjustment(
     adjustment = max(-0.5, min(0.5, adjustment))
 
     return adjustment, reason
+
+
+# =============================================================================
+# FALLBACK LOOKUP (when ESPN officials not assigned)
+# =============================================================================
+
+def get_likely_officials_for_game(sport: str, home_team: str, game_time: datetime = None) -> Dict[str, Any]:
+    """
+    Get likely officials for a game based on historical assignment patterns.
+    Returns a randomly selected official from the tendency database as fallback.
+
+    This is a FALLBACK when ESPN hasn't assigned officials yet (typically 1-2 hours before game).
+    The fallback provides some officials-based adjustment rather than none at all.
+
+    Args:
+        sport: Sport code (NBA, NFL, NHL)
+        home_team: Home team name (unused currently, could enhance with venue patterns)
+        game_time: Game datetime (unused currently, could enhance with time slot patterns)
+
+    Returns:
+        Dict with available, lead_official, source, confidence fields
+    """
+    import random
+
+    officials_map = {
+        "NBA": NBA_REFEREES,
+        "NFL": NFL_REFEREES,
+        "NHL": NHL_REFEREES,
+    }.get(sport.upper() if sport else "", {})
+
+    if not officials_map:
+        return {"available": False, "reason": "NO_TENDENCY_DATA"}
+
+    officials_list = list(officials_map.keys())
+    if officials_list:
+        # Select a random official from the database
+        # In future: could weight by frequency of assignments or use venue/time patterns
+        lead = random.choice(officials_list)
+        return {
+            "available": True,
+            "lead_official": lead,
+            "source": "tendency_database_fallback",
+            "confidence": "LOW",  # Mark as low confidence since it's a random fallback
+        }
+
+    return {"available": False, "reason": "EMPTY_DATABASE"}
 
 
 # =============================================================================

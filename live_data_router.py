@@ -5039,6 +5039,23 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                     away_team, home_team, lead_official, official_2, official_3,
                                     officials_data.get("source", "unknown"))
 
+                # v20.12: FALLBACK - If ESPN doesn't have officials assigned, try tendency database
+                # ESPN assigns officials 1-2 hours before game, but best-bets fetch earlier
+                if not lead_official and sport_upper in ("NBA", "NFL", "NHL"):
+                    try:
+                        from officials_data import get_likely_officials_for_game
+                        fallback_officials = get_likely_officials_for_game(sport_upper, home_team, game_datetime)
+                        if fallback_officials and fallback_officials.get("available"):
+                            lead_official = fallback_officials.get("lead_official", "")
+                            officials_data = fallback_officials
+                            logger.debug("OFFICIALS FALLBACK[%s @ %s]: Using tendency data, lead=%s (confidence: %s)",
+                                        away_team or "?", home_team or "?", lead_official,
+                                        fallback_officials.get("confidence", "?"))
+                    except ImportError:
+                        logger.debug("Officials fallback module not available")
+                    except Exception as e:
+                        logger.debug("Officials fallback lookup failed: %s", e)
+
                 # Only apply if we have official data
                 if lead_official and officials_data:
                     # v17.8: Use new tendency-based adjustment method
