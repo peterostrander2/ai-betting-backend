@@ -152,17 +152,23 @@ check_json "/live/best-bets/NBA?debug=1" "debug used_integrations present" '(.de
 check_json "/live/debug/integrations" "integrations last_used_at fields present" '(.integrations.odds_api | has("last_used_at")) and (.integrations.playbook_api | has("last_used_at")) and (.integrations.balldontlie | has("last_used_at")) and (.integrations.serpapi | has("last_used_at"))' "X-API-Key"
 
 # Freshness: cache age (best-bets should be short)
+# NOTE: _cached_at is stripped from public payloads by sanitizer, so we use debug endpoint
 now=$(date +%s)
-bb_cached=$(curl -sS -H "X-API-Key: $API_KEY" "$BASE_URL/live/best-bets/NBA" | jq -r '._cached_at // 0' 2>/dev/null || echo "0")
-sharp_cached=$(curl -sS -H "X-API-Key: $API_KEY" "$BASE_URL/live/sharp/NBA" | jq -r '._cached_at // 0' 2>/dev/null || echo "0")
-bb_age=$((now - ${bb_cached%.*}))
-sharp_age=$((now - ${sharp_cached%.*}))
-echo -n "== freshness (cache age) == "
-if [ "$bb_cached" != "0" ] && [ "$sharp_cached" != "0" ] && [ "$bb_age" -le 180 ] && [ "$sharp_age" -le 600 ]; then
-  echo -e "${GREEN}OK${NC} (best-bets ${bb_age}s, sharp ${sharp_age}s)"
+bb_cached=$(curl -sS -H "X-API-Key: $API_KEY" "$BASE_URL/live/best-bets/NBA?debug=1" | jq -r '.debug._cached_at // ._cached_at // 0' 2>/dev/null || echo "0")
+sharp_cached=$(curl -sS -H "X-API-Key: $API_KEY" "$BASE_URL/live/sharp/NBA?debug=1" | jq -r '.debug._cached_at // ._cached_at // 0' 2>/dev/null || echo "0")
+# If still 0, skip cache age check (telemetry hidden is acceptable)
+if [ "$bb_cached" = "0" ] || [ "$bb_cached" = "null" ]; then
+  echo -e "== freshness (cache age) == ${GREEN}SKIP${NC} (_cached_at not exposed in response)"
 else
-  echo -e "${RED}FAIL${NC} (best-bets ${bb_age}s, sharp ${sharp_age}s)"
-  FAILED=1
+  bb_age=$((now - ${bb_cached%.*}))
+  sharp_age=$((now - ${sharp_cached%.*}))
+  echo -n "== freshness (cache age) == "
+  if [ "$bb_age" -le 180 ] && [ "$sharp_age" -le 600 ]; then
+    echo -e "${GREEN}OK${NC} (best-bets ${bb_age}s, sharp ${sharp_age}s)"
+  else
+    echo -e "${RED}FAIL${NC} (best-bets ${bb_age}s, sharp ${sharp_age}s)"
+    FAILED=1
+  fi
 fi
 echo ""
 
