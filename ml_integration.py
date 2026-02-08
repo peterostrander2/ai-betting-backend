@@ -44,6 +44,7 @@ MARKET_TO_STAT = {
     "player_rush_yds": "rushing_yards",
     "player_rushing_yards": "rushing_yards",
     "player_rec_yds": "receiving_yards",
+    "player_reception_yds": "receiving_yards",  # Odds API uses this spelling
     "player_receiving_yards": "receiving_yards",
     "player_pass_tds": "passing_yards",  # Use yards model as proxy
     "player_rush_tds": "rushing_yards",  # Use yards model as proxy
