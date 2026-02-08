@@ -88,13 +88,20 @@ PY
       fail "best-bets $sport context_modifier exceeds cap"
     fi
 
-    # Final score math check (with cap at 10.0)
+    # Final score math check (with TOTAL_BOOST_CAP and clamp at [0, 10])
+    # Must match compute_final_score_option_a in core/scoring_pipeline.py
     local diff
     diff=$(jq -r '
       .game_picks.picks[0] as $p |
-      ($p.base_4_score + $p.context_modifier + $p.confluence_boost + $p.msrf_boost + $p.jason_sim_boost + $p.serp_boost + ($p.ensemble_adjustment // 0) + ($p.live_adjustment // 0) + ($p.totals_calibration_adj // 0)) as $raw |
-      ($raw | if . > 10 then 10 else . end) as $capped |
-      ($p.final_score - $capped) | abs
+      # Sum boosts that get capped together (per scoring_pipeline.py line 85)
+      (($p.confluence_boost // 0) + ($p.msrf_boost // 0) + ($p.jason_sim_boost // 0) + ($p.serp_boost // 0) + ($p.ensemble_adjustment // 0) + ($p.totals_calibration_adj // 0)) as $total_boosts |
+      # Apply TOTAL_BOOST_CAP (1.5) per scoring_contract.py
+      (if $total_boosts > 1.5 then 1.5 else $total_boosts end) as $capped_boosts |
+      # Final = base_4 + context + capped_boosts + live_adjustment (live applied to research_score, but still checked)
+      ($p.base_4_score + $p.context_modifier + $capped_boosts + ($p.live_adjustment // 0)) as $raw |
+      # Clamp to [0, 10]
+      ($raw | if . > 10 then 10 else . end | if . < 0 then 0 else . end) as $final |
+      ($p.final_score - $final) | fabs
     ' "$resp_file" 2>/dev/null || echo 0)
 
     python3 - <<PY

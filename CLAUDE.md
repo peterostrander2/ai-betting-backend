@@ -64,7 +64,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 23 | SERP Intelligence | Web search boost capped at 4.3 |
 | 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
-| 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 3.5 |
+| 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
 ### Lessons Learned (60 Total) - Key Categories
 | Range | Category | Examples |
@@ -177,7 +177,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 **Previous Fixes (v20.6):**
 - Lesson 49: Props timeout — TIME_BUDGET_S configurable, increased 40→55s default
 - Lesson 50: Empty description fields — auto-generated in `normalize_pick()`
-- Lesson 51: Score inflation — TOTAL_BOOST_CAP = 3.5 prevents boost stacking to 10.0
+- Lesson 51: Score inflation — TOTAL_BOOST_CAP = 1.5 prevents boost stacking to 10.0
 - Lesson 52: Jarvis baseline misconception — 4.5 baseline is by design (sacred triggers are rare)
 - Invariant 26: Total Boost Cap enforcement in `compute_final_score_option_a()`
 
@@ -422,7 +422,7 @@ context_modifier ∈ [-0.35, +0.35]
 total_boosts = min(TOTAL_BOOST_CAP, confluence_boost + msrf_boost + jason_sim_boost + serp_boost)
 FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + ensemble_adjustment + live_adjustment + totals_calibration_adj)
 ```
-**TOTAL_BOOST_CAP = 3.5** — prevents score inflation from stacking multiple boosts (Invariant 26)
+**TOTAL_BOOST_CAP = 1.5** — prevents score inflation from stacking multiple boosts (Invariant 26)
 
 **Ensemble adjustment:**
 - Uses `ENSEMBLE_ADJUSTMENT_STEP` (no magic ±0.5 literals).
@@ -437,7 +437,7 @@ FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + ensemble_adjustm
 | msrf_boost | `signals/msrf_resonance.py` | `MSRF_BOOST_CAP` (1.0) | 0.0 / 0.25 / 0.5 / 1.0 |
 | jason_sim_boost | `jason_sim_confluence.py` | `JASON_SIM_BOOST_CAP` (1.5) | Can be negative (block rules) |
 | serp_boost | `alt_data_sources/serp_intelligence.py` | `SERP_BOOST_CAP_TOTAL` (4.3) | Total SERP capped |
-| **SUM of above 4** | `core/scoring_pipeline.py` | **`TOTAL_BOOST_CAP` (3.5)** | **Prevents score inflation (Inv. 26)** |
+| **SUM of above 4** | `core/scoring_pipeline.py` | **`TOTAL_BOOST_CAP` (1.5)** | **Prevents score inflation (Inv. 26)** |
 | ensemble_adjustment | `utils/ensemble_adjustment.py` | `ENSEMBLE_ADJUSTMENT_STEP` (0.5) | +0.5 / -0.5 step |
 | live_adjustment | `live_data_router.py` | ±0.50 | In-game adjustment to research_score |
 | totals_calibration_adj | `live_data_router.py` | ±0.75 | OVER penalty / UNDER boost from `TOTALS_SIDE_CALIBRATION` |
@@ -3616,7 +3616,7 @@ curl /live/grader/bias/NBA?days_back=7 -H "X-API-Key: KEY" | jq '.pick_type_brea
 
 ### INVARIANT 26: Total Boost Cap (v20.6)
 
-**RULE:** The sum of all additive boosts (confluence + msrf + jason_sim + serp) MUST be capped at `TOTAL_BOOST_CAP` (3.5) before being added to `base_score`. Context modifier is excluded from this cap.
+**RULE:** The sum of all additive boosts (confluence + msrf + jason_sim + serp) MUST be capped at `TOTAL_BOOST_CAP` (1.5) before being added to `base_score`. Context modifier is excluded from this cap.
 
 **Why This Exists:**
 Individual boost caps (confluence 10.0, msrf 1.0, jason_sim 1.5, serp 4.3) allowed a theoretical max of 16.8 additional points. In practice, picks with mediocre base scores (~6.5) were being inflated to 10.0 through boost stacking, eliminating score differentiation. TOTAL_BOOST_CAP ensures boosts improve good picks but can't rescue bad ones.
@@ -3632,7 +3632,7 @@ final_score = max(0.0, min(10.0, final_score))
 ```
 
 **Constants (core/scoring_contract.py):**
-- `TOTAL_BOOST_CAP = 3.5` — max sum of 4 boosts
+- `TOTAL_BOOST_CAP = 1.5` — max sum of 4 boosts
 - `SERP_BOOST_CAP_TOTAL = 4.3` — individual SERP cap (still applies first)
 - `CONFLUENCE_BOOST_CAP = 10.0` — individual confluence cap
 - `MSRF_BOOST_CAP = 1.0` — individual MSRF cap
@@ -5882,7 +5882,7 @@ datetime.fromisoformat(p.timestamp) >= cutoff  # Same error
 **Root Cause:** Individual boost caps existed (confluence 10.0, msrf 1.0, jason_sim 1.5, serp 4.3) but NO cap on their SUM. Theoretical max boost was 16.8 points. In practice, confluence 3.0 + msrf 1.0 + serp 2.0 + jason 0.5 = 6.5 boosts on a 6.5 base = 13.0 → clamped to 10.0.
 
 **The Fix:**
-1. Added `TOTAL_BOOST_CAP = 3.5` in `core/scoring_contract.py`
+1. Added `TOTAL_BOOST_CAP = 1.5` in `core/scoring_contract.py`
 2. In `compute_final_score_option_a()`: sum of confluence+msrf+jason_sim+serp capped to `TOTAL_BOOST_CAP` before adding to base_score
 3. Context modifier is excluded from the cap (it's a bounded modifier, not a boost)
 4. Updated `test_option_a_scoring_guard.py` to test new cap behavior
@@ -7049,7 +7049,7 @@ if day_start <= ts < day_end:  # Exclusive end
 
 ## 🚫 NEVER DO THESE (v20.6 - Boost Caps & Production)
 
-156. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (3.5) — this causes score inflation and clustering at 10.0
+156. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (1.5) — this causes score inflation and clustering at 10.0
 157. **NEVER** add a new additive boost without updating `TOTAL_BOOST_CAP` logic in `compute_final_score_option_a()` — uncapped boosts compound silently
 158. **NEVER** hardcode timeout values in API endpoints — always use `os.getenv()` with a sensible default and register in `integration_registry.py`
 159. **NEVER** assume `TIME_BUDGET_S` only needs to cover game scoring — props scoring shares the same budget and needs time too
