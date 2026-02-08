@@ -3668,16 +3668,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     # Telemetry: LSTM is ML primary for props
                     _ai_telemetry = {"ai_mode": "ML_LSTM", "models_used_count": 1}
                 else:
-                    # Fallback to heuristic
-                    ai_score, ai_reasons = _calculate_heuristic_ai_score(
+                    # Fallback to heuristic - include WHY lstm wasn't used
+                    _fallback_reason = lstm_metadata.get("reason", f"No LSTM model for {sport_upper}/{market}")
+                    ai_score, heuristic_reasons = _calculate_heuristic_ai_score(
                         base_ai, sharp_signal, spread, player_name
                     )
+                    ai_reasons = [f"LSTM unavailable: {_fallback_reason}"] + heuristic_reasons
                     _ai_telemetry = {"ai_mode": "HEURISTIC_FALLBACK", "models_used_count": 0}
             except Exception as e:
                 logger.warning(f"LSTM prediction failed, using heuristic: {e}")
-                ai_score, ai_reasons = _calculate_heuristic_ai_score(
+                ai_score, heuristic_reasons = _calculate_heuristic_ai_score(
                     base_ai, sharp_signal, spread, player_name
                 )
+                ai_reasons = [f"LSTM error: {str(e)[:50]} — using heuristic fallback"] + heuristic_reasons
                 _ai_telemetry = {"ai_mode": "HEURISTIC_FALLBACK", "models_used_count": 0}
         else:
             # ===== v20.1: GAMES USE 8-MODEL SYSTEM AS PRIMARY =====

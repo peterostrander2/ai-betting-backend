@@ -148,3 +148,61 @@ ALLOW_EMPTY=1 bash scripts/learning_loop_sanity.sh
 ## 10) Learning Loop Audit
 
 **Report:** `docs/LEARNING_LOOP_AUDIT.md`
+
+---
+
+## NFL Props LSTM Status (v20.2 - February 8, 2026)
+
+### Issue Summary
+
+**Issue:** NFL props were using heuristic fallback instead of LSTM models, despite LSTM model files existing.
+
+**Root Cause:** Missing market name mapping in `MARKET_TO_STAT`. The Odds API returns `player_reception_yds` but the mapping only had `player_rec_yds`.
+
+**Fix Applied:** Added `player_reception_yds` to the mapping and improved fallback messaging.
+
+**Status:** ✅ FIXED
+
+### NFL LSTM Model Availability
+
+| Stat Type | Model File | Status |
+|-----------|------------|--------|
+| passing_yards | `models/lstm_nfl_passing_yards.weights.h5` | ✅ Exists |
+| rushing_yards | `models/lstm_nfl_rushing_yards.weights.h5` | ✅ Exists |
+| receiving_yards | `models/lstm_nfl_receiving_yards.weights.h5` | ✅ Exists |
+
+### Market → Stat Mapping (After Fix)
+
+| Odds API Market | Stat Type | LSTM Model | Status |
+|-----------------|-----------|------------|--------|
+| `player_pass_yds` | passing_yards | nfl_passing_yards | ✅ Mapped |
+| `player_passing_yards` | passing_yards | nfl_passing_yards | ✅ Mapped |
+| `player_rush_yds` | rushing_yards | nfl_rushing_yards | ✅ Mapped |
+| `player_rushing_yards` | rushing_yards | nfl_rushing_yards | ✅ Mapped |
+| `player_rec_yds` | receiving_yards | nfl_receiving_yards | ✅ Mapped |
+| `player_reception_yds` | receiving_yards | nfl_receiving_yards | ✅ **ADDED** |
+| `player_receiving_yards` | receiving_yards | nfl_receiving_yards | ✅ Mapped |
+| `player_pass_tds` | passing_yards | nfl_passing_yards | ✅ Proxy |
+| `player_rush_tds` | rushing_yards | nfl_rushing_yards | ✅ Proxy |
+| `player_receptions` | receiving_yards | nfl_receiving_yards | ✅ Proxy |
+
+### Changes Made
+
+1. **ml_integration.py** - Added `player_reception_yds` to MARKET_TO_STAT
+2. **live_data_router.py** - Improved fallback messaging with clear reasons
+3. **scripts/verify_lstm_props.sh** - New verification script
+
+### Verification
+
+```bash
+./scripts/verify_lstm_props.sh NFL
+API_KEY=your_key ./scripts/verify_lstm_props.sh NFL
+```
+
+### Contract: "LSTM Primary for Props When Available"
+
+This contract is now enforced:
+
+1. **When LSTM model exists:** Props use LSTM prediction, `ai_mode=ML_LSTM`
+2. **When LSTM unavailable:** Props use heuristic, `ai_mode=HEURISTIC_FALLBACK`, ai_reasons explains why
+3. **No silent fallbacks:** Every fallback includes a reason
