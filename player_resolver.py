@@ -604,46 +604,49 @@ def match_player_stats(
 # =============================================================================
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("PLAYER RESOLVER v1.0 - TEST")
-    print("=" * 60)
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+    logger.info("=" * 60)
+    logger.info("PLAYER RESOLVER v1.0 - TEST")
+    logger.info("=" * 60)
 
     resolver = get_player_resolver()
 
     # Test 1: Known player with alias
-    print("\nTest 1: Known player - 'L. James'")
+    logger.info("\nTest 1: Known player - 'L. James'")
     player = resolver.resolve_player("L. James", "NBA", "Lakers")
     if player:
-        print(f"  Canonical ID: {player.canonical_id}")
-        print(f"  Canonical Name: {player.canonical_name}")
-        print(f"  Provider IDs: {player.provider_ids}")
+        logger.info("  Canonical ID: %s", player.canonical_id)
+        logger.info("  Canonical Name: %s", player.canonical_name)
+        logger.info("  Provider IDs: %s", player.provider_ids)
 
     # Test 2: Player matching
-    print("\nTest 2: Matching 'LeBron James' vs 'L. James'")
+    logger.info("\nTest 2: Matching 'LeBron James' vs 'L. James'")
     is_match, similarity = resolver.match_players("LeBron James", "L. James")
-    print(f"  Match: {is_match}, Similarity: {similarity:.2f}")
+    logger.info("  Match: %s, Similarity: %.2f", is_match, similarity)
 
     # Test 3: Unknown player
-    print("\nTest 3: Unknown player - 'John Smith'")
+    logger.info("\nTest 3: Unknown player - 'John Smith'")
     player = resolver.resolve_player("John Smith", "NBA", "Lakers")
     if player:
-        print(f"  Canonical ID: {player.canonical_id}")
-        print(f"  Canonical Name: {player.canonical_name}")
+        logger.info("  Canonical ID: %s", player.canonical_id)
+        logger.info("  Canonical Name: %s", player.canonical_name)
 
     # Test 4: Find best match from list
-    print("\nTest 4: Find best match")
+    logger.info("\nTest 4: Find best match")
     candidates = ["LeBron James", "Kevin Durant", "Stephen Curry"]
     result = resolver.find_best_match("L. James", candidates)
     if result:
-        print(f"  Best match: {result[0]} (similarity: {result[1]:.2f})")
+        logger.info("  Best match: %s (similarity: %.2f)", result[0], result[1])
 
     # Test 5: Name normalization
-    print("\nTest 5: Name normalization")
+    logger.info("\nTest 5: Name normalization")
     test_names = ["LeBron James Jr.", "CURRY, STEPHEN", "Giannis Antetokounmpo"]
     for name in test_names:
         normalized = normalize_player_name(name)
-        print(f"  '{name}' -> '{normalized}'")
+        logger.info("  '%s' -> '%s'", name, normalized)
 
-    print("\n" + "=" * 60)
-    print("Tests complete!")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("Tests complete!")
+    logger.info("=" * 60)

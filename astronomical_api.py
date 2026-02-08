@@ -399,25 +399,28 @@ def get_moon_betting_signal(target_date: date = None) -> Dict[str, Any]:
 # =============================================================================
 
 if __name__ == "__main__":
-    print("=== Astronomical API Module Test ===\n")
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+    logger.info("=== Astronomical API Module Test ===\n")
 
     # Current moon data
     now = datetime.utcnow()
     data = get_live_moon_data()
 
-    print(f"Date: {data['date']}")
-    print(f"Moon Sign: {data['moon_sign']} ({data['degree']}°)")
-    print(f"Phase: {data['phase']['phase_name']} ({data['phase']['illumination']}% illuminated)")
-    print(f"Days since new moon: {data['phase']['days_since_new']}")
+    logger.info("Date: %s", data['date'])
+    logger.info("Moon Sign: %s (%s deg)", data['moon_sign'], data['degree'])
+    logger.info("Phase: %s (%s%% illuminated)", data['phase']['phase_name'], data['phase']['illumination'])
+    logger.info("Days since new moon: %s", data['phase']['days_since_new'])
 
-    print(f"\nVoid of Course:")
+    logger.info("\nVoid of Course:")
     voc = data['void_of_course']
-    print(f"  Is Void: {voc['is_void']} (confidence: {voc['confidence']:.0%})")
-    print(f"  Hours until sign change: {voc['hours_until_sign_change']}")
-    print(f"  Next sign: {voc['next_sign']}")
+    logger.info("  Is Void: %s (confidence: %.0f%%)", voc['is_void'], voc['confidence'] * 100)
+    logger.info("  Hours until sign change: %s", voc['hours_until_sign_change'])
+    logger.info("  Next sign: %s", voc['next_sign'])
 
-    print("\n=== Betting Signal ===")
+    logger.info("\n=== Betting Signal ===")
     signal = get_moon_betting_signal()
-    print(f"Signal: {signal['signal']}")
-    print(f"Strength: {signal['strength']}")
-    print(f"Note: {signal['note']}")
+    logger.info("Signal: %s", signal['signal'])
+    logger.info("Strength: %s", signal['strength'])
+    logger.info("Note: %s", signal['note'])

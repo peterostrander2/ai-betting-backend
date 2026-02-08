@@ -3,7 +3,10 @@ Advanced AI Sports Betting Backend with 8 AI Models + 8 Pillars of Execution
 Railway-Ready Production Version
 """
 
+import logging
 import numpy as np
+
+logger = logging.getLogger(__name__)
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from xgboost import XGBRegressor
@@ -29,7 +32,7 @@ try:
     TENSORFLOW_AVAILABLE = True
 except ImportError:
     TENSORFLOW_AVAILABLE = False
-    print("⚠️  TensorFlow not available - LSTM model will use fallback")
+    logger.warning("TensorFlow not available - LSTM model will use fallback")
 
 # ============================================
 # 🏛️ THE 8 PILLARS OF EXECUTION
@@ -448,16 +451,16 @@ class EnsembleStackingModel:
         """Train all base models and meta model"""
         base_predictions = []
         for name, model in self.base_models.items():
-            print(f"Training {name}...")
+            logger.info("Training %s...", name)
             model.fit(X_train, y_train)
             val_pred = model.predict(X_val)
             base_predictions.append(val_pred)
-        
+
         # Stack predictions for meta model
         stacked_features = np.column_stack(base_predictions)
         self.meta_model.fit(stacked_features, y_val)
         self.is_trained = True
-        print("✓ Ensemble model trained successfully")
+        logger.info("Ensemble model trained successfully")
     
     def predict(self, features):
         """Make prediction using ensemble"""
@@ -501,7 +504,7 @@ class LSTMModel:
     def build_model(self, sequence_length=10, features=1):
         """Build LSTM architecture"""
         if not TENSORFLOW_AVAILABLE:
-            print("⚠️  TensorFlow not available - using statistical fallback")
+            logger.warning("TensorFlow not available - using statistical fallback")
             return None
         
         model = keras.Sequential([
@@ -655,8 +658,8 @@ class MasterPredictionSystem:
     Produces final recommendation with confidence score
     """
     def __init__(self):
-        print("🔧 Initializing Master Prediction System with 8 Pillars...")
-        
+        logger.info("Initializing Master Prediction System with 8 Pillars...")
+
         # Initialize all 8 AI models
         self.ensemble = EnsembleStackingModel()
         self.lstm = LSTMModel()
@@ -666,11 +669,11 @@ class MasterPredictionSystem:
         self.rest_model = RestFatigueModel()
         self.injury_model = InjuryImpactModel()
         self.edge_calculator = BettingEdgeCalculator()
-        
+
         # Initialize 8 Pillars
         self.pillars = PillarsAnalyzer()
-        
-        print("✅ All 8 AI Models + 8 Pillars Loaded Successfully!")
+
+        logger.info("All 8 AI Models + 8 Pillars Loaded Successfully!")
     
     def generate_comprehensive_prediction(self, game_data: Dict) -> Dict:
         """
@@ -840,12 +843,15 @@ class MasterPredictionSystem:
 
 # For testing
 if __name__ == "__main__":
-    print("🏀 AI Sports Betting System with 8 Pillars")
-    print("=" * 50)
-    
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+    logger.info("AI Sports Betting System with 8 Pillars")
+    logger.info("=" * 50)
+
     # Initialize
     predictor = MasterPredictionSystem()
-    
+
     # Test prediction
     test_data = {
         'player_id': 'lebron_james',
@@ -873,19 +879,19 @@ if __name__ == "__main__":
         'betting_odds': -110,
         'line': 25.5
     }
-    
+
     result = predictor.generate_comprehensive_prediction(test_data)
-    
-    print("\n📊 PREDICTION RESULT:")
-    print(f"Predicted Value: {result['predicted_value']}")
-    print(f"Line: {result['line']}")
-    print(f"Recommendation: {result['recommendation']}")
-    print(f"AI Score: {result['ai_score']}/10")
-    print(f"Confidence: {result['confidence']}")
-    
-    print("\n🏛️ PILLARS TRIGGERED:")
+
+    logger.info("\nPREDICTION RESULT:")
+    logger.info("Predicted Value: %s", result['predicted_value'])
+    logger.info("Line: %s", result['line'])
+    logger.info("Recommendation: %s", result['recommendation'])
+    logger.info("AI Score: %s/10", result['ai_score'])
+    logger.info("Confidence: %s", result['confidence'])
+
+    logger.info("\nPILLARS TRIGGERED:")
     for pillar in result['pillars']['triggered']:
-        print(f"  ✓ {pillar}")
-    
-    print("\n💰 BET SIZING:")
-    print(f"  {result['bet_sizing']['recommendation']}")
+        logger.info("  %s", pillar)
+
+    logger.info("\nBET SIZING:")
+    logger.info("  %s", result['bet_sizing']['recommendation'])
