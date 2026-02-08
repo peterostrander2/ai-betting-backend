@@ -1343,25 +1343,26 @@ def get_result_fetcher():
 
 if __name__ == "__main__":
     import sys
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
 
     async def main():
         date = sys.argv[1] if len(sys.argv) > 1 else None
         result = await auto_grade_picks(date=date)
-        print(f"\nAuto-grade results:")
-        print(f"  Games fetched: {result['games_fetched']}")
-        print(f"  Stats fetched: {result['stats_fetched']}")
-        print(f"  Picks graded: {result['picks_graded']}")
-        print(f"  Picks failed: {result['picks_failed']}")
+        logger.info("\nAuto-grade results:")
+        logger.info(f"  Games fetched: {result['games_fetched']}")
+        logger.info(f"  Stats fetched: {result['stats_fetched']}")
+        logger.info(f"  Picks graded: {result['picks_graded']}")
+        logger.info(f"  Picks failed: {result['picks_failed']}")
 
         if result.get("summary"):
             s = result["summary"]
-            print(f"\nSummary:")
-            print(f"  Record: {s['wins']}-{s['losses']}-{s['pushes']}")
-            print(f"  Hit rate: {s['hit_rate']}")
+            logger.info("\nSummary:")
+            logger.info(f"  Record: {s['wins']}-{s['losses']}-{s['pushes']}")
+            logger.info(f"  Hit rate: {s['hit_rate']}")
 
         if result.get("graded_picks"):
-            print(f"\nGraded picks:")
+            logger.info("\nGraded picks:")
             for g in result["graded_picks"][:10]:
-                print(f"  {g['player']}: {g['line']} {g['side']} -> {g['actual']} = {g['result']}")
+                logger.info(f"  {g['player']}: {g['line']} {g['side']} -> {g['actual']} = {g['result']}")
 
     asyncio.run(main())

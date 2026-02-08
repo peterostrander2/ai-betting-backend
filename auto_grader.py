@@ -1245,7 +1245,7 @@ class AutoGrader:
                     except (ValueError, TypeError):
                         continue
 
-        print(f"Saved {graded_count} graded picks to {path}")
+        logger.info(f"Saved {graded_count} graded picks to {path}")
         return path
 
     def load_daily_grading_jsonl(self, date_str: str) -> List[Dict]:
@@ -1653,20 +1653,23 @@ learning = LearningLoop()
 # ============================================
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("🎓 AUTO-GRADER TEST")
-    print("=" * 60)
-    
+    # Configure logging for test mode
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+    logger.info("=" * 60)
+    logger.info("AUTO-GRADER TEST")
+    logger.info("=" * 60)
+
     grader = AutoGrader(storage_path="./test_grader_data")
-    
+
     # Test weight retrieval
-    print("\n📊 Default Weights:")
+    logger.info("\nDefault Weights:")
     for sport in ["NBA", "NFL", "MLB"]:
         weights = grader.get_weights(sport, "points" if sport != "MLB" else "hits")
-        print(f"  {sport}: {weights}")
-    
+        logger.info(f"  {sport}: {weights}")
+
     # Test prediction logging
-    print("\n📝 Logging test predictions...")
+    logger.info("\nLogging test predictions...")
     pred_id = grader.log_prediction(
         sport="NBA",
         player_name="LeBron James",
@@ -1680,15 +1683,15 @@ if __name__ == "__main__":
             "lstm_brain": -1.5
         }
     )
-    print(f"  Logged: {pred_id}")
-    
+    logger.info(f"  Logged: {pred_id}")
+
     # Test grading
-    print("\n📈 Grading prediction...")
+    logger.info("\nGrading prediction...")
     grade = grader.grade_prediction(pred_id, actual_value=29.0)
-    print(f"  Result: {grade}")
-    
+    logger.info(f"  Result: {grade}")
+
     # Test context feature calculation
-    print("\n🔬 Context Feature Calculation:")
+    logger.info("\nContext Feature Calculation:")
     context = ContextFeatureCalculator.calculate_context_features(
         sport="NBA",
         team_id="LAL",
@@ -1698,8 +1701,8 @@ if __name__ == "__main__":
         ],
         game_stats={"home_pace": 102.5, "away_pace": 98.5}
     )
-    print(f"  {context}")
-    
-    print("\n" + "=" * 60)
-    print("✅ Auto-Grader tests complete!")
-    print("=" * 60)
+    logger.info(f"  {context}")
+
+    logger.info("\n" + "=" * 60)
+    logger.info("Auto-Grader tests complete!")
+    logger.info("=" * 60)

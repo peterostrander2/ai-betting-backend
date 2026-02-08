@@ -1394,15 +1394,15 @@ async def run_cleanup_now():
 # ============================================
 
 if __name__ == "__main__":
-    print("Testing Daily Scheduler...")
-    
+    logger.info("Testing Daily Scheduler...")
+
     scheduler = DailyScheduler()
-    
+
     # Test manual audit
-    print("\nRunning manual audit...")
+    logger.info("\nRunning manual audit...")
     result = scheduler.run_audit_now()
-    print(json.dumps(result, indent=2, default=str))
-    
+    logger.info(json.dumps(result, indent=2, default=str))
+
     # Test status
-    print("\nScheduler status:")
-    print(json.dumps(scheduler.get_status(), indent=2, default=str))
+    logger.info("\nScheduler status:")
+    logger.info(json.dumps(scheduler.get_status(), indent=2, default=str))

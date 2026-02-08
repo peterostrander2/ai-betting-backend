@@ -15,9 +15,12 @@ Features (aligned with spec):
 Output: Prediction adjustment value for the waterfall
 """
 
+import logging
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Union
 import os
+
+logger = logging.getLogger(__name__)
 
 # Silence TensorFlow/CUDA noise BEFORE import (must be set before TF loads)
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")  # Suppress TF INFO/WARN/ERROR
@@ -35,7 +38,7 @@ try:
     TF_AVAILABLE = True
 except ImportError:
     TF_AVAILABLE = False
-    print("⚠️ TensorFlow not available - using numpy fallback")
+    logger.warning("TensorFlow not available - using numpy fallback")
 
 
 class LSTMBrain:
@@ -92,7 +95,7 @@ class LSTMBrain:
             if model_path and os.path.exists(model_path):
                 self._load_weights(model_path)
         else:
-            print(f"🧠 LSTM Brain ({sport}) initialized in numpy fallback mode")
+            logger.info("LSTM Brain (%s) initialized in numpy fallback mode", sport)
     
     def _build_model(self) -> None:
         """Build the LSTM architecture."""
@@ -129,27 +132,27 @@ class LSTMBrain:
             metrics=['mae']
         )
         
-        print(f"🧠 LSTM Brain ({self.sport}) built: {self.INPUT_SHAPE} -> 1")
+        logger.info("LSTM Brain (%s) built: %s -> 1", self.sport, self.INPUT_SHAPE)
     
     def _load_weights(self, path: str) -> bool:
         """Load pre-trained weights."""
         try:
             self.model.load_weights(path)
             self.is_trained = True
-            print(f"✅ Loaded weights from {path}")
+            logger.info("Loaded weights from %s", path)
             return True
         except Exception as e:
-            print(f"⚠️ Could not load weights: {e}")
+            logger.warning("Could not load weights: %s", e)
             return False
     
     def save_weights(self, path: str) -> bool:
         """Save model weights."""
         try:
             self.model.save_weights(path)
-            print(f"✅ Saved weights to {path}")
+            logger.info("Saved weights to %s", path)
             return True
         except Exception as e:
-            print(f"⚠️ Could not save weights: {e}")
+            logger.warning("Could not save weights: %s", e)
             return False
     
     def normalize_features(self, lstm_features: Dict, sport: str = "NBA") -> np.ndarray:
@@ -565,13 +568,15 @@ def integrate_lstm_prediction(
 # ============================================
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("🧠 LSTM BRAIN TEST")
-    print("=" * 60)
-    
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+    logger.info("=" * 60)
+    logger.info("LSTM BRAIN TEST")
+    logger.info("=" * 60)
+
     # Test basic initialization
     brain = LSTMBrain(sport="NBA")
-    
+
     # Test feature normalization
     test_features = {
         "defense_rank": 5,
@@ -581,46 +586,46 @@ if __name__ == "__main__":
         "vacuum": 0.25,
         "vacuum_context": 0.12
     }
-    
+
     normalized = brain.normalize_features(test_features, "NBA")
-    print(f"\n📊 Feature normalization test:")
-    print(f"   Input: {test_features}")
-    print(f"   Normalized: {normalized}")
-    
+    logger.info("Feature normalization test:")
+    logger.info("   Input: %s", test_features)
+    logger.info("   Normalized: %s", normalized)
+
     # Test sequence building
     historical = [
-        {"defense_rank": 10, "defense_context": 0.1, "pace": 100, 
+        {"defense_rank": 10, "defense_context": 0.1, "pace": 100,
          "pace_context": 0.0, "vacuum": 0.1, "vacuum_context": 0.05}
         for _ in range(10)
     ]
-    
+
     sequence = brain.build_sequence(historical, test_features, "NBA")
-    print(f"\n📈 Sequence shape: {sequence.shape}")
-    print(f"   Expected: (15, 6)")
-    
+    logger.info("Sequence shape: %s", sequence.shape)
+    logger.info("   Expected: (15, 6)")
+
     # Test prediction
     result = brain.predict(sequence)
-    print(f"\n🎯 Prediction result:")
-    print(f"   Adjustment: {result['adjustment']}")
-    print(f"   Confidence: {result['confidence']}%")
-    print(f"   Method: {result['method']}")
-    
+    logger.info("Prediction result:")
+    logger.info("   Adjustment: %s", result['adjustment'])
+    logger.info("   Confidence: %s%%", result['confidence'])
+    logger.info("   Method: %s", result['method'])
+
     # Test high-level predict_from_context
     result2 = brain.predict_from_context(
         current_features=test_features,
         historical_features=historical,
         sport="NBA"
     )
-    print(f"\n🏀 Full prediction from context:")
-    print(f"   Result: {result2}")
-    
+    logger.info("Full prediction from context:")
+    logger.info("   Result: %s", result2)
+
     # Test MultiSportLSTMBrain
-    print(f"\n🌐 Multi-sport brain status:")
+    logger.info("Multi-sport brain status:")
     multi_brain = MultiSportLSTMBrain()
     status = multi_brain.get_status()
     for sport, info in status.items():
-        print(f"   {sport}: {info}")
-    
-    print("\n" + "=" * 60)
-    print("✅ LSTM Brain tests complete!")
-    print("=" * 60)
+        logger.info("   %s: %s", sport, info)
+
+    logger.info("=" * 60)
+    logger.info("LSTM Brain tests complete!")
+    logger.info("=" * 60)

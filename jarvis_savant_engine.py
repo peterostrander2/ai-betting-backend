@@ -1913,72 +1913,75 @@ def calculate_full_esoteric_analysis(
 # ============================================================================
 
 if __name__ == "__main__":
-    print("=" * 70)
-    print("JARVIS SAVANT ENGINE v7.3 - TESTING")
-    print("=" * 70)
+    # Configure logging for test mode
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+    logger.info("=" * 70)
+    logger.info("JARVIS SAVANT ENGINE v7.3 - TESTING")
+    logger.info("=" * 70)
 
     # Test Phase 1
-    print("\n[PHASE 1: CONFLUENCE CORE]")
+    logger.info("\n[PHASE 1: CONFLUENCE CORE]")
     jarvis = JarvisSavantEngine()
 
     # Test 2178 validation
-    print("\n2178 Validation:")
+    logger.info("\n2178 Validation:")
     validation = jarvis.validate_2178()
-    print(f"  Is Immortal: {validation['is_immortal']}")
-    print(f"  Proof: {validation['proof']}")
+    logger.info(f"  Is Immortal: {validation['is_immortal']}")
+    logger.info(f"  Proof: {validation['proof']}")
 
     # Test trigger detection
-    print("\nTrigger Detection:")
+    logger.info("\nTrigger Detection:")
     trigger = jarvis.check_jarvis_trigger(2178)
-    print(f"  Triggers Hit: {trigger['triggers_hit']}")
-    print(f"  Total Boost: {trigger['total_boost']}")
+    logger.info(f"  Triggers Hit: {trigger['triggers_hit']}")
+    logger.info(f"  Total Boost: {trigger['total_boost']}")
 
     # Test gematria
-    print("\nGematria Signal:")
+    logger.info("\nGematria Signal:")
     gematria = jarvis.calculate_gematria_signal("LeBron James", "Lakers", "Celtics")
-    print(f"  Signal: {gematria['signal']}")
-    print(f"  Weight: {gematria['weight']}")
+    logger.info(f"  Signal: {gematria['signal']}")
+    logger.info(f"  Weight: {gematria['weight']}")
 
     # Test Phase 2
-    print("\n[PHASE 2: VEDIC/ASTRO]")
+    logger.info("\n[PHASE 2: VEDIC/ASTRO]")
     vedic = VedicAstroEngine()
 
-    print("\nPlanetary Hour:")
+    logger.info("\nPlanetary Hour:")
     hour = vedic.calculate_planetary_hour()
-    print(f"  Day Ruler: {hour['day_ruler']}")
-    print(f"  Hour Ruler: {hour['hour_ruler']}")
-    print(f"  Favorable: {hour['is_favorable']}")
+    logger.info(f"  Day Ruler: {hour['day_ruler']}")
+    logger.info(f"  Hour Ruler: {hour['hour_ruler']}")
+    logger.info(f"  Favorable: {hour['is_favorable']}")
 
-    print("\nNakshatra:")
+    logger.info("\nNakshatra:")
     nakshatra = vedic.calculate_nakshatra()
-    print(f"  Name: {nakshatra['nakshatra_name']}")
-    print(f"  Nature: {nakshatra['nature']}")
+    logger.info(f"  Name: {nakshatra['nakshatra_name']}")
+    logger.info(f"  Nature: {nakshatra['nature']}")
 
-    print("\nRetrograde Check:")
+    logger.info("\nRetrograde Check:")
     retro = vedic.is_planet_retrograde("Mercury")
-    print(f"  Mercury Retrograde: {retro['is_retrograde']}")
+    logger.info(f"  Mercury Retrograde: {retro['is_retrograde']}")
 
-    print("\nAstro Score:")
+    logger.info("\nAstro Score:")
     astro = vedic.calculate_astro_score()
-    print(f"  Overall Score: {astro['overall_score']}")
-    print(f"  Rating: {astro['rating']}")
+    logger.info(f"  Overall Score: {astro['overall_score']}")
+    logger.info(f"  Rating: {astro['rating']}")
 
     # Test Phase 3
-    print("\n[PHASE 3: LEARNING LOOP]")
+    logger.info("\n[PHASE 3: LEARNING LOOP]")
     learning = EsotericLearningLoop()
 
-    print("\nCurrent Weights:")
+    logger.info("\nCurrent Weights:")
     weights = learning.get_weights()
     for key, val in weights["weights"].items():
-        print(f"  {key}: {val}")
+        logger.info(f"  {key}: {val}")
 
-    print("\nPerformance Summary:")
+    logger.info("\nPerformance Summary:")
     perf = learning.get_performance()
-    print(f"  Total Picks: {perf['total_picks']}")
-    print(f"  Overall Record: {perf['overall']}")
+    logger.info(f"  Total Picks: {perf['total_picks']}")
+    logger.info(f"  Overall Record: {perf['overall']}")
 
     # Test full analysis
-    print("\n[FULL ESOTERIC ANALYSIS]")
+    logger.info("\n[FULL ESOTERIC ANALYSIS]")
     analysis = calculate_full_esoteric_analysis(
         player="LeBron James",
         team="Lakers",
@@ -1989,12 +1992,12 @@ if __name__ == "__main__":
         model_probability=58
     )
 
-    print(f"\n  Total Esoteric Score: {analysis['total_score']}/10")
-    print(f"  Confluence Level: {analysis['confluence']['level']}")
-    print(f"  Blended Probability: {analysis['blended']['blended_probability']}%")
-    print(f"  Bet Tier: {analysis['tier']['tier']}")
-    print(f"  Action: {analysis['tier']['explanation']}")
+    logger.info(f"\n  Total Esoteric Score: {analysis['total_score']}/10")
+    logger.info(f"  Confluence Level: {analysis['confluence']['level']}")
+    logger.info(f"  Blended Probability: {analysis['blended']['blended_probability']}%")
+    logger.info(f"  Bet Tier: {analysis['tier']['tier']}")
+    logger.info(f"  Action: {analysis['tier']['explanation']}")
 
-    print("\n" + "=" * 70)
-    print("ALL TESTS COMPLETE")
-    print("=" * 70)
+    logger.info("\n" + "=" * 70)
+    logger.info("ALL TESTS COMPLETE")
+    logger.info("=" * 70)
