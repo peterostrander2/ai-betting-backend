@@ -7521,7 +7521,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     # v14.9: Date and timestamp in ET
     date_et = get_today_date_str() if TIME_FILTERS_AVAILABLE else datetime.now().strftime("%Y-%m-%d")
-    run_timestamp_et = datetime.now().isoformat()
+    # Format as "HH:MM:SS ET" to pass sanitizer (must include " ET" suffix)
+    _now_for_timestamp = now_et() if TIME_ET_AVAILABLE else datetime.now()
+    run_timestamp_et = _now_for_timestamp.strftime("%H:%M:%S ET")
 
     # Component status (public, non-telemetry)
     props_status = "OK"
