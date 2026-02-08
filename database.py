@@ -86,7 +86,7 @@ class PredictionRecord(Base):
     predicted_value = Column(Float)
     actual_value = Column(Float, nullable=True)
     line = Column(Float, nullable=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    timestamp = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc), index=True)
 
     # Context features used
     defense_adjustment = Column(Float, default=0.0)
@@ -150,7 +150,7 @@ class WeightConfig(Base):
     max_weight = Column(Float, default=0.35)
 
     # Tracking
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
 
     __table_args__ = (
         Index('ix_weights_sport_stat', 'sport', 'stat_type', unique=True),
@@ -178,7 +178,7 @@ class BiasHistory(Base):
     id = Column(Integer, primary_key=True, index=True)
     sport = Column(String(20), index=True)
     stat_type = Column(String(50))
-    calculated_at = Column(DateTime, default=datetime.utcnow, index=True)
+    calculated_at = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc), index=True)
 
     # Bias values
     defense_bias = Column(Float, default=0.0)
@@ -227,7 +227,7 @@ class DailyEnergy(Base):
     total_energy = Column(Float, default=0.0)
     energy_data = Column(Text)  # JSON blob for full energy breakdown
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -271,7 +271,7 @@ class LineSnapshot(Base):
     public_pct = Column(Float, nullable=True)
     money_pct = Column(Float, nullable=True)
 
-    captured_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    captured_at = Column(DateTime, nullable=False, default=lambda: datetime.now(tz=timezone.utc), index=True)
     game_start_time = Column(DateTime, nullable=True)
 
     __table_args__ = (
@@ -315,7 +315,7 @@ class SeasonExtreme(Base):
     season_low = Column(Float, nullable=True)
     current_value = Column(Float, nullable=True)
 
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc), onupdate=lambda: datetime.now(tz=timezone.utc))
 
     __table_args__ = (
         Index('ix_extremes_sport_season', 'sport', 'season', 'stat_type', 'subject_id', unique=True),
@@ -603,7 +603,7 @@ class OfficialGameRecord(Base):
     home_covered = Column(Boolean, nullable=True)  # spread_result > spread_line
 
     # Metadata
-    recorded_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    recorded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(tz=timezone.utc))
     outcome_recorded_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
@@ -665,7 +665,7 @@ class OfficialTendency(Base):
     # Confidence
     sample_size_sufficient = Column(Boolean, default=False)  # >= 50 games
 
-    last_updated = Column(DateTime(timezone=True), default=datetime.utcnow)
+    last_updated = Column(DateTime(timezone=True), default=lambda: datetime.now(tz=timezone.utc))
 
     __table_args__ = (
         Index('ix_tendencies_sport_official', 'sport', 'official_name', unique=False),
