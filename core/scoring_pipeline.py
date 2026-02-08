@@ -14,7 +14,18 @@ v18.0 Option A (4-Engine Base + Context Modifier):
 
     CONTEXT_MOD (bounded): optional modifier in [-0.35, +0.35]
 
-    FINAL = BASE_4 + CONTEXT_MOD + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+    POST-BASE BOOSTS (all capped, combined via TOTAL_BOOST_CAP):
+    - confluence_boost, msrf_boost, jason_sim_boost, serp_boost
+    - ensemble_adjustment, totals_calibration_adj
+
+    v20.3 POST-BASE SIGNALS (8 Pillars of Execution):
+    - hook_penalty: <=0, max magnitude -0.25 (NFL/NBA spread key numbers)
+    - expert_consensus_boost: >=0, max 0.35 (aggregated expert agreement)
+    - prop_correlation_adjustment: signed, max magnitude 0.20 (player prop correlations)
+
+    FINAL = clamp(0..10, BASE_4 + CONTEXT_MOD + boosts + hook_penalty + expert_boost + prop_corr)
+
+    CRITICAL: No signal may mutate engine scores. Post-base additive fields ONLY.
 """
 
 from typing import Dict, Any, Optional, Tuple
@@ -68,20 +79,45 @@ def compute_final_score_option_a(
     cap: Optional[float] = None,
     ensemble_adjustment: float = 0.0,
     totals_calibration_adj: float = 0.0,
+    # v20.3 Post-base signals (8 Pillars of Execution)
+    hook_penalty: float = 0.0,
+    expert_consensus_boost: float = 0.0,
+    prop_correlation_adjustment: float = 0.0,
 ) -> Tuple[float, float]:
     """
     Option A final score formula:
-    FINAL = BASE_4 + CONTEXT_MOD + capped(confluence + msrf + jason_sim + serp + ensemble + totals_cal)
+    FINAL = clamp(0..10, BASE_4 + CONTEXT_MOD + capped_boosts + hook + expert + prop_corr)
+
+    v20.3: Added explicit post-base signal parameters:
+    - hook_penalty: <=0, max magnitude -HOOK_PENALTY_CAP (NFL/NBA key numbers)
+    - expert_consensus_boost: >=0, max EXPERT_CONSENSUS_CAP (expert agreement)
+    - prop_correlation_adjustment: signed, max magnitude ±PROP_CORRELATION_CAP
+
+    CRITICAL: These are post-base only. No engine score mutation allowed.
     """
     context_modifier = clamp_context_modifier(context_modifier, cap=cap)
+
+    # Import caps for validation
     try:
-        from core.scoring_contract import MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, JASON_SIM_BOOST_CAP
+        from core.scoring_contract import (
+            MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, JASON_SIM_BOOST_CAP,
+            HOOK_PENALTY_CAP, EXPERT_CONSENSUS_CAP, PROP_CORRELATION_CAP,
+        )
         msrf_boost = max(-MSRF_BOOST_CAP, min(MSRF_BOOST_CAP, msrf_boost))
         serp_boost = max(0.0, min(SERP_BOOST_CAP_TOTAL, serp_boost))
         jason_sim_boost = max(-JASON_SIM_BOOST_CAP, min(JASON_SIM_BOOST_CAP, jason_sim_boost))
+        # v20.3: Cap post-base signals
+        hook_penalty = max(-HOOK_PENALTY_CAP, min(0.0, hook_penalty))  # Must be <=0
+        expert_consensus_boost = max(0.0, min(EXPERT_CONSENSUS_CAP, expert_consensus_boost))  # Must be >=0
+        prop_correlation_adjustment = max(-PROP_CORRELATION_CAP, min(PROP_CORRELATION_CAP, prop_correlation_adjustment))
     except Exception:
-        pass
+        # Fallback caps if import fails
+        hook_penalty = max(-0.25, min(0.0, hook_penalty))
+        expert_consensus_boost = max(0.0, min(0.35, expert_consensus_boost))
+        prop_correlation_adjustment = max(-0.20, min(0.20, prop_correlation_adjustment))
+
     # Cap total boosts (confluence + msrf + jason_sim + serp + ensemble + totals_cal) to prevent score inflation
+    # Note: hook/expert/prop are NOT included in TOTAL_BOOST_CAP - they have their own caps
     total_boosts = confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + totals_calibration_adj
     try:
         from core.scoring_contract import TOTAL_BOOST_CAP
@@ -89,7 +125,17 @@ def compute_final_score_option_a(
             total_boosts = TOTAL_BOOST_CAP
     except Exception:
         pass
-    final_score = base_score + context_modifier + total_boosts
+
+    # v20.3: Final score includes all post-base signals explicitly
+    final_score = (
+        base_score
+        + context_modifier
+        + total_boosts
+        + hook_penalty
+        + expert_consensus_boost
+        + prop_correlation_adjustment
+    )
+
     # Clamp final score to [0, 10]
     final_score = max(0.0, min(10.0, final_score))
     return final_score, context_modifier
