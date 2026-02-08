@@ -66,7 +66,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 3.5 |
 
-### Lessons Learned (55 Total) - Key Categories
+### Lessons Learned (60 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -85,8 +85,10 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
+| 56 | **v20.10 SHARP Field** | `signal.get("side")` should be `signal.get("sharp_side")` — wrong team graded |
+| 57-60 | **v20.11 Real Data Sources** | NOAA Kp-index, ESPN live scores, Improved void moon, LSTM Playbook API training |
 
-### NEVER DO Sections (25 Categories)
+### NEVER DO Sections (26 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -112,6 +114,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.7 Parallel Pre-Fetch & Performance (rules 164-172)
 - v20.8 Props Indentation & Code Placement (rules 173-177)
 - v20.9 Frontend/Backend Endpoint Contract (rules 178-181)
+- v20.11 Real Data Sources (rules 182-191)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -133,16 +136,26 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 |------|---------|
 | `core/scoring_contract.py` | Scoring constants (Option A weights, thresholds, boost caps, calibration) |
 | `core/scoring_pipeline.py` | Score calculation (single source of truth) |
-| `live_data_router.py` | Main API endpoints, pick scoring |
+| `live_data_router.py` | Main API endpoints, pick scoring, ESPN live scores extraction (v20.11) |
 | `utils/pick_normalizer.py` | Pick contract normalization (single source for all pick fields) |
 | `auto_grader.py` | Learning loop, bias calculation, weight updates |
 | `result_fetcher.py` | Game result fetching, pick grading |
 | `grader_store.py` | Pick persistence (predictions.jsonl) |
 | `utils/contradiction_gate.py` | Prevents opposite side picks |
 | `integration_registry.py` | Env var registry, integration config |
+| `signals/physics.py` | Kp-index via NOAA API (v20.11) — was simulation, now real data |
+| `signals/hive_mind.py` | Void moon with Meeus calculation (v20.11) — improved accuracy |
+| `lstm_training_pipeline.py` | LSTM training with Playbook API data (v20.11) — real data fallback |
+| `alt_data_sources/noaa.py` | NOAA Space Weather API client (Kp-index, X-ray flux) |
 
-### Current Version: v20.10 (Feb 8, 2026)
-**Latest Fix (v20.10):**
+### Current Version: v20.11 (Feb 8, 2026)
+**Latest Enhancements (v20.11) — 4 Real Data Source Integrations:**
+- **Enhancement 1: NOAA Space Weather (Lesson 57)** — `signals/physics.py` now calls `alt_data_sources/noaa.py:get_kp_betting_signal()` for real Kp-Index data instead of time-based simulation
+- **Enhancement 2: Live Game Signals (Lesson 58)** — `live_data_router.py` extracts live scores from ESPN scoreboard and passes to `calculate_pick_score()` for in-game adjustments
+- **Enhancement 3: Void Moon Improved (Lesson 59)** — `signals/hive_mind.py:get_void_moon()` now uses Meeus-based lunar ephemeris with synodic month and perturbation correction
+- **Enhancement 4: LSTM Real Data (Lesson 60)** — `lstm_training_pipeline.py` now tries Playbook API game logs via `build_training_data_real()` before falling back to synthetic data
+
+**Previous Fix (v20.10):**
 - Lesson 56: SHARP signal field name mismatch — `signal.get("side")` should be `signal.get("sharp_side")`
 - Root cause: Signal dictionary uses `sharp_side` but pick creation used `side`, causing all SHARP picks to be treated as HOME team
 - Fix: Changed all `signal.get("side")` to `signal.get("sharp_side")` with lowercase comparison
@@ -6193,6 +6206,254 @@ data.append({
 
 **Fixed in:** v20.10 (Feb 8, 2026)
 
+### Lesson 57: NOAA Space Weather — Replace Simulation with Real API (v20.11)
+**Problem:** `signals/physics.py:get_kp_index()` used time-based simulation instead of real Kp-Index data from NOAA Space Weather API.
+
+**Root Cause:** The function was a placeholder simulation (time-modulated fake values 0-9) even though `alt_data_sources/noaa.py` had a fully working `fetch_kp_index_live()` implementation that was never called.
+
+**The Fix:**
+```python
+# signals/physics.py - Now calls real NOAA API
+from alt_data_sources.noaa import get_kp_betting_signal, NOAA_ENABLED
+
+def get_kp_index(game_time: datetime = None) -> Dict[str, Any]:
+    if USE_REAL_NOAA and NOAA_ENABLED:
+        try:
+            return get_kp_betting_signal(game_time)  # Real NOAA data
+        except Exception as e:
+            logger.warning("NOAA API call failed, using simulation: %s", e)
+    # Fallback to simulation if disabled or API fails
+```
+
+**Key Design Decisions:**
+- `USE_REAL_NOAA` env var (default: true) for gradual rollout
+- Graceful fallback to simulation on API error
+- 3-hour cache in `noaa.py` (Kp updates every 3 hours)
+
+**Prevention:**
+1. **NEVER leave working API integrations uncalled** — if the module exists and works, wire it in
+2. **Always add feature flags** for new external API calls (gradual rollout)
+3. **Always add fallback** for external APIs that may fail
+
+**Files Modified:**
+- `signals/physics.py` — Updated `get_kp_index()` to call NOAA API
+
+**Verification:**
+```bash
+# Check NOAA Kp-Index source in debug output
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.debug.glitch_breakdown.kp_index.source'
+# Should show "noaa_live" when API working, "fallback" on error, "disabled" if NOAA_ENABLED=false
+```
+
+**Fixed in:** v20.11 (Feb 8, 2026)
+
+### Lesson 58: Live Game Signals — ESPN Scoreboard Integration (v20.11)
+**Problem:** `live_data_router.py` hardcoded `home_score=0, away_score=0, period=1` for in-game adjustments instead of using actual live scores from ESPN.
+
+**Root Cause:** The ESPN scoreboard was being fetched but never parsed to extract live game data. The live signals section used placeholder values.
+
+**The Fix:**
+```python
+# live_data_router.py - Build live scores lookup from ESPN scoreboard
+_live_scores_by_teams = {}
+if espn_scoreboard and isinstance(espn_scoreboard, dict):
+    for event in espn_scoreboard.get("events", []):
+        # Extract competitors, scores, period, status
+        key = (_normalize_team_name(home_team), _normalize_team_name(away_team))
+        _live_scores_by_teams[key] = {
+            "home_score": home_score,
+            "away_score": away_score,
+            "period": period,
+            "status": game_status,
+        }
+
+# In calculate_pick_score() - Use real scores instead of hardcoded values
+_live_data = _find_espn_data(_live_scores_by_teams, home_team, away_team)
+if _live_data:
+    _home_score = _live_data.get("home_score", 0)
+    _away_score = _live_data.get("away_score", 0)
+    _period = _live_data.get("period", 1)
+```
+
+**Key Design Decisions:**
+- Scores extracted during parallel fetch phase (no additional API calls in scoring loop)
+- Team name normalization for matching (handles case and accent differences)
+- Graceful fallback to 0-0 if ESPN data unavailable
+
+**Prevention:**
+1. **NEVER hardcode live data values** when the data source is already being fetched
+2. **Extract data during fetch phase**, not inside scoring loop
+3. **Normalize team names** for reliable lookups
+
+**Files Modified:**
+- `live_data_router.py` — Added `_live_scores_by_teams` lookup and score extraction
+
+**Verification:**
+```bash
+# Check live adjustment in debug output (during live games)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[] | select(.game_status == "LIVE") | {live_adjustment, live_score_diff}]'
+# live_adjustment should be non-zero when score differential is significant
+```
+
+**Fixed in:** v20.11 (Feb 8, 2026)
+
+### Lesson 59: Void Moon — Improved Lunar Calculation (v20.11)
+**Problem:** `signals/hive_mind.py:get_void_moon()` used a simplified 27.3-day cycle approximation that was inaccurate for precise void-of-course detection.
+
+**Root Cause:** The original calculation used a simple linear formula based on sidereal month (27.3 days), ignoring synodic month (29.53 days) and lunar orbit perturbations (~6.3° variation).
+
+**The Fix:**
+```python
+# signals/hive_mind.py - Meeus-based lunar ephemeris
+SYNODIC_MONTH = 29.53059  # More accurate than 27.3 sidereal
+MEEUS_EPOCH = datetime(2000, 1, 6, 18, 14, 0, tzinfo=timezone.utc)
+PERTURBATION_AMPLITUDE = 6.289  # Main lunar perturbation (degrees)
+
+def _calculate_moon_longitude(dt: datetime) -> float:
+    """Calculate ecliptic longitude using Meeus method with perturbation."""
+    days_since_epoch = (dt - MEEUS_EPOCH).total_seconds() / 86400.0
+    # Mean longitude + main perturbation term
+    mean_longitude = (218.3165 + 13.176396 * days_since_epoch) % 360
+    # Add perturbation correction (simplified Meeus)
+    M = (134.963 + 13.064993 * days_since_epoch) % 360
+    correction = PERTURBATION_AMPLITUDE * math.sin(math.radians(M))
+    return (mean_longitude + correction) % 360
+
+def _is_void_of_course(longitude: float) -> Tuple[bool, float]:
+    """VOC when moon in last 3 degrees of sign (more conservative)."""
+    sign_position = longitude % 30
+    if sign_position >= 27:  # Last 3 degrees = VOC
+        return True, (30 - sign_position) / 30  # Confidence 0-1
+    return False, 0.0
+```
+
+**Key Design Decisions:**
+- Synodic month (29.53d) more accurate for phase calculations than sidereal (27.3d)
+- Main perturbation term improves accuracy by ~6 degrees
+- Last 3 degrees of sign for VOC (more conservative than last 1 degree)
+- Optional `ASTRONOMY_API_ID` env var for future paid API integration
+
+**Prevention:**
+1. **Use proper astronomical formulas** for celestial calculations (Meeus algorithm)
+2. **Include perturbation terms** for lunar calculations (moon orbit is complex)
+3. **Be conservative** with esoteric signals (better to miss than false trigger)
+
+**Files Modified:**
+- `signals/hive_mind.py` — Improved `get_void_moon()` with Meeus calculation
+
+**Verification:**
+```bash
+# Check void moon calculation in debug output
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug.esoteric.void_moon | {is_void, confidence, method}'
+# method should show "meeus_local" (improved calculation)
+```
+
+**Fixed in:** v20.11 (Feb 8, 2026)
+
+### Lesson 60: LSTM Real Training Data — Playbook API Integration (v20.11)
+**Problem:** `lstm_training_pipeline.py` had a TODO at line 478 and always used synthetic data, even though `fetch_player_games()` was fully implemented at lines 141-179.
+
+**Root Cause:** The `build_training_data_real()` method that should call `fetch_player_games()` was never implemented. The training pipeline always fell through to `SyntheticDataGenerator.generate_training_data()`.
+
+**The Fix:**
+```python
+# lstm_training_pipeline.py - New build_training_data_real() method
+@classmethod
+def build_training_data_real(
+    cls,
+    sport: str,
+    stat_type: str,
+    max_players: int = 100,
+    min_games: int = 20
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Build training data from real Playbook API game logs."""
+    STAT_FIELD_MAP = {
+        "points": "points", "rebounds": "rebounds", "assists": "assists",
+        "threes": "threePointersMade", "passing_yards": "passingYards", ...
+    }
+    # Fetch players, get game logs, build 15-game sequences
+    X_sequences, y_targets = [], []
+    for player in fetch_players(sport, limit=max_players):
+        games = fetch_player_games(player_id, sport, limit=50)
+        # Build sliding window sequences...
+    return np.array(X_sequences), np.array(y_targets)
+
+# train_sport() - Try real data first, fallback to synthetic
+if not use_synthetic:
+    X, y = HistoricalDataFetcher.build_training_data_real(sport, stat_type, ...)
+    if len(X) >= TrainingConfig.MIN_SAMPLES_PER_SPORT:  # 500
+        data_source = "real_playbook"
+if len(X) < TrainingConfig.MIN_SAMPLES_PER_SPORT:
+    data_source = "synthetic"
+    X, y = SyntheticDataGenerator.generate_training_data(sport, stat_type)
+```
+
+**Key Design Decisions:**
+- `MIN_SAMPLES_PER_SPORT = 500` threshold for using real data
+- Graceful fallback to synthetic if real data insufficient
+- `data_source` field in training results for tracking
+- 15-game sequence windows with 6 features per game
+
+**Prevention:**
+1. **NEVER leave working fetch methods uncalled** — if data fetching is implemented, wire it into the pipeline
+2. **Always add fallback** for external data sources (API may return insufficient data)
+3. **Track data source** in results for debugging and quality monitoring
+
+**Files Modified:**
+- `lstm_training_pipeline.py` — Added `build_training_data_real()`, updated `train_sport()` to try real data first
+
+**Verification:**
+```bash
+# Check LSTM training data source in logs
+# After retrain (Sundays 4AM ET), check:
+curl /live/ml/status -H "X-API-Key: KEY" | jq '.lstm.training_info'
+# data_source should show "real_playbook" when API data available
+```
+
+**Fixed in:** v20.11 (Feb 8, 2026)
+
+---
+
+## ✅ VERIFICATION CHECKLIST (v20.11 — Real Data Sources)
+
+Run these after ANY change to NOAA, ESPN live scores, void moon, or LSTM training:
+
+```bash
+# 1. Syntax check all modified files
+python -m py_compile signals/physics.py signals/hive_mind.py lstm_training_pipeline.py live_data_router.py
+
+# 2. Check NOAA Kp-Index is using real API
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug.glitch_breakdown.kp_index | {source, kp_value, storm_level}'
+# source should be "noaa_live" (not "simulation" or "fallback")
+
+# 3. Check live scores are being extracted (during live games)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[] | {matchup, game_status, live_adjustment}] | map(select(.game_status == "LIVE"))'
+# live_adjustment should be non-zero when game is in progress
+
+# 4. Check void moon calculation method
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug.esoteric.void_moon'
+# Should show improved calculation with confidence value
+
+# 5. Check LSTM training data source (after Sunday retrain)
+curl /live/ml/status -H "X-API-Key: KEY" | jq '.lstm | {loaded_count, training_data_source}'
+
+# 6. Test all 5 sports
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  curl -s "/live/best-bets/$sport?debug=1" -H "X-API-Key: KEY" | \
+    jq '{sport: .sport, picks: (.game_picks.count + .props.count), kp_source: .debug.glitch_breakdown.kp_index.source}'
+done
+# All should show kp_source: "noaa_live"
+
+# 7. Run option_a_drift_scan (ensure no regressions)
+bash scripts/option_a_drift_scan.sh
+```
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -6854,6 +7115,37 @@ for pick in candidates:
                 picks.append(result)  # Always executes
             if deadline:       # Check AFTER append
                 break
+```
+
+## 🚫 NEVER DO THESE (v20.11 - Real Data Sources)
+
+182. **NEVER** leave working API modules uncalled — if `alt_data_sources/noaa.py` has `fetch_kp_index_live()` working, it must be wired into the scoring pipeline via `signals/physics.py`
+183. **NEVER** hardcode live game scores (0-0, period=1) when ESPN scoreboard data is already being fetched — extract and use real scores for in-game adjustments
+184. **NEVER** use simplified 27.3-day lunar cycle for void moon — use Meeus-based calculation with synodic month (29.53d) and perturbation terms for accuracy
+185. **NEVER** leave `fetch_player_games()` uncalled in LSTM training — if real data fetching is implemented, use it before falling back to synthetic data
+186. **NEVER** skip feature flags for new external API integrations — use `USE_REAL_NOAA`, `LSTM_USE_REAL_DATA` etc. for gradual rollout
+187. **NEVER** assume API data is always available — always add fallback to simulation/synthetic when external APIs fail or return insufficient data
+188. **NEVER** add a new data source without tracking its usage in debug output — `source: "noaa_live"` vs `source: "fallback"` must be visible
+189. **NEVER** modify lunar ephemeris calculations without understanding perturbation terms — moon orbit has ~6.3° variation that affects VOC detection
+190. **NEVER** use real training data if sample count < `MIN_SAMPLES_PER_SPORT` (500) — insufficient data produces worse models than synthetic
+191. **NEVER** hardcode team names for ESPN live score lookups — always normalize (lowercase, strip accents) for reliable matching
+
+**Real Data Fallback Pattern:**
+```python
+# ✅ CORRECT — Try real API, fallback gracefully
+if USE_REAL_API and API_ENABLED:
+    try:
+        result = fetch_from_real_api()
+        if result and len(result) >= MIN_THRESHOLD:
+            return {"data": result, "source": "api_live"}
+    except Exception as e:
+        logger.warning("API failed, using fallback: %s", e)
+# Fallback
+return {"data": simulation_data(), "source": "fallback"}
+
+# ❌ WRONG — No fallback, crashes on API failure
+result = fetch_from_real_api()  # Raises on error
+return result  # No source tracking
 ```
 
 ---
