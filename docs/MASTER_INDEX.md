@@ -510,7 +510,7 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 
 - `docs/MASTER_INDEX.md` — this file (routing + policy)
 - `CLAUDE.md` — invariants + operational rules
-- `docs/LESSONS.md` — mistakes made and how to avoid repeating them
+- `docs/LESSONS.md` — mistakes made and how to avoid repeating them (61 lessons as of v20.11)
 - `SCORING_LOGIC.md` — scoring details + contract representation
 - `PROJECT_MAP.md` — file/module responsibilities
 - `COMMIT_CHECKLIST.md` — code+docs commit discipline
@@ -633,3 +633,32 @@ This is the mirror gate to `ci_sanity_check.sh`:
 - **After deploy:** `./scripts/post_deploy_check.sh`
 
 Never skip. Catches runtime/env drift that CI cannot detect.
+
+---
+
+## v20.11 Updates (Feb 8, 2026)
+
+**Latest Enhancements — 4 Real Data Source Integrations + Rivalry Database:**
+
+| Lesson | Enhancement | Description |
+|--------|-------------|-------------|
+| 57 | NOAA Space Weather | `signals/physics.py` calls real NOAA API for Kp-Index |
+| 58 | Live ESPN Scores | `live_data_router.py` extracts live scores from scoreboard |
+| 59 | Void Moon Improved | Meeus-based lunar calculation with perturbation |
+| 60 | LSTM Real Data | Playbook API game logs before synthetic fallback |
+| 61 | Rivalry Database | 204 rivalries covering ALL teams in 5 sports |
+
+**Key Files Modified:**
+- `signals/physics.py` — Real NOAA integration
+- `signals/hive_mind.py` — Improved void moon
+- `live_data_router.py` — ESPN live scores extraction
+- `lstm_training_pipeline.py` — Real data training
+- `esoteric_engine.py` — Comprehensive MAJOR_RIVALRIES
+
+**Invariant Updates:**
+- TOTAL_BOOST_CAP = 1.5 (fixed from incorrect 3.5 in sanity scripts and docs)
+- 61 total lessons documented
+- 27 NEVER DO categories
+
+**Prevention Checklist Added to CLAUDE.md:**
+A new "🛡️ Prevention Checklist" section consolidates key prevention rules from all lessons for quick reference before writing code.

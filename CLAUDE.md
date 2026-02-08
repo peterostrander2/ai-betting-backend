@@ -133,6 +133,47 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 ./scripts/prod_go_nogo.sh
 ```
 
+### 🛡️ Prevention Checklist (BEFORE WRITING CODE)
+
+**Scan this checklist before ANY code change to avoid repeating past mistakes:**
+
+#### Data & API
+- [ ] **Field names match source** — Trace back to where data is created (e.g., `sharp_side` not `side`)
+- [ ] **Working APIs are wired** — If an API implementation exists, call it (don't leave simulations)
+- [ ] **Real data before synthetic** — Try real data sources with graceful fallback
+- [ ] **Surface all adjustments** — Every `final_score` adjustment needs a payload field
+
+#### Code Structure
+- [ ] **Initialize before conditionals** — Variables used after `if` blocks must be initialized before
+- [ ] **Update ALL call sites** — When adding function parameters, grep for all callers
+- [ ] **Code placement matters** — `break` and `return` positioning affects reachability
+- [ ] **Copy-paste variable names** — Never type dict keys from memory
+
+#### Datetimes & Timezones
+- [ ] **Both sides timezone-aware** — Can't subtract naive from aware datetime
+- [ ] **ET for user-facing, UTC for storage** — Use `core/time_et.py` only
+- [ ] **Date math is correct** — yesterday = today - 1 day (not 2)
+
+#### Environment & Config
+- [ ] **Env var logic correct** — `any()` for alternatives, `all()` for required
+- [ ] **Script vars in registry** — Add script-only env vars to `RUNTIME_ENV_VARS`
+- [ ] **Heredocs use explicit paths** — `__file__` doesn't work in heredocs
+
+#### Scoring & Boosts
+- [ ] **TOTAL_BOOST_CAP = 1.5** — Sum of confluence+msrf+jason+serp is capped
+- [ ] **Jarvis baseline is 4.5** — Sacred triggers are rare by design
+- [ ] **pick_type values** — Game picks use "SPREAD"/"MONEYLINE"/"TOTAL", not "GAME"
+
+#### Frontend/Backend Contract
+- [ ] **Endpoint exists before calling** — Verify backend route exists before frontend API method
+- [ ] **No silent fallbacks** — Don't use mock data that looks real (masks bugs)
+- [ ] **Weights match** — Frontend tooltips must match `scoring_contract.py`
+
+#### Grading & Learning
+- [ ] **SHARP graded as moneyline** — Did the team win? (not line_variance)
+- [ ] **All stat types in weights** — Auto grader needs complete structure
+- [ ] **Comprehensive data coverage** — Cover ALL teams/types, not just popular ones
+
 ### Key Files Reference
 | File | Purpose |
 |------|---------|
