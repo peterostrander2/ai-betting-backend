@@ -8601,3 +8601,36 @@ python3 -c 'import socket; print(socket.gethostbyname("github.com"))'
 2) Keep a one-line invariant in this file: Option A is canonical and context is modifier-only.
 3) Add a drift-scan to `scripts/ci_sanity_check.sh` to block `BASE_5` / context-weighted strings.
 # 1770205770
+
+### Lesson 62: SERP Quota Cost vs Value Analysis (v20.12)
+**Problem:** SERP API burned 5000+ searches/month with 1000+ searches in a single day. Quota exhausted mid-month causing 429 rate limits.
+
+**Root Cause:** SERP was enabled by default for both props AND game picks. Each best-bets request triggered ~70+ Google searches for game narratives, team buzz, and news.
+
+**Cost/Benefit Analysis:**
+| Signal | Max Boost | Source |
+|--------|-----------|--------|
+| Sharp Chatter | +1.3 | SERP |
+| Narrative Momentum | +0.7 | SERP |
+| Noosphere Buzz | +0.6 | SERP |
+| **Total SERP Impact** | **+2.6 max** | 5000 searches/month |
+
+**Better Alternatives (No Per-Call Cost):**
+- Playbook API: Sharp money splits, line movement (already included)
+- ESPN: Live scores, injuries, officials (already included)
+- LSTM: Historical player performance (already included)
+
+**Decision:** Disabled SERP by default (`SERP_INTEL_ENABLED=false`).
+
+**To Re-enable (if upgraded plan):**
+```bash
+# In Railway environment variables:
+SERP_INTEL_ENABLED=true
+```
+
+**Prevention:**
+1. **NEVER enable expensive per-call APIs by default** — require explicit opt-in
+2. **Calculate cost/benefit before enabling** — SERP was ~$0.001/search but marginal value
+3. **Monitor quota via debug endpoint** — `/live/debug/integrations` shows quota usage
+
+**Fixed in:** v20.12 (Feb 8, 2026)
