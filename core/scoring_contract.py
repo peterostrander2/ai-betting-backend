@@ -126,6 +126,41 @@ SPORT_TOTALS_CALIBRATION = {
     "last_updated": "2026-02-05",
 }
 
+# v20.3: Hook Discipline Caps (post-scoring filter for NFL/NBA spread bets)
+# Applied to research_score, not final_score (avoids TOTAL_BOOST_CAP interaction)
+# Codex recommendation: -0.25 penalty cap (not -0.35) to avoid over-penalizing
+HOOK_DISCIPLINE = {
+    "enabled": True,
+    "penalty_cap": -0.25,  # Max penalty for bad hooks (crossing key numbers)
+    "bonus_cap": 0.15,     # Max bonus for key numbers (favorites on 3, 7, 10)
+    "applies_to": "research_score",  # Modified engine, not post-base boost
+    "sports": ["NFL"],     # NBA has minimal impact, others N/A
+}
+
+# v20.3: Expert Consensus (aggregated expert agreement boost)
+# Uses SerpAPI to find expert picks and boost when consensus exists
+# Shadow mode: compute but don't apply (for validation first)
+EXPERT_CONSENSUS = {
+    "enabled": True,
+    "shadow_mode": True,   # Compute fields but force boost=0 for validation
+    "boost_cap": 0.35,     # Max boost when 5+ sources agree
+    "min_sources": 3,      # Minimum sources required for any boost
+    "staleness_hours": 24, # Ignore data older than 24h
+    "applies_to": "research_score",  # Modified engine, not post-base boost
+    "bet_types": ["SPREAD", "TOTAL", "MONEYLINE"],
+}
+
+# v20.3: Prop Correlation (rule-based player prop correlations)
+# Adjusts props based on correlated outcomes in same game
+# e.g., QB passing yards OVER + WR receiving yards OVER = positive correlation
+PROP_CORRELATION = {
+    "enabled": True,
+    "adjustment_cap": 0.20,  # Max adjustment (±0.20)
+    "applies_to": "research_score",  # Modified engine, not post-base boost
+    "bet_types": ["PROP"],
+    "includes_game_total": True,  # Also correlate with game total picks
+}
+
 # v20.12: Pick concentration limits (quality over quantity)
 # Prevents overexposure to single games/sports
 CONCENTRATION_LIMITS = {
@@ -173,4 +208,7 @@ SCORING_CONTRACT = {
     "edge_lean_confluence_minimum": EDGE_LEAN_CONFLUENCE_MINIMUM,
     "concentration_limits": CONCENTRATION_LIMITS,
     "persist_tiers": PERSIST_TIERS,  # v20.12: Only quality tiers saved to learning loop
+    "hook_discipline": HOOK_DISCIPLINE,  # v20.3: Key number management
+    "expert_consensus": EXPERT_CONSENSUS,  # v20.3: Expert agreement boost
+    "prop_correlation": PROP_CORRELATION,  # v20.3: Player prop correlations
 }

@@ -30,7 +30,7 @@ class TestNFLBadHooks:
         analysis = analyze_hook_discipline(-3.5, "NFL", "favorite", "spread")
 
         assert analysis.is_bad_hook is True
-        assert analysis.adjustment == -0.35  # Max penalty
+        assert analysis.adjustment == -0.25  # Codex refinement: capped at -0.25
         assert "WORST HOOK" in analysis.warnings[0]
         assert "15%" in analysis.warnings[0]  # 3 occurs in ~15% of games
 
@@ -39,7 +39,7 @@ class TestNFLBadHooks:
         analysis = analyze_hook_discipline(-7.5, "NFL", "favorite", "spread")
 
         assert analysis.is_bad_hook is True
-        assert analysis.adjustment == -0.25
+        assert analysis.adjustment == -0.20  # Adjusted per Codex
         assert "7" in analysis.warnings[0]
 
     def test_bad_hook_6_5(self):
@@ -47,14 +47,14 @@ class TestNFLBadHooks:
         analysis = analyze_hook_discipline(-6.5, "NFL", "favorite", "spread")
 
         assert analysis.is_bad_hook is True
-        assert analysis.adjustment == -0.20
+        assert analysis.adjustment == -0.15  # Adjusted per Codex
 
     def test_bad_hook_10_5(self):
         """10.5 crosses 10."""
         analysis = analyze_hook_discipline(-10.5, "NFL", "favorite", "spread")
 
         assert analysis.is_bad_hook is True
-        assert analysis.adjustment == -0.15
+        assert analysis.adjustment == -0.10  # Adjusted per Codex
 
 
 class TestNFLKeyNumbers:
@@ -168,7 +168,7 @@ class TestConvenienceFunction:
 
         assert isinstance(adj, float)
         assert isinstance(reasons, list)
-        assert adj == -0.35
+        assert adj == -0.25  # Codex refinement: capped at -0.25
 
     def test_reasons_populated(self):
         """Reasons should explain the adjustment."""

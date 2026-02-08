@@ -263,6 +263,30 @@ except ImportError:
     HOOK_DISCIPLINE_AVAILABLE = False
     logger.warning("hook_discipline module not available - key number adjustments disabled")
 
+# Import Expert Consensus for aggregated expert picks (v20.3)
+try:
+    from signals.expert_consensus import (
+        get_expert_consensus_adjustment,
+        EXPERT_CONSENSUS_CAP,
+        EXPERT_CONSENSUS_SHADOW_MODE,
+    )
+    EXPERT_CONSENSUS_AVAILABLE = True
+except ImportError:
+    EXPERT_CONSENSUS_AVAILABLE = False
+    logger.warning("expert_consensus module not available - expert agreement boost disabled")
+
+# Import Prop Correlation for rule-based player prop correlations (v20.3)
+try:
+    from signals.prop_correlation import (
+        get_prop_correlation_adjustment,
+        get_total_correlation_adjustment,
+        PROP_CORRELATION_CAP,
+    )
+    PROP_CORRELATION_AVAILABLE = True
+except ImportError:
+    PROP_CORRELATION_AVAILABLE = False
+    logger.warning("prop_correlation module not available - prop correlation adjustments disabled")
+
 # Import Weather Module for outdoor sports scoring (v16.0)
 # Weather is now a REQUIRED integration - no WEATHER_ENABLED flag needed
 try:
@@ -4501,6 +4525,39 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             except Exception as e:
                 logger.debug("Matchup scoring failed: %s", e)
 
+        # ===== v20.3 PROP CORRELATION: RULE-BASED PLAYER PROP CORRELATIONS =====
+        # For PROP picks: boost when prop aligns with correlated stats (e.g., assists → points for NBA)
+        prop_correlation_adjustment = 0.0
+        prop_correlation_reasons: List[str] = []
+        correlated_props: List[Dict] = []
+
+        if PROP_CORRELATION_AVAILABLE and pick_type == "PROP" and market and player_name:
+            try:
+                # Get correlation adjustment for this prop
+                # Note: other_props would need to be passed from outer scope for full functionality
+                correlation_result = get_prop_correlation_adjustment(
+                    sport=sport_upper,
+                    prop_type=market,
+                    player=player_name,
+                    side=pick_side or "Over",
+                    other_props=[]  # TODO: Pass actual other props from same game
+                )
+
+                if correlation_result.get("available"):
+                    prop_correlation_adjustment = correlation_result.get("adjustment", 0.0)
+                    prop_correlation_reasons = correlation_result.get("reasons", [])
+                    correlated_props = correlation_result.get("correlated_props", [])
+
+                    if prop_correlation_adjustment != 0.0:
+                        # Apply to research_score (correlation = statistical intelligence)
+                        research_score = max(0.0, min(10.0, research_score + prop_correlation_adjustment))
+                        for reason in prop_correlation_reasons:
+                            research_reasons.append(f"PropCorr: {reason}")
+                        logger.debug("PROP_CORRELATION v20.3: %s %s %s, adj=%+.2f, correlated=%d",
+                                    player_name, market, pick_side, prop_correlation_adjustment, len(correlated_props))
+            except Exception as e:
+                logger.debug(f"Prop correlation adjustment failed: {e}")
+
         # ===== LIVE IN-GAME SIGNALS (v20.0 Phase 9) =====
         # Only applies to LIVE games - score momentum and line movement detection
         live_boost = 0.0
@@ -5113,6 +5170,73 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 spread, hook_adjustment, is_bad_hook, is_key_number)
             except Exception as e:
                 logger.debug(f"Hook discipline adjustment failed: {e}")
+
+        # ===== v20.3 EXPERT CONSENSUS: AGGREGATED EXPERT PICKS =====
+        # For SPREAD/TOTAL/MONEYLINE: boost when experts agree with our pick side
+        expert_consensus_adjustment = 0.0
+        expert_consensus_reasons: List[str] = []
+
+        if EXPERT_CONSENSUS_AVAILABLE and pick_type in {"SPREAD", "TOTAL", "MONEYLINE"}:
+            try:
+                # Build pick_data for expert consensus check
+                expert_pick_data = {
+                    "pick_type": pick_type,
+                    "side": pick_side,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "spread": spread,
+                    "total": total,
+                }
+
+                consensus_result = get_expert_consensus_adjustment(
+                    sport=sport_upper,
+                    home_team=home_team,
+                    away_team=away_team,
+                    pick_data=expert_pick_data
+                )
+
+                if consensus_result.get("available"):
+                    expert_consensus_adjustment = consensus_result.get("adjustment", 0.0)
+                    expert_consensus_reasons = consensus_result.get("reasons", [])
+
+                    if expert_consensus_adjustment != 0.0:
+                        # Apply to research_score (expert picks = market intelligence)
+                        research_score = max(0.0, min(10.0, research_score + expert_consensus_adjustment))
+                        for reason in expert_consensus_reasons:
+                            research_reasons.append(f"Expert: {reason}")
+                        logger.debug("EXPERT_CONSENSUS v20.3: %s vs %s, adj=%+.2f, reasons=%s",
+                                    home_team, away_team, expert_consensus_adjustment, expert_consensus_reasons)
+            except Exception as e:
+                logger.debug(f"Expert consensus adjustment failed: {e}")
+
+        # ===== v20.3 TOTAL CORRELATION: PACE/SCORING TREND ADJUSTMENTS =====
+        # For TOTAL picks: adjust based on team pace and scoring trends
+        total_correlation_adjustment = 0.0
+        total_correlation_reasons: List[str] = []
+
+        if PROP_CORRELATION_AVAILABLE and pick_type == "TOTAL" and total is not None:
+            try:
+                total_corr_result = get_total_correlation_adjustment(
+                    sport=sport_upper,
+                    home_team=home_team,
+                    away_team=away_team,
+                    side=pick_side or "Over",
+                    total_line=total
+                )
+
+                if total_corr_result.get("available"):
+                    total_correlation_adjustment = total_corr_result.get("adjustment", 0.0)
+                    total_correlation_reasons = total_corr_result.get("reasons", [])
+
+                    if total_correlation_adjustment != 0.0:
+                        # Apply to research_score (pace/scoring = statistical intelligence)
+                        research_score = max(0.0, min(10.0, research_score + total_correlation_adjustment))
+                        for reason in total_correlation_reasons:
+                            research_reasons.append(f"TotalCorr: {reason}")
+                        logger.debug("TOTAL_CORRELATION v20.3: %s vs %s, side=%s, adj=%+.2f",
+                                    home_team, away_team, pick_side, total_correlation_adjustment)
+            except Exception as e:
+                logger.debug(f"Total correlation adjustment failed: {e}")
 
         # Check if Jason blocked this pick
         jason_blocked = jason_output.get("jason_blocked", False)

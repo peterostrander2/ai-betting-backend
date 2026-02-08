@@ -47,13 +47,14 @@ NFL_KEY_NUMBER_FREQUENCY = {
 }
 
 # Bad hooks and their penalties (negative = penalize the pick)
+# v20.3 Codex refinement: worst hook capped at -0.25 (was -0.35)
 NFL_BAD_HOOKS = {
-    3.5: -0.35,   # Worst hook - crosses 3
-    7.5: -0.25,   # Second worst - crosses 7
-    6.5: -0.20,   # Crosses 7
-    10.5: -0.15,  # Crosses 10
-    13.5: -0.10,  # Crosses 14
-    14.5: -0.10,  # Crosses 14
+    3.5: -0.25,   # Worst hook - crosses 3 (capped at HOOK_PENALTY_CAP)
+    7.5: -0.20,   # Second worst - crosses 7
+    6.5: -0.15,   # Crosses 7
+    10.5: -0.10,  # Crosses 10
+    13.5: -0.05,  # Crosses 14
+    14.5: -0.05,  # Crosses 14
 }
 
 # Good positions (on key numbers for favorites)
@@ -71,7 +72,10 @@ NBA_BAD_HOOKS = {
 }
 
 # Caps (INVARIANT: bounded adjustments)
-HOOK_PENALTY_CAP = -0.35  # Max penalty
+# v20.3 Codex refinement: -0.25 penalty cap (was -0.35)
+# Reasoning: -0.35 was too aggressive; -0.25 keeps hook discipline meaningful
+# without over-penalizing. Bonus cap stays at 0.15 for key number favorites.
+HOOK_PENALTY_CAP = -0.25  # Max penalty (Codex recommendation)
 HOOK_BONUS_CAP = 0.15     # Max bonus
 
 
