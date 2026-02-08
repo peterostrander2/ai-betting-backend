@@ -3216,125 +3216,156 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         ai_score = min(8.0, base_ai + _ai_boost)
         return ai_score, ai_reasons
 
-    # v20.0: Helper function to get contributions from all 8 AI models
-    def _calculate_8_model_contributions(
+    # v20.1: AI Score Resolver - 8-model system as PRIMARY for games
+    # Returns (ai_score, reasons, ai_mode, models_used_count)
+    def _resolve_game_ai_score(
         mps,
-        line_variance: float = 0.0,
-        sharp_signal: Optional[Dict] = None,
-        injuries: Optional[List] = None,
-        probability: float = 0.5,
-        odds: int = -110,
-        days_rest: int = 1,
-        travel_miles: int = 0,
-        games_last_7: int = 3,
-        is_b2b: bool = False
-    ) -> Tuple[float, List[str]]:
+        game_data: Dict,
+        fallback_base: float = 5.0,
+        sharp_signal: Optional[Dict] = None
+    ) -> Tuple[float, List[str], str, int]:
         """
-        Run all 8 AI models from MasterPredictionSystem with available data.
-        Returns (total_boost, reasons) to add to AI score.
+        PRIMARY AI score resolver for GAME picks using all 8 ML models.
 
-        Models used:
-        - Model 5: Line Movement Analyzer (sharp money detection)
-        - Model 6: Rest/Fatigue Model (schedule impact)
-        - Model 7: Injury Impact Model (player availability)
-        - Model 8: Edge Calculator (EV and Kelly)
+        Returns:
+            ai_score: 0-10 scale score from ML models
+            reasons: List of diagnostic strings
+            ai_mode: "ML_PRIMARY" or "HEURISTIC_FALLBACK"
+            models_used_count: Number of models that contributed
 
-        Models 1-4 (Ensemble, LSTM, Matchup, Monte Carlo) require historical
-        data that's handled separately by ml_integration.py
+        The 8 models run by MasterPredictionSystem:
+        1. Ensemble Stacking (XGBoost + LightGBM + RF)
+        2. LSTM Neural Network (temporal patterns)
+        3. Matchup-Specific Model (player vs opponent)
+        4. Monte Carlo Simulator (10k simulations)
+        5. Line Movement Analyzer (sharp money RLM)
+        6. Rest/Fatigue Model (schedule impact)
+        7. Injury Impact Model (player availability)
+        8. Edge Calculator (EV + Kelly)
+
+        Fallback to heuristic ONLY when:
+        - MasterPredictionSystem unavailable
+        - Output is NaN/inf/out of range
+        - Missing required fields
+        - Runtime error in prediction
         """
-        if mps is None:
-            return 0.0, ["8-model system unavailable"]
-
-        total_boost = 0.0
         reasons = []
 
+        # ===== GUARD: MPS must be available =====
+        if mps is None:
+            # Fallback to heuristic
+            ai_score, heuristic_reasons = _calculate_heuristic_ai_score(
+                fallback_base, sharp_signal, game_data.get("spread", 0), None
+            )
+            reasons.append("ML unavailable: MasterPredictionSystem not loaded")
+            reasons.extend(heuristic_reasons)
+            return ai_score, reasons, "HEURISTIC_FALLBACK", 0
+
         try:
-            # ===== MODEL 5: Line Movement Analyzer =====
-            # Detects reverse line movement (sharp money)
-            if sharp_signal:
-                current_line = sharp_signal.get("current_line", 0)
-                opening_line = sharp_signal.get("opening_line", current_line)
-                public_pct = sharp_signal.get("public_pct", 50)
+            # ===== BUILD GAME DATA FOR 8-MODEL PREDICTION =====
+            # Map available data to MasterPredictionSystem format
+            import numpy as np
 
-                line_analysis = mps.line_analyzer.analyze_line_movement(
-                    game_id="live",
-                    current_line=current_line,
-                    opening_line=opening_line,
-                    time_until_game=60,  # Default 1 hour
-                    betting_pct={"public_on_favorite": public_pct}
-                )
+            spread = game_data.get("spread", 0) or 0
+            total = game_data.get("total", 220) or 220
 
-                if line_analysis.get("sharp_money_detected"):
-                    total_boost += 0.5
-                    move = line_analysis.get("line_movement", 0)
-                    reasons.append(f"Model5 RLM detected: {move:+.1f}pts (+0.5)")
-                elif line_variance > 1.0:
-                    total_boost += 0.25
-                    reasons.append(f"Model5 line variance: {line_variance:.1f} (+0.25)")
+            # Build features array from available context
+            features = np.array([
+                game_data.get("def_rank", 15),      # Defensive rank
+                game_data.get("pace", 100),          # Pace
+                game_data.get("vacuum", 0),          # Injury vacuum
+                abs(spread),                          # Spread magnitude
+                total,                                # Total
+                1.0 if game_data.get("home_pick") else 0.0,  # Picking home?
+            ])
 
-            # ===== MODEL 6: Rest/Fatigue Model =====
-            # Analyzes schedule burden
-            if is_b2b:
-                days_rest = 0
+            # Recent games - use spread as proxy for performance trend
+            recent_games = [abs(spread)] * 10  # Simplified sequence
 
-            rest_factor = mps.rest_model.analyze_rest(
-                days_rest=days_rest,
-                travel_miles=travel_miles,
-                games_in_last_7=games_last_7
-            )
+            # Player stats approximation from spread
+            std_dev = 10.0  # Default std dev
+            expected_value = total / 2 + (spread / 2 if game_data.get("home_pick") else -spread / 2)
 
-            # rest_factor is a multiplier (0.75-1.0), convert to boost
-            if rest_factor < 0.90:
-                # Fatigued team - reduce AI if betting on them
-                total_boost -= 0.3
-                reasons.append(f"Model6 fatigue factor: {rest_factor:.2f} (-0.3)")
-            elif rest_factor >= 0.98:
-                # Well-rested - boost
-                total_boost += 0.2
-                reasons.append(f"Model6 rest advantage: {rest_factor:.2f} (+0.2)")
+            # Build complete game_data dict for MPS
+            mps_game_data = {
+                "features": features,
+                "recent_games": recent_games,
+                "line": abs(spread),
+                "player_id": game_data.get("home_team", "home"),
+                "opponent_id": game_data.get("away_team", "away"),
+                "player_stats": {
+                    "expected_value": expected_value,
+                    "std_dev": std_dev
+                },
+                "game_id": game_data.get("event_id", "live"),
+                "current_line": spread,
+                "opening_line": spread,  # Assume no movement if not available
+                "time_until_game": 60,
+                "betting_percentages": {
+                    "public_on_favorite": sharp_signal.get("public_pct", 50) if sharp_signal else 50
+                },
+                "schedule": {
+                    "days_rest": game_data.get("days_rest", 1),
+                    "travel_miles": game_data.get("travel_miles", 0),
+                    "games_in_last_7": game_data.get("games_last_7", 3)
+                },
+                "injuries": game_data.get("injuries", []),
+                "depth_chart": {},
+                "betting_odds": game_data.get("odds", -110)
+            }
 
-            # ===== MODEL 7: Injury Impact Model =====
-            # Calculates impact of missing players
-            if injuries:
-                injury_impact = mps.injury_model.calculate_impact(
-                    injuries=injuries,
-                    depth_chart={}  # We don't have depth chart, model handles gracefully
-                )
+            # ===== RUN 8-MODEL PREDICTION =====
+            result = mps.generate_comprehensive_prediction(mps_game_data)
 
-                # injury_impact is negative (penalty) when key players out
-                if injury_impact < -1.5:
-                    total_boost -= 0.4
-                    reasons.append(f"Model7 injury impact: {injury_impact:.1f} (-0.4)")
-                elif injury_impact < -0.5:
-                    total_boost -= 0.2
-                    reasons.append(f"Model7 injury impact: {injury_impact:.1f} (-0.2)")
-                elif injury_impact == 0:
-                    total_boost += 0.1
-                    reasons.append("Model7 no significant injuries (+0.1)")
+            # ===== VALIDATE OUTPUT =====
+            ai_score_raw = result.get("ai_score")
 
-            # ===== MODEL 8: Edge Calculator =====
-            # Computes expected value and Kelly criterion
-            edge_analysis = mps.edge_calculator.calculate_ev(
-                your_probability=probability,
-                betting_odds=odds
-            )
+            # Check for invalid values
+            if ai_score_raw is None:
+                raise ValueError("ai_score is None")
+            if not isinstance(ai_score_raw, (int, float)):
+                raise ValueError(f"ai_score is not numeric: {type(ai_score_raw)}")
+            if np.isnan(ai_score_raw) or np.isinf(ai_score_raw):
+                raise ValueError(f"ai_score is NaN/inf: {ai_score_raw}")
+            if ai_score_raw < 0 or ai_score_raw > 10:
+                raise ValueError(f"ai_score out of range [0,10]: {ai_score_raw}")
 
-            ev = edge_analysis.get("expected_value", 0)
-            edge_pct = edge_analysis.get("edge_percent", 0)
-            confidence = edge_analysis.get("confidence", "low")
+            # ===== EXTRACT DIAGNOSTICS =====
+            ai_score = float(ai_score_raw)
+            confidence = result.get("confidence", "unknown")
+            ev = result.get("expected_value", 0)
+            probability = result.get("probability", 0.5)
+            factors = result.get("factors", {})
 
-            if confidence == "high" and ev > 0:
-                total_boost += 0.5
-                reasons.append(f"Model8 high EV: {ev:.2f} edge:{edge_pct:.1f}% (+0.5)")
-            elif confidence == "medium" and ev > 0:
-                total_boost += 0.25
-                reasons.append(f"Model8 medium EV: {ev:.2f} edge:{edge_pct:.1f}% (+0.25)")
-            elif ev < -0.1:
-                total_boost -= 0.25
-                reasons.append(f"Model8 negative EV: {ev:.2f} (-0.25)")
+            # Count models that contributed (non-zero factors)
+            models_used = sum(1 for v in factors.values() if v != 0)
+
+            # Build diagnostic reasons (non-secret info)
+            reasons.append(f"8-Model AI: {ai_score:.1f}/10 (confidence: {confidence})")
+            reasons.append(f"Models used: {models_used}/8")
+            reasons.append(f"EV: {ev:+.3f}, prob: {probability:.1%}")
+
+            # Key driver summary
+            if factors.get("rest_factor", 1.0) < 0.9:
+                reasons.append(f"Fatigue factor: {factors.get('rest_factor', 1.0):.2f}")
+            if factors.get("injury_impact", 0) < -1:
+                reasons.append(f"Injury impact: {factors.get('injury_impact', 0):.1f}")
+            if factors.get("line_movement", 0) != 0:
+                reasons.append(f"Line movement: {factors.get('line_movement', 0):+.1f}")
+            if factors.get("edge", 0) > 5:
+                reasons.append(f"Edge: {factors.get('edge', 0):.1f}%")
+
+            return ai_score, reasons, "ML_PRIMARY", models_used
 
         except Exception as e:
-            logger.debug(f"8-model calculation error: {e}")
+            # ===== FALLBACK TO HEURISTIC =====
+            logger.warning(f"8-model prediction failed, using heuristic: {e}")
+            ai_score, heuristic_reasons = _calculate_heuristic_ai_score(
+                fallback_base, sharp_signal, game_data.get("spread", 0), None
+            )
+            reasons.append(f"ML unavailable: {str(e)[:100]}")
+            reasons.extend(heuristic_reasons)
+            return ai_score, reasons, "HEURISTIC_FALLBACK", 0
             reasons.append(f"8-model partial: {str(e)[:50]}")
 
         # Cap total boost to reasonable range
@@ -3545,18 +3576,21 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             except Exception as e:
                 logger.debug(f"Context lookup failed, using defaults: {e}")
 
+        # Initialize AI telemetry (for debug output)
+        _ai_telemetry = {"ai_mode": "UNKNOWN", "models_used_count": 0}
+
         if pick_type == "PROP" and ML_INTEGRATION_AVAILABLE and market:
-            # Try LSTM-powered AI score for props
+            # PROPS: LSTM-powered AI score (primary)
             try:
                 lstm_ai_score, lstm_metadata = get_lstm_ai_score(
-                    sport=sport_upper,  # Use sport_upper from outer scope
+                    sport=sport_upper,
                     market=market,
                     prop_line=prop_line,
                     player_name=player_name,
                     home_team=home_team,
                     away_team=away_team,
-                    player_team=None,  # Could be passed if available
-                    player_stats=None,  # Could be enriched with player data
+                    player_team=None,
+                    player_stats=None,
                     game_data={"def_rank": _def_rank, "pace": _pace, "vacuum": _vacuum},
                     base_ai=base_ai
                 )
@@ -3568,80 +3602,85 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         ai_reasons.append(f"LSTM lean: +{lstm_metadata.get('adjustment', 0):.2f}")
                     elif lstm_metadata.get("adjustment", 0) < 0:
                         ai_reasons.append(f"LSTM lean: {lstm_metadata.get('adjustment', 0):.2f}")
+                    # Telemetry: LSTM is ML primary for props
+                    _ai_telemetry = {"ai_mode": "ML_LSTM", "models_used_count": 1}
                 else:
                     # Fallback to heuristic
                     ai_score, ai_reasons = _calculate_heuristic_ai_score(
                         base_ai, sharp_signal, spread, player_name
                     )
+                    _ai_telemetry = {"ai_mode": "HEURISTIC_FALLBACK", "models_used_count": 0}
             except Exception as e:
                 logger.warning(f"LSTM prediction failed, using heuristic: {e}")
                 ai_score, ai_reasons = _calculate_heuristic_ai_score(
                     base_ai, sharp_signal, spread, player_name
                 )
+                _ai_telemetry = {"ai_mode": "HEURISTIC_FALLBACK", "models_used_count": 0}
         else:
-            # Games and non-prop picks use heuristic AI score
-            ai_score, ai_reasons = _calculate_heuristic_ai_score(
-                base_ai, sharp_signal, spread, player_name
+            # ===== v20.1: GAMES USE 8-MODEL SYSTEM AS PRIMARY =====
+            # No more heuristic + boost double-counting
+            # MasterPredictionSystem runs all 8 models directly
+
+            # Gather injury data for the model
+            _all_injuries_for_ml = []
+            if _injuries_by_team:
+                for team_injuries in _injuries_by_team.values():
+                    _all_injuries_for_ml.extend(team_injuries)
+
+            # Format injuries for the model
+            _formatted_injuries = []
+            for inj in _all_injuries_for_ml:
+                status = inj.get("status", "").upper()
+                if status in ["OUT", "DOUBTFUL"]:
+                    _formatted_injuries.append({
+                        "player": {
+                            "name": inj.get("player_name", inj.get("name", "Unknown")),
+                            "depth": 1 if inj.get("is_starter", True) else 2
+                        },
+                        "status": status
+                    })
+
+            # Build game data for the 8-model resolver
+            _game_data_for_ml = {
+                "spread": spread,
+                "total": total,
+                "def_rank": _def_rank,
+                "pace": _pace,
+                "vacuum": _vacuum,
+                "home_team": home_team,
+                "away_team": away_team,
+                "home_pick": pick_side.lower() == home_team.lower() if pick_side and home_team else True,
+                "event_id": candidate.get("id", "unknown"),
+                "injuries": _formatted_injuries,
+                "odds": -110,  # Default
+                "days_rest": 1,  # Could be enriched from schedule
+                "travel_miles": 0,
+                "games_last_7": 3
+            }
+
+            # Run 8-model resolver (ML primary, heuristic fallback)
+            ai_score_raw, ai_reasons, _ai_mode, _models_used = _resolve_game_ai_score(
+                mps=mps,
+                game_data=_game_data_for_ml,
+                fallback_base=base_ai,
+                sharp_signal=sharp_signal
             )
 
-        # ===== v20.0: ADD 8-MODEL CONTRIBUTIONS =====
-        # Run all 8 AI models from MasterPredictionSystem and add boost
-        _8model_boost = 0.0
-        _8model_reasons = []
+            # Store telemetry for debug output
+            _ai_telemetry = {
+                "ai_mode": _ai_mode,
+                "models_used_count": _models_used
+            }
 
-        if mps is not None:
-            try:
-                # Gather injury data for model 7
-                _all_injuries_for_8model = []
-                if _injuries_by_team:
-                    for team_injuries in _injuries_by_team.values():
-                        _all_injuries_for_8model.extend(team_injuries)
-
-                # Convert injuries to model format (need player and depth info)
-                _formatted_injuries = []
-                for inj in _all_injuries_for_8model:
-                    status = inj.get("status", "").upper()
-                    if status in ["OUT", "DOUBTFUL"]:
-                        _formatted_injuries.append({
-                            "player": {
-                                "name": inj.get("player_name", inj.get("name", "Unknown")),
-                                "depth": 1 if inj.get("is_starter", True) else 2
-                            },
-                            "status": status
-                        })
-
-                # Estimate probability from current AI score
-                # Higher AI = higher confidence in our pick
-                _prob_estimate = 0.5 + (ai_score - 5.0) / 10.0  # Maps 5.0→0.5, 8.0→0.8
-                _prob_estimate = max(0.35, min(0.85, _prob_estimate))
-
-                # Check for back-to-back (b2b) from context data
-                _is_b2b = False  # Could be enriched from schedule data
-
-                # Get 8-model contributions
-                _8model_boost, _8model_reasons = _calculate_8_model_contributions(
-                    mps=mps,
-                    line_variance=sharp_signal.get("line_variance", 0) if sharp_signal else 0,
-                    sharp_signal=sharp_signal,
-                    injuries=_formatted_injuries if _formatted_injuries else None,
-                    probability=_prob_estimate,
-                    odds=-110,  # Default odds
-                    days_rest=1,  # Default rest
-                    travel_miles=0,
-                    games_last_7=3,
-                    is_b2b=_is_b2b
-                )
-
-                # Add boost to AI score (capped at 8.0 max)
-                ai_score = min(8.0, ai_score + _8model_boost)
-                ai_reasons.extend(_8model_reasons)
-
-                if _8model_boost != 0:
-                    ai_reasons.append(f"8-Model total: {_8model_boost:+.2f}")
-
-            except Exception as e:
-                logger.debug(f"8-model integration error: {e}")
-                ai_reasons.append("8-Model: unavailable")
+            # The resolver returns 0-10 scale already for ML_PRIMARY
+            # For HEURISTIC_FALLBACK it returns 0-8 scale, so we need to convert
+            if _ai_mode == "ML_PRIMARY":
+                # ML returns 0-10 directly, but we need 0-8 for consistency with ai_score
+                # Then scale to 0-10 for ai_scaled
+                ai_score = ai_score_raw * 0.8  # 0-10 -> 0-8
+            else:
+                # Heuristic already returns 0-8
+                ai_score = ai_score_raw
 
         # Scale AI to 0-10 for use in base_score formula
         ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
@@ -5107,6 +5146,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "units": bet_tier.get("units", bet_tier.get("unit_size", 0.0)),
             # v18.0 Engine scores (all 0-10 scale) - 4 base engines + context modifier
             "ai_score": round(ai_scaled, 2),
+            "ai_mode": _ai_telemetry.get("ai_mode", "UNKNOWN"),  # v20.1: ML_PRIMARY, ML_LSTM, or HEURISTIC_FALLBACK
+            "ai_models_used": _ai_telemetry.get("models_used_count", 0),  # v20.1: Number of ML models that ran
             "research_score": round(research_score, 2),
             "esoteric_score": round(esoteric_score, 2),
             "jarvis_score": round(jarvis_rs, 2) if jarvis_rs is not None else None,  # Alias for jarvis_rs
@@ -5122,6 +5163,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "esoteric_score": round(esoteric_score, 2),
                 "ai_models": round(ai_score, 2),
                 "ai_score": round(ai_scaled, 2),
+                "ai_mode": _ai_telemetry.get("ai_mode", "UNKNOWN"),
+                "ai_models_used": _ai_telemetry.get("models_used_count", 0),
                 "context_modifier": round(context_modifier, 3),  # v18.0
                 "context_score": round(context_score, 2),  # backward-compat
                 "pillars": round(pillar_score, 2),
