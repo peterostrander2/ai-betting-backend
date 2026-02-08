@@ -3713,7 +3713,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "home_team": home_team,
                 "away_team": away_team,
                 "home_pick": pick_side.lower() == home_team.lower() if pick_side and home_team else True,
-                "event_id": candidate.get("id", "unknown"),
+                "event_id": event_id or "unknown",
                 "injuries": _formatted_injuries,
                 "odds": -110,  # Default
                 "days_rest": 1,  # Could be enriched from schedule
@@ -4413,8 +4413,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         if _is_game_pick and sport_upper in ("NFL", "MLB", "NCAAF"):
             try:
                 from alt_data_sources.weather import get_weather_context_sync
-                # Get venue from candidate if available
-                _weather_venue = candidate.get("venue", "") if isinstance(candidate, dict) else ""
+                # v20.11: Venue not passed to calculate_pick_score, use home_team for lookup
+                _weather_venue = ""
                 weather_ctx = get_weather_context_sync(sport_upper, home_team, _weather_venue)
                 if weather_ctx.get("status") == "VALIDATED":
                     weather_adj = weather_ctx.get("score_modifier", 0.0)
@@ -4496,11 +4496,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     get_combined_live_signals, is_live_signals_enabled
                 )
                 if is_live_signals_enabled():
-                    _home_score = candidate.get("home_score", 0) if isinstance(candidate, dict) else 0
-                    _away_score = candidate.get("away_score", 0) if isinstance(candidate, dict) else 0
-                    _period = candidate.get("period", 1) if isinstance(candidate, dict) else 1
-                    _current_line = candidate.get("line", 0) if isinstance(candidate, dict) else 0
-                    _event_id = candidate.get("event_id", "") if isinstance(candidate, dict) else ""
+                    # v20.11: Live game data not passed to calculate_pick_score, use defaults
+                    # TODO: Pass live game data (home_score, away_score, period) for proper live signals
+                    _home_score = 0
+                    _away_score = 0
+                    _period = 1
+                    _current_line = spread or 0
+                    _event_id = event_id or ""
                     _is_home_pick = pick_side and home_team and pick_side.lower() in home_team.lower()
 
                     live_signals = get_combined_live_signals(
