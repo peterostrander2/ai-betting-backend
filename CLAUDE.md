@@ -66,7 +66,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (62 Total) - Key Categories
+### Lessons Learned (63 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -89,6 +89,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 57-60 | **v20.11 Real Data Sources** | NOAA Kp-index, ESPN live scores, Improved void moon, LSTM Playbook API training |
 | 61 | **v20.11 Rivalry Database** | Comprehensive MAJOR_RIVALRIES expansion: 204 rivalries covering all teams in 5 sports |
 | 62 | **v20.11 Post-Base Signals** | Hook/Expert/Prop signals mutated research_score AFTER base_score — NO EFFECT on final_score |
+| 63 | **v20.12 Dormant Features** | Stadium altitude, travel fatigue fix, gematria twitter enabled |
 
 ### NEVER DO Sections (28 Categories)
 - ML & GLITCH (rules 1-10)
@@ -193,8 +194,13 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | `lstm_training_pipeline.py` | LSTM training with Playbook API data (v20.11) — real data fallback |
 | `alt_data_sources/noaa.py` | NOAA Space Weather API client (Kp-index, X-ray flux) |
 
-### Current Version: v20.11 (Feb 8, 2026)
-**Latest Enhancements (v20.11) — 5 Key Updates:**
+### Current Version: v20.12 (Feb 8, 2026)
+**Latest Enhancements (v20.12) — 3 Dormant Features Enabled:**
+- **Enhancement 1: Stadium Altitude Impact (Lesson 63)** — `live_data_router.py` now calls `alt_data_sources/stadium.py` for NFL/MLB high-altitude venues (Denver 5280ft, Utah 4226ft). Adds esoteric scoring boost when altitude >1000ft.
+- **Enhancement 2: Travel Fatigue Fix (Lesson 63)** — Fixed bug where `rest_days` variable was undefined. Now uses `_rest_days_for_team(away_team)` closure.
+- **Enhancement 3: Gematria Twitter Intel** — Already wired at `live_data_router.py:4800-4842`, just needed `SERPAPI_KEY` env var. No code changes required.
+
+**Previous Enhancements (v20.11) — 5 Key Updates:**
 - **Enhancement 1: NOAA Space Weather (Lesson 57)** — `signals/physics.py` now calls `alt_data_sources/noaa.py:get_kp_betting_signal()` for real Kp-Index data instead of time-based simulation
 - **Enhancement 2: Live Game Signals (Lesson 58)** — `live_data_router.py` extracts live scores from ESPN scoreboard and passes to `calculate_pick_score()` for in-game adjustments
 - **Enhancement 3: Void Moon Improved (Lesson 59)** — `signals/hive_mind.py:get_void_moon()` now uses Meeus-based lunar ephemeris with synodic month and perturbation correction
@@ -6670,6 +6676,84 @@ FINAL = clamp(0..10, BASE_4 + context_modifier + confluence_boost + msrf_boost +
 - `tests/test_option_a_scoring_guard.py` — Added 5 reconciliation tests
 
 **Fixed in:** v20.11 (Feb 8, 2026)
+
+### Lesson 63: Enabling Dormant Features — Stadium Altitude & Travel Fatigue (v20.12)
+**Problem:** Three implemented features were dormant:
+1. Stadium altitude impact — code existed in `alt_data_sources/stadium.py` but wasn't wired into scoring
+2. Travel fatigue — code existed but had a bug: `rest_days` variable was undefined
+3. Gematria Twitter — fully wired but needed `SERPAPI_KEY` env var
+
+**Root Cause:**
+- Stadium altitude module existed but was never called from `live_data_router.py`
+- Travel fatigue at line 4575 had: `_rest_days = rest_days if 'rest_days' in dir() else 1` — `rest_days` was never defined in scope
+- The `_rest_days_for_team()` closure at lines 5561-5564 was ready to use but not called
+
+**The Fix:**
+```python
+# 1. Stadium Altitude — Added after line 4500 in live_data_router.py
+if _is_game_pick and sport_upper in ("NFL", "MLB"):
+    try:
+        from alt_data_sources.stadium import calculate_altitude_impact, lookup_altitude, STADIUM_ENABLED
+        if STADIUM_ENABLED:
+            _altitude = lookup_altitude(home_team)
+            if _altitude and _altitude > 1000:
+                _alt_impact = calculate_altitude_impact(sport_upper, _altitude)
+                if _alt_impact.get("overall_impact") != "NONE":
+                    altitude_adj = _alt_impact.get("scoring_impact", 0.0)
+                    if altitude_adj > 0:
+                        esoteric_reasons.append(f"Altitude: {_alt_impact.get('reasons', ['High altitude'])[0]}")
+                        esoteric_raw += altitude_adj
+    except ImportError:
+        pass
+
+# 2. Travel Fatigue Fix — Line 4575
+# BEFORE (BUG):
+_rest_days = rest_days if 'rest_days' in dir() else 1
+
+# AFTER (FIXED):
+_rest_days = _rest_days_for_team(away_team) or 1
+```
+
+**Environment Variables Added:**
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `STADIUM_ENABLED` | `true` | Enable altitude impact for NFL/MLB |
+| `TRAVEL_ENABLED` | `true` | Enable travel fatigue calculation |
+| `SERPAPI_KEY` | `<key>` | Gematria Twitter intel (already available) |
+
+**High-Altitude Venues Affected:**
+- Denver (Broncos/Rockies): 5280ft — +0.5 scoring adjustment
+- Salt Lake City (Utah Jazz): 4226ft — ~+0.3 adjustment
+- Other venues >1000ft get proportional adjustments
+
+**Verification:**
+```bash
+# Travel fatigue visible in picks (tested with NBA)
+curl /live/best-bets/NBA -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[].context_reasons] | flatten | map(select(contains("Travel")))'
+# Returns: ["Travel: 1521mi + 1-day rest (-0.35)"]
+
+# Gematria boost active
+curl /live/best-bets/NBA -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0].confluence.gematria_boost'
+# Returns: 0.495
+
+# Stadium altitude (needs NFL/MLB game at high-altitude venue)
+curl /live/best-bets/NFL -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[].esoteric_reasons] | flatten | map(select(contains("Altitude")))'
+```
+
+**Prevention:**
+1. **ALWAYS check env var requirements** — Dormant code often just needs feature flags enabled
+2. **Trace variable usage** — `rest_days if 'rest_days' in dir()` is a red flag; variable was never defined
+3. **Use existing closures** — `_rest_days_for_team()` was already implemented and tested
+
+**Files Modified:**
+- `live_data_router.py` — 2 changes:
+  - Inserted altitude impact block after line 4500 (~18 lines)
+  - Fixed travel fatigue variable at line 4575
+
+**Fixed in:** v20.12 (Feb 8, 2026) — Commit `7fe1889`
 
 ---
 
