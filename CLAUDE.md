@@ -54,7 +54,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 13 | PickContract v1 | Frontend-proof picks with all required fields |
 | 14 | ML Model Activation | LSTM + Ensemble models active |
 | 15 | GLITCH Protocol | 6 signals: chrome_resonance, void_moon, noosphere, hurst, kp_index, benford |
-| 16 | 17-Pillar Scoring | All 17 pillars active (see detailed list) |
+| 16 | 18-Pillar Scoring | All 18 pillars active (see detailed list) |
 | 17 | Harmonic Convergence | +1.5 boost when Research AND Esoteric ≥7.5 |
 | 18 | Secret Redaction | API keys never in logs |
 | 19 | Demo Data Hard Gate | Block demo/test data in production |
@@ -66,7 +66,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (61 Total) - Key Categories
+### Lessons Learned (62 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -88,8 +88,9 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 56 | **v20.10 SHARP Field** | `signal.get("side")` should be `signal.get("sharp_side")` — wrong team graded |
 | 57-60 | **v20.11 Real Data Sources** | NOAA Kp-index, ESPN live scores, Improved void moon, LSTM Playbook API training |
 | 61 | **v20.11 Rivalry Database** | Comprehensive MAJOR_RIVALRIES expansion: 204 rivalries covering all teams in 5 sports |
+| 62 | **v20.11 Post-Base Signals** | Hook/Expert/Prop signals mutated research_score AFTER base_score — NO EFFECT on final_score |
 
-### NEVER DO Sections (27 Categories)
+### NEVER DO Sections (28 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -117,6 +118,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.9 Frontend/Backend Endpoint Contract (rules 178-181)
 - v20.11 Real Data Sources (rules 182-191)
 - v20.11 Rivalry Database (rules 192-197)
+- v20.11 Post-Base Signals Architecture (rules 198-202)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -192,11 +194,12 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | `alt_data_sources/noaa.py` | NOAA Space Weather API client (Kp-index, X-ray flux) |
 
 ### Current Version: v20.11 (Feb 8, 2026)
-**Latest Enhancements (v20.11) — 4 Real Data Source Integrations:**
+**Latest Enhancements (v20.11) — 5 Key Updates:**
 - **Enhancement 1: NOAA Space Weather (Lesson 57)** — `signals/physics.py` now calls `alt_data_sources/noaa.py:get_kp_betting_signal()` for real Kp-Index data instead of time-based simulation
 - **Enhancement 2: Live Game Signals (Lesson 58)** — `live_data_router.py` extracts live scores from ESPN scoreboard and passes to `calculate_pick_score()` for in-game adjustments
 - **Enhancement 3: Void Moon Improved (Lesson 59)** — `signals/hive_mind.py:get_void_moon()` now uses Meeus-based lunar ephemeris with synodic month and perturbation correction
 - **Enhancement 4: LSTM Real Data (Lesson 60)** — `lstm_training_pipeline.py` now tries Playbook API game logs via `build_training_data_real()` before falling back to synthetic data
+- **Fix 5: Post-Base Signals (Lesson 62)** — Hook/Expert/Prop signals were mutating `research_score` AFTER base_score (no effect). Fixed by wiring as explicit parameters to `compute_final_score_option_a()`
 
 **Previous Fix (v20.10):**
 - Lesson 56: SHARP signal field name mismatch — `signal.get("side")` should be `signal.get("sharp_side")`
@@ -6607,6 +6610,67 @@ done
 bash scripts/option_a_drift_scan.sh
 ```
 
+### Lesson 62: Post-Base Signals Mutating Engine Scores — Hidden Adjustments (v20.3/v20.11)
+**Problem:** Hook Discipline, Expert Consensus, and Prop Correlation signals were incorrectly mutating `research_score` AFTER `base_score` was computed. This meant the adjustments had **NO EFFECT** on `final_score` — they were hidden inside BASE_4 and broke reconciliation/auditability.
+
+**Root Cause:** The v20.3 "8 Pillars of Execution" implementation added these signals as mutations to `research_score` instead of as separate post-base additive fields:
+
+```python
+# BUG — Mutating research_score AFTER base_score is computed
+research_score = 7.5  # Already used to compute base_score
+hook_penalty = -0.25
+research_score += hook_penalty  # TOO LATE! base_score already locked
+
+# This mutation is invisible to final_score calculation:
+# final = base_score + context_modifier + boosts  ← hook_penalty NOT here
+```
+
+**The Fix:** Wire signals as explicit parameters to `compute_final_score_option_a()`:
+
+```python
+# CORRECT — Post-base additive fields passed explicitly
+final_score = compute_final_score_option_a(
+    ai_score=ai_score,
+    research_score=research_score,
+    esoteric_score=esoteric_score,
+    jarvis_score=jarvis_score,
+    context_modifier=context_modifier,
+    confluence_boost=confluence_boost,
+    # ... other boosts ...
+    hook_penalty=hook_penalty,              # NEW: post-base
+    expert_consensus_boost=expert_boost,    # NEW: post-base
+    prop_correlation_adjustment=prop_corr,  # NEW: post-base
+)
+```
+
+**Math Contract (Option A v20.11):**
+```
+FINAL = clamp(0..10, BASE_4 + context_modifier + confluence_boost + msrf_boost +
+              jason_sim_boost + serp_boost + ensemble_adjustment + live_adjustment +
+              totals_calibration_adj + hook_penalty + expert_consensus_boost +
+              prop_correlation_adjustment)
+```
+
+**Caps (enforced inside compute_final_score_option_a):**
+- `hook_penalty` ∈ [-0.25, 0] — always ≤0
+- `expert_consensus_boost` ∈ [0, 0.35] — always ≥0, SHADOW MODE (forced to 0) until validated
+- `prop_correlation_adjustment` ∈ [-0.20, 0.20] — signed ±
+
+**Prevention:**
+1. **NEVER mutate engine scores for post-base signals** — engine scores (ai, research, esoteric, jarvis) are LOCKED once BASE_4 is computed
+2. **Post-base signals MUST be explicit parameters** to `compute_final_score_option_a()`
+3. **Every adjustment MUST be surfaced as its own field** in the pick payload for auditability
+4. **Caps MUST be enforced inside the scoring function**, not at call sites
+5. **Add reconciliation test**: `abs(final_score - clamp(sum(all_terms))) <= 0.02`
+
+**Files Modified:**
+- `core/scoring_contract.py` — Added caps with `applies_to: "post_base"`
+- `core/scoring_pipeline.py` — Added 3 new parameters to `compute_final_score_option_a()`
+- `live_data_router.py` — Removed research_score mutations, pass signals as explicit params
+- `tests/test_option_a_scoring_guard.py` — Added 5 reconciliation tests
+
+**Fixed in:** v20.11 (Feb 8, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -6935,7 +6999,7 @@ curl /live/best-bets/NBA -H "X-API-Key: KEY" | \
 4. **NEVER** hardcode `base_ai = 5.0` when LSTM models are available
 5. **NEVER** skip the ML fallback chain (LSTM → Ensemble → Heuristic)
 6. **NEVER** change ENGINE_WEIGHTS without updating `core/scoring_contract.py`
-7. **NEVER** add a new pillar without documenting it in the 17-pillar map
+7. **NEVER** add a new pillar without documenting it in the 18-pillar map
 8. **NEVER** modify `get_glitch_aggregate()` without updating its docstring weights
 
 ## 🚫 NEVER DO THESE (MSRF)
@@ -7391,6 +7455,33 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
 # 5. Check esoteric_reasons include rivalry signals
 curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
   jq '[.game_picks.picks[].esoteric_reasons] | flatten | map(select(contains("Rivalry")))'
+```
+
+---
+
+## 🚫 NEVER DO THESE (v20.11 - Post-Base Signals Architecture)
+
+182. **NEVER** mutate engine scores (ai_score, research_score, esoteric_score, jarvis_score) for post-base signals — engine scores are LOCKED once BASE_4 is computed; any mutation after that point has NO EFFECT on final_score
+183. **NEVER** apply post-base adjustments before `base_score` is computed — they must be passed as explicit parameters to `compute_final_score_option_a()`, not baked into engine scores
+184. **NEVER** add a new scoring adjustment without surfacing it as its own field in the pick payload — hidden adjustments break reconciliation testing and audit trails
+185. **NEVER** enforce caps at the call site — caps for post-base signals (HOOK_PENALTY_CAP, EXPERT_CONSENSUS_CAP, PROP_CORRELATION_CAP) must be enforced INSIDE `compute_final_score_option_a()` for single source of truth
+186. **NEVER** skip the reconciliation test when adding new scoring components — `abs(final_score - clamp(sum(all_terms))) <= 0.02` must pass for all test cases
+
+**Post-Base Signal Architecture (v20.11):**
+```python
+# ❌ WRONG — Mutating engine score after base_score is computed
+base_score = (ai * 0.25) + (research * 0.35) + (esoteric * 0.20) + (jarvis * 0.20)
+research += hook_penalty  # TOO LATE! base_score already locked, this has NO EFFECT
+
+# ✅ CORRECT — Pass as explicit parameter to scoring function
+final_score = compute_final_score_option_a(
+    ai_score, research_score, esoteric_score, jarvis_score,
+    context_modifier, confluence_boost, msrf_boost, jason_sim_boost, serp_boost,
+    ensemble_adjustment, live_adjustment, totals_calibration_adj,
+    hook_penalty=hook_penalty,              # Post-base additive
+    expert_consensus_boost=expert_boost,    # Post-base additive
+    prop_correlation_adjustment=prop_corr,  # Post-base additive
+)
 ```
 
 ---
@@ -8059,6 +8150,89 @@ curl /ops/env-map -H "X-Admin-Key: ADMIN_KEY" | \
 - `weather_data` MUST be initialized to `None` before conditional use
 - Phase 8 boost added to `esoteric_raw`, not directly to final score
 - All 5 signals aggregated via `get_phase8_esoteric_signals()`
+
+---
+
+## ✅ VERIFICATION CHECKLIST (v20.11 - Post-Base Signals)
+
+Run these after ANY change to Hook Discipline, Expert Consensus, Prop Correlation, or scoring pipeline:
+
+```bash
+# 1. Syntax check scoring modules
+python -m py_compile core/scoring_contract.py core/scoring_pipeline.py live_data_router.py
+
+# 2. Run reconciliation tests (CRITICAL - verifies math contract)
+python3 -m pytest tests/test_option_a_scoring_guard.py -v -k "v20_3"
+# All 5 v20.3 tests must pass
+
+# 3. Verify post-base signals in pick payload
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {
+    hook_penalty, hook_flagged, hook_reasons,
+    expert_consensus_boost, expert_status,
+    prop_correlation_adjustment, prop_corr_status
+  }'
+# All fields must be present (not null/undefined)
+
+# 4. Verify caps enforced (hook_penalty ≤ 0, expert ≥ 0, prop_corr in [-0.20, 0.20])
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[] | {
+    hook: .hook_penalty,
+    expert: .expert_consensus_boost,
+    prop_corr: .prop_correlation_adjustment
+  }] | {
+    hook_max: (map(.hook) | max),
+    expert_min: (map(.expert) | min),
+    prop_corr_range: [(map(.prop_corr) | min), (map(.prop_corr) | max)]
+  }'
+# hook_max ≤ 0, expert_min ≥ 0, prop_corr_range within [-0.20, 0.20]
+
+# 5. Verify math reconciliation (manually for one pick)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.game_picks.picks[0] | {
+  base_4: .base_4_score,
+  context: .context_modifier,
+  confluence: .confluence_boost,
+  msrf: .msrf_boost,
+  jason_sim: .jason_sim_boost,
+  serp: .serp_boost,
+  ensemble: (.ensemble_adjustment // 0),
+  live: (.live_adjustment // 0),
+  totals_cal: (.totals_calibration_adj // 0),
+  hook: (.hook_penalty // 0),
+  expert: (.expert_consensus_boost // 0),
+  prop_corr: (.prop_correlation_adjustment // 0),
+  computed_sum: (.base_4_score + .context_modifier + .confluence_boost + .msrf_boost +
+                 .jason_sim_boost + .serp_boost + (.ensemble_adjustment // 0) +
+                 (.live_adjustment // 0) + (.totals_calibration_adj // 0) +
+                 (.hook_penalty // 0) + (.expert_consensus_boost // 0) +
+                 (.prop_correlation_adjustment // 0)),
+  actual_final: .final_score,
+  diff: ((.base_4_score + .context_modifier + .confluence_boost + .msrf_boost +
+          .jason_sim_boost + .serp_boost + (.ensemble_adjustment // 0) +
+          (.live_adjustment // 0) + (.totals_calibration_adj // 0) +
+          (.hook_penalty // 0) + (.expert_consensus_boost // 0) +
+          (.prop_correlation_adjustment // 0)) - .final_score) | fabs
+}'
+# diff must be < 0.02
+
+# 6. Verify no research_score mutation in router (regression guard)
+grep -n "research_score.*+=" live_data_router.py | grep -v "^#" | head -5
+# Should return EMPTY or only comments
+
+# 7. Test all 5 sports for v20.11 fields
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  curl -s "/live/best-bets/$sport?debug=1" -H "X-API-Key: KEY" | \
+    jq '{sport: .sport, has_hook: (.game_picks.picks[0].hook_penalty != null), has_expert: (.game_picks.picks[0].expert_consensus_boost != null)}'
+done
+```
+
+**Critical Invariants (v20.11):**
+- Engine scores are LOCKED once BASE_4 is computed — never mutate after
+- Post-base signals passed as explicit parameters to `compute_final_score_option_a()`
+- All additive terms surfaced as pick fields for audit trail
+- Caps enforced INSIDE the scoring function (single source of truth)
+- Reconciliation tolerance: `abs(final - clamp(sum)) <= 0.02`
 
 ---
 
