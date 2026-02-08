@@ -101,7 +101,7 @@ def calculate_biorhythms(birth_date_str: str, target_date: date = None) -> Dict[
             birth_date = datetime.strptime(birth_date_str, "%Y-%m-%d").date()
         else:
             birth_date = birth_date_str
-    except:
+    except Exception:
         # Default to a sample date if parsing fails
         birth_date = date(1990, 1, 1)
 
@@ -557,7 +557,7 @@ def calculate_life_path(birth_date_str: str) -> int:
             total = sum(int(d) for d in str(total))
 
         return total
-    except:
+    except Exception:
         return 5  # Default
 
 

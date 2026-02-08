@@ -280,11 +280,11 @@ class DailyAuditJob:
             audit_summary = self.auto_grader.get_audit_summary(sport)
             result["summary"] = audit_summary
             result["graded"] = audit_summary.get("total_graded", 0)
-        except:
+        except Exception:
             pass
-        
+
         return result
-    
+
     def _should_adjust_weights(self, bias: Dict) -> bool:
         """Check if weights should be adjusted based on bias."""
         if not bias:
@@ -843,7 +843,7 @@ class DailyScheduler:
                                 try:
                                     from datetime import datetime as dt
                                     game_start = dt.fromisoformat(commence_time.replace("Z", "+00:00"))
-                                except:
+                                except Exception:
                                     pass
 
                             # Extract lines from first bookmaker (consensus)

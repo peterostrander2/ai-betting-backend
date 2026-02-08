@@ -8630,7 +8630,7 @@ async def debug_learning_latest():
                 try:
                     perf = grader.get_performance(sport, days_back=7)
                     sport_performance[sport] = perf
-                except:
+                except Exception:
                     sport_performance[sport] = {"error": "Could not fetch"}
 
             result["auto_grader"] = {
@@ -10767,7 +10767,7 @@ async def trigger_ensemble_training(background: bool = False):
                             pick = json.loads(line)
                             if pick.get("grade_status", "").upper() == "GRADED":
                                 graded_count += 1
-                        except:
+                        except Exception:
                             pass
     except Exception as e:
         logger.warning("Could not count graded picks: %s", e)
@@ -10981,7 +10981,7 @@ async def get_signal_accuracy(signal_type: str, value: str = None):
         if signal_type == "life_path":
             try:
                 value = int(value)
-            except:
+            except Exception:
                 pass
         elif signal_type in ["void_moon", "gann_resonance", "founders_echo"]:
             value = value.lower() in ["true", "1", "yes"]
@@ -11876,7 +11876,7 @@ async def generate_smash_card(bet_data: Dict[str, Any], book: Optional[str] = "d
     try:
         hits, total = hit_rate.split("/")
         hit_pct = int(int(hits) / int(total) * 100)
-    except:
+    except Exception:
         hit_pct = 70
 
     # Generate hit rate bar

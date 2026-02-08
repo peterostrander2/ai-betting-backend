@@ -164,7 +164,7 @@ class EsotericGrader:
             try:
                 with open(cache_file, "r") as f:
                     self.accuracy_cache = json.load(f)
-            except:
+            except Exception:
                 self.accuracy_cache = {}
 
         # Merge with historical baseline

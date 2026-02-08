@@ -57,7 +57,7 @@ class TestTodayOnlyGating:
             # Insert colon in timezone offset for ISO format
             if len(now_iso) > 5 and now_iso[-5] in "+-":
                 now_iso = now_iso[:-2] + ":" + now_iso[-2:]
-        except:
+        except Exception:
             # Fallback to UTC
             now_iso = datetime.now().isoformat() + "Z"
         result = is_game_today(now_iso)
@@ -72,7 +72,7 @@ class TestTodayOnlyGating:
             tomorrow_iso = tomorrow.strftime("%Y-%m-%dT%H:%M:%S%z")
             if len(tomorrow_iso) > 5 and tomorrow_iso[-5] in "+-":
                 tomorrow_iso = tomorrow_iso[:-2] + ":" + tomorrow_iso[-2:]
-        except:
+        except Exception:
             tomorrow = datetime.now() + timedelta(days=1)
             tomorrow_iso = tomorrow.isoformat() + "Z"
         assert is_game_tomorrow(tomorrow_iso) == True
@@ -93,7 +93,7 @@ class TestTodayOnlyGating:
                 if len(iso) > 5 and iso[-5] in "+-":
                     iso = iso[:-2] + ":" + iso[-2:]
                 return iso
-        except:
+        except Exception:
             now = datetime.now()
             tomorrow = now + timedelta(days=1)
             yesterday = now - timedelta(days=1)

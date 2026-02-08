@@ -185,7 +185,7 @@ async def get_live_games() -> List[Dict[str, Any]]:
                 try:
                     mins, secs = time_str.split(":")
                     minutes_remaining = int(mins) + int(secs) / 60
-                except:
+                except Exception:
                     pass
 
             # Determine trigger window

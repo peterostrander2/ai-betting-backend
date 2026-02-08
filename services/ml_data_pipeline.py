@@ -341,7 +341,7 @@ class MLDataPipeline:
                             continue
                         if end_date and pred_date > end_date:
                             continue
-                    except:
+                    except Exception:
                         continue
 
             # Score filter
@@ -396,7 +396,7 @@ class MLDataPipeline:
                 else:
                     dt = created_at
                 return (datetime.now(dt.tzinfo) - dt).days
-            except:
+            except Exception:
                 return np.nan
 
         if "created_at" in df.columns:

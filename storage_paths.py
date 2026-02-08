@@ -211,7 +211,7 @@ def get_storage_health() -> dict:
             with open(test_file, 'w') as f:
                 f.write("test")
             os.remove(test_file)
-        except:
+        except Exception:
             writable = False
 
         # If RAILWAY_VOLUME_MOUNT_PATH is set, storage is persistent (Railway volume)

@@ -890,7 +890,7 @@ def enrich_game_result(game: Dict[str, Any]) -> Dict[str, Any]:
             enriched["day_of_week"] = date_obj.strftime("%A")
             enriched["day_number"] = date_obj.day
             enriched["month"] = date_obj.month
-        except:
+        except Exception:
             pass
 
     # Calculate team gematria

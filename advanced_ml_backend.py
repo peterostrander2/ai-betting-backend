@@ -471,9 +471,9 @@ class EnsembleStackingModel:
                 try:
                     pred = model.predict(features.reshape(1, -1) if features.ndim == 1 else features)
                     predictions.append(pred)
-                except:
+                except Exception:
                     pass
-            
+
             if predictions:
                 return np.mean(predictions, axis=0)[0] if predictions[0].ndim > 0 else np.mean(predictions)
             return np.mean(features) if len(features) > 0 else 25.0
