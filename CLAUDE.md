@@ -6127,7 +6127,7 @@ done
 
 **Fixed in:** v20.8 (Feb 5, 2026)
 
-### Lesson 32: SERP Props Quota Optimization (v20.9)
+### SERP Props Quota Optimization Note (v20.9 Addendum to Lesson 53)
 **Problem:** SERP daily quota (166/day) exhausted by a single best-bets request (~291 calls). Props alone consume ~220 calls (60% of budget) with near-zero cache hit rate because each player query is unique. When quota exhausts, SERP pre-fetch for game picks is disabled, causing game scoring to revert to sequential SERP (51s of 55s budget), and props time out entirely.
 
 **Production Data (Feb 5, 2026):**
