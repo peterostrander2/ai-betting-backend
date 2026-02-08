@@ -83,6 +83,40 @@ from .msrf_resonance import (
     MSRF_VORTEX,
 )
 
+# Hook Discipline - Key Number Management (Post-Scoring Filter)
+from .hook_discipline import (
+    analyze_hook_discipline,
+    get_hook_adjustment,
+    HookAnalysis,
+    NFL_KEY_NUMBER_FREQUENCY,
+    NFL_BAD_HOOKS,
+    NFL_KEY_NUMBER_BONUS,
+    HOOK_PENALTY_CAP,
+    HOOK_BONUS_CAP,
+)
+
+# Expert Consensus - Aggregated Expert Agreement (Post-Scoring Filter)
+from .expert_consensus import (
+    analyze_expert_consensus,
+    get_expert_consensus_adjustment,
+    ExpertConsensusResult,
+    EXPERT_CONSENSUS_CAP,
+    EXPERT_CONSENSUS_MIN_SOURCES,
+    EXPERT_CONSENSUS_SHADOW_MODE,
+    CONSENSUS_LEVELS,
+)
+
+# Prop Correlation - Rule-Based Player Prop Correlations (Post-Scoring Filter)
+from .prop_correlation import (
+    analyze_prop_correlation,
+    get_prop_correlation_adjustment,
+    get_total_correlation_adjustment,
+    PropCorrelationResult,
+    PROP_CORRELATION_CAP,
+    CORRELATION_BOOSTS,
+    SPORT_CORRELATIONS,
+)
+
 __all__ = [
     # Public Fade
     "calculate_public_fade",
@@ -134,4 +168,32 @@ __all__ = [
     "MSRF_NORMAL",
     "MSRF_IMPORTANT",
     "MSRF_VORTEX",
+
+    # Hook Discipline
+    "analyze_hook_discipline",
+    "get_hook_adjustment",
+    "HookAnalysis",
+    "NFL_KEY_NUMBER_FREQUENCY",
+    "NFL_BAD_HOOKS",
+    "NFL_KEY_NUMBER_BONUS",
+    "HOOK_PENALTY_CAP",
+    "HOOK_BONUS_CAP",
+
+    # Expert Consensus
+    "analyze_expert_consensus",
+    "get_expert_consensus_adjustment",
+    "ExpertConsensusResult",
+    "EXPERT_CONSENSUS_CAP",
+    "EXPERT_CONSENSUS_MIN_SOURCES",
+    "EXPERT_CONSENSUS_SHADOW_MODE",
+    "CONSENSUS_LEVELS",
+
+    # Prop Correlation
+    "analyze_prop_correlation",
+    "get_prop_correlation_adjustment",
+    "get_total_correlation_adjustment",
+    "PropCorrelationResult",
+    "PROP_CORRELATION_CAP",
+    "CORRELATION_BOOSTS",
+    "SPORT_CORRELATIONS",
 ]

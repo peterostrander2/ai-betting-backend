@@ -250,6 +250,43 @@ except ImportError:
     SIGNALS_AVAILABLE = False
     logger.warning("signals module not available - using inline calculations")
 
+# Import Hook Discipline for key number management (v20.3)
+try:
+    from signals.hook_discipline import (
+        get_hook_adjustment,
+        analyze_hook_discipline,
+        HOOK_PENALTY_CAP,
+        HOOK_BONUS_CAP,
+    )
+    HOOK_DISCIPLINE_AVAILABLE = True
+except ImportError:
+    HOOK_DISCIPLINE_AVAILABLE = False
+    logger.warning("hook_discipline module not available - key number adjustments disabled")
+
+# Import Expert Consensus for aggregated expert picks (v20.3)
+try:
+    from signals.expert_consensus import (
+        get_expert_consensus_adjustment,
+        EXPERT_CONSENSUS_CAP,
+        EXPERT_CONSENSUS_SHADOW_MODE,
+    )
+    EXPERT_CONSENSUS_AVAILABLE = True
+except ImportError:
+    EXPERT_CONSENSUS_AVAILABLE = False
+    logger.warning("expert_consensus module not available - expert agreement boost disabled")
+
+# Import Prop Correlation for rule-based player prop correlations (v20.3)
+try:
+    from signals.prop_correlation import (
+        get_prop_correlation_adjustment,
+        get_total_correlation_adjustment,
+        PROP_CORRELATION_CAP,
+    )
+    PROP_CORRELATION_AVAILABLE = True
+except ImportError:
+    PROP_CORRELATION_AVAILABLE = False
+    logger.warning("prop_correlation module not available - prop correlation adjustments disabled")
+
 # Import Weather Module for outdoor sports scoring (v16.0)
 # Weather is now a REQUIRED integration - no WEATHER_ENABLED flag needed
 try:
@@ -4488,6 +4525,39 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             except Exception as e:
                 logger.debug("Matchup scoring failed: %s", e)
 
+        # ===== v20.3 PROP CORRELATION: RULE-BASED PLAYER PROP CORRELATIONS =====
+        # For PROP picks: boost when prop aligns with correlated stats (e.g., assists → points for NBA)
+        prop_correlation_adjustment = 0.0
+        prop_correlation_reasons: List[str] = []
+        correlated_props: List[Dict] = []
+
+        if PROP_CORRELATION_AVAILABLE and pick_type == "PROP" and market and player_name:
+            try:
+                # Get correlation adjustment for this prop
+                # Note: other_props would need to be passed from outer scope for full functionality
+                correlation_result = get_prop_correlation_adjustment(
+                    sport=sport_upper,
+                    prop_type=market,
+                    player=player_name,
+                    side=pick_side or "Over",
+                    other_props=[]  # TODO: Pass actual other props from same game
+                )
+
+                if correlation_result.get("available"):
+                    prop_correlation_adjustment = correlation_result.get("adjustment", 0.0)
+                    prop_correlation_reasons = correlation_result.get("reasons", [])
+                    correlated_props = correlation_result.get("correlated_props", [])
+
+                    if prop_correlation_adjustment != 0.0:
+                        # v20.3: POST-BASE additive field - do NOT mutate research_score
+                        # Adjustment is passed to compute_final_score_option_a() as explicit parameter
+                        for reason in prop_correlation_reasons:
+                            research_reasons.append(f"PropCorr: {reason}")
+                        logger.debug("PROP_CORRELATION v20.3: %s %s %s, adj=%+.2f, correlated=%d",
+                                    player_name, market, pick_side, prop_correlation_adjustment, len(correlated_props))
+            except Exception as e:
+                logger.debug(f"Prop correlation adjustment failed: {e}")
+
         # ===== LIVE IN-GAME SIGNALS (v20.0 Phase 9) =====
         # Only applies to LIVE games - score momentum and line movement detection
         live_boost = 0.0
@@ -5070,6 +5140,123 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             except Exception as e:
                 logger.debug(f"Park factor adjustment failed: {e}")
 
+        # ===== v20.3 HOOK DISCIPLINE: KEY NUMBER MANAGEMENT =====
+        # NFL/NBA spreads: penalize bad hooks (-3.5, -7.5), bonus for key numbers (3, 7)
+        hook_adjustment = 0.0
+        hook_reasons: List[str] = []
+        hook_warnings: List[str] = []
+        is_bad_hook = False
+        is_key_number = False
+
+        if HOOK_DISCIPLINE_AVAILABLE and pick_type == "SPREAD" and spread is not None:
+            try:
+                # Determine bet side: favorite vs underdog
+                # Negative spread = favorite, positive = underdog
+                bet_side = "favorite" if spread < 0 else "underdog"
+
+                hook_analysis = analyze_hook_discipline(
+                    line=spread,
+                    sport=sport_upper,
+                    bet_side=bet_side,
+                    bet_type="spread"
+                )
+
+                hook_adjustment = hook_analysis.adjustment
+                hook_reasons = hook_analysis.reasons
+                hook_warnings = hook_analysis.warnings
+                is_bad_hook = hook_analysis.is_bad_hook
+                is_key_number = hook_analysis.is_key_number
+
+                if hook_adjustment != 0.0:
+                    # v20.3: POST-BASE additive field - do NOT mutate research_score
+                    # hook_adjustment is passed to compute_final_score_option_a() as hook_penalty
+                    for reason in hook_reasons:
+                        research_reasons.append(f"Hook: {reason}")
+                    logger.debug("HOOK v20.3: spread=%.1f adj=%+.2f bad_hook=%s key_number=%s",
+                                spread, hook_adjustment, is_bad_hook, is_key_number)
+            except Exception as e:
+                logger.debug(f"Hook discipline adjustment failed: {e}")
+
+        # ===== v20.3 EXPERT CONSENSUS: AGGREGATED EXPERT PICKS =====
+        # For SPREAD/TOTAL/MONEYLINE: boost when experts agree with our pick side
+        expert_consensus_adjustment = 0.0
+        expert_consensus_reasons: List[str] = []
+
+        if EXPERT_CONSENSUS_AVAILABLE and pick_type in {"SPREAD", "TOTAL", "MONEYLINE"}:
+            try:
+                # Build pick_data for expert consensus check
+                expert_pick_data = {
+                    "pick_type": pick_type,
+                    "side": pick_side,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "spread": spread,
+                    "total": total,
+                }
+
+                consensus_result = get_expert_consensus_adjustment(
+                    sport=sport_upper,
+                    home_team=home_team,
+                    away_team=away_team,
+                    pick_data=expert_pick_data
+                )
+
+                if consensus_result.get("available"):
+                    expert_consensus_adjustment = consensus_result.get("adjustment", 0.0)
+                    expert_consensus_reasons = consensus_result.get("reasons", [])
+                    # v20.3: Check shadow mode - compute fields but force boost=0 until validated
+                    from core.scoring_contract import EXPERT_CONSENSUS
+                    _expert_shadow_mode = EXPERT_CONSENSUS.get("shadow_mode", True)
+                    _expert_status = "SHADOW" if _expert_shadow_mode else "ACTIVE"
+                    _expert_sources = consensus_result.get("sources", [])
+
+                    if _expert_shadow_mode:
+                        # Shadow mode: log reasons but force boost to 0
+                        expert_consensus_adjustment = 0.0
+                        logger.debug("EXPERT_CONSENSUS v20.3 [SHADOW]: %s vs %s, would-be-adj=%+.2f, status=SHADOW",
+                                    home_team, away_team, consensus_result.get("adjustment", 0.0))
+
+                    if expert_consensus_adjustment != 0.0 or _expert_status == "SHADOW":
+                        # v20.3: POST-BASE additive field - do NOT mutate research_score
+                        # expert_consensus_adjustment is passed to compute_final_score_option_a() as expert_consensus_boost
+                        for reason in expert_consensus_reasons:
+                            research_reasons.append(f"Expert: {reason}")
+                        if not _expert_shadow_mode:
+                            logger.debug("EXPERT_CONSENSUS v20.3: %s vs %s, adj=%+.2f, reasons=%s",
+                                        home_team, away_team, expert_consensus_adjustment, expert_consensus_reasons)
+            except Exception as e:
+                logger.debug(f"Expert consensus adjustment failed: {e}")
+
+        # ===== v20.3 TOTAL CORRELATION: PACE/SCORING TREND ADJUSTMENTS =====
+        # For TOTAL picks: adjust based on team pace and scoring trends
+        total_correlation_adjustment = 0.0
+        total_correlation_reasons: List[str] = []
+
+        if PROP_CORRELATION_AVAILABLE and pick_type == "TOTAL" and total is not None:
+            try:
+                total_corr_result = get_total_correlation_adjustment(
+                    sport=sport_upper,
+                    home_team=home_team,
+                    away_team=away_team,
+                    side=pick_side or "Over",
+                    total_line=total
+                )
+
+                if total_corr_result.get("available"):
+                    total_correlation_adjustment = total_corr_result.get("adjustment", 0.0)
+                    total_correlation_reasons = total_corr_result.get("reasons", [])
+
+                    if total_correlation_adjustment != 0.0:
+                        # v20.3: POST-BASE additive field - do NOT mutate research_score
+                        # total_correlation_adjustment is combined with prop_correlation_adjustment
+                        # and passed to compute_final_score_option_a() as prop_correlation_adjustment
+                        for reason in total_correlation_reasons:
+                            research_reasons.append(f"TotalCorr: {reason}")
+                        logger.debug("TOTAL_CORRELATION v20.3: %s vs %s, side=%s, adj=%+.2f",
+                                    home_team, away_team, pick_side, total_correlation_adjustment)
+            except Exception as e:
+                logger.debug(f"Total correlation adjustment failed: {e}")
+
         # Check if Jason blocked this pick
         jason_blocked = jason_output.get("jason_blocked", False)
 
@@ -5111,21 +5298,27 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     elif hit_prob < 0.4:
                         ensemble_adjustment = -ENSEMBLE_ADJUSTMENT_STEP
                         ai_reasons.append(f"Ensemble penalty: -{ENSEMBLE_ADJUSTMENT_STEP} (prob < 40%)")
-
-                    # Recompute final_score with ensemble_adjustment inside the cap
-                    if ensemble_adjustment != 0.0:
-                        final_score, context_modifier = compute_final_score_option_a(
-                            base_score=base_score,
-                            context_modifier=context_modifier,
-                            confluence_boost=confluence_boost,
-                            msrf_boost=msrf_boost,
-                            jason_sim_boost=jason_sim_boost,
-                            serp_boost=serp_boost_total,
-                            totals_calibration_adj=totals_calibration_adj,
-                            ensemble_adjustment=ensemble_adjustment,
-                        )
             except Exception as e:
                 logger.debug(f"Ensemble prediction unavailable: {e}")
+
+        # ===== v20.3 FINAL SCORE RECOMPUTATION WITH ALL POST-BASE SIGNALS =====
+        # Combine prop_correlation_adjustment + total_correlation_adjustment
+        combined_prop_correlation = prop_correlation_adjustment + total_correlation_adjustment
+
+        # Recompute final_score with ALL post-base signals (always runs, not conditional)
+        final_score, context_modifier = compute_final_score_option_a(
+            base_score=base_score,
+            context_modifier=context_modifier,
+            confluence_boost=confluence_boost,
+            msrf_boost=msrf_boost,
+            jason_sim_boost=jason_sim_boost,
+            serp_boost=serp_boost_total,
+            totals_calibration_adj=totals_calibration_adj,
+            ensemble_adjustment=ensemble_adjustment,
+            hook_penalty=hook_adjustment,
+            expert_consensus_boost=expert_consensus_adjustment,
+            prop_correlation_adjustment=combined_prop_correlation,
+        )
 
         # --- v15.0: jarvis_rs already calculated by standalone function above ---
         # jarvis_rs, jarvis_active, jarvis_hits_count, jarvis_triggers_hit, jarvis_reasons
@@ -5429,6 +5622,25 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "park_adjustment": park_adjustment,
                 "park_reason": park_reason,
             },
+            # v20.3 Hook Discipline (spreads only - key number management)
+            "hook_penalty": round(hook_adjustment, 3),  # Post-base additive (<=0)
+            "hook_flagged": is_bad_hook,
+            "hook_reasons": hook_reasons,
+            "hook_warnings": hook_warnings,
+            "is_bad_hook": is_bad_hook,  # Backwards compat
+            "is_key_number": is_key_number,
+            # v20.3 Expert Consensus (post-base boost for aggregated expert agreement)
+            "expert_consensus_boost": round(expert_consensus_adjustment, 3),  # Post-base additive (>=0)
+            "expert_status": _expert_status if '_expert_status' in dir() else "UNAVAILABLE",
+            "expert_sources": _expert_sources if '_expert_sources' in dir() else [],
+            "expert_reasons": expert_consensus_reasons if 'expert_consensus_reasons' in dir() else [],
+            # v20.3 Prop Correlation (post-base adjustment for correlated player props)
+            "prop_correlation_adjustment": round(combined_prop_correlation, 3),  # Post-base additive (signed)
+            "prop_corr_status": "APPLIED" if combined_prop_correlation != 0.0 else "NO_CORRELATION",
+            "prop_corr_reasons": (prop_correlation_reasons if 'prop_correlation_reasons' in dir() else []) +
+                                 (total_correlation_reasons if 'total_correlation_reasons' in dir() else []),
+            # v20.3 Ensemble adjustment (surfaced for audit reconciliation)
+            "ensemble_adjustment": round(ensemble_adjustment, 3),
             # v17.0 Harmonic Convergence
             "harmonic_boost": harmonic_boost,
             # v17.2 MSRF Resonance

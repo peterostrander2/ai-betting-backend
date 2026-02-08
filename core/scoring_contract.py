@@ -126,6 +126,55 @@ SPORT_TOTALS_CALIBRATION = {
     "last_updated": "2026-02-05",
 }
 
+# ==============================================================================
+# v20.3 POST-BASE ADDITIVE SIGNALS (8 Pillars of Execution)
+# ==============================================================================
+# CRITICAL: These signals are POST-BASE ONLY. They do NOT mutate engine scores.
+# All adjustments are explicit additive fields combined in compute_final_score_option_a().
+# Formula: final = clamp(0..10, base_4 + context_mod + boosts + hook + expert + prop_corr)
+
+# Top-level caps for post-base signals (used in scoring_pipeline.py)
+HOOK_PENALTY_CAP = 0.25        # Max penalty magnitude (hook_penalty <= 0, >= -0.25)
+EXPERT_CONSENSUS_CAP = 0.35    # Max boost (expert_consensus_boost >= 0, <= 0.35)
+PROP_CORRELATION_CAP = 0.20    # Max adjustment magnitude (|prop_correlation_adjustment| <= 0.20)
+
+# v20.3: Hook Discipline (post-base penalty for NFL/NBA spread bets)
+# Penalizes picks that cross key numbers (3, 7, 10 for NFL)
+HOOK_DISCIPLINE = {
+    "enabled": True,
+    "penalty_cap": HOOK_PENALTY_CAP,  # Max penalty magnitude
+    "bonus_cap": 0.15,     # Max bonus for landing ON key numbers
+    "applies_to": "post_base",  # EXPLICIT: post-base additive, NOT engine mutation
+    "sports": ["NFL"],     # NBA has minimal impact, others N/A
+    "output_fields": ["hook_penalty", "hook_flagged", "hook_reasons"],
+}
+
+# v20.3: Expert Consensus (post-base boost for aggregated expert agreement)
+# Uses SerpAPI to find expert picks and boost when consensus exists
+# Shadow mode: compute fields but force boost=0 for validation
+EXPERT_CONSENSUS = {
+    "enabled": True,
+    "shadow_mode": True,   # Compute fields but force boost=0 until validated
+    "boost_cap": EXPERT_CONSENSUS_CAP,  # Max boost when 5+ sources agree
+    "min_sources": 3,      # Minimum sources required for any boost
+    "staleness_hours": 24, # Ignore data older than 24h
+    "applies_to": "post_base",  # EXPLICIT: post-base additive, NOT engine mutation
+    "bet_types": ["SPREAD", "TOTAL", "MONEYLINE"],
+    "output_fields": ["expert_consensus_boost", "expert_status", "expert_sources", "expert_reasons"],
+}
+
+# v20.3: Prop Correlation (post-base adjustment for correlated player props)
+# Adjusts props based on correlated outcomes in same game
+# e.g., QB passing yards OVER + WR receiving yards OVER = positive correlation
+PROP_CORRELATION = {
+    "enabled": True,
+    "adjustment_cap": PROP_CORRELATION_CAP,  # Max adjustment magnitude (±0.20)
+    "applies_to": "post_base",  # EXPLICIT: post-base additive, NOT engine mutation
+    "bet_types": ["PROP", "TOTAL"],  # Props and game totals
+    "includes_game_total": True,  # Also correlate with game total picks
+    "output_fields": ["prop_correlation_adjustment", "prop_corr_status", "prop_corr_reasons"],
+}
+
 # v20.12: Pick concentration limits (quality over quantity)
 # Prevents overexposure to single games/sports
 CONCENTRATION_LIMITS = {
@@ -164,6 +213,10 @@ SCORING_CONTRACT = {
         "serp_boost_cap_total": SERP_BOOST_CAP_TOTAL,
         "jason_sim_boost_cap": JASON_SIM_BOOST_CAP,
         "total_boost_cap": TOTAL_BOOST_CAP,
+        # v20.3 post-base signal caps
+        "hook_penalty_cap": HOOK_PENALTY_CAP,
+        "expert_consensus_cap": EXPERT_CONSENSUS_CAP,
+        "prop_correlation_cap": PROP_CORRELATION_CAP,
     },
     "totals_side_calibration": TOTALS_SIDE_CALIBRATION,  # v20.4 (disabled v20.11)
     "sport_totals_calibration": SPORT_TOTALS_CALIBRATION,  # v20.11
@@ -173,4 +226,7 @@ SCORING_CONTRACT = {
     "edge_lean_confluence_minimum": EDGE_LEAN_CONFLUENCE_MINIMUM,
     "concentration_limits": CONCENTRATION_LIMITS,
     "persist_tiers": PERSIST_TIERS,  # v20.12: Only quality tiers saved to learning loop
+    "hook_discipline": HOOK_DISCIPLINE,  # v20.3: Key number management
+    "expert_consensus": EXPERT_CONSENSUS,  # v20.3: Expert agreement boost
+    "prop_correlation": PROP_CORRELATION,  # v20.3: Player prop correlations
 }

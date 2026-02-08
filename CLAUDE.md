@@ -386,7 +386,7 @@ CONTEXT_MODIFIER_CAP = 0.35  # Context is a bounded modifier, NOT an engine
 **Scoring Formula (EXACT):**
 ```python
 BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
-FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + live_adjustment + totals_calibration_adj
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + live_adjustment + totals_calibration_adj + hook_penalty + expert_consensus_boost + prop_correlation_adjustment
 ```
 
 **Boosts are additive (NOT engines):**
@@ -395,6 +395,20 @@ FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_bo
 - `ensemble_adjustment` is applied post-base for game picks when the ensemble model is available
   (+0.5 if hit_prob > 0.60, -0.5 if hit_prob < 0.40, else 0.0). Currently surfaced via `ai_reasons`.
 - Live in-game adjustment: `live_adjustment` (bounded ±0.50) applied to **research_score** when game_status is LIVE.
+
+**v20.3 Post-Base Signals (8 Pillars of Execution):**
+
+| Signal | Cap | Notes |
+|--------|-----|-------|
+| `hook_penalty` | `HOOK_PENALTY_CAP` (0.25) | Always ≤0, penalizes bad hooks (key numbers) |
+| `expert_consensus_boost` | `EXPERT_CONSENSUS_CAP` (0.35) | Always ≥0, boosts expert alignment (SHADOW MODE until validated) |
+| `prop_correlation_adjustment` | `PROP_CORRELATION_CAP` (0.20) | Signed ±, prop correlation signals |
+
+**CRITICAL: v20.3 No-Mutation Rule:**
+- These signals are **post-base additive** — they MUST NOT mutate `research_score` or any engine score
+- They are computed separately and passed as explicit parameters to `compute_final_score_option_a()`
+- Caps are enforced inside `compute_final_score_option_a()`, not at call sites
+- Each signal has explicit output fields for auditability: `{signal}_penalty/boost`, `{signal}_status`, `{signal}_reasons`
 
 **Non-negotiable rule for any NEW final_score adjustment:**
 - Must be **bounded**
@@ -420,9 +434,14 @@ context_modifier ∈ [-0.35, +0.35]
 **Final score (clamped):**
 ```
 total_boosts = min(TOTAL_BOOST_CAP, confluence_boost + msrf_boost + jason_sim_boost + serp_boost)
-FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + ensemble_adjustment + live_adjustment + totals_calibration_adj)
+FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + ensemble_adjustment + live_adjustment + totals_calibration_adj + hook_penalty + expert_consensus_boost + prop_correlation_adjustment)
 ```
 **TOTAL_BOOST_CAP = 1.5** — prevents score inflation from stacking multiple boosts (Invariant 26)
+
+**v20.3 Post-Base Signal Caps (enforced in compute_final_score_option_a):**
+- `hook_penalty` ∈ [-0.25, 0] (HOOK_PENALTY_CAP)
+- `expert_consensus_boost` ∈ [0, 0.35] (EXPERT_CONSENSUS_CAP) — currently SHADOW MODE (forced to 0)
+- `prop_correlation_adjustment` ∈ [-0.20, 0.20] (PROP_CORRELATION_CAP)
 
 **Ensemble adjustment:**
 - Uses `ENSEMBLE_ADJUSTMENT_STEP` (no magic ±0.5 literals).
@@ -441,6 +460,10 @@ FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + ensemble_adjustm
 | ensemble_adjustment | `utils/ensemble_adjustment.py` | `ENSEMBLE_ADJUSTMENT_STEP` (0.5) | +0.5 / -0.5 step |
 | live_adjustment | `live_data_router.py` | ±0.50 | In-game adjustment to research_score |
 | totals_calibration_adj | `live_data_router.py` | ±0.75 | OVER penalty / UNDER boost from `TOTALS_SIDE_CALIBRATION` |
+| **v20.3 Post-Base Signals** | | | **8 Pillars of Execution** |
+| hook_penalty | `live_data_router.py` | `HOOK_PENALTY_CAP` (0.25) | Always ≤0, bad hook detection |
+| expert_consensus_boost | `live_data_router.py` | `EXPERT_CONSENSUS_CAP` (0.35) | Always ≥0, SHADOW MODE (boost forced to 0) |
+| prop_correlation_adjustment | `live_data_router.py` | `PROP_CORRELATION_CAP` (0.20) | Signed ±, prop correlation signals |
 
 ---
 
@@ -6923,6 +6946,14 @@ curl /live/best-bets/NBA -H "X-API-Key: KEY" | \
 105. **NEVER** return a pick without all required boost fields (value + status + reasons)
 106. **NEVER** omit `msrf_boost`, `jason_sim_boost`, or `serp_boost` from pick payloads - even if 0.0
 107. **NEVER** skip tracking integration usage on cache hits - call `mark_integration_used()` for both cache and live
+
+## 🚫 NEVER DO THESE (v20.3 - Post-Base Signals / 8 Pillars)
+
+107a. **NEVER** mutate `research_score` (or any engine score) for Hook Discipline, Expert Consensus, or Prop Correlation signals — they are POST-BASE additive, not engine mutations
+107b. **NEVER** apply v20.3 post-base adjustments before `base_score` is computed — they must be passed as explicit parameters to `compute_final_score_option_a()`
+107c. **NEVER** omit the v20.3 output fields from pick payloads: `hook_penalty`, `hook_flagged`, `hook_reasons`, `expert_consensus_boost`, `expert_status`, `prop_correlation_adjustment`, `prop_corr_status`
+107d. **NEVER** apply caps at the call site — caps are enforced inside `compute_final_score_option_a()`: `HOOK_PENALTY_CAP=0.25`, `EXPERT_CONSENSUS_CAP=0.35`, `PROP_CORRELATION_CAP=0.20`
+107e. **NEVER** enable Expert Consensus boost in production until validated — currently SHADOW MODE (boost computed but forced to 0.0)
 
 ## 🚫 NEVER DO THESE (v20.2 - Auto Grader Weights)
 

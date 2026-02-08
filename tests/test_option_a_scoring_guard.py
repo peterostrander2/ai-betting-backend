@@ -253,6 +253,14 @@ def test_payload_boost_fields_present_in_router() -> None:
         "jason_status",
         "serp_boost",
         "serp_status",
+        # v20.3 post-base signals (8 Pillars of Execution)
+        "hook_penalty",
+        "hook_flagged",
+        "hook_reasons",
+        "expert_consensus_boost",
+        "expert_status",
+        "prop_correlation_adjustment",
+        "prop_corr_status",
     ]
     for field in required_fields:
         assert field in text, f"live_data_router.py missing required payload field: {field}"
@@ -279,3 +287,323 @@ def test_scoring_contract_matches_scoring_logic_doc() -> None:
     # Ensure the doc block contains matching weights
     for k, v in weights.items():
         assert f'"{k}": {v}' in m.group(1), f"SCORING_LOGIC.md contract missing {k}: {v}"
+
+
+# ============================================================================
+# v20.3 Post-Base Signals Tests (8 Pillars of Execution)
+# ============================================================================
+
+def test_v20_3_post_base_signals_math_reconciliation() -> None:
+    """
+    CRITICAL RECONCILIATION TEST: Ensures final_score = clamp(sum(all_terms)).
+
+    This test verifies that:
+    1. All additive terms are correctly summed in compute_final_score_option_a()
+    2. The result is clamped to [0, 10]
+    3. The difference from manual calculation is <= 0.02 (rounding tolerance)
+
+    This prevents regression where signals are computed but not included in final score.
+    """
+    from core.scoring_pipeline import compute_final_score_option_a
+    from core.scoring_contract import TOTAL_BOOST_CAP
+
+    test_cases = [
+        # Case 1: All positive values, under total boost cap
+        {
+            "base_score": 6.5,
+            "context_modifier": 0.25,
+            "confluence_boost": 0.5,
+            "msrf_boost": 0.2,
+            "jason_sim_boost": 0.1,
+            "serp_boost": 0.3,
+            "ensemble_adjustment": 0.15,
+            "totals_calibration_adj": 0.0,
+            "hook_penalty": 0.0,  # No penalty
+            "expert_consensus_boost": 0.2,
+            "prop_correlation_adjustment": 0.1,
+        },
+        # Case 2: Hook penalty active
+        {
+            "base_score": 7.0,
+            "context_modifier": 0.2,
+            "confluence_boost": 0.3,
+            "msrf_boost": 0.1,
+            "jason_sim_boost": 0.0,
+            "serp_boost": 0.2,
+            "ensemble_adjustment": 0.0,
+            "totals_calibration_adj": -0.5,
+            "hook_penalty": -0.2,  # Penalty active
+            "expert_consensus_boost": 0.0,
+            "prop_correlation_adjustment": -0.1,
+        },
+        # Case 3: All signals active with negative prop correlation
+        {
+            "base_score": 8.0,
+            "context_modifier": 0.35,
+            "confluence_boost": 0.0,
+            "msrf_boost": 0.0,
+            "jason_sim_boost": 0.0,
+            "serp_boost": 0.0,
+            "ensemble_adjustment": 0.5,
+            "totals_calibration_adj": 0.75,
+            "hook_penalty": -0.15,
+            "expert_consensus_boost": 0.3,
+            "prop_correlation_adjustment": -0.15,
+        },
+        # Case 4: Edge case - would exceed 10, should clamp
+        {
+            "base_score": 9.0,
+            "context_modifier": 0.35,
+            "confluence_boost": 1.0,
+            "msrf_boost": 0.5,
+            "jason_sim_boost": 0.5,
+            "serp_boost": 0.5,  # Will be capped by TOTAL_BOOST_CAP
+            "ensemble_adjustment": 0.5,
+            "totals_calibration_adj": 0.75,
+            "hook_penalty": 0.0,
+            "expert_consensus_boost": 0.35,
+            "prop_correlation_adjustment": 0.2,
+        },
+        # Case 5: Edge case - would go below 0, should clamp
+        {
+            "base_score": 1.0,
+            "context_modifier": -0.35,
+            "confluence_boost": 0.0,
+            "msrf_boost": 0.0,
+            "jason_sim_boost": -0.5,
+            "serp_boost": 0.0,
+            "ensemble_adjustment": -0.5,
+            "totals_calibration_adj": -0.75,
+            "hook_penalty": -0.25,
+            "expert_consensus_boost": 0.0,
+            "prop_correlation_adjustment": -0.2,
+        },
+    ]
+
+    for i, case in enumerate(test_cases):
+        final_score, _ = compute_final_score_option_a(**case)
+
+        # Manual calculation (what the function should compute)
+        # Note: boosts are capped by TOTAL_BOOST_CAP inside the function
+        total_boosts = case["confluence_boost"] + case["msrf_boost"] + case["jason_sim_boost"] + case["serp_boost"]
+        capped_boosts = min(TOTAL_BOOST_CAP, total_boosts)
+
+        expected_raw = (
+            case["base_score"]
+            + case["context_modifier"]
+            + capped_boosts
+            + case["ensemble_adjustment"]
+            + case["totals_calibration_adj"]
+            + case["hook_penalty"]
+            + case["expert_consensus_boost"]
+            + case["prop_correlation_adjustment"]
+        )
+        expected_clamped = max(0.0, min(10.0, expected_raw))
+
+        diff = abs(final_score - expected_clamped)
+        assert diff <= 0.02, (
+            f"Case {i+1} RECONCILIATION FAILED: "
+            f"final_score={final_score}, expected={expected_clamped}, diff={diff}"
+        )
+
+
+def test_v20_3_hook_penalty_cap_enforcement() -> None:
+    """
+    Guard: hook_penalty must be capped to [-HOOK_PENALTY_CAP, 0].
+    Penalties exceeding the cap should be clamped.
+    """
+    from core.scoring_pipeline import compute_final_score_option_a
+    from core.scoring_contract import HOOK_PENALTY_CAP
+
+    # Test excessive penalty is capped
+    final_with_excessive, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        hook_penalty=-1.0,  # Excessive, should be capped to -0.25
+    )
+
+    final_with_capped, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        hook_penalty=-HOOK_PENALTY_CAP,
+    )
+
+    assert final_with_excessive == final_with_capped, (
+        f"hook_penalty not capped: excessive={final_with_excessive}, capped={final_with_capped}"
+    )
+
+    # Verify penalty can't be positive
+    final_with_positive, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        hook_penalty=0.5,  # Positive should be clamped to 0
+    )
+
+    final_with_zero, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        hook_penalty=0.0,
+    )
+
+    assert final_with_positive == final_with_zero, (
+        "hook_penalty must be <=0, positive values should be clamped to 0"
+    )
+
+
+def test_v20_3_expert_consensus_cap_enforcement() -> None:
+    """
+    Guard: expert_consensus_boost must be capped to [0, EXPERT_CONSENSUS_CAP].
+    """
+    from core.scoring_pipeline import compute_final_score_option_a
+    from core.scoring_contract import EXPERT_CONSENSUS_CAP
+
+    # Test excessive boost is capped
+    final_with_excessive, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        expert_consensus_boost=1.0,  # Excessive, should be capped to 0.35
+    )
+
+    final_with_capped, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        expert_consensus_boost=EXPERT_CONSENSUS_CAP,
+    )
+
+    assert final_with_excessive == final_with_capped, (
+        f"expert_consensus_boost not capped: excessive={final_with_excessive}, capped={final_with_capped}"
+    )
+
+    # Verify boost can't be negative
+    final_with_negative, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        expert_consensus_boost=-0.5,  # Negative should be clamped to 0
+    )
+
+    final_with_zero, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        expert_consensus_boost=0.0,
+    )
+
+    assert final_with_negative == final_with_zero, (
+        "expert_consensus_boost must be >=0, negative values should be clamped to 0"
+    )
+
+
+def test_v20_3_prop_correlation_cap_enforcement() -> None:
+    """
+    Guard: prop_correlation_adjustment must be capped to [-PROP_CORRELATION_CAP, PROP_CORRELATION_CAP].
+    """
+    from core.scoring_pipeline import compute_final_score_option_a
+    from core.scoring_contract import PROP_CORRELATION_CAP
+
+    # Test excessive positive is capped
+    final_with_excessive_pos, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        prop_correlation_adjustment=1.0,  # Excessive, should be capped to 0.20
+    )
+
+    final_with_capped_pos, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        prop_correlation_adjustment=PROP_CORRELATION_CAP,
+    )
+
+    assert final_with_excessive_pos == final_with_capped_pos, (
+        f"prop_correlation_adjustment positive not capped: excessive={final_with_excessive_pos}, capped={final_with_capped_pos}"
+    )
+
+    # Test excessive negative is capped
+    final_with_excessive_neg, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        prop_correlation_adjustment=-1.0,  # Excessive, should be capped to -0.20
+    )
+
+    final_with_capped_neg, _ = compute_final_score_option_a(
+        base_score=7.0,
+        context_modifier=0.0,
+        confluence_boost=0.0,
+        msrf_boost=0.0,
+        jason_sim_boost=0.0,
+        serp_boost=0.0,
+        prop_correlation_adjustment=-PROP_CORRELATION_CAP,
+    )
+
+    assert final_with_excessive_neg == final_with_capped_neg, (
+        f"prop_correlation_adjustment negative not capped: excessive={final_with_excessive_neg}, capped={final_with_capped_neg}"
+    )
+
+
+def test_v20_3_no_research_score_mutation_in_router() -> None:
+    """
+    HARD GUARD: v20.3 signals must NOT mutate research_score.
+
+    Hook Discipline, Expert Consensus, and Prop Correlation must be
+    post-base additive signals, not engine mutations.
+    """
+    path = os.path.join(REPO_ROOT, "live_data_router.py")
+    text = _read(path)
+
+    # These patterns would indicate research_score mutation (FORBIDDEN)
+    forbidden_patterns = [
+        r'research_score\s*=\s*research_score\s*[-+]',  # research_score = research_score +/- X
+        r'research_score\s*[-+]=',  # research_score += X or research_score -= X
+    ]
+
+    for pattern in forbidden_patterns:
+        matches = re.findall(pattern, text)
+        # Filter out lines that are in the expected places (before base_score computation)
+        # by checking context - these mutations should not exist after base_score is computed
+        assert len(matches) == 0, (
+            f"CRITICAL: Found research_score mutation pattern: {pattern}\n"
+            f"Matches: {matches}\n"
+            "v20.3 signals must be post-base additive, not engine mutations!"
+        )
