@@ -66,7 +66,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (60 Total) - Key Categories
+### Lessons Learned (61 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -87,8 +87,9 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
 | 56 | **v20.10 SHARP Field** | `signal.get("side")` should be `signal.get("sharp_side")` — wrong team graded |
 | 57-60 | **v20.11 Real Data Sources** | NOAA Kp-index, ESPN live scores, Improved void moon, LSTM Playbook API training |
+| 61 | **v20.11 Rivalry Database** | Comprehensive MAJOR_RIVALRIES expansion: 204 rivalries covering all teams in 5 sports |
 
-### NEVER DO Sections (26 Categories)
+### NEVER DO Sections (27 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -115,6 +116,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.8 Props Indentation & Code Placement (rules 173-177)
 - v20.9 Frontend/Backend Endpoint Contract (rules 178-181)
 - v20.11 Real Data Sources (rules 182-191)
+- v20.11 Rivalry Database (rules 192-197)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -6437,6 +6439,93 @@ curl /live/ml/status -H "X-API-Key: KEY" | jq '.lstm.training_info'
 
 **Fixed in:** v20.11 (Feb 8, 2026)
 
+### Lesson 61: Comprehensive Rivalry Database Expansion (v20.11)
+**Problem:** `MAJOR_RIVALRIES` in `esoteric_engine.py` only covered ~50 popular matchups. User requirement: "Every team has a rivalry in each sport — grab them all."
+
+**Root Cause:** Original database was written for "popular" rivalries only (Lakers-Celtics, Yankees-Red Sox), leaving most teams without rivalry detection. Mid-market and newer teams (Kraken, Golden Knights, Utah Jazz) had no entries.
+
+**The Fix:**
+```python
+# esoteric_engine.py lines 1583-1653 — Comprehensive coverage
+MAJOR_RIVALRIES = {
+    "NBA": [  # 35 rivalries covering all 30 teams
+        ({"celtics", "boston"}, {"lakers", "los angeles lakers"}, "HIGH"),
+        ({"celtics", "boston"}, {"sixers", "76ers", "philadelphia"}, "HIGH"),
+        # ... divisional + historic rivalries
+    ],
+    "NFL": [  # 46 rivalries covering all 32 teams
+        ({"bills", "buffalo"}, {"dolphins", "miami"}, "HIGH"),
+        ({"packers", "green bay"}, {"bears", "chicago"}, "HIGH"),
+        # ... all divisional matchups
+    ],
+    "NHL": [  # 36 rivalries including newest teams
+        ({"bruins", "boston"}, {"canadiens", "montreal"}, "HIGH"),
+        ({"kraken", "seattle"}, {"canucks", "vancouver"}, "MEDIUM"),
+        ({"golden knights", "vegas"}, {"sharks", "san jose"}, "HIGH"),
+        # ... Original Six + expansion teams
+    ],
+    "MLB": [  # 36 rivalries + interleague
+        ({"yankees", "new york yankees"}, {"red sox", "boston"}, "HIGH"),
+        ({"cubs", "chicago cubs"}, {"cardinals", "st louis"}, "HIGH"),
+        # ... divisional + crosstown
+    ],
+    "NCAAB": [  # 51 rivalries for major programs
+        ({"duke", "blue devils"}, {"north carolina", "tar heels", "unc"}, "HIGH"),
+        ({"kentucky", "wildcats"}, {"louisville", "cardinals"}, "HIGH"),
+        # ... conference + regional rivalries
+    ],
+}
+# Total: 204 rivalries across 5 sports
+```
+
+**Key Design Decisions:**
+- Tuples use sets for case-insensitive keyword matching: `({"celtics", "boston"}, {"lakers"}, "HIGH")`
+- Intensity levels: "HIGH" (historic/divisional) and "MEDIUM" (regional/newer)
+- Every NBA (30), NFL (32), NHL (32), MLB (30) team has at least one rivalry
+- NCAAB covers all major conference programs + historic independents
+
+**Coverage by Sport:**
+| Sport | Rivalries | Teams Covered | Coverage |
+|-------|-----------|---------------|----------|
+| NBA | 35 | 30/30 | 100% |
+| NFL | 46 | 32/32 | 100% |
+| NHL | 36 | 32/32 | 100% (incl. Kraken, Vegas, Utah) |
+| MLB | 36 | 30/30 | 100% (incl. interleague) |
+| NCAAB | 51 | 75+ programs | Major conferences |
+| **Total** | **204** | All teams | Comprehensive |
+
+**Prevention:**
+1. **NEVER add partial data for a sport** — cover ALL teams, not just "popular" ones
+2. **Always organize by division/conference** for maintainability
+3. **Use keyword sets** for flexible matching (city names, nicknames, abbreviations)
+4. **Include newest teams** (Kraken 2021, Golden Knights 2017, Utah 2024)
+
+**Files Modified:**
+- `esoteric_engine.py` — Expanded `MAJOR_RIVALRIES` from ~50 to 204 entries (lines 1583-1653)
+
+**Verification:**
+```bash
+# Test rivalry detection for all sports
+python3 -c "
+from esoteric_engine import calculate_rivalry_intensity
+tests = [
+    ('NBA', 'Celtics', 'Lakers', True),      # Historic
+    ('NBA', 'Kings', 'Warriors', True),      # California
+    ('NFL', 'Bills', 'Dolphins', True),      # AFC East
+    ('NFL', 'Jaguars', 'Titans', True),      # AFC South
+    ('NHL', 'Kraken', 'Canucks', True),      # Pacific
+    ('NHL', 'Golden Knights', 'Sharks', True), # Expansion
+    ('MLB', 'Mets', 'Yankees', True),        # Subway Series
+    ('NCAAB', 'Duke', 'UNC', True),          # Tobacco Road
+]
+for sport, t1, t2, expected in tests:
+    result = calculate_rivalry_intensity(sport, t1, t2)
+    status = '✅' if result.get('is_rivalry') == expected else '❌'
+    print(f'{status} {sport}: {t1} vs {t2} = {result}')"
+```
+
+**Fixed in:** v20.11 (Feb 8, 2026) — Commit `5e51fa1`
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (v20.11 — Real Data Sources)
@@ -7177,6 +7266,90 @@ return {"data": simulation_data(), "source": "fallback"}
 # ❌ WRONG — No fallback, crashes on API failure
 result = fetch_from_real_api()  # Raises on error
 return result  # No source tracking
+```
+
+## 🚫 NEVER DO THESE (v20.11 - Rivalry Database)
+
+192. **NEVER** add partial rivalry data for a sport — if adding rivalries, cover ALL teams (30 NBA, 32 NFL, 32 NHL, 30 MLB), not just popular matchups
+193. **NEVER** use exact string matching for team names in rivalry detection — use keyword sets for flexible matching (`{"celtics", "boston"}` matches "Boston Celtics", "Celtics", etc.)
+194. **NEVER** forget to include newest expansion teams in rivalry data — Kraken (2021), Golden Knights (2017), Utah Jazz rename (2024) must have entries
+195. **NEVER** organize rivalries randomly — use division/conference structure for maintainability and completeness verification
+196. **NEVER** mix up intensity levels — "HIGH" for historic/divisional rivalries, "MEDIUM" for regional/newer rivalries
+197. **NEVER** assume a team has no rivalries — every professional team has at least one divisional rival; research before claiming "no rivalry"
+
+**Rivalry Database Quick Reference:**
+```python
+# ✅ CORRECT — Set-based keywords for flexible matching
+({"celtics", "boston"}, {"lakers", "los angeles lakers", "la lakers"}, "HIGH")
+
+# ❌ WRONG — Exact string match will miss variants
+("Boston Celtics", "Los Angeles Lakers", "HIGH")
+
+# ✅ CORRECT — Include city, nickname, and common abbreviations
+({"yankees", "new york yankees", "nyy"}, {"red sox", "boston", "bos"}, "HIGH")
+```
+
+---
+
+## ✅ VERIFICATION CHECKLIST (Rivalry Database)
+
+Run these after ANY change to MAJOR_RIVALRIES in esoteric_engine.py:
+
+```bash
+# 1. Syntax check
+python3 -m py_compile esoteric_engine.py
+
+# 2. Count rivalries per sport (should be: NBA 35, NFL 46, NHL 36, MLB 36, NCAAB 51 = 204 total)
+python3 -c "
+from esoteric_engine import MAJOR_RIVALRIES
+for sport, rivals in MAJOR_RIVALRIES.items():
+    print(f'{sport}: {len(rivals)} rivalries')
+print(f'Total: {sum(len(v) for v in MAJOR_RIVALRIES.values())} rivalries')
+"
+
+# 3. Test rivalry detection for each sport
+python3 -c "
+from esoteric_engine import calculate_rivalry_intensity
+tests = [
+    # NBA
+    ('NBA', 'Celtics', 'Lakers'),
+    ('NBA', 'Kings', 'Warriors'),
+    ('NBA', 'Timberwolves', 'Nuggets'),
+    # NFL
+    ('NFL', 'Bills', 'Dolphins'),
+    ('NFL', 'Jaguars', 'Titans'),
+    ('NFL', 'Commanders', 'Cowboys'),
+    # NHL
+    ('NHL', 'Bruins', 'Canadiens'),
+    ('NHL', 'Kraken', 'Canucks'),
+    ('NHL', 'Golden Knights', 'Sharks'),
+    # MLB
+    ('MLB', 'Yankees', 'Red Sox'),
+    ('MLB', 'Mets', 'Phillies'),
+    ('MLB', 'Dodgers', 'Giants'),
+    # NCAAB
+    ('NCAAB', 'Duke', 'North Carolina'),
+    ('NCAAB', 'Kentucky', 'Louisville'),
+    ('NCAAB', 'Michigan', 'Ohio State'),
+]
+passed = 0
+for sport, t1, t2 in tests:
+    result = calculate_rivalry_intensity(sport, t1, t2)
+    if result.get('is_rivalry'):
+        print(f'✅ {sport}: {t1} vs {t2} = {result.get(\"intensity\")}')
+        passed += 1
+    else:
+        print(f'❌ {sport}: {t1} vs {t2} = NOT FOUND')
+print(f'\n{passed}/{len(tests)} tests passed')
+"
+
+# 4. Verify rivalry boost appears in production picks
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[].phase8_breakdown.rivalry] | map(select(.is_rivalry == true))'
+
+# 5. Check esoteric_reasons include rivalry signals
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[].esoteric_reasons] | flatten | map(select(contains("Rivalry")))'
 ```
 
 ---
