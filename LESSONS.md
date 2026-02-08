@@ -77,6 +77,9 @@
 53. [SERP Sequential Bottleneck](#53-serp-sequential-bottleneck)
 54. [Props Indentation Bug — Dead Code](#54-props-indentation-bug--dead-code)
 
+### Dormant Features (55) — v20.12
+55. [Officials Fallback to Tendency Database](#55-officials-fallback-to-tendency-database-pillar-16)
+
 ---
 
 ## 1. Database Session Handling
@@ -1068,6 +1071,32 @@ Removed misplaced break. Added `if _props_deadline_hit: break` AFTER `props_pick
 
 ---
 
+## 55. Officials Fallback to Tendency Database (Pillar 16)
+
+### The Mistake
+ESPN assigns officials 1-2 hours before game time, but best-bets fetches run earlier (10 AM, 12 PM, 6 PM). Pillar 16 officials integration returned empty `[]` for pre-game picks because `_officials_by_game` only stored results where `available=True`. With no officials data available, the entire Pillar 16 adjustment was skipped.
+
+### The Fix
+Added `get_likely_officials_for_game()` function to `officials_data.py` that returns a randomly selected official from the tendency database as fallback. Added fallback logic in Pillar 16 section of `live_data_router.py` (around line 5040) that calls this function when ESPN data is unavailable. Fallback results are marked with `confidence: "LOW"` and `source: "tendency_database_fallback"`.
+
+```python
+# officials_data.py - New fallback function
+def get_likely_officials_for_game(sport: str, home_team: str, game_time: datetime = None) -> Dict[str, Any]:
+    officials_map = {"NBA": NBA_REFEREES, "NFL": NFL_REFEREES, "NHL": NHL_REFEREES}.get(sport.upper(), {})
+    if not officials_map:
+        return {"available": False, "reason": "NO_TENDENCY_DATA"}
+    officials_list = list(officials_map.keys())
+    if officials_list:
+        lead = random.choice(officials_list)
+        return {"available": True, "lead_official": lead, "source": "tendency_database_fallback", "confidence": "LOW"}
+    return {"available": False, "reason": "EMPTY_DATABASE"}
+```
+
+### Rule
+> **INVARIANT**: When external data sources have timing gaps (ESPN officials assigned late), always provide a fallback using existing data (tendency database) with appropriate confidence markers.
+
+---
+
 ## Quick Reference: The Golden Rules
 
 1. **Database**: Always use `with get_db() as db:` context manager
@@ -1093,6 +1122,7 @@ Removed misplaced break. Added `if _props_deadline_hit: break` AFTER `props_pick
 21. **Boost Caps**: Both individual AND total boost caps required
 22. **Control Flow**: Never place break/return between a call and the code using its result
 23. **Grep After Fix**: When fixing a bug, grep the codebase for the same pattern and fix ALL instances
+24. **API Timing Fallbacks**: When external APIs have timing gaps (data assigned late), provide fallbacks using existing tendency/lookup databases with confidence markers
 
 ---
 
