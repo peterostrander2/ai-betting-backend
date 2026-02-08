@@ -241,40 +241,54 @@ class DailyAuditJob:
             "graded": 0,
             "bias": {},
             "weights_adjusted": False,
-            "retrain_triggered": False
+            "retrain_triggered": False,
+            "reconciliation_skipped": []
         }
-        
+
         if not self.auto_grader:
             return {"error": "Auto-grader not initialized"}
-        
-        # Get yesterday's predictions
-        yesterday = datetime.now() - timedelta(days=1)
-        
+
+        # Reload predictions from grader_store to ensure fresh data
+        try:
+            self.auto_grader._load_state()
+        except Exception as e:
+            logger.warning(f"[{sport}] Failed to reload predictions: {e}")
+
+        # Define all stat types: prop_stat_types + game_stat_types
+        prop_stat_types = SchedulerConfig.SPORT_STATS.get(sport, ["points"])
+        game_stat_types = ["spread", "total", "moneyline", "sharp"]
+        all_stat_types = prop_stat_types + game_stat_types
+
         # Grade predictions for each stat type
-        for stat_type in SchedulerConfig.SPORT_STATS.get(sport, ["points"]):
+        for stat_type in all_stat_types:
             try:
                 # Calculate bias
                 bias = self.auto_grader.calculate_bias(sport, stat_type, days_back=1)
                 result["bias"][stat_type] = bias
-                
+
                 # Check if weights need adjustment
                 if self._should_adjust_weights(bias):
-                    adjustment = self.auto_grader.adjust_weights(
+                    # Use reconciliation-aware adjustment to prevent conflicts with trap learning
+                    adjustment = self.auto_grader.adjust_weights_with_reconciliation(
                         sport, stat_type, days_back=1, apply_changes=True
                     )
-                    result["weights_adjusted"] = True
-                    logger.info(f"[{sport}/{stat_type}] Weights adjusted: {adjustment}")
-                
+                    if adjustment and adjustment.get("applied"):
+                        result["weights_adjusted"] = True
+                        logger.info(f"[{sport}/{stat_type}] Weights adjusted: {adjustment}")
+                    elif adjustment and adjustment.get("reconciliation_skipped"):
+                        result["reconciliation_skipped"].append(stat_type)
+                        logger.info(f"[{sport}/{stat_type}] Skipped due to trap reconciliation")
+
                 # Check if retrain needed
                 if self._should_retrain(bias):
                     result["retrain_triggered"] = True
                     logger.warning(f"[{sport}/{stat_type}] Retrain triggered due to high MAE")
                     if self.training_pipeline:
                         self.training_pipeline.train_sport(sport, stat_type, epochs=30)
-                
+
             except Exception as e:
                 logger.warning(f"[{sport}/{stat_type}] Bias calculation failed: {e}")
-        
+
         # Get summary stats
         try:
             audit_summary = self.auto_grader.get_audit_summary(sport)
@@ -289,24 +303,36 @@ class DailyAuditJob:
         """Check if weights should be adjusted based on bias."""
         if not bias:
             return False
-        
-        # Adjust if any feature bias exceeds threshold
+
+        # Access factor_bias from the actual bias response structure
+        factor_bias = bias.get("factor_bias", {})
+        if not factor_bias:
+            return False
+
+        # Adjust if any feature correlation exceeds threshold
         for feature in ["vacuum", "defense", "pace", "lstm", "officials"]:
-            feature_bias = bias.get(f"{feature}_bias", 0)
-            if abs(feature_bias) > 2.0:  # Significant bias
+            feature_data = factor_bias.get(feature, {})
+            correlation = feature_data.get("correlation", 0) if isinstance(feature_data, dict) else 0
+            if abs(correlation) > 0.3:  # Significant correlation (scaled appropriately)
                 return True
-        
+
         return False
     
     def _should_retrain(self, bias: Dict) -> bool:
         """Check if model should be retrained."""
         if not bias:
             return False
-        
-        mae = bias.get("mae", 0)
-        hit_rate = bias.get("hit_rate", 0.5)
-        
-        return (mae > SchedulerConfig.RETRAIN_MAE_THRESHOLD or 
+
+        # Access overall metrics from the actual bias response structure
+        overall = bias.get("overall", {})
+        if not overall:
+            return False
+
+        mae = overall.get("mean_error", 0)
+        hit_rate_pct = overall.get("hit_rate", 50)  # This is a percentage (0-100)
+        hit_rate = hit_rate_pct / 100.0 if hit_rate_pct > 1 else hit_rate_pct  # Convert to decimal
+
+        return (mae > SchedulerConfig.RETRAIN_MAE_THRESHOLD or
                 hit_rate < SchedulerConfig.RETRAIN_HIT_RATE_THRESHOLD)
     
     def _save_audit_log(self, results: Dict):

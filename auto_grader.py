@@ -495,21 +495,31 @@ class AutoGrader:
     ) -> Optional[Dict]:
         """
         Grade a prediction with actual outcome.
-        
+
         Returns grading result with error analysis.
+        Error metric aligned with _convert_pick_to_record():
+        error = predicted_value - (10.0 if hit else 0.0)
         """
         # Find the prediction
         for sport, records in self.predictions.items():
             for record in records:
                 if record.prediction_id == prediction_id:
                     record.actual_value = actual_value
-                    record.error = record.predicted_value - actual_value
-                    
+
                     # Determine if it "hit" (beat the line correctly)
                     if record.line is not None:
                         predicted_over = record.predicted_value > record.line
                         actual_over = actual_value > record.line
                         record.hit = predicted_over == actual_over
+                    else:
+                        # For picks without a line, compare predicted vs actual directly
+                        record.hit = record.predicted_value > actual_value if actual_value > 0 else False
+
+                    # Error metric aligned with _convert_pick_to_record() (line 332)
+                    # This measures how far off the confidence score was from the ideal:
+                    # - If hit: ideal was 10.0 (max confidence justified)
+                    # - If miss: ideal was 0.0 (should have had no confidence)
+                    record.error = record.predicted_value - (10.0 if record.hit else 0.0)
 
                     # v19.1: Grading updates go to grader_store via mark_graded()
                     # Update in-memory only here - grader_store handles persistence
@@ -522,7 +532,7 @@ class AutoGrader:
                         "hit": record.hit,
                         "bias_direction": "OVER" if record.error > 0 else "UNDER"
                     }
-        
+
         return None
     
     def bulk_grade(
@@ -901,7 +911,7 @@ class AutoGrader:
             "bias_analysis": bias,
             "weight_adjustments": adjustments,
             "applied": apply_changes,
-            "reconciliation": reconciliation_results if 'reconciliation_results' in dir() else None
+            "reconciliation": None
         }
 
     # ============================================
@@ -1209,15 +1219,19 @@ class AutoGrader:
         Save graded picks to JSONL file for daily tracking.
 
         Args:
-            date_str: Date string (YYYY-MM-DD), defaults to today
+            date_str: Date string (YYYY-MM-DD), defaults to today in ET
 
         Returns:
             Path to JSONL file
         """
         import json
+        from core.time_et import now_et
+        from zoneinfo import ZoneInfo
+
+        et_tz = ZoneInfo("America/New_York")
 
         if date_str is None:
-            date_str = datetime.now().strftime("%Y-%m-%d")
+            date_str = now_et().strftime("%Y-%m-%d")
 
         # Ensure graded_picks directory exists
         graded_dir = os.path.join(self.storage_path, "graded_picks")
@@ -1225,12 +1239,13 @@ class AutoGrader:
 
         path = os.path.join(graded_dir, f"graded_{date_str}.jsonl")
 
-        # Get all graded predictions from today
-        cutoff = datetime.strptime(date_str, "%Y-%m-%d")
+        # Get all graded predictions from this date using ET-aware cutoffs
+        cutoff = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=et_tz)
         cutoff_end = cutoff + timedelta(days=1)
 
         graded_count = 0
-        with open(path, 'a') as f:
+        # Use write mode ('w') instead of append ('a') to prevent duplicates
+        with open(path, 'w') as f:
             for sport, records in self.predictions.items():
                 for record in records:
                     # Only include graded predictions from this date
@@ -1239,6 +1254,9 @@ class AutoGrader:
 
                     try:
                         record_date = datetime.fromisoformat(record.timestamp)
+                        # Handle both naive and aware timestamps
+                        if record_date.tzinfo is None:
+                            record_date = record_date.replace(tzinfo=et_tz)
                         if cutoff <= record_date < cutoff_end:
                             f.write(json.dumps(asdict(record)) + "\n")
                             graded_count += 1
