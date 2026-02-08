@@ -755,6 +755,154 @@ Documented explicit contract in `SCORING_LOGIC.md`:
 18. **Pipeline Checks**: Add sanity checks for each major data pipeline
 19. **Integration Tracking**: Track usage at source module level, including cache hits
 20. **Boost Contract**: Every boost exposes value + status + reasons
+21. **SERP Shadow Mode**: Default SERP to LIVE mode, not shadow mode (v17.2)
+22. **pick_type Values**: Game picks use "SPREAD"/"MONEYLINE"/"TOTAL", not "GAME" (v17.5)
+23. **Dormant Signal Activation**: Use `_is_game_pick` helper for pick_type conditions (v17.5)
+24. **Benford Multi-Book**: Aggregate odds across books before anomaly detection (v17.6)
+25. **Function Parameter Threading**: Update ALL call sites when adding function parameters (v17.6)
+26. **Officials Tendency**: Pair referee names with tendency database for betting signals (v17.8)
+27. **Trap Learning Loop**: Detect trap lines via sharp divergence patterns (v19.0)
+28. **Complete Learning System**: End-to-end grading → bias → weight updates (v19.1)
+29. **Timezone Aware Datetimes**: Both sides must be tz-aware for arithmetic (v18.2)
+30. **Env Var OR Logic**: Use `any()` for alternatives, `all()` for required (v18.2)
+31. **Variable Init Before Conditionals**: Initialize to None before conditional assignment (v18.2)
+32. **Auto Grader Weights**: Include all stat types in weights dict structure (v20.2)
+33. **OVER Bet Tracking**: Monitor OVER/UNDER bias for calibration adjustments (v20.2)
+34. **Learning Loop Verification**: Check bias trends across sports to verify learning (v20.3)
+35. **Grading Pipeline Coverage**: Handle SHARP/MONEYLINE/PROP in grading (v20.3)
+36. **Audit Drift Line Filters**: Use precise line ranges in drift scans (v20.4)
+37. **Endpoint Matrix Sanity Math**: Verify final_score formula matches production (v20.4)
+38. **OVER/UNDER Calibration**: Apply totals_calibration_adj for bias correction (v20.4)
+39. **Frontend Tooltip Alignment**: Weights in UI must match scoring_contract.py (v20.4)
+40. **Shell Export for Python**: Use `export VAR=value` for Python subprocesses (v20.4)
+41. **SHARP Grading**: Grade as moneyline (team won?), not line_variance (v20.5)
+42. **PYTZ_AVAILABLE Defined**: Define PYTZ_AVAILABLE before conditional use (v20.5)
+43. **Naive vs Aware Datetime**: Use timezone-aware datetimes for all comparisons (v20.5)
+44. **Date Window Math**: yesterday = today - 1 day, not today - 2 days (v20.5)
+45. **Grader Performance Bug**: Same naive/aware datetime issue in multiple endpoints (v20.5)
+46. **Surface All Adjustments**: Every final_score adjustment needs a payload field (v20.5)
+47. **Script Env Vars Registry**: Add script-only env vars to RUNTIME_ENV_VARS (v20.5)
+48. **Heredoc __file__ Path**: Heredocs run from temp, use explicit paths (v20.5)
+49. **Props Timeout Budget**: TIME_BUDGET_S configurable, increase for props (v20.6)
+50. **Empty Description Fields**: Auto-generate descriptions in normalize_pick() (v20.6)
+51. **Total Boost Cap**: TOTAL_BOOST_CAP = 1.5 prevents score inflation (v20.6)
+52. **Jarvis Baseline Design**: 4.5 baseline is intentional (sacred triggers are rare) (v20.6)
+53. **SERP Parallel Pre-Fetch**: Pre-fetch SERP data to avoid sequential bottleneck (v20.7)
+54. **Props Indentation Bug**: Code placement matters - break AFTER append, not before (v20.8)
+55. **Frontend/Backend Contract**: Verify backend endpoint exists before frontend calls it (v20.9)
+56. **SHARP Signal Field Name**: Use `sharp_side`, not `side` (signal dictionary field) (v20.10)
+57. **NOAA Real API**: Wire existing API implementations, don't leave simulations (v20.11)
+58. **Live ESPN Scores**: Extract real scores during fetch, don't hardcode 0-0 (v20.11)
+59. **Void Moon Meeus**: Use proper astronomical formulas (synodic month + perturbation) (v20.11)
+60. **LSTM Real Data**: Try Playbook API before falling back to synthetic (v20.11)
+61. **Comprehensive Rivalry Database**: Cover ALL teams in each sport, not just popular (v20.11)
+
+---
+
+## 21. SERP Shadow Mode Default (v17.2)
+
+### The Mistake
+SERP was defaulting to shadow mode (disabled), so the feature was never actually used in production.
+
+### The Fix
+Set `SERP_SHADOW_MODE=false` by default to enable SERP intelligence.
+
+### Rule
+> **INVARIANT**: Features should default to ENABLED unless there's a specific reason to disable.
+
+---
+
+## 22. pick_type Value Mismatch (v17.5)
+
+### The Mistake
+Code checked `pick_type == "GAME"` but actual game picks use `"SPREAD"`, `"MONEYLINE"`, or `"TOTAL"`.
+
+### The Fix
+```python
+_is_game_pick = pick_type in ("GAME", "SPREAD", "MONEYLINE", "TOTAL", "SHARP")
+if _is_game_pick and spread and total:
+    # Now triggers correctly
+```
+
+### Rule
+> **INVARIANT**: Before using `pick_type` in conditions, trace where it's set. The value `"GAME"` is only a fallback.
+
+---
+
+## 23-31. Phase Lessons (v17.5-v18.2)
+
+See `CLAUDE.md` for detailed coverage of:
+- Dormant Signal Activation (23)
+- Benford Multi-Book (24)
+- Function Parameter Threading (25)
+- Officials Tendency (26)
+- Trap Learning Loop (27)
+- Complete Learning System (28)
+- Timezone Aware Datetimes (29)
+- Env Var OR Logic (30)
+- Variable Init Before Conditionals (31)
+
+---
+
+## 32-45. v20.x Learning Loop & Grading (v20.2-v20.5)
+
+Key lessons from the v20.x learning loop implementation:
+
+- **Auto Grader Weights (32)**: Include ALL stat types in weights structure
+- **OVER Tracking (33)**: Monitor bias to enable calibration
+- **Learning Verification (34)**: Check trends to confirm learning is working
+- **Grading Coverage (35)**: Handle all pick types in grading pipeline
+- **SHARP Grading (41)**: Grade as moneyline win/loss, not line variance
+- **Datetime Bugs (42-45)**: Always use timezone-aware datetimes
+
+---
+
+## 46-52. v20.5-v20.6 Production Fixes
+
+### 46. Surface All Adjustments
+Every adjustment to `final_score` MUST have a corresponding payload field.
+
+### 51. Total Boost Cap (CRITICAL)
+**TOTAL_BOOST_CAP = 1.5** prevents score inflation from stacking multiple boosts.
+
+```python
+total_boosts = min(TOTAL_BOOST_CAP, confluence + msrf + jason + serp)
+```
+
+---
+
+## 53-56. v20.7-v20.10 Performance & Bug Fixes
+
+### 53. SERP Parallel Pre-Fetch
+Pre-fetch SERP data before scoring loop to avoid 17s→3s improvement.
+
+### 54. Props Indentation Bug
+`break` was placed BETWEEN `calculate_pick_score()` and `props_picks.append()`, making append unreachable.
+
+### 55. Frontend/Backend Contract
+NEVER write frontend API method without verifying backend endpoint exists.
+
+### 56. SHARP Signal Field Name
+Signal uses `sharp_side`, not `side`. Wrong field = wrong team graded.
+
+---
+
+## 57-61. v20.11 Real Data Sources
+
+### 57. NOAA Real API
+If a working API exists (noaa.py), wire it in. Don't leave simulations.
+
+### 58. Live ESPN Scores
+Extract real scores from ESPN scoreboard during fetch phase.
+
+### 59. Void Moon Meeus
+Use proper astronomical formulas (synodic month 29.53d + perturbation).
+
+### 60. LSTM Real Data
+Try Playbook API with `build_training_data_real()` before synthetic fallback.
+
+### 61. Comprehensive Rivalry Database
+Cover ALL teams in each sport (204 rivalries across 5 sports).
 
 ---
 
