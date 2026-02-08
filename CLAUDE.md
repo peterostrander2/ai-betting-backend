@@ -66,7 +66,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (63 Total) - Key Categories
+### Lessons Learned (65 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -90,8 +90,10 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 61 | **v20.11 Rivalry Database** | Comprehensive MAJOR_RIVALRIES expansion: 204 rivalries covering all teams in 5 sports |
 | 62 | **v20.11 Post-Base Signals** | Hook/Expert/Prop signals mutated research_score AFTER base_score — NO EFFECT on final_score |
 | 63 | **v20.12 Dormant Features** | Stadium altitude, travel fatigue fix, gematria twitter, officials tendency fallback |
+| 64 | **v20.12 CI Partial-Success** | Spot checks must distinguish fatal errors from partial-success (timeouts with valid picks) |
+| 65 | **v20.12 SERP Quota** | SERP burned 5000 searches/month — disabled by default, per-call APIs need explicit opt-in |
 
-### NEVER DO Sections (28 Categories)
+### NEVER DO Sections (29 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -121,6 +123,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.11 Rivalry Database (rules 192-197)
 - v20.11 Post-Base Signals Architecture (rules 198-202)
 - v20.12 Dormant Features & API Timing Fallbacks (rules 203-207)
+- v20.12 CI Spot Checks & Error Handling (rules 208-212)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -178,6 +181,12 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - [ ] **All stat types in weights** — Auto grader needs complete structure
 - [ ] **Comprehensive data coverage** — Cover ALL teams/types, not just popular ones
 
+#### CI & Testing Scripts
+- [ ] **Distinguish fatal vs partial errors** — Timeout with picks = partial success, not failure
+- [ ] **Check actual data presence** — Count picks before deciding on error severity
+- [ ] **Handle off-season gracefully** — 0 picks is valid when no games scheduled
+- [ ] **Allow transient failures** — HTTP 502 during deploy is temporary; retry helps
+
 ### Key Files Reference
 | File | Purpose |
 |------|---------|
@@ -194,12 +203,17 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | `signals/hive_mind.py` | Void moon with Meeus calculation (v20.11) — improved accuracy |
 | `lstm_training_pipeline.py` | LSTM training with Playbook API data (v20.11) — real data fallback |
 | `alt_data_sources/noaa.py` | NOAA Space Weather API client (Kp-index, X-ray flux) |
+| `scripts/spot_check_session8.sh` | Grading & persistence + multi-sport smoke tests (partial-success handling v20.12) |
+| `scripts/ci_sanity_check.sh` | Full CI sanity check — runs all 10 session spot checks |
+| `scripts/prod_go_nogo.sh` | Production go/no-go validation before deploy |
 
 ### Current Version: v20.12 (Feb 8, 2026)
-**Latest Enhancements (v20.12) — 3 Dormant Features Enabled:**
+**Latest Enhancements (v20.12) — 5 Updates:**
 - **Enhancement 1: Stadium Altitude Impact (Lesson 63)** — `live_data_router.py` now calls `alt_data_sources/stadium.py` for NFL/MLB high-altitude venues (Denver 5280ft, Utah 4226ft). Adds esoteric scoring boost when altitude >1000ft.
 - **Enhancement 2: Travel Fatigue Fix (Lesson 63)** — Fixed bug where `rest_days` variable was undefined. Now uses `_rest_days_for_team(away_team)` closure.
 - **Enhancement 3: Gematria Twitter Intel** — Already wired at `live_data_router.py:4800-4842`, just needed `SERPAPI_KEY` env var. No code changes required.
+- **Fix 4: CI Partial-Success (Lesson 64)** — Session 8 spot check now distinguishes fatal errors from partial-success (timeout with valid picks). Scripts must check both error codes AND pick counts.
+- **Fix 5: SERP Quota (Lesson 65)** — SERP disabled by default (`SERP_INTEL_ENABLED=false`). Per-call APIs need explicit opt-in to prevent quota exhaustion.
 
 **Previous Enhancements (v20.11) — 5 Key Updates:**
 - **Enhancement 1: NOAA Space Weather (Lesson 57)** — `signals/physics.py` now calls `alt_data_sources/noaa.py:get_kp_betting_signal()` for real Kp-Index data instead of time-based simulation
@@ -786,7 +800,7 @@ top_picks = no_contradictions[:max_picks]
 
 ---
 
-### INVARIANT 9.1: Two Storage Systems (INTENTIONAL SEPARATION)
+#### INVARIANT 9.1: Two Storage Systems (INTENTIONAL SEPARATION)
 
 **RULE:** Picks and Weights use SEPARATE storage systems by design. Never merge them.
 
@@ -6756,6 +6770,58 @@ curl /live/best-bets/NFL -H "X-API-Key: KEY" | \
 
 **Fixed in:** v20.12 (Feb 8, 2026) — Commit `7fe1889`
 
+### Lesson 64: CI Spot Check Partial-Success Error Handling (v20.12)
+**Problem:** Session 8 spot check script failed when NFL endpoint returned valid picks alongside timeout errors (`PROPS_TIMED_OUT`, `GAME_PICKS_TIMED_OUT`). The script treated ANY error as fatal.
+
+**Root Cause:**
+- Original jq logic: `has("error") or has("errors")` → fail immediately
+- Did not distinguish between:
+  - **Fatal errors**: Top-level `error` field, non-timeout error codes
+  - **Partial success**: Timeout errors with valid picks still returned
+
+**The Fix (spot_check_session8.sh lines 109-134):**
+```bash
+# Count picks returned (including partial results)
+picks_count="$(echo "$body" | jq -r '([.props.picks[]?] + [.game_picks.picks[]?]) | length')"
+
+# Check for FATAL errors only (not timeout codes)
+has_fatal_err="$(echo "$body" | jq -r '
+  (has("error") and .error != null and .error != "") or
+  (has("errors") and (.errors | map(select(
+    .code != "PROPS_TIMED_OUT" and .code != "GAME_PICKS_TIMED_OUT"
+  )) | length) > 0) or
+  (.debug != null and .debug | has("error") and .debug.error != null)
+' 2>/dev/null || echo "false")"
+
+# Logic:
+# - Fatal error → FAIL
+# - Partial success (timeout + picks) → PASS
+# - Zero picks with timeout → WARNING (off-season)
+```
+
+**Key Insight:** Production APIs may return partial results with soft errors. CI scripts must:
+1. **Distinguish fatal vs recoverable errors** — timeout with data is OK
+2. **Check for actual data** — if picks returned, endpoint is working
+3. **Allow off-season gracefully** — 0 picks + timeout is warning, not failure
+
+**Prevention:**
+1. **NEVER fail CI on ANY error** — check error codes and actual data presence
+2. **Allow partial success** — timeout errors with valid data = working endpoint
+3. **Test all sports** — one sport may have games while others don't
+4. **Handle transient 502s** — server restarts cause brief failures; retry logic helps
+
+**NEVER DO (CI Spot Checks - rules 208-212):**
+- 208: NEVER fail on `has("errors")` alone — check error codes for severity
+- 209: NEVER ignore pick counts when evaluating errors — partial success is valid
+- 210: NEVER assume all sports have games — off-season returns 0 picks legitimately
+- 211: NEVER skip error code filtering — timeout codes are not fatal
+- 212: NEVER treat HTTP 502 as permanent — transient server restarts are normal
+
+**Files Modified:**
+- `scripts/spot_check_session8.sh` — Lines 109-134: partial-success error handling
+
+**Fixed in:** v20.12 (Feb 8, 2026) — Commit `86d3982`
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -8631,7 +8697,7 @@ python3 -c 'import socket; print(socket.gethostbyname("github.com"))'
 3) Add a drift-scan to `scripts/ci_sanity_check.sh` to block `BASE_5` / context-weighted strings.
 # 1770205770
 
-### Lesson 62: SERP Quota Cost vs Value Analysis (v20.12)
+### Lesson 65: SERP Quota Cost vs Value Analysis (v20.12)
 **Problem:** SERP API burned 5000+ searches/month with 1000+ searches in a single day. Quota exhausted mid-month causing 429 rate limits.
 
 **Root Cause:** SERP was enabled by default for both props AND game picks. Each best-bets request triggered ~70+ Google searches for game narratives, team buzz, and news.

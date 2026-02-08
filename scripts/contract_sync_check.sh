@@ -18,7 +18,7 @@ ISSUES=0
 # 1. Check tier thresholds match
 echo "[1/4] Checking tier thresholds..."
 
-BACKEND_GOLD=$(grep -o "GOLD_STAR_THRESHOLD = [0-9.]*" "$BACKEND_DIR/tiering.py" 2>/dev/null | grep -o "[0-9.]*")
+BACKEND_GOLD=$(grep -o "GOLD_STAR_THRESHOLD = [0-9.]*" "$BACKEND_DIR/core/scoring_contract.py" 2>/dev/null | grep -o "[0-9.]*")
 FRONTEND_GOLD=$(grep -o "GOLD_STAR_THRESHOLD = [0-9.]*" "$FRONTEND_DIR/core/frontend_scoring_contract.js" 2>/dev/null | grep -o "[0-9.]*")
 
 if [ "$BACKEND_GOLD" = "$FRONTEND_GOLD" ]; then
@@ -28,7 +28,7 @@ else
     ISSUES=$((ISSUES + 1))
 fi
 
-BACKEND_MIN=$(grep -o "MIN_FINAL_SCORE = [0-9.]*" "$BACKEND_DIR/tiering.py" 2>/dev/null | grep -o "[0-9.]*")
+BACKEND_MIN=$(grep -o "MIN_FINAL_SCORE = [0-9.]*" "$BACKEND_DIR/core/scoring_contract.py" 2>/dev/null | grep -o "[0-9.]*")
 FRONTEND_MIN=$(grep -o "MIN_FINAL_SCORE = [0-9.]*" "$FRONTEND_DIR/core/frontend_scoring_contract.js" 2>/dev/null | grep -o "[0-9.]*")
 
 if [ "$BACKEND_MIN" = "$FRONTEND_MIN" ]; then
