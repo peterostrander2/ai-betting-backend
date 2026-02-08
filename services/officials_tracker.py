@@ -18,7 +18,7 @@ Integration Points:
 """
 
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Dict, Any, Optional, List
 
 from database import (
@@ -371,7 +371,7 @@ class OfficialsTracker:
 
     def _get_current_season(self) -> str:
         """Get current season string."""
-        now = datetime.utcnow()
+        now = datetime.now(tz=timezone.utc)
         if now.month >= 10:
             return f"{now.year}-{str(now.year + 1)[-2:]}"
         else:

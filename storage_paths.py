@@ -14,7 +14,7 @@ import os
 import sys
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger("storage_paths")
 
@@ -108,7 +108,7 @@ def ensure_persistent_storage_ready():
 
     # Write sentinel file (proves persistence)
     sentinel_file = os.path.join(store_dir, ".volume_sentinel")
-    sentinel_content = f"Railway volume verified at {datetime.utcnow().isoformat()}"
+    sentinel_content = f"Railway volume verified at {datetime.now(tz=timezone.utc).isoformat()}"
 
     try:
         with open(sentinel_file, 'w') as f:

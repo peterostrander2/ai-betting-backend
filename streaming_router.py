@@ -22,7 +22,7 @@ import json
 import logging
 import os
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger("streaming")
 
@@ -111,7 +111,7 @@ async def _fetch_live_games(sport: str) -> List[Dict[str, Any]]:
                     "away_score": away_score,
                     "period": status_type.get("shortDetail", ""),
                     "clock": status.get("displayClock", ""),
-                    "last_update": datetime.utcnow().isoformat()
+                    "last_update": datetime.now(tz=timezone.utc).isoformat()
                 })
 
     except Exception as e:
@@ -216,7 +216,7 @@ async def stream_live_games(
                 # Build event data
                 event_data = {
                     "sport": sport_upper,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(tz=timezone.utc).isoformat(),
                     "live_count": len(games),
                     "games": games
                 }
@@ -295,7 +295,7 @@ async def stream_line_movements(
 
                 event_data = {
                     "sport": sport_upper,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(tz=timezone.utc).isoformat(),
                     "movement_count": len(movements),
                     "movements": movements[:20]  # Limit to 20 most recent
                 }
@@ -402,7 +402,7 @@ async def stream_pick_updates(
 
                 event_data = {
                     "sport": sport_upper,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(tz=timezone.utc).isoformat(),
                     "new_picks_count": len(new_picks),
                     "picks": new_picks,
                     "min_score_filter": min_score
@@ -441,7 +441,7 @@ async def poll_live_games(sport: str):
 
     return {
         "sport": sport_upper,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         "live_count": len(games),
         "games": games,
         "next_refresh_seconds": DEFAULT_REFRESH_INTERVAL
@@ -458,7 +458,7 @@ async def poll_line_movements(sport: str):
 
     return {
         "sport": sport_upper,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         "movement_count": len(movements),
         "movements": movements[:20],
         "next_refresh_seconds": DEFAULT_REFRESH_INTERVAL

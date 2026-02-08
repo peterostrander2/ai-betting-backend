@@ -13508,7 +13508,7 @@ async def get_sport_dashboard(sport: str, auth: bool = Depends(verify_api_key)):
                 "injuries": injuries.get("data", [])
             },
             "daily_energy": best_bets.get("daily_energy", get_daily_energy()),
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
             "cache_info": {"hit": False, "sources": cache_sources}
         }
 
@@ -13635,7 +13635,7 @@ async def get_game_details(sport: str, game_id: str, auth: bool = Depends(verify
             "sharp_signals": game_sharp,
             "injuries": game_injuries,
             "ai_pick": ai_pick,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.now(tz=timezone.utc).isoformat()
         }
 
         # Cache for 2 minutes
@@ -13745,7 +13745,7 @@ async def get_parlay_builder_init(
         "correlations": correlations,
         "current_parlay": current_parlay,
         "user_history": user_history,
-        "timestamp": datetime.utcnow().isoformat() + "Z"
+        "timestamp": datetime.now(tz=timezone.utc).isoformat()
     }
 
     return result

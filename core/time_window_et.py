@@ -176,7 +176,7 @@ def get_today_date_string() -> str:
         return get_today_date_et()
     else:
         # Fallback to UTC date
-        return datetime.utcnow().strftime("%Y-%m-%d")
+        return datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
 
 
 # =============================================================================
@@ -236,7 +236,7 @@ def _fallback_et_bounds(date_str: Optional[str] = None) -> Tuple[datetime, datet
     """Fallback ET bounds calculation."""
     if not PYTZ_AVAILABLE:
         # Return naive UTC bounds
-        now = datetime.utcnow()
+        now = datetime.now(tz=timezone.utc)
         target_date = datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else now.date()
         start = datetime.combine(target_date, datetime.min.time())
         end = start + timedelta(days=1)  # Next day at 00:00:00 (exclusive)

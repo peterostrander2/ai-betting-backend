@@ -13,7 +13,7 @@ import os
 import time
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger("noaa")
 
@@ -103,7 +103,7 @@ def fetch_kp_index_live() -> Dict[str, Any]:
             "storm_level": storm_level,
             "timestamp": timestamp,
             "source": "noaa_live",
-            "fetched_at": datetime.utcnow().isoformat()
+            "fetched_at": datetime.now(tz=timezone.utc).isoformat()
         }
 
         # Update cache
@@ -288,7 +288,7 @@ def get_solar_xray_flux() -> Dict[str, Any]:
             "flare_class": flare_class,
             "timestamp": timestamp,
             "source": "noaa_live",
-            "fetched_at": datetime.utcnow().isoformat()
+            "fetched_at": datetime.now(tz=timezone.utc).isoformat()
         }
 
         # Update cache

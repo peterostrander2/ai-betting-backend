@@ -13,7 +13,7 @@ This module provides accurate moon phase/sign data and estimated VOC periods.
 import os
 import logging
 import math
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Dict, Any, Optional, Tuple
 from functools import lru_cache
 
@@ -340,14 +340,14 @@ def get_live_moon_data(target_date: date = None) -> Dict[str, Any]:
 
 def get_moon_sign_now() -> str:
     """Quick helper to get current moon sign."""
-    longitude = calculate_moon_longitude(datetime.utcnow())
+    longitude = calculate_moon_longitude(datetime.now(tz=timezone.utc))
     sign, _ = get_moon_sign_from_longitude(longitude)
     return sign
 
 
 def is_void_moon_now() -> Tuple[bool, float]:
     """Quick check if moon is currently void of course."""
-    voc = calculate_void_of_course(datetime.utcnow())
+    voc = calculate_void_of_course(datetime.now(tz=timezone.utc))
     return voc["is_void"], voc["confidence"]
 
 
@@ -405,7 +405,7 @@ if __name__ == "__main__":
     logger.info("=== Astronomical API Module Test ===\n")
 
     # Current moon data
-    now = datetime.utcnow()
+    now = datetime.now(tz=timezone.utc)
     data = get_live_moon_data()
 
     logger.info("Date: %s", data['date'])

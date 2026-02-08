@@ -29,7 +29,7 @@ from fastapi import Request
 from live_data_router import router as live_router, close_shared_client
 from streaming_router import router as streaming_router
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 import database
 from daily_scheduler import scheduler_router, init_scheduler, get_scheduler
 from trap_router import trap_router
@@ -253,7 +253,7 @@ async def health():
         "integrations_health": integrations_health,
         "errors": errors,
         "degraded_reasons": degraded_reasons,
-        "timestamp_utc": datetime.utcnow().isoformat() + "Z",
+        "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
     }
 
 
@@ -359,7 +359,7 @@ async def public_status(request: Request):
     def status_icon(ok: bool) -> str:
         return "✅" if ok else "❌"
 
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1283,7 +1283,7 @@ async def ops_auto_grade_run():
     # Persist metadata
     _last_grade_run = {
         "timestamp_et": now_et.isoformat(),
-        "timestamp_utc": datetime.utcnow().isoformat() + "Z",
+        "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
         "dates_graded": dates_to_grade,
         "results": all_results,
     }

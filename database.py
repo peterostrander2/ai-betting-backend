@@ -3,7 +3,7 @@
 
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, Index
 from sqlalchemy.ext.declarative import declarative_base
@@ -523,7 +523,7 @@ def grade_prediction(db: Session, prediction_id: str, actual_value: float):
         if record.line is not None:
             record.hit = (record.predicted_value > record.line) == (actual_value > record.line)
         record.graded = True
-        record.graded_at = datetime.utcnow()
+        record.graded_at = datetime.now(tz=timezone.utc)
         db.flush()
 
     return record
@@ -778,7 +778,7 @@ def record_game_outcome(
         record.home_score = home_score
         record.away_score = away_score
         record.spread_result = home_score - away_score
-        record.outcome_recorded_at = datetime.utcnow()
+        record.outcome_recorded_at = datetime.now(tz=timezone.utc)
 
         # Calculate derived fields
         if record.over_under_line is not None:
@@ -865,7 +865,7 @@ def save_official_tendency(
         record.home_cover_games = home_cover_games
         record.avg_total_points = avg_total_points
         record.whistle_rate = whistle_rate
-        record.last_updated = datetime.utcnow()
+        record.last_updated = datetime.now(tz=timezone.utc)
 
         # Calculate derived fields
         if total_games > 0:
@@ -919,7 +919,7 @@ def get_official_game_history(
 
 def _get_current_season() -> str:
     """Get current season string (e.g., '2025-26')."""
-    now = datetime.utcnow()
+    now = datetime.now(tz=timezone.utc)
     # Season starts in October, so before October = previous season
     if now.month >= 10:
         return f"{now.year}-{str(now.year + 1)[-2:]}"
