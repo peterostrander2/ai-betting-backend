@@ -24,53 +24,65 @@ logger = logging.getLogger(__name__)
 # STAT TYPE MAPPING
 # ============================================
 
-# Map market names to their LSTM model identifiers
+# Map market names to their LSTM model identifiers (sport-specific to avoid key collisions)
 # These must match the weight file names: lstm_{sport}_{stat}.weights.h5
+# Structure: {sport: {market: stat_type}}
+SPORT_MARKET_TO_STAT = {
+    "NBA": {
+        "player_points": "points",
+        "player_points_over_under": "points",
+        "player_assists": "assists",
+        "player_assists_over_under": "assists",
+        "player_rebounds": "rebounds",
+        "player_rebounds_over_under": "rebounds",
+        "player_threes": "points",  # Use points model as proxy
+        "player_steals": "points",  # Use points model as proxy
+        "player_blocks": "points",  # Use points model as proxy
+    },
+    "NFL": {
+        "player_pass_yds": "passing_yards",
+        "player_passing_yards": "passing_yards",
+        "player_rush_yds": "rushing_yards",
+        "player_rushing_yards": "rushing_yards",
+        "player_rec_yds": "receiving_yards",
+        "player_reception_yds": "receiving_yards",  # Odds API uses this spelling
+        "player_receiving_yards": "receiving_yards",
+        "player_pass_tds": "passing_yards",  # Use yards model as proxy
+        "player_rush_tds": "rushing_yards",  # Use yards model as proxy
+        "player_receptions": "receiving_yards",  # Use yards model as proxy
+    },
+    "MLB": {
+        "batter_hits": "hits",
+        "player_hits": "hits",
+        "batter_total_bases": "total_bases",
+        "player_total_bases": "total_bases",
+        "pitcher_strikeouts": "strikeouts",
+        "player_strikeouts": "strikeouts",
+        "batter_rbis": "hits",  # Use hits model as proxy
+        "batter_runs": "hits",  # Use hits model as proxy
+    },
+    "NHL": {
+        "player_points": "points",
+        "player_shots": "shots",
+        "player_goals": "points",  # Use points model as proxy
+        "player_assists": "points",  # Use points model as proxy (no NHL assists model)
+        "player_saves": "shots",  # Use shots model for goalies
+    },
+    "NCAAB": {
+        "player_points": "points",
+        "player_points_ncaab": "points",
+        "player_rebounds": "rebounds",
+        "player_rebounds_ncaab": "rebounds",
+        "player_assists": "points",  # Use points model as proxy (no NCAAB assists model)
+        "player_assists_ncaab": "points",
+    },
+}
+
+# Flat fallback for backward compatibility (uses NBA mappings for shared keys)
 MARKET_TO_STAT = {
-    # NBA
-    "player_points": "points",
-    "player_points_over_under": "points",
-    "player_assists": "assists",
-    "player_assists_over_under": "assists",
-    "player_rebounds": "rebounds",
-    "player_rebounds_over_under": "rebounds",
-    "player_threes": "points",  # Use points model as proxy
-    "player_steals": "points",  # Use points model as proxy
-    "player_blocks": "points",  # Use points model as proxy
-
-    # NFL
-    "player_pass_yds": "passing_yards",
-    "player_passing_yards": "passing_yards",
-    "player_rush_yds": "rushing_yards",
-    "player_rushing_yards": "rushing_yards",
-    "player_rec_yds": "receiving_yards",
-    "player_reception_yds": "receiving_yards",  # Odds API uses this spelling
-    "player_receiving_yards": "receiving_yards",
-    "player_pass_tds": "passing_yards",  # Use yards model as proxy
-    "player_rush_tds": "rushing_yards",  # Use yards model as proxy
-    "player_receptions": "receiving_yards",  # Use yards model as proxy
-
-    # MLB
-    "batter_hits": "hits",
-    "player_hits": "hits",
-    "batter_total_bases": "total_bases",
-    "player_total_bases": "total_bases",
-    "pitcher_strikeouts": "strikeouts",
-    "player_strikeouts": "strikeouts",
-    "batter_rbis": "hits",  # Use hits model as proxy
-    "batter_runs": "hits",  # Use hits model as proxy
-
-    # NHL
-    "player_points": "points",  # NHL version
-    "player_shots": "shots",
-    "player_goals": "points",  # Use points model as proxy
-    "player_assists": "points",  # Use points model as proxy (NHL)
-    "player_saves": "shots",  # Use shots model for goalies
-
-    # NCAAB
-    "player_points_ncaab": "points",
-    "player_rebounds_ncaab": "rebounds",
-    "player_assists_ncaab": "points",  # Use points model as proxy
+    market: stat
+    for sport_map in SPORT_MARKET_TO_STAT.values()
+    for market, stat in sport_map.items()
 }
 
 # Sports that have LSTM models available
@@ -123,9 +135,27 @@ class PropLSTMManager:
         weight_path = self.get_weight_path(sport, stat_type)
         return os.path.exists(weight_path)
 
-    def get_stat_type(self, market: str) -> Optional[str]:
-        """Map a market name to its corresponding stat type."""
+    def get_stat_type(self, market: str, sport: str = None) -> Optional[str]:
+        """Map a market name to its corresponding stat type.
+
+        Args:
+            market: Market name from Odds API (e.g., "player_assists")
+            sport: Sport name for sport-specific mapping (e.g., "NBA")
+
+        Returns:
+            Stat type for LSTM model lookup, or None if not mapped
+        """
         market_lower = market.lower().replace("-", "_").replace(" ", "_")
+
+        # Try sport-specific mapping first to avoid key collisions
+        if sport:
+            sport_upper = sport.upper()
+            if sport_upper in SPORT_MARKET_TO_STAT:
+                result = SPORT_MARKET_TO_STAT[sport_upper].get(market_lower)
+                if result:
+                    return result
+
+        # Fall back to flat mapping for backward compatibility
         return MARKET_TO_STAT.get(market_lower)
 
     def _load_model(self, sport: str, stat_type: str) -> Optional["LSTMBrain"]:
@@ -200,8 +230,8 @@ class PropLSTMManager:
         Returns:
             Prediction dict with adjustment value, or None if no model available.
         """
-        # Map market to stat type
-        stat_type = self.get_stat_type(market)
+        # Map market to stat type (sport-aware to avoid key collisions)
+        stat_type = self.get_stat_type(market, sport)
         if stat_type is None:
             return None
 

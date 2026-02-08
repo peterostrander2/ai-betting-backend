@@ -54,10 +54,10 @@ for stat in "${EXPECTED_MODELS[@]}"; do
     MODEL_FILE="$MODEL_DIR/lstm_${SPORT_LOWER}_${stat}.weights.h5"
     if [ -f "$MODEL_FILE" ]; then
         echo "  ✅ $MODEL_FILE exists"
-        ((MODELS_FOUND++))
+        MODELS_FOUND=$((MODELS_FOUND + 1))
     else
         echo "  ❌ $MODEL_FILE MISSING"
-        ((MODELS_MISSING++))
+        MODELS_MISSING=$((MODELS_MISSING + 1))
     fi
 done
 
