@@ -1583,6 +1583,7 @@ def calculate_rivalry_intensity(
     MAJOR_RIVALRIES = {
         "NBA": [
             ({"celtics", "boston"}, {"lakers", "los angeles lakers", "la lakers"}, "HIGH"),
+            ({"celtics", "boston"}, {"knicks", "new york"}, "HIGH"),
             ({"bulls", "chicago"}, {"pistons", "detroit"}, "HIGH"),
             ({"heat", "miami"}, {"knicks", "new york"}, "MEDIUM"),
             ({"warriors", "golden state"}, {"cavaliers", "cleveland"}, "MEDIUM"),
