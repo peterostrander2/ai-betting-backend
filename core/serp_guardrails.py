@@ -10,7 +10,7 @@ Manages:
 
 Environment Variables:
 - SERP_SHADOW_MODE: bool (default: false) - When true, boosts are zeroed; false = LIVE MODE
-- SERP_INTEL_ENABLED: bool (default: true) - Feature flag
+- SERP_INTEL_ENABLED: bool (default: false) - Feature flag (disabled - quota expensive)
 - SERP_DAILY_QUOTA: int (default: 166) - Daily API calls (5000/30)
 - SERP_MONTHLY_QUOTA: int (default: 5000) - Monthly API calls
 - SERP_TIMEOUT: float (default: 2.0) - API timeout seconds
@@ -54,7 +54,8 @@ def _env_float(key: str, default: float) -> float:
 SERP_SHADOW_MODE = _env_bool("SERP_SHADOW_MODE", False)
 
 # Feature flag - master enable/disable
-SERP_INTEL_ENABLED = _env_bool("SERP_INTEL_ENABLED", True)
+# v20.12: Disabled by default - quota too expensive for marginal boost impact
+SERP_INTEL_ENABLED = _env_bool("SERP_INTEL_ENABLED", False)
 
 # Quota limits
 SERP_DAILY_QUOTA = _env_int("SERP_DAILY_QUOTA", 166)  # 5000/30 days
