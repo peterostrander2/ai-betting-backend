@@ -33,6 +33,212 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 
 ---
 
+## 📚 MASTER INDEX (Quick Reference)
+
+### Critical Invariants (26 Total)
+| # | Name | Summary |
+|---|------|---------|
+| 1 | Storage Persistence | ALL data under `RAILWAY_VOLUME_MOUNT_PATH=/data` |
+| 2 | Titanium 3-of-4 Rule | `titanium=true` ONLY when ≥3 of 4 engines ≥8.0 |
+| 3 | ET Today-Only Gating | ALL picks for games in today's ET window ONLY |
+| 4 | Option A Scoring | 4-engine base (AI 25%, Research 35%, Esoteric 20%, Jarvis 20%) + context modifier |
+| 5 | Jarvis Additive | Jarvis is weighted engine, NOT separate boost |
+| 6 | Output Filtering | `final_score >= 6.5` required for output |
+| 7 | Contradiction Gate | Never output both Over AND Under on same line |
+| 8 | Best-Bets Contract | Response MUST have `props.picks[]` and `game_picks.picks[]` |
+| 9 | Pick Persistence | Picks logged to grader_store for learning loop |
+| 9.1 | Two Storage Systems | grader_store (picks) + weights.json (learning) |
+| 10 | Frontend-Ready | Human-readable times, no internal IDs |
+| 11 | Integration Contract | ESPN/Playbook field mapping |
+| 12 | Logging Visibility | Keep INFO telemetry for debugging |
+| 13 | PickContract v1 | Frontend-proof picks with all required fields |
+| 14 | ML Model Activation | LSTM + Ensemble models active |
+| 15 | GLITCH Protocol | 6 signals: chrome_resonance, void_moon, noosphere, hurst, kp_index, benford |
+| 16 | 17-Pillar Scoring | All 17 pillars active (see detailed list) |
+| 17 | Harmonic Convergence | +1.5 boost when Research AND Esoteric ≥7.5 |
+| 18 | Secret Redaction | API keys never in logs |
+| 19 | Demo Data Hard Gate | Block demo/test data in production |
+| 20 | MSRF Boost | ±1.0 cap on MSRF adjustments |
+| 21 | Dual-Use Functions | Must return dicts (not Response objects) |
+| 22 | ESPN Integration | Injuries, officials, lineups from ESPN |
+| 23 | SERP Intelligence | Web search boost capped at 4.3 |
+| 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
+| 25 | Complete Learning | End-to-end grading → bias → weight updates |
+| 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 3.5 |
+
+### Lessons Learned (55 Total) - Key Categories
+| Range | Category | Examples |
+|-------|----------|----------|
+| 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
+| 6-7 | Security | Secret leakage, demo data |
+| 8-15 | Integration | MSRF, ESPN, API mismatches |
+| 16-22 | Team/Data | NHL accents, NCAAB expansion, pick_type values |
+| 23-28 | Signals | Benford, officials, trap learning |
+| 29-31 | Datetime | Timezone awareness, variable initialization |
+| 32-38 | **v20.x Learning Loop** | Grader weights, SHARP/MONEYLINE grading, OVER/UNDER calibration |
+| 39 | **Frontend Sync** | Option A tooltip alignment (weights must match scoring_contract.py) |
+| 40 | **Shell/Python** | Export variables for Python subprocesses (`export VAR=value`) |
+| 41 | **Grading Bug** | SHARP picks: line_variance ≠ actual spread (grade as moneyline) |
+| 42-45 | **v20.5 Datetime/Grader** | Naive vs aware datetime, PYTZ undefined, date window math |
+| 46-48 | **v20.5 Scoring/Scripts** | Unsurfaced adjustments, env var registry, heredoc __file__ |
+| 49-52 | **v20.6 Production Fixes** | Props timeout, empty descriptions, score inflation (total boost cap), Jarvis baseline |
+| 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
+| 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
+| 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
+
+### NEVER DO Sections (25 Categories)
+- ML & GLITCH (rules 1-10)
+- MSRF (rules 11-14)
+- Security (rules 15-19)
+- FastAPI & Functions (rules 20-25)
+- Nested Functions (rules 26-30)
+- API & Data (rules 31-40)
+- ESPN Integration (rules 41-55)
+- SERP Intelligence (rules 56-65)
+- Esoteric/Phase 1 (rules 66-80)
+- v17.6 Vortex & Benford (rules 81-90)
+- v19.0 Trap Learning (rules 91-100)
+- v18.2 Phase 8 Esoteric (rules 101-110)
+- Boost Field Contract (rules 105-107)
+- v20.2 Auto Grader Weights (rules 108-117)
+- v20.x Two Storage Systems (rules 111-117)
+- v20.3 Grading Pipeline (rules 118-124)
+- v20.4 Go/No-Go Scripts (rules 125-131)
+- v20.4 Frontend/Backend Sync (rules 132-137)
+- Shell/Python Subprocesses (rules 138-141)
+- v20.5 Datetime/Timezone (rules 142-150)
+- v20.5 Go/No-Go & Scoring Adjustments (rules 151-155)
+- v20.6 Boost Caps & Production (rules 156-163)
+- v20.7 Parallel Pre-Fetch & Performance (rules 164-172)
+- v20.8 Props Indentation & Code Placement (rules 173-177)
+- v20.9 Frontend/Backend Endpoint Contract (rules 178-181)
+
+### Deployment Gates (REQUIRED BEFORE DEPLOY)
+```bash
+# 1. Option A drift scan (blocks BASE_5, context-weighted patterns)
+./scripts/option_a_drift_scan.sh
+
+# 2. Audit drift scan (verifies scoring formula)
+./scripts/audit_drift_scan.sh
+
+# 3. Full CI sanity check
+./scripts/ci_sanity_check.sh
+
+# 4. Production Go/No-Go
+./scripts/prod_go_nogo.sh
+```
+
+### Key Files Reference
+| File | Purpose |
+|------|---------|
+| `core/scoring_contract.py` | Scoring constants (Option A weights, thresholds, boost caps, calibration) |
+| `core/scoring_pipeline.py` | Score calculation (single source of truth) |
+| `live_data_router.py` | Main API endpoints, pick scoring |
+| `utils/pick_normalizer.py` | Pick contract normalization (single source for all pick fields) |
+| `auto_grader.py` | Learning loop, bias calculation, weight updates |
+| `result_fetcher.py` | Game result fetching, pick grading |
+| `grader_store.py` | Pick persistence (predictions.jsonl) |
+| `utils/contradiction_gate.py` | Prevents opposite side picks |
+| `integration_registry.py` | Env var registry, integration config |
+
+### Current Version: v20.10 (Feb 8, 2026)
+**Latest Fix (v20.10):**
+- Lesson 56: SHARP signal field name mismatch — `signal.get("side")` should be `signal.get("sharp_side")`
+- Root cause: Signal dictionary uses `sharp_side` but pick creation used `side`, causing all SHARP picks to be treated as HOME team
+- Fix: Changed all `signal.get("side")` to `signal.get("sharp_side")` with lowercase comparison
+
+**Previous Fix (v20.9):**
+- Lesson 55: Frontend Grading page called `GET /live/picks/graded` but endpoint didn't exist — frontend fell back to MOCK_PICKS silently
+- Root cause: `api.js` had `getGradedPicks()` calling a non-existent endpoint; backend only had `POST /picks/grade` and `GET /picks/grading-summary`
+- Fix: Added `GET /picks/graded` endpoint using `grader_store.load_predictions()`, updated `Grading.jsx` to remove mock fallback, fixed `pick_id` usage
+
+**Previous Fix (v20.8):**
+- Lesson 54: CRITICAL — Props indentation bug made `props_picks.append()` unreachable dead code; ALL sports returned 0 props
+- Root cause: `if _props_deadline_hit: break` placed BETWEEN `calculate_pick_score()` and prop processing code
+- Fix: Moved deadline check AFTER `props_picks.append()` so each prop is fully processed before checking the deadline
+
+**Previous Fix (v20.7):**
+- Lesson 53: SERP sequential bottleneck — parallel pre-fetch reduces ~17s to ~2-3s, fixes props returning 0 picks
+- Performance: `serp_prefetch` timing now in debug telemetry (`debug.serp.prefetch_cached`)
+
+**Previous Fixes (v20.6):**
+- Lesson 49: Props timeout — TIME_BUDGET_S configurable, increased 40→55s default
+- Lesson 50: Empty description fields — auto-generated in `normalize_pick()`
+- Lesson 51: Score inflation — TOTAL_BOOST_CAP = 3.5 prevents boost stacking to 10.0
+- Lesson 52: Jarvis baseline misconception — 4.5 baseline is by design (sacred triggers are rare)
+- Invariant 26: Total Boost Cap enforcement in `compute_final_score_option_a()`
+
+**Previous Fixes (v20.5):**
+- Lesson 41: SHARP pick grading fix (grade as moneyline, not line_variance)
+- Lesson 42: PYTZ_AVAILABLE undefined in `/grader/queue`
+- Lesson 43: Naive vs aware datetime in `/grader/daily-report`
+- Lesson 44: Date window math error (2-day instead of 1-day)
+- Lesson 45: Same datetime bug in `/grader/performance`
+
+**All Grader Endpoints Verified Working:**
+- `/grader/status` ✅
+- `/grader/queue` ✅
+- `/grader/daily-report` ✅
+- `/grader/performance/{sport}` ✅
+- `/grader/bias/{sport}` ✅
+- `/grader/weights/{sport}` ✅
+- `/picks/graded` ✅ (v20.9 — frontend Grading page)
+- `/picks/grade` ✅ (POST — grade a single pick)
+- `/picks/grading-summary` ✅ (stats by tier)
+
+**Frontend Integration (Priority 1-5 COMPLETE):**
+- Context score displayed with correct tooltip (modifier ±0.35)
+- Harmonic Convergence badge (purple) when Research + Esoteric ≥7.5
+- MSRF Turn Date badge when msrf_boost > 0
+- Context Layer expandable details (def_rank, pace, vacuum, officials)
+
+**Active Calibration:**
+```python
+TOTALS_SIDE_CALIBRATION = {
+    "enabled": True,
+    "over_penalty": -0.75,
+    "under_boost": 0.75,
+}
+```
+
+---
+
+## Code Style & Simplification Rules
+
+**Apply these automatically when writing or modifying code:**
+
+### Preserve Functionality
+- Never change what code does - only how it does it
+- All original features, outputs, and behaviors must remain intact
+
+### Clarity Over Brevity
+- **AVOID** nested ternary operators - use if/else or switch statements
+- **AVOID** dense one-liners that sacrifice readability
+- **PREFER** explicit, readable code over clever compact solutions
+- **PREFER** clear variable/function names over comments explaining bad names
+
+### Simplification Guidelines
+- Reduce unnecessary complexity and nesting
+- Eliminate redundant code and abstractions
+- Consolidate related logic
+- Remove comments that describe obvious code
+- Don't combine too many concerns into single functions
+
+### Python-Specific (This Project)
+- Use type hints for function signatures
+- Use f-strings for string formatting
+- Use `logging` module, not print statements
+- Handle errors gracefully with proper logging
+- Follow existing patterns in the codebase
+
+### What NOT to Do
+- Don't over-simplify to the point of reducing clarity
+- Don't create "clever" solutions that are hard to understand
+- Don't remove helpful abstractions that improve organization
+- Don't prioritize "fewer lines" over maintainability
+
+---
+
 ## 🚨 MASTER SYSTEM INVARIANTS (NEVER VIOLATE) 🚨
 
 **READ THIS FIRST BEFORE TOUCHING ANYTHING**
@@ -167,7 +373,7 @@ CONTEXT_MODIFIER_CAP = 0.35  # Context is a bounded modifier, NOT an engine
 **Scoring Formula (EXACT):**
 ```python
 BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
-FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + live_adjustment + totals_calibration_adj
 ```
 
 **Boosts are additive (NOT engines):**
@@ -182,6 +388,82 @@ FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_bo
 - Must be **surfaced as its own field** in payloads
 - Must be **included in docs contract scan**
 - Must be **included in endpoint sanity math checks**
+
+---
+
+## Canonical Scoring Contract (Option A)
+
+**Base (4 engines only):**
+```
+BASE_4 = (AI * 0.25) + (Research * 0.35) + (Esoteric * 0.20) + (Jarvis * 0.20)
+```
+
+**Context (modifier only):**
+```
+CONTEXT_MODIFIER_CAP = 0.35
+context_modifier ∈ [-0.35, +0.35]
+```
+
+**Final score (clamped):**
+```
+total_boosts = min(TOTAL_BOOST_CAP, confluence_boost + msrf_boost + jason_sim_boost + serp_boost)
+FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + ensemble_adjustment + live_adjustment + totals_calibration_adj)
+```
+**TOTAL_BOOST_CAP = 3.5** — prevents score inflation from stacking multiple boosts (Invariant 26)
+
+**Ensemble adjustment:**
+- Uses `ENSEMBLE_ADJUSTMENT_STEP` (no magic ±0.5 literals).
+
+---
+
+## Boost Inventory (Source + Cap)
+
+| Boost | Source | Cap | Notes |
+|---|---|---|---|
+| confluence_boost | `live_data_router.py` | `CONFLUENCE_BOOST_CAP` (10.0) | Derived from confluence levels |
+| msrf_boost | `signals/msrf_resonance.py` | `MSRF_BOOST_CAP` (1.0) | 0.0 / 0.25 / 0.5 / 1.0 |
+| jason_sim_boost | `jason_sim_confluence.py` | `JASON_SIM_BOOST_CAP` (1.5) | Can be negative (block rules) |
+| serp_boost | `alt_data_sources/serp_intelligence.py` | `SERP_BOOST_CAP_TOTAL` (4.3) | Total SERP capped |
+| **SUM of above 4** | `core/scoring_pipeline.py` | **`TOTAL_BOOST_CAP` (3.5)** | **Prevents score inflation (Inv. 26)** |
+| ensemble_adjustment | `utils/ensemble_adjustment.py` | `ENSEMBLE_ADJUSTMENT_STEP` (0.5) | +0.5 / -0.5 step |
+| live_adjustment | `live_data_router.py` | ±0.50 | In-game adjustment to research_score |
+| totals_calibration_adj | `live_data_router.py` | ±0.75 | OVER penalty / UNDER boost from `TOTALS_SIDE_CALIBRATION` |
+
+---
+
+## Go/No-Go Checklist (Run Exactly)
+
+```bash
+# Full go/no-go (all 12 checks + optional pytest must pass)
+API_KEY="YOUR_KEY" SKIP_NETWORK=0 SKIP_PYTEST=0 ALLOW_EMPTY=1 \
+  bash scripts/prod_go_nogo.sh
+
+# Or run individual checks:
+bash scripts/option_a_drift_scan.sh
+bash scripts/audit_drift_scan.sh
+bash scripts/env_drift_scan.sh
+bash scripts/docs_contract_scan.sh
+ALLOW_EMPTY=1 bash scripts/learning_sanity_check.sh
+ALLOW_EMPTY=1 bash scripts/learning_loop_sanity.sh
+API_KEY=YOUR_KEY bash scripts/endpoint_matrix_sanity.sh
+API_KEY=YOUR_KEY bash scripts/prod_endpoint_matrix.sh
+API_KEY=YOUR_KEY python3 scripts/signal_coverage_report.py
+API_KEY=YOUR_KEY bash scripts/api_proof_check.sh
+API_KEY=YOUR_KEY bash scripts/live_sanity_check.sh
+API_KEY=YOUR_KEY bash scripts/perf_audit_best_bets.sh
+```
+
+**IMPORTANT:** Always use `ALLOW_EMPTY=1` for local runs (dev doesn't have production prediction/weight files).
+
+---
+
+## Integration Registry Expectations
+
+- **Validated**: env vars set + connectivity OK.
+- **Configured**: env vars set but connectivity not verified.
+- **Unreachable**: env vars set but API unreachable (fail‑loud).
+- **Not configured**: missing required env vars (fail‑loud).
+- `last_used_at` must update on **both cache hits and live fetches** for all paid integrations.
 
 **Engine Separation Rules:**
 1. **Research Engine** - ALL market signals ONLY (sharp, splits, variance, public fade)
@@ -2465,9 +2747,9 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.noaa, .serpapi'
 
 ---
 
-### INVARIANT 16: 17-Pillar Scoring System (v17.8 - ALL PILLARS ACTIVE)
+### INVARIANT 16: 18-Pillar Scoring System (v20.0 - ALL PILLARS ACTIVE)
 
-**RULE:** All 17 pillars must contribute to scoring. No pillar may be orphaned.
+**RULE:** All 18 pillars must contribute to scoring. No pillar may be orphaned.
 
 **Pillar Map:**
 | # | Pillar | Engine | Weight | Implementation | Status |
@@ -2482,8 +2764,9 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.noaa, .serpapi'
 | 15 | Usage Vacuum | Context | 20% | `UsageVacuumService` + injuries | ✅ Real values |
 | 16 | Officials | Research | Adjustment | `OfficialsService` + `officials_data.py` | ✅ ACTIVE (v17.8) |
 | 17 | Park Factors | Esoteric | MLB only | `ParkFactorService` | ✅ |
+| 18 | Live Context | Multiple | Adjustment | `alt_data_sources/live_signals.py` | ✅ ACTIVE (v20.0) |
 
-**v17.8 Completion Status (Feb 2026):**
+**v20.0 Completion Status (Feb 2026):**
 - ✅ **Pillars 13-15 now use REAL DATA** (not hardcoded defaults)
 - ✅ **Injuries fetched in parallel** with props and game odds
 - ✅ **Context calculation runs for ALL pick types** (PROP, GAME, SHARP)
@@ -2492,6 +2775,11 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.noaa, .serpapi'
   - 17 NFL referee crews with flag_rate, over_tendency
   - 15 NHL referees with penalty_rate, over_tendency
   - Adjustment range: -0.5 to +0.5 on research score
+- ✅ **Pillar 18 (Live Context)** - ACTIVE with score momentum + line movement (v20.0)
+  - Score momentum: Blowout/comeback detection (±0.25)
+  - Live line movement: Sharp action detection (±0.30)
+  - Combined cap: ±0.50
+  - Only applies when game_status == "LIVE"
 
 **Data Flow (v17.8):**
 ```
@@ -2900,6 +3188,7 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
 ```python
 SERP_SHADOW_MODE = False      # LIVE MODE by default (boosts applied)
 SERP_INTEL_ENABLED = True     # Feature flag
+SERP_PROPS_ENABLED = False    # v20.9: Props SERP disabled (saves ~60% daily quota)
 SERP_DAILY_QUOTA = 166        # 5000/30 days
 SERP_MONTHLY_QUOTA = 5000     # Monthly API calls
 SERP_TIMEOUT = 2.0            # Strict 2s timeout
@@ -3312,6 +3601,37 @@ curl /live/grader/bias/NBA?days_back=7 -H "X-API-Key: KEY" | jq '.pick_type_brea
 | `live_data_router.py` | 4887-4899 | Added glitch_signals, esoteric_contributions to scoring result |
 | `live_data_router.py` | 6390-6420 | Updated pick persistence with all signal fields |
 
+### INVARIANT 26: Total Boost Cap (v20.6)
+
+**RULE:** The sum of all additive boosts (confluence + msrf + jason_sim + serp) MUST be capped at `TOTAL_BOOST_CAP` (3.5) before being added to `base_score`. Context modifier is excluded from this cap.
+
+**Why This Exists:**
+Individual boost caps (confluence 10.0, msrf 1.0, jason_sim 1.5, serp 4.3) allowed a theoretical max of 16.8 additional points. In practice, picks with mediocre base scores (~6.5) were being inflated to 10.0 through boost stacking, eliminating score differentiation. TOTAL_BOOST_CAP ensures boosts improve good picks but can't rescue bad ones.
+
+**Implementation:**
+```python
+# In core/scoring_pipeline.py:compute_final_score_option_a()
+total_boosts = confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+if total_boosts > TOTAL_BOOST_CAP:
+    total_boosts = TOTAL_BOOST_CAP
+final_score = base_score + context_modifier + total_boosts
+final_score = max(0.0, min(10.0, final_score))
+```
+
+**Constants (core/scoring_contract.py):**
+- `TOTAL_BOOST_CAP = 3.5` — max sum of 4 boosts
+- `SERP_BOOST_CAP_TOTAL = 4.3` — individual SERP cap (still applies first)
+- `CONFLUENCE_BOOST_CAP = 10.0` — individual confluence cap
+- `MSRF_BOOST_CAP = 1.0` — individual MSRF cap
+- `JASON_SIM_BOOST_CAP = 1.5` — individual Jason cap
+
+**Test Guard:** `tests/test_option_a_scoring_guard.py:test_compute_final_score_caps_serp_and_clamps_final`
+
+**NEVER:**
+- Remove or increase `TOTAL_BOOST_CAP` without analyzing production score distributions
+- Include context_modifier in the total boost cap (it's a bounded modifier, not a boost)
+- Add a new boost component without including it in the total cap sum
+
 ---
 
 ## 📚 MASTER FILE INDEX (ML & GLITCH)
@@ -3553,13 +3873,31 @@ class TrapDefinition:
     status: str = "ACTIVE"          # ACTIVE, PAUSED, RETIRED
 ```
 
-### Complete Learning System Files (v19.1)
+### Complete Learning System Files (v20.2)
 | File | Purpose | Key Functions/Classes |
 |------|---------|----------------------|
-| `auto_grader.py` | Statistical learning (6:00 AM ET) | `AutoGrader`, `PredictionRecord`, `calculate_bias()`, `adjust_weights_with_reconciliation()`, `check_trap_reconciliation()` |
+| `auto_grader.py` | Statistical learning (6:00 AM ET) | `AutoGrader`, `PredictionRecord`, `calculate_bias()`, `adjust_weights_with_reconciliation()`, `check_trap_reconciliation()`, `_initialize_weights()`, `_convert_pick_to_record()` |
 | `trap_learning_loop.py` | Hypothesis learning (6:15 AM ET) | `TrapLearningLoop`, `has_recent_trap_adjustment()`, `get_recent_parameter_adjustments()` |
 | `grader_store.py` | Pick persistence | `persist_pick()`, `load_predictions()` |
 | `live_data_router.py` | Signal extraction for learning | Lines 4887-4899 (glitch_signals), Lines 6390-6420 (pick persistence) |
+
+**Critical auto_grader.py Lines (v20.2):**
+| Line Range | Function | Purpose |
+|------------|----------|---------|
+| 173-210 | `_initialize_weights()` | **MUST include game_stat_types (spread, total, moneyline, sharp)** |
+| 261-318 | `_convert_pick_to_record()` | Sets `stat_type = pick_type.lower()` for game picks |
+| 534-634 | `calculate_bias()` | Filters by `record.stat_type == stat_type` (exact match) |
+| 787-866 | `adjust_weights()` | Falls back to "points" if stat_type missing (line 802-803) |
+| 1035-1078 | `run_daily_audit()` | Iterates over game_stat_types = ["spread", "total", "moneyline", "sharp"] |
+
+**stat_type Mapping (v20.2):**
+| Pick Type | stat_type Value | Source |
+|-----------|-----------------|--------|
+| PROP | "points", "rebounds", etc. | `pick.get("stat_type", ...)` |
+| SPREAD | "spread" | `pick_type.lower()` |
+| TOTAL | "total" | `pick_type.lower()` |
+| MONEYLINE | "moneyline" | `pick_type.lower()` |
+| SHARP | "sharp" | `pick_type.lower()` |
 
 **PredictionRecord Signal Tracking (28 signals - 100% coverage):**
 ```python
@@ -3681,20 +4019,35 @@ live_data_router.py:3567 → adds to confluence["boost"]
 | `detect_situational()` | Context | B2B, rest advantage, travel fatigue |
 | `detect_noosphere()` | Esoteric | Search trend velocity between teams |
 
-**SERP Data Flow:**
+**SERP Data Flow (v20.7 — Parallel Pre-Fetch):**
 ```
-get_serp_betting_intelligence(sport, home, away, pick_side)
-  ├── detect_silent_spike(team, sport) → AI boost
-  ├── detect_sharp_chatter(team, sport) → Research boost
-  ├── detect_narrative(home, away, sport) → Jarvis boost
-  ├── detect_situational(team, sport, b2b, rest) → Context boost
-  └── detect_noosphere(home, away) → Esoteric boost
+_best_bets_inner() — BEFORE scoring loop:
+  │
+  ├── Extract unique (home, away) pairs from raw_games + prop_games
+  │
+  ├── ThreadPoolExecutor(max_workers=16)
+  │     └── _prefetch_serp_game(home, away, target) × 2 per game
+  │           └── get_serp_betting_intelligence(sport, home, away, target)
+  │                 ├── detect_silent_spike(team, sport) → AI boost
+  │                 ├── detect_sharp_chatter(team, sport) → Research boost
+  │                 ├── detect_narrative(home, away, sport) → Jarvis boost
+  │                 ├── detect_situational(team, sport, b2b, rest) → Context boost
+  │                 └── detect_noosphere(home, away) → Esoteric boost
+  │
+  └── _serp_game_cache[(home_lower, away_lower, target_lower)] = result
+
+calculate_pick_score() — DURING scoring loop:
+  │
+  ├── Game bets: Check _serp_game_cache first (cache hit ~0ms)
+  │     └── Fallback: get_serp_betting_intelligence() if cache miss
+  │
+  └── Prop bets: get_serp_prop_intelligence() inline (per-player, not pre-fetchable)
         ↓
   cap_total_boost(boosts) → enforce 4.3 total cap
         ↓
   apply_shadow_mode(boosts) → zero if shadow mode (currently OFF)
         ↓
-  live_data_router.py:3727 → confluence["boost"] += serp_boost_total
+  confluence["boost"] += serp_boost_total
 ```
 
 **SERP Query Templates (SPORT_QUERIES):**
@@ -3780,6 +4133,43 @@ Scoring Integration:
 | `get_injuries()` | 2200+ | `/live/injuries/{sport}` | dashboard | dict ✅ |
 
 **Rule:** ALL functions in this table MUST return dicts, NOT JSONResponse. FastAPI auto-serializes.
+
+### Go/No-Go Sanity Scripts (v20.4)
+| Script | Purpose | Key Checks |
+|--------|---------|------------|
+| `scripts/prod_go_nogo.sh` | Master orchestrator | Runs all 12 checks, fails fast |
+| `scripts/option_a_drift_scan.sh` | Scoring formula guard | No BASE_5, no context-as-engine |
+| `scripts/audit_drift_scan.sh` | Unauthorized boost guard | No literal +/-0.5 outside ensemble |
+| `scripts/endpoint_matrix_sanity.sh` | Endpoint contract | All sports, required fields, math check |
+| `scripts/docs_contract_scan.sh` | Documentation sync | Required fields documented |
+| `scripts/env_drift_scan.sh` | Environment config | Required env vars set |
+| `scripts/learning_loop_sanity.sh` | Auto grader health | Grader available, weights loaded |
+| `scripts/learning_sanity_check.sh` | Weights initialized | All stat types have weights |
+| `scripts/live_sanity_check.sh` | Best-bets health | Returns valid JSON structure |
+| `scripts/api_proof_check.sh` | Production API | API responding with 200 |
+
+**Critical Line Number Filters (audit_drift_scan.sh):**
+```bash
+# Allowed ensemble adjustment lines in live_data_router.py:
+# - 4753-4754: ensemble_reasons extend
+# - 4756-4757: boost (+0.5) fallback
+# - 4760-4762: penalty (-0.5) fallback
+rg -v "live_data_router.py:475[34]" | \
+rg -v "live_data_router.py:475[67]" | \
+rg -v "live_data_router.py:476[012]"
+```
+
+**Math Formula (endpoint_matrix_sanity.sh line 93-97):**
+```jq
+($p.base_4_score + $p.context_modifier + $p.confluence_boost +
+ $p.msrf_boost + $p.jason_sim_boost + $p.serp_boost +
+ ($p.ensemble_adjustment // 0) + ($p.live_adjustment // 0) +
+ ($p.totals_calibration_adj // 0)) as $raw |
+($raw | if . > 10 then 10 else . end) as $capped |
+($p.final_score - $capped) | abs
+# Must be < 0.02
+```
+**Every field that adjusts final_score MUST appear in this formula.** If you add a new adjustment to the scoring pipeline, you MUST: (1) surface it as its own field in the pick payload, (2) add it to this formula with `// 0` null handling.
 
 ### Key Debugging Locations
 | Location | Line | Purpose |
@@ -4760,6 +5150,1049 @@ if weather_data:  # Safe - weather_data is always defined
 
 **Fixed in:** v18.2 (Feb 2026) - `weather_data = None` initialization at line 3345
 
+### Lesson 32: Auto Grader Weights Must Include All Stat Types (v20.2)
+**Problem:** Auto grader returned "No graded predictions found" for ALL game picks (spread, total, moneyline, sharp) even though 242 graded picks existed.
+
+**Root Cause:** The `_initialize_weights()` method only created `WeightConfig` entries for PROP stat types (points, rebounds, assists, etc.) but NOT for GAME stat types (spread, total, moneyline, sharp).
+
+```python
+# BUG - Only PROP stat types initialized
+stat_types = {
+    "NBA": ["points", "rebounds", "assists", "threes", ...],  # PROP only
+    ...
+}
+for stat in stat_types.get(sport, ["points"]):
+    self.weights[sport][stat] = WeightConfig()
+# Missing: spread, total, moneyline, sharp
+```
+
+**The Bug Flow:**
+1. `run_daily_audit()` called `adjust_weights(sport, "spread")`
+2. `adjust_weights()` checked if "spread" was in `weights[sport]` → **NO**
+3. Line 802-803 defaulted to `stat_type = "points"` as fallback
+4. `calculate_bias()` filtered for records where `record.stat_type == "points"`
+5. Game picks have `stat_type` like "spread", "total" → **NO MATCH**
+6. → "No graded predictions found" for ALL game picks
+
+**Solution (v20.2):**
+```python
+# FIXED - Both PROP and GAME stat types initialized
+prop_stat_types = {
+    "NBA": ["points", "rebounds", "assists", ...],
+    ...
+}
+game_stat_types = ["spread", "total", "moneyline", "sharp"]
+
+for sport in self.SUPPORTED_SPORTS:
+    self.weights[sport] = {}
+    # Initialize PROP stat types
+    for stat in prop_stat_types.get(sport, ["points"]):
+        self.weights[sport][stat] = WeightConfig()
+    # Initialize GAME stat types
+    for stat in game_stat_types:
+        self.weights[sport][stat] = WeightConfig()
+```
+
+**Prevention:**
+- When adding new pick types (market types), ensure weights are initialized for them
+- The `stat_type` field in `PredictionRecord` comes from `pick_type.lower()` for game picks
+- Verify with: `curl /live/grader/bias/NBA?stat_type=spread` - should return sample_size > 0
+- The NEVER DO rules 108-111 enforce this
+
+**Verification Commands:**
+```bash
+# Check all game stat types have weights
+for stat in spread total moneyline sharp; do
+  echo "=== $stat ==="
+  curl -s "/live/grader/bias/NBA?stat_type=$stat&days_back=1" -H "X-API-Key: KEY" | \
+    jq '{stat_type: .stat_type, sample_size: .bias.sample_size, hit_rate: .bias.overall.hit_rate}'
+done
+# All should show sample_size > 0 (if graded picks exist)
+```
+
+**Fixed in:** v20.2 (Feb 2026) - Commit `ac25a59`
+
+### Lesson 33: OVER Bet Performance Tracking (v20.2 Analysis)
+**Problem:** Feb 3, 2026 analysis revealed severe OVER bias - 19.1% win rate on OVER bets vs 81.6% on UNDER bets.
+
+**Performance Data (Feb 3, 2026):**
+| Market | Record | Win Rate | Assessment |
+|--------|--------|----------|------------|
+| SPREAD | 96-21-40 | 82.1% | Excellent |
+| UNDER | 31-7 | 81.6% | Excellent |
+| OVER | 9-38 | 19.1% | **Critical Problem** |
+
+**Root Cause:** The system was overvaluing OVER bets. 38 of 66 total losses (57.6%) came from OVER picks.
+
+**Learning Loop Impact:**
+- With v20.2 fix, the auto grader can now properly analyze this data
+- `calculate_bias()` for "total" stat_type will detect the OVER bias
+- Weights will be adjusted to reduce OVER confidence
+- The esoteric/context signals that pushed OVER need recalibration
+
+**Prevention:**
+- Monitor OVER/UNDER split in daily grading reports
+- Auto grader bias analysis now properly includes totals picks
+- Consider market-type-specific confidence adjustments
+
+**Action:** The v20.2 fix enables the learning loop to automatically adjust based on this performance data.
+
+### Lesson 34: Verifying the Learning Loop is Working (v20.3)
+**Problem:** After fixing the auto grader weights (v20.2), needed to verify the entire learning loop was functioning end-to-end.
+
+**Verification Steps Performed (Feb 4, 2026):**
+1. **Grader Status Check**: `available: true` ✅
+2. **Grading Summary**: 242 graded picks, 136 wins, 66 losses (67.3% hit rate) ✅
+3. **Bias Calculation for Game Types**: Working for all stat types ✅
+4. **Weight Adjustments Applied**: `applied: true` with actual deltas ✅
+
+**Key Verification Results:**
+
+| Component | Endpoint | Expected | Actual |
+|-----------|----------|----------|--------|
+| Grader Status | `/live/grader/status` | `available: true` | ✅ Working |
+| Weights Initialized | `/live/grader/weights/NBA` | All 11 stat types | ✅ spread, total, moneyline, sharp + props |
+| Spread Bias | `/live/grader/bias/NBA?stat_type=spread` | sample_size > 0 | ✅ 53 samples, 84.9% hit rate |
+| Total Bias | `/live/grader/bias/NBA?stat_type=total` | sample_size > 0 | ✅ 32 samples, 56.2% hit rate |
+| Weight Adjustments | Run audit | `applied: true` | ✅ pace, vacuum, officials adjusted |
+| Factor Correlations | Bias response | Non-null values | ✅ 28 signals tracked |
+
+**What "Learning Loop Working" Means:**
+1. Picks are being persisted to `/data/grader/predictions.jsonl`
+2. Grading summary shows wins/losses/pushes
+3. `calculate_bias()` returns sample_size > 0 for active stat types
+4. `factor_bias` shows correlations for all tracked signals (pace, vacuum, officials, glitch, esoteric)
+5. `weight_adjustments` shows `applied: true` with actual delta values
+6. Confidence decay (70% per day) is being applied
+
+**Factor Bias Signals Tracked (28 total):**
+```python
+factor_bias = {
+    "pace": {"correlation": 0.088, "suggested_adjustment": -0.0088},
+    "vacuum": {"correlation": 0.032, "suggested_adjustment": -0.0032},
+    "officials": {"correlation": 0.313, "suggested_adjustment": -0.0313},
+    "glitch": {
+        "void_moon": {"correlation": 0.155},
+        "kp_index": {"correlation": 0.0}
+    },
+    "esoteric": {
+        "numerology": {"correlation": 0.114},
+        "astro": {"correlation": 0.003},
+        "fib_alignment": {"correlation": 0.146},
+        "vortex": {"correlation": 0.058},
+        "daily_edge": {"correlation": -0.313}
+    }
+}
+```
+
+**Prevention:**
+- Run the full learning loop verification after any auto_grader.py changes
+- Check both bias AND weight_adjustments sections of audit response
+- Verify `applied: true` not just sample_size > 0
+- Monitor factor correlations for outliers (e.g., officials at 0.313)
+
+**Verification Command (Full Check):**
+```bash
+curl -s "/live/grader/bias/NBA?stat_type=spread&days_back=1" -H "X-API-Key: KEY" | \
+  jq '{
+    stat_type,
+    sample_size: .bias.sample_size,
+    hit_rate: .bias.overall.hit_rate,
+    weight_adjustments_applied: (.weight_adjustments != null),
+    factors_tracked: (.bias.factor_bias | keys)
+  }'
+```
+
+### Lesson 35: Grading Pipeline Missing SHARP/MONEYLINE/PROP Handling (v20.3)
+**Problem:** Investigation revealed:
+- **SHARP**: 18 picks, 0% hit rate (all graded as PUSH)
+- **MONEYLINE**: 1 sample in 7 days
+- **PROPS**: 0 samples in learning loop
+
+**Root Causes Found:**
+
+1. **SHARP picks graded as PUSH** (`result_fetcher.py:842-884`)
+   - `grade_game_pick()` checked for "total", "spread", "moneyline" in pick_type
+   - SHARP picks have `pick_type="SHARP"` which matched NONE of these
+   - Fell through to `return "PUSH", 0.0` - never WIN or LOSS
+
+2. **`picked_team` not passed** (`result_fetcher.py:1067-1075`)
+   - Call to `grade_game_pick()` didn't include `picked_team` parameter
+   - For spreads/moneylines, couldn't determine which team was picked
+
+3. **`run_daily_audit()` prop_stat_types incomplete** (`auto_grader.py:1071-1077`)
+   - Only audited: points, rebounds, assists
+   - Missing: threes, steals, blocks, pra (4 prop types not analyzed)
+
+4. **Prop stat lookup failures** (`result_fetcher.py:770-798`)
+   - STAT_TYPE_MAP didn't include direct formats like "threes"
+   - Market keys like "player_points_over_under" not cleaned
+
+**Fixes Applied (v20.3):**
+
+| Bug | Fix | File:Lines |
+|-----|-----|------------|
+| SHARP grading | Added `elif "sharp" in pick_type_lower` handling | `result_fetcher.py:893-916` |
+| picked_team | Extract from selection/picked_team/team/side fields | `result_fetcher.py:1066-1074` |
+| prop_stat_types | Synced with `_initialize_weights()` (7 NBA, 5 NFL, etc.) | `auto_grader.py:1071-1077` |
+| STAT_TYPE_MAP | Added direct formats + market suffix stripping | `result_fetcher.py:80-125` |
+
+**Verification Commands:**
+```bash
+# After next grading cycle, verify SHARP picks have WIN/LOSS (not all PUSH)
+curl -s "/live/picks/grading-summary?date=$(date +%Y-%m-%d)" -H "X-API-Key: KEY" | \
+  jq '[.graded_picks[] | select(.pick_type == "SHARP")] | group_by(.result) | map({result: .[0].result, count: length})'
+
+# Verify prop stat types being audited
+curl -s -X POST "/live/grader/run-audit" -H "X-API-Key: KEY" \
+  -H "Content-Type: application/json" -d '{"days_back": 1}' | \
+  jq '.results.results.NBA | keys'
+# Should include: points, rebounds, assists, threes, steals, blocks, pra, spread, total, moneyline, sharp
+```
+
+**Fixed in:** v20.3 (Feb 4, 2026)
+
+### Lesson 36: Audit Drift Scan Line Number Filters (v20.4)
+**Problem:** Go/no-go check failed with `audit_drift` error because the line number filter in `audit_drift_scan.sh` didn't match actual code locations.
+
+**Root Cause:** The ensemble adjustment fallback code shifted from lines 4753-4757 to lines 4757-4763. The filter pattern `live_data_router.py:475[67]` allowed line 4757 but NOT line 4761 (the penalty code).
+
+**The Failure:**
+```
+Found additive final_score +/-0.5 outside allowed ensemble adjustment:
+live_data_router.py:4761:                            final_score = max(0.0, final_score - 0.5)
+ERROR: Unexpected literal +/-0.5 applied to final_score
+```
+
+**The Fix:**
+```bash
+# OLD filter (incomplete)
+rg -v "live_data_router.py:475[34]" | \
+rg -v "live_data_router.py:475[67]" || true
+
+# NEW filter (includes lines 4760-4762)
+rg -v "live_data_router.py:475[34]" | \
+rg -v "live_data_router.py:475[67]" | \
+rg -v "live_data_router.py:476[012]" || true
+```
+
+**Prevention:**
+- When code shifts (refactoring, additions), line-based filters in sanity scripts break
+- After ANY change to `live_data_router.py`, re-run `audit_drift_scan.sh` locally
+- Use broader patterns when possible, or document exact line purposes
+- The filter comment now explains: "Lines 4757 (boost) and 4761 (penalty) are the fallback ensemble adjustments"
+
+**Verification:**
+```bash
+# Check current ensemble adjustment line numbers
+grep -n "final_score.*0\.5" live_data_router.py | grep -E "(min|max)"
+# Should show lines ~4757 and ~4761
+
+# Run audit_drift scan
+bash scripts/audit_drift_scan.sh
+# Should pass
+
+# Full go/no-go
+API_KEY="KEY" SKIP_NETWORK=0 SKIP_PYTEST=1 bash scripts/prod_go_nogo.sh
+```
+
+**Files Modified:**
+- `scripts/audit_drift_scan.sh:43-48` - Updated filter pattern with comment
+
+**Fixed in:** v20.4 (Feb 4, 2026)
+
+### Lesson 37: Endpoint Matrix Sanity Math Formula (v20.4)
+**Problem:** `endpoint_matrix_sanity.sh` final_score math check failed because the formula was missing `ensemble_adjustment`.
+
+**Root Cause:** The production API was returning `ensemble_adjustment: null` instead of `0.0` or an actual value, causing:
+- Computed sum: 9.443
+- Actual final_score: 9.94
+- Difference: 0.497 (exceeds 0.02 tolerance)
+
+**The Formula (must match scoring pipeline):**
+```jq
+($p.base_4_score + $p.context_modifier + $p.confluence_boost + $p.msrf_boost +
+ $p.jason_sim_boost + $p.serp_boost + ($p.ensemble_adjustment // 0) +
+ ($p.live_adjustment // 0) + ($p.totals_calibration_adj // 0)) as $raw |
+($raw | if . > 10 then 10 else . end) as $capped |
+($p.final_score - $capped) | abs
+```
+
+**Key Points:**
+- `ensemble_adjustment` is exposed at `live_data_router.py:4939,4952`
+- Default is `0.0` (line 4720), but can be `±0.5` based on ensemble model
+- `totals_calibration_adj` is ±0.75 from `TOTALS_SIDE_CALIBRATION` (v20.4) - surfaced in v20.5
+- `glitch_adjustment` is NOT added separately (already folded into `esoteric_score`)
+- The `// 0` jq syntax handles null values
+- **EVERY adjustment to final_score MUST be surfaced as a field** (Lesson 46)
+
+**Prevention:**
+- When adding new boosts/adjustments to scoring, update ALL THREE:
+  1. `live_data_router.py` pick payload (surface as a named field)
+  2. `scripts/endpoint_matrix_sanity.sh` math formula (add to jq sum)
+  3. `CLAUDE.md` Boost Inventory + canonical formula
+- Document formula in CLAUDE.md INVARIANT 4 (already done)
+
+**Verification:**
+```bash
+# Check a pick's math manually
+curl -s "/live/best-bets/NBA?debug=1&max_games=1" -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {
+    base_4: .base_4_score,
+    context: .context_modifier,
+    confluence: .confluence_boost,
+    msrf: .msrf_boost,
+    jason_sim: .jason_sim_boost,
+    serp: .serp_boost,
+    ensemble: .ensemble_adjustment,
+    live: .live_adjustment,
+    totals_cal: .totals_calibration_adj,
+    computed: (.base_4_score + .context_modifier + .confluence_boost +
+               .msrf_boost + .jason_sim_boost + .serp_boost +
+               (.ensemble_adjustment // 0) + (.live_adjustment // 0) +
+               (.totals_calibration_adj // 0)),
+    actual: .final_score,
+    diff: ((.base_4_score + .context_modifier + .confluence_boost +
+            .msrf_boost + .jason_sim_boost + .serp_boost +
+            (.ensemble_adjustment // 0) + (.live_adjustment // 0) +
+            (.totals_calibration_adj // 0)) - .final_score) | fabs
+  }'
+# diff should be < 0.02
+```
+
+**Fixed in:** v20.4 (Feb 4, 2026)
+
+### Lesson 38: OVER/UNDER Totals Bias Calibration (v20.4)
+**Problem:** Learning loop revealed massive OVER vs UNDER imbalance:
+- **OVER**: 9W / 38L = 19.1% hit rate (terrible)
+- **UNDER**: 31W / 7L = 81.6% hit rate (excellent)
+
+The contradiction gate was keeping whichever side scored higher. OVER picks consistently scored higher but lost more often.
+
+**Root Cause:** No mechanism to apply learned bias corrections to totals scoring. Both Over and Under were scored identically with no calibration based on historical performance.
+
+**The Fix (v20.4):**
+
+1. Added `TOTALS_SIDE_CALIBRATION` to `core/scoring_contract.py`:
+```python
+TOTALS_SIDE_CALIBRATION = {
+    "enabled": True,
+    "over_penalty": -0.75,   # Penalty applied to OVER picks
+    "under_boost": 0.75,     # Boost applied to UNDER picks
+    "min_samples_required": 50,
+    "last_updated": "2026-02-04",
+}
+```
+
+2. Applied calibration in `live_data_router.py:4577-4592`:
+   - When `pick_type == "TOTAL"`, check side
+   - Apply over_penalty (-0.75) to Over picks
+   - Apply under_boost (+0.75) to Under picks
+   - Log adjustment for tracking
+
+**Expected Outcome:**
+- UNDER picks gain +0.75, more likely to win contradiction gate
+- OVER picks penalized -0.75, less likely to be selected
+- Learning loop should show improved total hit rates
+
+**Verification:**
+```bash
+# Check OVER/UNDER split after next grading cycle
+curl -s "/live/picks/grading-summary?date=$(date +%Y-%m-%d)" -H "X-API-Key: KEY" | jq '{
+  over: {wins: [.graded_picks[] | select(.side == "Over" and .result == "WIN")] | length,
+         losses: [.graded_picks[] | select(.side == "Over" and .result == "LOSS")] | length},
+  under: {wins: [.graded_picks[] | select(.side == "Under" and .result == "WIN")] | length,
+          losses: [.graded_picks[] | select(.side == "Under" and .result == "LOSS")] | length}
+}'
+```
+
+**Fixed in:** v20.4 (Feb 4, 2026)
+
+### Lesson 39: Frontend Tooltip Alignment with Option A Weights (v20.4)
+
+**Problem:** Frontend tooltips in `PropsSmashList.jsx` and `GameSmashList.jsx` showed incorrect engine weights that didn't match the backend `scoring_contract.py`:
+
+| Engine | Frontend (Wrong) | Backend (Correct) |
+|--------|------------------|-------------------|
+| AI | 15% | **25%** |
+| Research | 20% | **35%** |
+| Esoteric | 15% | **20%** |
+| Jarvis | 10% | **20%** |
+| Context | 30% weighted | **±0.35 modifier** |
+
+**Root Cause:** Frontend documentation and tooltips were written for an outdated scoring architecture. When Option A (4-engine base + context modifier) was implemented, the frontend wasn't updated to reflect that:
+1. Context is NOT a weighted engine - it's a bounded modifier (±0.35 cap)
+2. The 4 engine weights sum to 100% (25+35+20+20)
+3. Context modifier is applied AFTER the weighted base score
+
+**The Fix (v20.4):**
+
+1. Updated `bookie-member-app/PropsSmashList.jsx` tooltips:
+```jsx
+// Option A: 4 weighted engines + context modifier
+<ScoreBadge label="AI" tooltip="8 AI models (25% weight)" />
+<ScoreBadge label="Research" tooltip="Sharp money, line variance (35% weight)" />
+<ScoreBadge label="Esoteric" tooltip="Numerology, astro, fibonacci (20% weight)" />
+<ScoreBadge label="Jarvis" tooltip="Gematria triggers (20% weight)" />
+<ScoreBadge label="Context" tooltip="Defense rank, pace, vacuum (modifier ±0.35)" />
+```
+
+2. Updated `bookie-member-app/GameSmashList.jsx` with same corrections
+
+3. Updated `bookie-member-app/CLAUDE.md` documentation in 3 sections
+
+4. Updated `ai-betting-backend/docs/FRONTEND_INTEGRATION.md`:
+   - Marked Priority 1-3 as COMPLETE
+   - Fixed weight comments in API response structure
+
+**Prevention:**
+- ALWAYS check `core/scoring_contract.py` for authoritative weights
+- When changing backend scoring, IMMEDIATELY update frontend tooltips
+- Add drift scan for frontend/backend weight synchronization
+
+**Files Modified:**
+- `bookie-member-app/PropsSmashList.jsx`
+- `bookie-member-app/GameSmashList.jsx`
+- `bookie-member-app/CLAUDE.md`
+- `ai-betting-backend/docs/FRONTEND_INTEGRATION.md`
+
+**Verification:**
+```bash
+# Check frontend tooltips match backend weights
+grep -n "25% weight\|35% weight\|20% weight\|modifier.*0.35" \
+  /Users/apple/bookie-member-app/PropsSmashList.jsx \
+  /Users/apple/bookie-member-app/GameSmashList.jsx
+
+# Check backend scoring_contract.py for truth
+grep -A5 "ENGINE_WEIGHTS" core/scoring_contract.py
+```
+
+**Fixed in:** v20.4 (Feb 4, 2026)
+
+### Lesson 40: Shell Variable Export for Python Subprocesses (v20.4)
+**Problem:** `perf_audit_best_bets.sh` was trying to connect to `None` as a hostname:
+```
+curl: (6) Could not resolve host: None
+```
+
+**Root Cause:** Shell variables are NOT automatically inherited by Python subprocesses. The script set `BASE_URL` as a shell variable, but Python's `os.environ.get("BASE_URL")` returned `None`:
+
+```bash
+# BUG - Python subprocess doesn't see this variable
+BASE_URL="${BASE_URL:-https://web-production-7b2a.up.railway.app}"
+
+# Inside Python heredoc:
+base_url = os.environ.get("BASE_URL")  # Returns None!
+```
+
+**The Fix:**
+```bash
+# CORRECT - 'export' makes variable available to subprocesses
+export BASE_URL="${BASE_URL:-https://web-production-7b2a.up.railway.app}"
+export API_KEY="${API_KEY:-}"
+```
+
+**Prevention:**
+- When shell scripts call Python (via heredoc, subprocess, or exec), variables MUST be exported
+- Use `export VAR=value` not just `VAR=value`
+- Test scripts by checking what Python actually sees: `python3 -c "import os; print(os.environ.get('VAR'))"`
+
+**Shell Variable Scope Rules:**
+| Pattern | Scope | Python sees it? |
+|---------|-------|-----------------|
+| `VAR=value` | Current shell only | ❌ No |
+| `export VAR=value` | Current shell + children | ✅ Yes |
+| `VAR=value command` | Command only | ✅ Yes (for that command) |
+
+**Files Modified:**
+- `scripts/perf_audit_best_bets.sh` - Added `export` to BASE_URL and API_KEY
+
+**Verification:**
+```bash
+# Test that Python inherits the variable
+export TEST_VAR="hello"
+python3 -c "import os; print(os.environ.get('TEST_VAR'))"
+# Should print: hello
+```
+
+**Fixed in:** v20.4 (Feb 4, 2026)
+
+### Lesson 41: SHARP Pick Grading - line_variance vs Actual Spread (v20.5)
+**Problem:** SHARP picks showing 0% hit rate across all sports (NBA 0/14, NHL 0/8, NCAAB 0/7).
+
+**Root Cause:** SHARP picks were being graded incorrectly because the `line` field contained `line_variance` (the movement amount) instead of the actual spread:
+
+```python
+# In live_data_router.py - SHARP pick creation
+"line": signal.get("line_variance", 0),  # BUG: This is 0.5, 1.5, etc.
+
+# In result_fetcher.py - Grading logic treated it as spread
+if line and line != 0:
+    adjusted = home_score + line  # WRONG: using line_variance as spread
+```
+
+**Example of the bug:**
+- Sharp signal: "sharps on Lakers" for Lakers (-5.5) vs Celtics
+- `line_variance` = 1.5 (line moved 1.5 points)
+- Pick logged with `"line": 1.5`
+- Grading treated as "Lakers +1.5 spread"
+- Lakers win by 4 → graded as WIN (should be LOSS, didn't cover -5.5)
+
+**The Fix:** Grade SHARP picks as moneyline only (who won), ignoring the `line` field:
+
+```python
+# v20.5 fix in result_fetcher.py
+elif "sharp" in pick_type_lower:
+    # ALWAYS grade as moneyline - line field is line_variance, not actual spread
+    if home_score == away_score:
+        return "PUSH", 0.0
+    if picked_home:
+        return ("WIN" if home_score > away_score else "LOSS"), 0.0
+    else:
+        return ("WIN" if away_score > home_score else "LOSS"), 0.0
+```
+
+**Why moneyline is correct:**
+- Sharp signals indicate "sharps are betting HOME/AWAY"
+- Without the actual spread line, we can only grade on straight-up winner
+- This is semantically accurate: "sharp side won" = their team won
+
+**Prevention:**
+- Never assume a field contains what its name suggests - trace data flow
+- `line_variance` ≠ `line` (spread)
+- Always verify grading logic with actual data examples
+
+**Files Modified:**
+- `result_fetcher.py` - Fixed `grade_game_pick()` SHARP case (lines 930-943)
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 42: Undefined PYTZ_AVAILABLE Variable (v20.5)
+**Problem:** `/grader/queue` endpoint returning `{"detail":"name 'PYTZ_AVAILABLE' is not defined"}`
+
+**Root Cause:** Code referenced `PYTZ_AVAILABLE` variable that was never defined:
+```python
+if PYTZ_AVAILABLE:  # NameError - never defined!
+    ET_TZ = pytz.timezone("America/New_York")
+```
+
+**The Fix:** Use `core.time_et.now_et()` - the single source of truth for ET timezone:
+```python
+from core.time_et import now_et
+date = now_et().strftime("%Y-%m-%d")
+```
+
+**Prevention:**
+- NEVER use `pytz` in new code - use `core.time_et` or `zoneinfo`
+- NEVER reference variables without importing/defining them
+- All ET timezone logic MUST go through `core.time_et`
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 43: Naive vs Aware Datetime Comparison (v20.5)
+**Problem:** `/grader/daily-report` returning `{"detail":"can't compare offset-naive and offset-aware datetimes"}`
+
+**Root Cause:** Comparing `datetime.now()` (naive) with stored timestamps that may be timezone-aware:
+```python
+cutoff = datetime.now() - timedelta(days=1)  # Naive
+ts = datetime.fromisoformat(p.timestamp)      # May be aware
+if ts >= cutoff:  # TypeError!
+```
+
+**The Fix:** Use timezone-aware datetime and handle both naive/aware timestamps:
+```python
+from core.time_et import now_et
+from zoneinfo import ZoneInfo
+et_tz = ZoneInfo("America/New_York")
+
+cutoff = now_et() - timedelta(days=1)  # Aware
+
+ts = datetime.fromisoformat(p.timestamp)
+if ts.tzinfo is None:
+    ts = ts.replace(tzinfo=et_tz)  # Make aware if naive
+if ts >= cutoff:  # Safe comparison
+```
+
+**Prevention:**
+- NEVER use `datetime.now()` in grader code - use `now_et()`
+- ALWAYS handle both naive and aware timestamps when parsing stored data
+- Test with both timezone-aware and naive timestamp data
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 44: Date Window Math Error (v20.5)
+**Problem:** Daily report showing ~290 picks for "yesterday" when actual count was ~150
+
+**Root Cause:** Wrong date window calculation created 2-day window instead of 1:
+```python
+# For days_back=1 (yesterday), this creates a 2-day window:
+cutoff = now - timedelta(days=days_back + 1)      # 2 days ago (WRONG)
+end_cutoff = now - timedelta(days=days_back - 1)  # today
+```
+
+**The Fix:** Use exact day boundaries:
+```python
+# Correct: exactly one day
+day_start = (now - timedelta(days=days_back)).replace(
+    hour=0, minute=0, second=0, microsecond=0
+)
+day_end = day_start + timedelta(days=1)
+
+if day_start <= ts < day_end:  # Exclusive end bound
+```
+
+**Prevention:**
+- NEVER use `days_back + 1` / `days_back - 1` math for date windows
+- ALWAYS use `.replace(hour=0, ...)` for day boundaries
+- Use exclusive end bounds (`<` not `<=`) to avoid overlap
+- Test date window logic with specific date examples
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 45: Grader Performance Endpoint Same Bug (v20.5)
+**Problem:** `/grader/performance/{sport}` returning `Internal Server Error`
+
+**Root Cause:** Same naive vs aware datetime bug as Lesson 43 - copy-paste pattern:
+```python
+cutoff = datetime.now() - timedelta(days=days_back)
+datetime.fromisoformat(p.timestamp) >= cutoff  # Same error
+```
+
+**The Fix:** Apply same fix as Lesson 43 - use `now_et()` and handle mixed timestamps.
+
+**Prevention:**
+- When fixing a bug, grep the entire codebase for the same pattern
+- `/grader/daily-report` and `/grader/performance` had identical bugs
+- Run `grep -n "datetime.now()" *.py | grep fromisoformat` after datetime fixes
+
+**Files Modified (v20.5 datetime fixes):**
+- `live_data_router.py` lines 8933-8944 (performance endpoint)
+- `live_data_router.py` lines 9016-9058 (daily-report endpoint)
+- `live_data_router.py` lines 9210-9215 (queue endpoint)
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 46: Unsurfaced Scoring Adjustments Break Sanity Math (v20.5)
+**Problem:** `endpoint_matrix_sanity.sh` math check showed diff=0.748 because `totals_calibration_adj` (±0.75) was applied to `final_score` but NOT surfaced as a field in the pick payload.
+
+**Root Cause:** `TOTALS_SIDE_CALIBRATION` (v20.4) adjusted `final_score` directly via a local variable `totals_calibration_adj`, but this value was never included in the pick output dict. The sanity script recomputes `final_score` from surfaced fields, so the hidden adjustment caused a mismatch.
+
+**The Fix:**
+1. Added `"totals_calibration_adj": round(totals_calibration_adj, 3)` to pick output dict in `live_data_router.py`
+2. Updated jq formula in `endpoint_matrix_sanity.sh` to include `+ ($p.totals_calibration_adj // 0)`
+
+**Prevention:**
+- **INVARIANT:** Every adjustment to `final_score` MUST be surfaced as its own field in the pick payload
+- When adding a new scoring adjustment: (1) add to pick dict, (2) add to sanity formula, (3) add to CLAUDE.md Boost Inventory, (4) add to canonical formula
+- The endpoint matrix math check exists precisely to catch this class of bug
+
+**Files Modified:**
+- `live_data_router.py` (pick output dict)
+- `scripts/endpoint_matrix_sanity.sh` (jq formula)
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 47: Script-Only Env Vars Must Be in RUNTIME_ENV_VARS (v20.5)
+**Problem:** `env_drift_scan.sh` failed because `MAX_GAMES`, `MAX_PROPS`, and `RUNS` were used in scripts but not registered in `RUNTIME_ENV_VARS` in `integration_registry.py`.
+
+**Root Cause:** The env drift scan greps all `.sh` and `.py` files for `os.environ` / `${}` references, then checks them against the `RUNTIME_ENV_VARS` list. Script-only variables were not registered because they seemed "not important enough."
+
+**The Fix:** Added `MAX_GAMES`, `MAX_PROPS`, and `RUNS` to `RUNTIME_ENV_VARS` in `integration_registry.py` in alphabetical position.
+
+**Prevention:**
+- ANY env var referenced in ANY script or Python file must be in either `INTEGRATION_CONTRACTS` or `RUNTIME_ENV_VARS`
+- Run `bash scripts/env_drift_scan.sh` after adding new env vars to scripts
+- The scan is intentionally aggressive - false positives are better than missed drift
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 48: Python Heredoc `__file__` Path Resolution Bug (v20.5)
+**Problem:** `prod_endpoint_matrix.sh` failed with `FileNotFoundError: [Errno 2] No such file or directory: '../docs/ENDPOINT_MATRIX_REPORT.md'`
+
+**Root Cause:** The script uses `python3 - <<'PY'` (Python heredoc). Inside a heredoc, `__file__` resolves to `"<stdin>"`, so `os.path.dirname(__file__)` returns an empty string. The path `os.path.join("", "..", "docs", "ENDPOINT_MATRIX_REPORT.md")` resolved to `../docs/ENDPOINT_MATRIX_REPORT.md` which doesn't exist.
+
+**The Fix:** Changed to project-relative path: `os.path.join("docs", "ENDPOINT_MATRIX_REPORT.md")` - works because the shell script runs from the project root.
+
+**Prevention:**
+- NEVER use `__file__`, `__dir__`, or `os.path.dirname(__file__)` inside Python heredocs
+- In heredocs, use project-relative paths (scripts always run from project root)
+- Test heredoc scripts directly: `bash scripts/script_name.sh`
+
+**Files Modified:**
+- `scripts/prod_endpoint_matrix.sh` (line 86)
+
+**Fixed in:** v20.5 (Feb 4, 2026)
+
+### Lesson 49: Props Timeout — Shared Time Budget Starvation (v20.6)
+**Problem:** `/live/best-bets/NBA` returned 0 props despite game picks working. Props section showed `"picks": []`.
+
+**Root Cause:** `TIME_BUDGET_S = 40.0` was hardcoded in `live_data_router.py:2741`. Game scoring consumed the full budget, leaving 0 seconds for props scoring. The timeout wasn't configurable.
+
+**The Fix:**
+1. Changed `TIME_BUDGET_S` from hardcoded `40.0` to `float(os.getenv("BEST_BETS_TIME_BUDGET_S", "55"))` — configurable with higher default
+2. Registered `BEST_BETS_TIME_BUDGET_S` in `integration_registry.py` `RUNTIME_ENV_VARS`
+
+**Prevention:**
+- Any shared time budget must leave enough headroom for ALL consumers (games + props)
+- All timeout/budget values should be env-configurable, not hardcoded
+- Always register new env vars in `integration_registry.py` (see Lesson 47)
+
+**Files Modified:**
+- `live_data_router.py` (line 2741)
+- `integration_registry.py` (RUNTIME_ENV_VARS)
+
+**Fixed in:** v20.6 (Feb 4, 2026)
+
+### Lesson 50: Empty Description Fields in Pick Payload (v20.6)
+**Problem:** All picks returned `"description": ""` in the best-bets response. Frontend had no human-readable summary of each pick.
+
+**Root Cause:** `compute_description()` existed in `models/pick_converter.py` but it used object attribute access (`.player_name`, `.matchup`) — only works for database model objects. The live scoring path uses plain dicts through `normalize_pick()`, so `compute_description()` was never called.
+
+**The Fix:** Added dict-based description generation directly in `utils/pick_normalizer.py` `normalize_pick()`, covering:
+- Player props: `"LeBron James Points Over 25.5"`
+- Moneyline: `"LAL @ BOS — Lakers ML +150"`
+- Spreads/totals: `"LAL @ BOS — Spread Away -3.5"`
+- Fallback: matchup string
+
+**Prevention:**
+- When adding a new field to the pick contract, verify it's populated in ALL paths (normalize_pick is the single source)
+- `normalize_pick()` is the ONLY place to set pick fields — never set them in individual scoring functions
+
+**Files Modified:**
+- `utils/pick_normalizer.py` (added ~15 lines in normalize_pick)
+
+**Fixed in:** v20.6 (Feb 4, 2026)
+
+### Lesson 51: Score Inflation from Unbounded Boost Stacking (v20.6)
+**Problem:** Multiple picks had `final_score = 10.0` despite mediocre base scores (~6.5). Picks clustered at the max, eliminating score differentiation.
+
+**Root Cause:** Individual boost caps existed (confluence 10.0, msrf 1.0, jason_sim 1.5, serp 4.3) but NO cap on their SUM. Theoretical max boost was 16.8 points. In practice, confluence 3.0 + msrf 1.0 + serp 2.0 + jason 0.5 = 6.5 boosts on a 6.5 base = 13.0 → clamped to 10.0.
+
+**The Fix:**
+1. Added `TOTAL_BOOST_CAP = 3.5` in `core/scoring_contract.py`
+2. In `compute_final_score_option_a()`: sum of confluence+msrf+jason_sim+serp capped to `TOTAL_BOOST_CAP` before adding to base_score
+3. Context modifier is excluded from the cap (it's a bounded modifier, not a boost)
+4. Updated `test_option_a_scoring_guard.py` to test new cap behavior
+
+**Prevention:**
+- Every additive boost system needs BOTH individual caps AND a total cap
+- Monitor production score distributions — clustering at boundaries is a red flag
+- Added Invariant 26 to prevent regression
+
+**Files Modified:**
+- `core/scoring_contract.py` (TOTAL_BOOST_CAP constant)
+- `core/scoring_pipeline.py` (cap enforcement in compute_final_score_option_a)
+- `tests/test_option_a_scoring_guard.py` (updated tests for new cap)
+
+**Fixed in:** v20.6 (Feb 4, 2026)
+
+### Lesson 52: Jarvis Baseline Is Not a Bug — Sacred Triggers Are Rare By Design (v20.6)
+**Problem:** Report claimed `jarvis_score = 5.0` hardcoded at `core/scoring_pipeline.py:280` made Jarvis "dead code."
+
+**Investigation Found:** The hardcoded 5.0 is in `score_candidate()` which is dormant demo code — NOT the production path. Production Jarvis scoring is in `live_data_router.py:calculate_jarvis_engine_score()` (lines 2819-3037), fully wired with real triggers.
+
+**Why Jarvis Stays at 4.5 Baseline:**
+- Sacred number triggers (2178, 201, 33, 93, 322, 666, 888, 369) fire on gematria sums of player+team names
+- Simple gematria (a=1..z=26) produces sums typically in the 100-400 range
+- Sacred numbers are statistically rare — most matchups don't trigger ANY
+- This is intentional: Jarvis should ONLY boost when genuine sacred number alignment exists
+- GOLD_STAR gate requires `jarvis_rs >= 6.5` — needs at minimum a +2.0 trigger (33, 93, or 322)
+
+**Prevention:**
+- Before reporting "dead code," trace the actual production call path (imports, function calls)
+- `core/scoring_pipeline.py:score_candidate()` is NOT used in production — only `compute_final_score_option_a()` and `compute_harmonic_boost()` are imported
+- A low/constant score from an engine is not necessarily a bug — check if triggers are designed to be rare
+
+**Production Jarvis flow:**
+```
+get_jarvis_savant() → JarvisSavantEngine singleton
+  → calculate_jarvis_engine_score()
+    ├── check_jarvis_trigger() for sacred numbers
+    ├── calculate_gematria_signal() for name sums
+    └── mid-spread goldilocks for spreads 4.0-9.0
+  → jarvis_rs = 4.5 + triggers + gematria + goldilocks
+```
+
+**Fixed in:** v20.6 (Feb 4, 2026)
+
+### Lesson 53: SERP Sequential Bottleneck — Parallel Pre-Fetch Pattern (v20.7)
+**Problem:** Props scoring returned 0 picks despite v20.6 timeout fix. Deep dive revealed 107 sequential SerpAPI calls at ~157ms each = ~17s, consuming half the game scoring budget and leaving no time for props.
+
+**Root Cause:** `get_serp_betting_intelligence()` makes 9 API calls per game pick (silent_spike×1, sharp_chatter×2, narrative×2, situational×2, noosphere×2). For 8 games with both home and away targets, that's ~14 unique queries per game × 8 games = ~107 calls. Each call goes through `serpapi.py` with ~157ms average latency. All sequential.
+
+**The Sequential Bottleneck Pattern:**
+```python
+# ❌ BAD - Sequential SERP calls inside scoring loop (~17s total)
+for pick in game_picks:
+    serp_intel = get_serp_betting_intelligence(sport, home, away, pick_side)
+    # Each call: 9 sequential API requests × ~157ms = ~1.4s per pick
+    # 12 picks × 1.4s = ~17s total
+```
+
+**Solution (v20.7 — Parallel Pre-Fetch Pattern):**
+```python
+# ✅ GOOD - Pre-fetch all SERP data in parallel before scoring loop (~2-3s)
+# Step 1: Extract unique (home, away) pairs from all games
+_unique_serp_games = {(g["home_team"], g["away_team"]) for g in raw_games + prop_games}
+
+# Step 2: Pre-fetch both targets (home, away) per game in parallel
+with ThreadPoolExecutor(max_workers=16) as executor:
+    futures = [executor.submit(_prefetch_serp_game, h, a, target)
+               for h, a in _unique_serp_games
+               for target in [h, a]]  # Both home and away as target
+    results = wait_for(gather(*futures), timeout=12.0)
+
+# Step 3: Store in cache dict, accessed by scoring function via closure
+_serp_game_cache[(home_lower, away_lower, target_lower)] = result
+
+# Step 4: In calculate_pick_score(), check cache before live call
+if _serp_cache_key in _serp_game_cache:
+    serp_intel = _serp_game_cache[_serp_cache_key]  # Cache hit: ~0ms
+else:
+    serp_intel = get_serp_betting_intelligence(...)  # Fallback: ~1.4s
+```
+
+**Key Design Decisions:**
+| Decision | Why |
+|----------|-----|
+| `ThreadPoolExecutor` + `run_in_executor` | SERP calls are synchronous (requests lib); threads avoid blocking async loop |
+| 16 workers max | ~16 unique game-target pairs for 8 games; 1 thread per task |
+| 12s timeout on entire batch | Hard ceiling prevents runaway parallel calls |
+| Cache key = `(home_lower, away_lower, target_lower)` | Mirrors `serp_intelligence.py:602` target_team selection logic |
+| Props NOT pre-fetched | Per-player data too many unique combinations; benefit from warm serpapi cache |
+| Closure-scoped `_serp_game_cache` | Available to nested `calculate_pick_score()` without parameter threading |
+
+**Performance Impact:**
+| Metric | Before (v20.6) | After (v20.7) | Improvement |
+|--------|----------------|---------------|-------------|
+| SERP total time | ~17s sequential | ~2-3s parallel | **~6x faster** |
+| Game scoring | ~35-46s | ~20-30s (expected) | Time freed for props |
+| Props scoring | 0 picks (timeout) | Should complete | **Props restored** |
+
+**Debug Telemetry Added:**
+```json
+{
+  "debug": {
+    "serp": {
+      "prefetch_cached": 16,   // Results successfully pre-fetched
+      "prefetch_games": 8      // Unique game pairs cached
+    },
+    "timings": {
+      "serp_prefetch": 2.3     // Seconds for parallel pre-fetch
+    }
+  }
+}
+```
+
+**Files Modified:**
+- `live_data_router.py:5851-5927` — SERP pre-fetch block (after player resolution, before scoring loop)
+- `live_data_router.py:4431-4442` — Cache lookup in `calculate_pick_score()` for game bets
+- `live_data_router.py:7229-7230` — Debug telemetry (`prefetch_cached`, `prefetch_games`)
+
+**Prevention:**
+- When an external API is called N times sequentially in a loop, consider parallel pre-fetching
+- Always measure actual API call counts and latencies before assuming "it's fast enough"
+- The 90-minute `serpapi.py` cache helps for repeated queries but doesn't help when ALL queries are unique
+- Pre-fetch tasks should have a hard timeout to prevent blocking the main budget
+- Always add debug telemetry for pre-fetch results so performance can be monitored
+
+**The General Pre-Fetch Pattern (for future similar bottlenecks):**
+1. **Identify** the sequential bottleneck: grep for API calls inside scoring loops
+2. **Extract** unique inputs from all candidates before the loop starts
+3. **Parallelize** using `ThreadPoolExecutor` + `asyncio.run_in_executor()`
+4. **Cache** results in a closure-scoped dict with deterministic keys
+5. **Fallback** gracefully to live calls on cache miss or timeout
+6. **Telemetry** via `_record()` and debug output fields
+
+**Fixed in:** v20.7 (Feb 5, 2026)
+
+### Lesson 54: Props Indentation Bug — Dead Code from Misplaced Break (v20.8)
+**Problem:** ALL sports (NBA, NHL, NFL, MLB, NCAAB) returned 0 props despite game picks working correctly. Props were scored but never collected into the output.
+
+**Root Cause:** `if _props_deadline_hit: break` was positioned at game-loop indentation level (12 spaces) BETWEEN `calculate_pick_score()` and all prop processing code (16 spaces). Due to Python's indentation-sensitive scoping:
+
+```python
+# BUG — Lines 6499-6506 (before fix):
+                    game_status=_prop_game_status
+                )
+            if _props_deadline_hit:       # ← 12-space indent (game loop level)
+                break
+
+                # Lineup confirmation guard (props only)   # ← 16-space indent
+                lineup_guard = _lineup_risk_guard(...)      #    INSIDE the if block
+                ...
+                props_picks.append({...})                   #    ALSO INSIDE — UNREACHABLE
+```
+
+**How Python interpreted this:**
+- When `_props_deadline_hit = True`: `break` executes, everything after is unreachable
+- When `_props_deadline_hit = False`: the entire `if` block is skipped — BUT all code at 16-space indent was INSIDE the `if` block, so it was ALSO skipped
+- Result: `props_picks.append(...)` at line 6596 NEVER executes regardless of the flag's value
+
+**The Fix:**
+1. Removed `if _props_deadline_hit: break` from between `calculate_pick_score()` and prop processing (line 6502)
+2. Added `if _props_deadline_hit: break` AFTER `props_picks.append({...})` completes (line 6662)
+
+```python
+# FIXED — Each prop is fully processed before deadline check:
+                    game_status=_prop_game_status
+                )
+
+                # Lineup confirmation guard (props only)
+                lineup_guard = _lineup_risk_guard(...)
+                ...
+                props_picks.append({...})
+            if _props_deadline_hit:
+                break
+```
+
+**Why This Was Hard to Find:**
+- No errors, no crashes, no stack traces — the code simply never reached `append()`
+- Props status showed "OK" (scoring succeeded), but count was always 0
+- The bug was invisible in normal test output because Python's indentation scoping made the dead code syntactically valid
+- A 4-character indentation difference (12 vs 16 spaces) determined whether 160+ lines of code executed
+
+**Prevention:**
+1. **NEVER place control flow (`if/break/continue/return`) between a function call and the code that uses its result** — especially in deeply nested loops
+2. **When moving `break` statements, verify the indentation level matches the loop you intend to break from** — Python treats indentation as scope
+3. **After any edit near loop control flow, read the surrounding 50+ lines** to verify the intended scope isn't broken
+4. **If props return 0 picks but game picks work**, the first thing to check is the prop scoring loop's control flow — not timeouts, not data sources
+5. **Add integration tests that verify `props.count > 0`** when test data is available — a structural invariant test would have caught this immediately
+
+**Files Modified:**
+- `live_data_router.py` — 2 edits: remove misplaced break (line 6502), add break after append (line 6662)
+
+**Verification:**
+```bash
+# 1. Syntax check
+python3 -m py_compile live_data_router.py
+
+# 2. Scoring guard tests
+python3 -m pytest tests/test_option_a_scoring_guard.py -q
+
+# 3. Option A drift scan
+bash scripts/option_a_drift_scan.sh
+
+# 4. Verify props return picks in production
+curl /live/best-bets/NBA -H "X-API-Key: KEY" | jq '.props.count'
+# Should be > 0 when today's games exist
+
+# 5. Check all sports
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  curl -s "/live/best-bets/$sport" -H "X-API-Key: KEY" | \
+    jq '{sport: .sport, props: .props.count, games: .game_picks.count}'
+done
+```
+
+**Impact:** This was the root cause of the "props not pulling across sports" issue. Every sport (NBA, NHL, NFL, MLB, NCAAB) was affected since the bug was in the shared props scoring loop in `_best_bets_inner()`.
+
+**Fixed in:** v20.8 (Feb 5, 2026)
+
+### Lesson 32: SERP Props Quota Optimization (v20.9)
+**Problem:** SERP daily quota (166/day) exhausted by a single best-bets request (~291 calls). Props alone consume ~220 calls (60% of budget) with near-zero cache hit rate because each player query is unique. When quota exhausts, SERP pre-fetch for game picks is disabled, causing game scoring to revert to sequential SERP (51s of 55s budget), and props time out entirely.
+
+**Production Data (Feb 5, 2026):**
+- NBA: 3/55 props analyzed (TIMED_OUT)
+- NHL: 0/59 props analyzed (TIMED_OUT)
+- SERP: daily_used=176, daily_limit=166, daily_remaining=-10
+- Pre-fetch skipped (quota exhausted)
+
+**Root Cause:** Per-prop SERP calls are unique per player (cache miss rate ~100%), while game SERP queries repeat across picks for the same game (high cache hit rate). Props get moderate boost impact (research cap 0.5, esoteric cap 0.6) vs game signals (sharp chatter 1.3, narrative 0.7).
+
+**Solution (v20.9):**
+1. Added `SERP_PROPS_ENABLED` env var in `core/serp_guardrails.py` (default: `False`)
+2. When disabled, props skip SERP entirely with `serp_status = "SKIPPED_PROPS"`
+3. Props still benefit from LSTM, context layer, GLITCH, Phase 8, and all other signals
+4. Game SERP signals remain active (high cache hit rate, higher impact)
+5. Re-enable with `SERP_PROPS_ENABLED=true` without code changes
+
+**Expected Impact:**
+| Metric | Before | After |
+|--------|--------|-------|
+| SERP daily calls | ~291 (exceeds 166 quota) | ~72 (within quota) |
+| Props completed | 3/55 NBA, 0/59 NHL | Full completion within budget |
+| Game pre-fetch | Disabled (quota exhausted) | Active (quota available) |
+
+**Prevention:**
+- Monitor SERP quota via `debug.serp.status.quota.daily_remaining`
+- Check `get_serp_status()["props_enabled"]` in debug output
+- If re-enabling props SERP, ensure daily quota is increased first
+
+**Files Modified:**
+- `core/serp_guardrails.py` - Added `SERP_PROPS_ENABLED` config + status reporting
+- `live_data_router.py` - Skip SERP for props when disabled
+- `integration_registry.py` - Documented `SERP_PROPS_ENABLED` in serpapi notes
+
+**Fixed in:** v20.9 (Feb 2026)
+
+### Lesson 55: Missing GET Endpoint — Frontend Calling Non-Existent Backend Route (v20.9)
+**Problem:** Frontend `Grading.jsx` called `GET /live/picks/graded` but the backend had no such endpoint. The backend only had `POST /live/picks/grade` (grade a pick) and `GET /live/picks/grading-summary` (stats). The missing GET endpoint caused the frontend to fall back to hardcoded MOCK_PICKS, making the Grading page show fake data instead of real picks.
+
+**Root Cause:** The frontend `api.js` was written with `getGradedPicks()` calling `GET /live/picks/graded`, but the backend endpoint was never implemented. The frontend silently fell back to MOCK_PICKS on the 404 error, masking the problem completely — no error shown to users, no console warnings, just fake data displayed as if it were real.
+
+**The Fix:**
+1. Added `GET /picks/graded` endpoint to `live_data_router.py` using `grader_store.load_predictions()` with grade records merged
+2. Maps internal pick fields to frontend format: `id`, `pick_id`, `player`, `team`, `opponent`, `stat`, `line`, `recommendation`, `graded` (boolean), `result`, `actual`
+3. Supports `?date=` and `?sport=` query params, defaults to today ET
+4. Updated `Grading.jsx`: removed MOCK_PICKS fallback, fixed `pick_id` usage for grade calls, handled game picks alongside props
+5. Added try-catch to `api.getGradedPicks()` (Invariant 11)
+
+**Why This Was Hard to Find:**
+- No errors, no crashes — frontend had a MOCK_PICKS fallback that silently activated
+- The page looked functional with mock data, so the broken backend connection was invisible
+- The similar endpoint names (`/picks/grade` POST vs `/picks/graded` GET) made it easy to assume the GET existed
+
+**Prevention:**
+1. **NEVER add a frontend API method without verifying the backend endpoint exists** — check `live_data_router.py` for the route before writing `api.js` methods
+2. **NEVER use mock/fallback data that looks like real data** — fallbacks should show an empty state or error banner, not realistic fake picks that mask broken connections
+3. **When adding a new GET endpoint, add it to the same section as related POST endpoints** — keeps the contract discoverable
+4. **Add backend endpoint existence checks to the frontend CI** — the `verify-backend.sh` pre-commit hook should validate all `api.js` endpoints exist
+
+**Files Modified:**
+- `live_data_router.py` — Added `GET /picks/graded` endpoint (grader_store integration)
+- `bookie-member-app/Grading.jsx` — Removed MOCK_PICKS, fixed pick_id, improved pick rendering
+- `bookie-member-app/api.js` — Added try-catch to `getGradedPicks()`
+
+**Fixed in:** v20.9 (Feb 5, 2026)
+
+### Lesson 56: SHARP Signal Field Name Mismatch — Wrong Team Graded (v20.10)
+**Problem:** SHARP picks showed 18% hit rate (2W-9L) with all picks showing `actual: 0.0`. Sharp money signals were always being graded as HOME team wins regardless of the actual sharp side.
+
+**Root Cause:** The SHARP signal dictionary uses `sharp_side` field with lowercase values ("home" or "away"), but the pick creation code used `signal.get("side", "HOME")` which always returned the default "HOME" since the `side` field doesn't exist in the signal.
+
+```python
+# BUG — signal has "sharp_side", not "side"
+sharp_side = "home" if money_pct > ticket_pct else "away"  # Line 1924
+data.append({
+    "sharp_side": sharp_side,  # The actual field name
+    ...
+})
+
+# Pick creation used wrong field name
+"side": home_team if signal.get("side") == "HOME" else away_team  # Line 6326
+# signal.get("side") returns None, defaults to "HOME"
+# So ALL picks get side=home_team regardless of actual sharp_side
+```
+
+**The Fix:** Changed all `signal.get("side", "HOME")` to `signal.get("sharp_side", "home")` and updated comparisons from uppercase "HOME" to lowercase "home":
+- Lines 6286, 6314: `pick_side=signal.get("sharp_side", "home")`
+- Lines 6324-6327: Use `signal.get("sharp_side")` with lowercase comparison
+- Line 6347: `signal.get('sharp_side', 'home').upper()`
+
+**Impact:** Before fix, ~50% of SHARP picks were graded against the wrong team (when sharps actually bet AWAY, pick was graded as if they bet HOME).
+
+**Prevention:**
+1. **NEVER assume field names** — always trace back to where the data dictionary is created
+2. **Field name consistency** — if data source uses `sharp_side`, consuming code must also use `sharp_side`
+3. **Beware of silent defaults** — `signal.get("side", "HOME")` returning "HOME" masked the bug because HOME is a valid value
+4. **Unit test SHARP grading** with both HOME and AWAY scenarios
+
+**Files Modified:**
+- `live_data_router.py` — Fixed 7 occurrences of `signal.get("side")` to `signal.get("sharp_side")`
+
+**Fixed in:** v20.10 (Feb 8, 2026)
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (ESPN)
@@ -5005,7 +6438,7 @@ curl -s "https://web-production-7b2a.up.railway.app/live/sharp/NBA" \
 
 ## ✅ VERIFICATION CHECKLIST (SERP Intelligence)
 
-Run these after ANY change to SERP integration (serp_guardrails.py, serp_intelligence.py, serpapi.py):
+Run these after ANY change to SERP integration (serp_guardrails.py, serp_intelligence.py, serpapi.py, or SERP pre-fetch in live_data_router.py):
 
 ```bash
 # 1. Syntax check SERP modules
@@ -5046,6 +6479,27 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
 # 8. Check env var aliases work
 curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 # Should show configured=true if either SERPAPI_KEY or SERP_API_KEY is set
+
+# 9. Verify SERP pre-fetch is working (v20.7)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug.serp | {prefetch_cached, prefetch_games}'
+# prefetch_cached > 0 means pre-fetch is active and caching results
+# prefetch_games > 0 means unique game pairs were identified
+
+# 10. Check pre-fetch timing (should be < 12s)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug.timings.serp_prefetch'
+# Should be 1-5s (parallel). If > 12s, pre-fetch timed out
+
+# 11. Verify pre-fetch not in timed_out_components
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.debug._timed_out_components'
+# Should NOT include "serp_prefetch" — if it does, 12s timeout was hit
+
+# 12. Verify props now return picks (v20.7 regression check)
+curl /live/best-bets/NBA -H "X-API-Key: KEY" | \
+  jq '{props_count: .props.count, game_count: .game_picks.count}'
+# props_count should be > 0 when there are today's games
 ```
 
 **Critical Invariants (ALWAYS verify these):**
@@ -5054,6 +6508,8 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 - Total boost must not exceed 4.3
 - Quota must be checked before API calls
 - All SERP calls wrapped in try/except (fail-soft)
+- `prefetch_cached > 0` in production (v20.7 — proves parallel pre-fetch is active)
+- `serp_prefetch` timing < 12s (hard timeout)
 
 ---
 
@@ -5136,6 +6592,7 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 54. **NEVER** forget to increment quota after successful API calls - use `increment_quota()` in serpapi.py
 55. **NEVER** hardcode sport-specific search queries inline - use `SPORT_QUERIES` template dict in serp_intelligence.py
 56. **NEVER** modify signal→engine mapping without updating INVARIANT 23 in CLAUDE.md
+57. **NEVER** re-enable SERP for props (`SERP_PROPS_ENABLED=true`) without first increasing `SERP_DAILY_QUOTA` — props consume ~220 calls/day with near-zero cache hit rate
 
 ## 🚫 NEVER DO THESE (Esoteric/Phase 1 Signals)
 
@@ -5205,6 +6662,497 @@ curl /live/debug/integrations -H "X-API-Key: KEY" | jq '.serpapi'
 105. **NEVER** return a pick without all required boost fields (value + status + reasons)
 106. **NEVER** omit `msrf_boost`, `jason_sim_boost`, or `serp_boost` from pick payloads - even if 0.0
 107. **NEVER** skip tracking integration usage on cache hits - call `mark_integration_used()` for both cache and live
+
+## 🚫 NEVER DO THESE (v20.2 - Auto Grader Weights)
+
+108. **NEVER** add a new pick type (market type) without initializing weights for it in `_initialize_weights()`
+109. **NEVER** assume `adjust_weights()` fallback to "points" is correct - it masks missing stat_type configurations
+110. **NEVER** forget that game picks use `stat_type = pick_type.lower()` (spread, total, moneyline, sharp)
+111. **NEVER** skip verifying `calculate_bias()` returns sample_size > 0 for new stat types
+112. **NEVER** assume the auto grader "just works" - test with `/live/grader/bias/{sport}?stat_type=X` for all types
+113. **NEVER** add new market types to `run_daily_audit()` without adding corresponding weights
+114. **NEVER** assume weight adjustments are applied just because sample_size > 0 - check `applied: true` explicitly
+115. **NEVER** skip checking `factor_bias` in bias response - it shows what signals are being tracked for learning
+116. **NEVER** assume the daily lesson generated correctly - verify with `/live/grader/daily-lesson/latest`
+117. **NEVER** forget to verify correlation tracking for all 28 signals (pace, vacuum, officials, glitch, esoteric)
+
+## 🚫 NEVER DO THESE (v20.3 - Grading Pipeline)
+
+118. **NEVER** add a new pick_type without adding handling in `grade_game_pick()` - it will grade as PUSH
+119. **NEVER** forget to pass `picked_team` to `grade_game_pick()` for spread/moneyline grading accuracy
+120. **NEVER** have mismatched stat type lists between `_initialize_weights()` and `run_daily_audit()` - both must match
+121. **NEVER** assume STAT_TYPE_MAP covers all formats - check for direct formats ("points") AND Odds API formats ("player_points")
+122. **NEVER** forget to strip market suffixes like "_over_under", "_alternate" from stat types before lookup
+123. **NEVER** skip testing grading for ALL pick types after changes (SPREAD, TOTAL, MONEYLINE, SHARP, PROP)
+124. **NEVER** assume 0% hit rate means bad predictions - it might mean grading is broken (all PUSH)
+
+## 🚫 NEVER DO THESE (v20.4 - Go/No-Go & Sanity Scripts)
+
+125. **NEVER** use hardcoded line numbers in sanity script filters without documenting what they filter
+126. **NEVER** modify `live_data_router.py` without re-running `audit_drift_scan.sh` locally
+127. **NEVER** add a new boost to the scoring formula without updating `endpoint_matrix_sanity.sh` math check
+128. **NEVER** assume `ensemble_adjustment` is 0 - it can be `null`, `0.0`, `+0.5`, or `-0.5`
+129. **NEVER** skip the go/no-go check after changes to scoring, boosts, or sanity scripts
+130. **NEVER** commit code that fails `prod_go_nogo.sh` - all 12 checks must pass
+131. **NEVER** forget that `glitch_adjustment` is ALREADY in `esoteric_score` (not a separate additive)
+
+## 🚫 NEVER DO THESE (v20.4 - Frontend/Backend Synchronization)
+
+132. **NEVER** change engine weights in `scoring_contract.py` without updating frontend tooltips
+133. **NEVER** assume frontend documentation matches backend - verify against `scoring_contract.py`
+134. **NEVER** describe context_score as a "weighted engine" - it's a bounded modifier (±0.35)
+135. **NEVER** use old weight percentages (AI 15%, Research 20%, Esoteric 15%, Jarvis 10%, Context 30%)
+136. **NEVER** skip updating `docs/FRONTEND_INTEGRATION.md` when backend scoring changes
+137. **ALWAYS** verify frontend tooltips show: AI 25%, Research 35%, Esoteric 20%, Jarvis 20%, Context ±0.35
+
+**Correct Option A Weights (authoritative source: `core/scoring_contract.py`):**
+```python
+ENGINE_WEIGHTS = {
+    "ai": 0.25,        # 25% - 8 AI models
+    "research": 0.35,  # 35% - Sharp money, splits, variance (LARGEST)
+    "esoteric": 0.20,  # 20% - Numerology, astro, fib, vortex
+    "jarvis": 0.20,    # 20% - Gematria, sacred triggers
+}
+CONTEXT_MODIFIER_CAP = 0.35  # ±0.35 (NOT a weighted engine!)
+```
+
+## 🚫 NEVER DO THESE (Shell Scripts with Python Subprocesses)
+
+138. **NEVER** use `VAR=value` when Python subprocesses need the variable - use `export VAR=value`
+139. **NEVER** assume shell variables are inherited by child processes - they must be explicitly exported
+140. **NEVER** debug "Could not resolve host: None" without checking if env vars are exported
+141. **NEVER** write shell scripts that call Python without verifying variable visibility with `os.environ.get()`
+
+**Shell Variable Scope Quick Reference:**
+```bash
+# ❌ WRONG - Python subprocess can't see this
+BASE_URL="https://example.com"
+python3 -c "import os; print(os.environ.get('BASE_URL'))"  # None
+
+# ✅ CORRECT - 'export' makes it visible to children
+export BASE_URL="https://example.com"
+python3 -c "import os; print(os.environ.get('BASE_URL'))"  # https://example.com
+```
+
+---
+
+## 🚫 NEVER DO THESE (Datetime/Timezone - v20.5)
+
+142. **NEVER** compare `datetime.now()` with `datetime.fromisoformat(timestamp)` - one may be naive, other aware
+143. **NEVER** use undefined variables like `PYTZ_AVAILABLE` - use `core.time_et.now_et()` instead
+144. **NEVER** use `pytz` for new code - use `core.time_et` (single source of truth) or `zoneinfo`
+145. **NEVER** calculate date windows with wrong math like `days_back + 1` for start (creates 2-day window)
+146. **NEVER** assume stored timestamps have the same timezone awareness as runtime datetime
+147. **NEVER** store `line_variance` in a field named `line` - they have different meanings
+148. **NEVER** grade SHARP picks using `line` field - it contains variance, not actual spread
+149. **NEVER** add new datetime handling code without testing timezone-aware vs naive comparison
+150. **NEVER** use `datetime.now()` in grader code - always use `now_et()` from `core.time_et`
+
+## 🚫 NEVER DO THESE (v20.5 - Go/No-Go & Scoring Adjustments)
+
+151. **NEVER** apply a scoring adjustment to `final_score` without surfacing it as its own field in the pick payload - unsurfaced adjustments break sanity math checks
+152. **NEVER** use `os.path.dirname(__file__)` inside Python heredocs (`python3 - <<'PY'`) - `__file__` resolves to `<stdin>` and `dirname()` returns empty string; use project-relative paths instead
+153. **NEVER** run `prod_go_nogo.sh` locally without `ALLOW_EMPTY=1` - local dev doesn't have production prediction/weight files
+154. **NEVER** add script-only env vars (like `MAX_GAMES`, `MAX_PROPS`, `RUNS`) without registering them in `RUNTIME_ENV_VARS` in `integration_registry.py`
+155. **NEVER** expect sanity scripts that test production API to pass pre-deploy when the change adds new fields - deploy first, then verify (chicken-and-egg pattern)
+
+**Datetime Comparison Quick Reference:**
+```python
+# ❌ WRONG - Will crash if timestamp is timezone-aware
+cutoff = datetime.now() - timedelta(days=7)
+if datetime.fromisoformat(p.timestamp) >= cutoff:  # Error!
+
+# ✅ CORRECT - Use timezone-aware datetime and handle both cases
+from core.time_et import now_et
+from zoneinfo import ZoneInfo
+et_tz = ZoneInfo("America/New_York")
+cutoff = now_et() - timedelta(days=7)
+
+ts = datetime.fromisoformat(p.timestamp)
+if ts.tzinfo is None:
+    ts = ts.replace(tzinfo=et_tz)  # Make aware if naive
+if ts >= cutoff:  # Now safe to compare
+```
+
+**Date Window Calculation:**
+```python
+# ❌ WRONG - Creates 2-day window for days_back=1
+cutoff = now - timedelta(days=days_back + 1)      # 2 days ago
+end_cutoff = now - timedelta(days=days_back - 1)  # today
+
+# ✅ CORRECT - Exact day boundaries
+day_start = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
+day_end = day_start + timedelta(days=1)
+if day_start <= ts < day_end:  # Exclusive end
+```
+
+## 🚫 NEVER DO THESE (v20.6 - Boost Caps & Production)
+
+156. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (3.5) — this causes score inflation and clustering at 10.0
+157. **NEVER** add a new additive boost without updating `TOTAL_BOOST_CAP` logic in `compute_final_score_option_a()` — uncapped boosts compound silently
+158. **NEVER** hardcode timeout values in API endpoints — always use `os.getenv()` with a sensible default and register in `integration_registry.py`
+159. **NEVER** assume `TIME_BUDGET_S` only needs to cover game scoring — props scoring shares the same budget and needs time too
+160. **NEVER** set pick contract fields (description, side_label, etc.) outside `normalize_pick()` — it is the single source of truth for the pick payload
+161. **NEVER** use `models/pick_converter.py:compute_description()` for dict-based picks — it uses object attributes (`.player_name`) not dict keys (`["player_name"]`)
+162. **NEVER** assume a consistently low engine score (like jarvis_rs=4.5) means the engine is dead code — check the production call path and whether triggers are designed to be rare
+163. **NEVER** report a function as "dead code" without tracing which modules actually import it — `score_candidate()` in scoring_pipeline.py is dormant but `compute_final_score_option_a()` is active
+
+## 🚫 NEVER DO THESE (v20.7 - Parallel Pre-Fetch & Performance)
+
+164. **NEVER** make sequential external API calls inside a scoring loop when the same data can be pre-fetched in parallel — 107 sequential calls at ~157ms each = ~17s wasted; parallel = ~2-3s
+165. **NEVER** assume "the cache handles it" for sequential API call performance — `serpapi.py` has a 90-min cache, but all ~107 queries were unique (different teams/targets); cache only helps on repeated calls within TTL
+166. **NEVER** use `threading.Thread` directly for parallel API calls in an async context — use `concurrent.futures.ThreadPoolExecutor` + `asyncio.run_in_executor()` to avoid blocking the event loop
+167. **NEVER** pre-fetch without a hard timeout — always wrap parallel batches in `asyncio.wait_for(gather(*futs), timeout=N)` to prevent runaway threads from consuming the entire time budget
+168. **NEVER** change the SERP pre-fetch cache key format without updating BOTH the pre-fetch block (line ~5893) AND the cache lookup in `calculate_pick_score()` (line ~4434) — mismatched keys = cache misses = fallback to sequential calls
+169. **NEVER** assume props can be pre-fetched like game SERP data — prop SERP calls are per-player with unique parameters that can't be batched ahead of time
+170. **NEVER** add a new parallel pre-fetch phase without adding it to `_record()` timing AND checking `_past_deadline()` before starting — untracked phases break performance telemetry and can exceed the time budget
+171. **NEVER** diagnose "0 props returned" without checking `_timed_out_components` in debug output — timeout starvation from upstream phases (SERP, game scoring) is the most common cause
+172. **NEVER** assume a performance fix is working without verifying `debug.serp.prefetch_cached > 0` in production — a prefetch count of 0 means the pre-fetch failed silently and scoring is still sequential
+
+**SERP Pre-Fetch Quick Reference:**
+```python
+# ❌ WRONG - Sequential API calls in scoring loop
+for pick in candidates:
+    result = external_api_call(pick.team)  # N calls × latency = slow
+
+# ✅ CORRECT - Parallel pre-fetch before scoring loop
+unique_inputs = extract_unique_from_candidates(candidates)
+with ThreadPoolExecutor(max_workers=16) as pool:
+    cache = dict(pool.map(fetch_one, unique_inputs))
+for pick in candidates:
+    result = cache.get(pick.key) or external_api_call(pick.team)  # Cache hit: ~0ms
+```
+
+## 🚫 NEVER DO THESE (v20.8 - Props Indentation & Code Placement)
+
+173. **NEVER** place `if/break/continue/return` between a function call and the code that processes its result — in Python, indentation determines scope, and a misplaced break can make 160+ lines of code unreachable
+174. **NEVER** insert loop control flow (`break`, `continue`) without verifying the indentation level matches the intended loop — a 4-space difference can silently change which loop you're breaking from
+175. **NEVER** assume "0 props returned" is a timeout or data issue without checking the props scoring loop's control flow first — structural dead code is invisible (no errors, no crashes, no stack traces)
+176. **NEVER** edit code near deeply nested loops without reading the surrounding 50+ lines to verify scope isn't broken — Python's indentation scoping means a single edit can silently disable entire code blocks
+177. **NEVER** leave `props_picks.append()` unreachable after refactoring the props scoring loop — always verify the append executes by checking `props.count > 0` in production output
+
+## 🚫 NEVER DO THESE (v20.9 - Frontend/Backend Endpoint Contract)
+
+178. **NEVER** add an `api.js` method calling a backend endpoint without first verifying that endpoint exists in `live_data_router.py` — a missing endpoint returns 404, and if the frontend has fallback data, the broken connection is completely invisible
+179. **NEVER** use realistic mock/fallback data (MOCK_PICKS, sample arrays) that silently activates on API failure — fallbacks must show empty state or error banners so broken connections are immediately visible
+180. **NEVER** assume similar endpoint names mean the endpoint exists — `POST /picks/grade` and `GET /picks/graded` are completely different routes; always verify the HTTP method AND path
+181. **NEVER** add a frontend page that depends on a backend endpoint without adding the endpoint to the "Key Endpoints" section in CLAUDE.md — undocumented endpoints get lost and forgotten
+
+**Indentation Bug Quick Reference:**
+```python
+# ❌ CATASTROPHIC — break between calculate_pick_score() and processing code
+                score = calculate_pick_score(...)
+            if deadline:       # ← Wrong indent level (game loop, not prop loop)
+                break          # Skips ALL processing below
+                # Everything at 16-space indent is INSIDE the if block → DEAD CODE
+                process_result(score)
+                picks.append(result)  # NEVER EXECUTES
+
+# ✅ CORRECT — break AFTER processing is complete
+                score = calculate_pick_score(...)
+                process_result(score)
+                picks.append(result)  # Always executes
+            if deadline:       # Check AFTER append
+                break
+```
+
+---
+
+## ✅ VERIFICATION CHECKLIST (Go/No-Go - REQUIRED BEFORE DEPLOY)
+
+Run this after ANY change to scoring, boosts, sanity scripts, or live_data_router.py:
+
+```bash
+# Full go/no-go (MUST PASS all 12 checks)
+API_KEY="YOUR_KEY" SKIP_NETWORK=0 SKIP_PYTEST=0 ALLOW_EMPTY=1 \
+  bash scripts/prod_go_nogo.sh
+
+# Expected output: "Prod go/no-go: PASS"
+```
+
+**IMPORTANT:** Always use `ALLOW_EMPTY=1` for local runs (dev doesn't have production prediction/weight files).
+
+**The 12 Checks (+ optional pytest):**
+| # | Check | Script | What It Validates |
+|---|-------|--------|-------------------|
+| 1 | option_a_drift | `option_a_drift_scan.sh` | No BASE_5 or context-as-engine |
+| 2 | audit_drift | `audit_drift_scan.sh` | No unauthorized +/-0.5 to final_score |
+| 3 | env_drift | `env_drift_scan.sh` | Required env vars configured |
+| 4 | docs_contract | `docs_contract_scan.sh` | Required fields documented |
+| 5 | learning_sanity | `learning_sanity_check.sh` | Weights initialized |
+| 6 | learning_loop | `learning_loop_sanity.sh` | Auto grader operational |
+| 7 | endpoint_matrix | `endpoint_matrix_sanity.sh` | All 5 sports, required fields, math check |
+| 8 | prod_endpoint_matrix | `prod_endpoint_matrix.sh` | Production /health, /debug, /grader, best-bets |
+| 9 | signal_coverage | `signal_coverage_report.py` | Signal coverage across sports |
+| 10 | api_proof | `api_proof_check.sh` | Production API responding |
+| 11 | live_sanity | `live_sanity_check.sh` | Best-bets returns valid data |
+| 12 | perf_audit | `perf_audit_best_bets.sh` | Response times within benchmarks |
+
+Checks 1-6 are offline (no network needed). Checks 7-12 require `SKIP_NETWORK=0` and a valid `API_KEY`.
+
+**If ANY check fails:**
+1. Read the artifact: `cat artifacts/{check_name}_YYYYMMDD_ET.json`
+2. Fix the issue
+3. Re-run go/no-go
+4. Do NOT deploy until all 12 pass
+
+**Common Failures:**
+| Failure | Likely Cause | Fix |
+|---------|--------------|-----|
+| `audit_drift` | Line numbers shifted | Update filter in `audit_drift_scan.sh` |
+| `endpoint_matrix` | Math mismatch (unsurfaced adjustment) | Surface the field + update jq formula in `endpoint_matrix_sanity.sh` |
+| `env_drift` | New env var not registered | Add to `RUNTIME_ENV_VARS` in `integration_registry.py` |
+| `option_a_drift` | BASE_5 introduced | Remove context-as-engine code |
+| `learning_loop` | Weights missing | Check `_initialize_weights()` |
+| `prod_endpoint_matrix` | Path bug or production down | Check `scripts/prod_endpoint_matrix.sh` paths, verify Railway deploy |
+| `learning_sanity` | Missing ALLOW_EMPTY | Set `ALLOW_EMPTY=1` for local runs |
+
+**Chicken-and-Egg Pattern:** When a code change adds new fields, `endpoint_matrix` (tests production) will fail pre-deploy because production doesn't have the field yet. In this case: deploy the code change first, then re-run go/no-go to verify.
+
+**Artifacts Location:** `artifacts/{check_name}_YYYYMMDD_ET.json`
+
+---
+
+## 📊 PERFORMANCE BENCHMARKS (Feb 4, 2026)
+
+**Perf Audit Results (perf_audit_best_bets.sh):**
+
+| Sport | Game Scoring (p50) | Game Scoring (p95) | Parallel Fetch (p50) | Status |
+|-------|-------------------|-------------------|---------------------|--------|
+| NBA | 45.9s | 49.1s | 0.2s | ✅ Baseline |
+| NFL | 0s | 0s | 0.1s | ✅ Off-season |
+| NHL | 53.2s | 53.8s | 0.3s | ✅ Baseline |
+| MLB | - | - | - | ✅ Off-season |
+| NCAAB | - | - | - | ✅ No games |
+
+**Component Timing Breakdown (NBA p50):**
+| Component | Time (s) | Notes |
+|-----------|----------|-------|
+| init_engines | 0.002 | Fast after first run (cached) |
+| game_context | 0.004 | Context layer setup |
+| parallel_fetch | 0.206 | Odds API + Playbook + ESPN |
+| et_filter | 0.002 | ET timezone filtering |
+| player_resolution | 0.935 | BallDontLie player lookups |
+| serp_prefetch | ~2-3 | v20.7: Parallel SERP pre-fetch (ThreadPoolExecutor, 16 workers) |
+| game_picks_scoring | 45.944 | Full 4-engine + boosts pipeline (expected ~28-35s with pre-fetch) |
+| props_scoring | 0.0 | No props today (should now complete with freed time budget) |
+| pick_logging | 0.0 | Persistence to JSONL |
+
+**Performance Notes:**
+- Game scoring (45-53s) was the bottleneck — v20.7 SERP pre-fetch moves ~17s of sequential SERP calls to a ~2-3s parallel phase
+- Expected game_picks_scoring after v20.7: ~28-35s (freed ~15s from SERP pre-fetch)
+- Props should now complete within time budget (previously starved by sequential SERP calls)
+- First run is slower (engine initialization ~0.6s), subsequent runs faster (~0.002s)
+- Parallel fetch is efficient (~0.2s for 3 API sources)
+- ET filtering is negligible (<0.02s)
+
+**Acceptable Ranges:**
+| Metric | Acceptable | Warning | Critical |
+|--------|------------|---------|----------|
+| game_picks_scoring | <60s | 60-90s | >90s |
+| serp_prefetch | <5s | 5-10s | >12s (timeout) |
+| parallel_fetch | <2s | 2-5s | >5s |
+| player_resolution | <3s | 3-5s | >5s |
+| Total endpoint response | <90s | 90-120s | >120s |
+
+---
+
+## ✅ VERIFICATION CHECKLIST (Perf Audit)
+
+Run the perf audit after ANY change to scoring pipeline, API integrations, or parallel fetch:
+
+```bash
+# Run perf audit (requires API_KEY)
+API_KEY="bookie-prod-2026-xK9mP2nQ7vR4" bash scripts/perf_audit_best_bets.sh
+
+# Check specific sport
+API_KEY="KEY" SPORTS="NBA" bash scripts/perf_audit_best_bets.sh
+
+# More runs for better p50/p95 accuracy
+API_KEY="KEY" RUNS=5 bash scripts/perf_audit_best_bets.sh
+```
+
+**What to Check:**
+1. **game_picks_scoring p50 < 60s** - Main scoring pipeline
+2. **parallel_fetch p50 < 2s** - API fetches
+3. **No empty timings** for sports with active games
+4. **init_engines fast after first run** (<0.1s on subsequent runs)
+
+**Troubleshooting Slow Performance:**
+| Symptom | Likely Cause | Fix |
+|---------|--------------|-----|
+| parallel_fetch > 5s | API timeout or rate limit | Check Odds API quota |
+| game_picks_scoring > 90s | Too many boosts enabled | Review SERP/MSRF/GLITCH |
+| player_resolution > 5s | BallDontLie slow | Check BDL API health |
+| init_engines > 1s every run | Engines not caching | Check singleton patterns |
+
+**Shell Variable Export (Critical):**
+The script uses Python heredocs. Variables MUST be exported:
+```bash
+# ❌ WRONG - Python can't see this
+BASE_URL="https://example.com"
+
+# ✅ CORRECT - Python inherits via os.environ
+export BASE_URL="https://example.com"
+```
+
+---
+
+## ✅ VERIFICATION CHECKLIST (v20.2 - Auto Grader)
+
+Run these after ANY change to auto_grader.py or grading logic:
+
+```bash
+# 1. Syntax check auto_grader
+python -m py_compile auto_grader.py
+
+# 2. Verify weights exist for ALL stat types (PROP + GAME)
+curl -s "/live/grader/weights/NBA" -H "X-API-Key: KEY" | jq 'keys'
+# Should include: points, rebounds, assists, spread, total, moneyline, sharp
+
+# 3. Test bias calculation for GAME stat types
+for stat in spread total moneyline sharp; do
+  echo "=== $stat ==="
+  curl -s "/live/grader/bias/NBA?stat_type=$stat&days_back=1" -H "X-API-Key: KEY" | \
+    jq '{stat_type: .stat_type, sample_size: .bias.sample_size, error: .bias.error}'
+done
+# All should show sample_size > 0 OR "No graded predictions found" (not a crash)
+
+# 4. Run full audit and verify game picks processed
+curl -s -X POST "/live/grader/run-audit" -H "X-API-Key: KEY" \
+  -H "Content-Type: application/json" -d '{"days_back": 1}' | \
+  jq '.results.results.NBA | {spread: .spread.bias_analysis.sample_size, total: .total.bias_analysis.sample_size}'
+# Should show sample_size > 0 for spread and total
+
+# 5. Verify grading summary has graded picks
+curl -s "/live/picks/grading-summary?date=$(date -v-1d +%Y-%m-%d)" -H "X-API-Key: KEY" | \
+  jq '{total: .total_picks, graded: (.graded_picks | length)}'
+# graded should be > 0
+
+# 6. Check OVER/UNDER performance split (for bias monitoring)
+curl -s "/live/picks/grading-summary?date=$(date -v-1d +%Y-%m-%d)" -H "X-API-Key: KEY" | \
+  jq '{
+    over: {wins: [.graded_picks[] | select(.side == "Over" and .result == "WIN")] | length,
+           losses: [.graded_picks[] | select(.side == "Over" and .result == "LOSS")] | length},
+    under: {wins: [.graded_picks[] | select(.side == "Under" and .result == "WIN")] | length,
+            losses: [.graded_picks[] | select(.side == "Under" and .result == "LOSS")] | length}
+  }'
+# Monitor for severe bias (e.g., OVER 19% vs UNDER 82%)
+
+# 7. Test all 5 sports audit
+curl -s -X POST "/live/grader/run-audit" -H "X-API-Key: KEY" \
+  -H "Content-Type: application/json" -d '{"days_back": 1}' | \
+  jq '[.results.results | to_entries[] | {sport: .key, spread_samples: .value.spread.bias_analysis.sample_size}]'
+
+# 8. Verify weight adjustments are APPLIED (not just calculated)
+curl -s "/live/grader/bias/NBA?stat_type=spread&days_back=1" -H "X-API-Key: KEY" | \
+  jq '{applied: (.weight_adjustments != null), adjustments: .weight_adjustments}'
+# Must show applied: true with pace, vacuum, officials deltas
+
+# 9. Check factor correlations are tracked
+curl -s "/live/grader/bias/NBA?stat_type=spread&days_back=1" -H "X-API-Key: KEY" | \
+  jq '.bias.factor_bias | keys'
+# Should include: pace, vacuum, officials, glitch, esoteric
+
+# 10. Full learning loop health check
+curl -s "/live/grader/bias/NBA?stat_type=spread&days_back=1" -H "X-API-Key: KEY" | \
+  jq '{
+    stat_type,
+    sample_size: .bias.sample_size,
+    hit_rate: .bias.overall.hit_rate,
+    bias_direction: .bias.overall.bias_direction,
+    factors_tracked: (.bias.factor_bias | keys | length),
+    adjustments_applied: (.weight_adjustments != null)
+  }'
+# Expected: sample_size > 0, factors_tracked >= 5, adjustments_applied: true
+
+# 11. Verify daily lesson generation
+curl -s "/live/grader/daily-lesson/latest" -H "X-API-Key: KEY" | \
+  jq '{date_et, total_graded, weights_adjusted: (.weights_adjusted | length)}'
+```
+
+**Critical Invariants (ALWAYS verify these):**
+- `_initialize_weights()` includes BOTH prop_stat_types AND game_stat_types
+- Game picks use `stat_type = pick_type.lower()` (from `_convert_pick_to_record()`)
+- `adjust_weights()` should NOT fall back to "points" for valid game stat types
+- `calculate_bias()` filters by `record.stat_type == stat_type` (exact match)
+- Weight adjustments must show `applied: true` (not just calculated)
+- Factor correlations must include all 5 categories: pace, vacuum, officials, glitch, esoteric
+
+**Learning Loop Health Indicators:**
+| Indicator | Healthy | Unhealthy |
+|-----------|---------|-----------|
+| `sample_size` | > 0 | 0 or null |
+| `hit_rate` | Non-null | null |
+| `factor_bias` | 5+ categories | Empty or null |
+| `weight_adjustments` | Non-null with deltas | null |
+| `applied` | true | false or missing |
+
+## 🚫 NEVER DO THESE (v20.0 - Phase 9 Full Spectrum)
+
+98. **NEVER** add weather boost to indoor sports (NBA, NHL, NCAAB) - weather only for NFL, MLB, NCAAF
+99. **NEVER** apply live signals to pre-game picks - only when game_status == "LIVE" or "MISSED_START"
+100. **NEVER** exceed -0.35 for weather modifier - capped in weather.py module
+101. **NEVER** exceed ±0.50 for combined live signals - MAX_COMBINED_LIVE_BOOST enforced
+102. **NEVER** make SSE/WebSocket calls synchronous - blocks event loop, use async
+103. **NEVER** skip dome detection for NFL weather - indoor stadiums return NOT_RELEVANT
+104. **NEVER** apply surface impact to indoor sports - only NFL/MLB outdoor venues
+105. **NEVER** break existing altitude integration (live_data_router.py ~line 4026-4037)
+106. **NEVER** use SSE polling intervals < 15 seconds - API quota protection
+107. **NEVER** stream full pick objects over SSE - bandwidth; use slim_pick format
+108. **NEVER** flip TRAVEL_ENABLED without explicit user approval
+109. **NEVER** add new pillars without updating CLAUDE.md pillar table and docs/MASTER_INDEX.md
+
+---
+
+## ✅ VERIFICATION CHECKLIST (v20.0 - Phase 9 Full Spectrum)
+
+Run these after ANY change to Phase 9 features (streaming, live signals, weather, travel):
+
+```bash
+# 1. Syntax check Phase 9 modules
+python -m py_compile streaming_router.py alt_data_sources/live_signals.py alt_data_sources/weather.py alt_data_sources/travel.py
+
+# 2. Verify streaming status
+curl /live/stream/status -H "X-API-Key: KEY"
+# When enabled: status: "ACTIVE", sse_available: true
+
+# 3. Check live signals in debug output (during live games)
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[] | select(.game_status == "LIVE") | {live_boost, live_reasons}]'
+
+# 4. Check weather adjustments (NFL/MLB only)
+curl /live/best-bets/NFL?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0] | {weather_adj, research_reasons}'
+# Should show weather adjustment for outdoor games (NOT dome games)
+
+# 5. Check travel adjustments
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
+  jq '.game_picks.picks[0].context_reasons | map(select(contains("Travel")))'
+# Should show "Travel: XXXXmi + X-day rest" when applicable
+
+# 6. Test SSE stream (requires enabled flag)
+curl -N /live/stream/games/NBA -H "X-API-Key: KEY" | head -20
+# Should return SSE events if streaming enabled
+
+# 7. Test all sports for Phase 9 integration
+for sport in NBA NHL NFL MLB NCAAB; do
+  echo "=== $sport ==="
+  curl -s "/live/best-bets/$sport?debug=1" -H "X-API-Key: KEY" | \
+    jq '{sport, games: .game_picks.count, props: .props.count, error: .detail}'
+done
+
+# 8. Verify feature flags
+curl /live/stream/status -H "X-API-Key: KEY" | jq '{streaming: .enabled, sse: .sse_available}'
+```
+
+**Critical Invariants (ALWAYS verify these):**
+- Weather ONLY for outdoor sports (NFL, MLB, NCAAF)
+- Live signals ONLY for game_status == "LIVE" or "MISSED_START"
+- Weather cap: -0.35 max
+- Live signals cap: ±0.50 combined
+- SSE minimum interval: 15 seconds
+- All 5 sports must pass regression test
 
 ---
 
@@ -5699,16 +7647,76 @@ grep -n "function_name" live_data_router.py
 - **Daily audit job (6 AM ET):** grades, audits bias, adjusts weights, triggers retrain.
 - **Daily lesson writer:** generates a short lesson summary from audit results.
 
+### v20.2 Stat Types Audited
+The audit now processes BOTH prop picks AND game picks:
+
+**PROP Stat Types (per sport):**
+- NBA: points, rebounds, assists, threes, steals, blocks, pra
+- NFL: passing_yards, rushing_yards, receiving_yards, receptions, touchdowns
+- MLB: hits, runs, rbis, strikeouts, total_bases, walks
+- NHL: goals, assists, points, shots, saves, blocks
+- NCAAB: points, rebounds, assists, threes
+
+**GAME Stat Types (all sports):**
+- spread, total, moneyline, sharp
+
 ### Files + outputs (source of truth)
 - Scheduler + audit flow: `daily_scheduler.py`
 - Audit logs: `/data/grader_data/audit_logs/audit_YYYY-MM-DD.json`
 - Daily lesson (single day): `/data/grader_data/audit_logs/lesson_YYYY-MM-DD.json`
 - Daily lessons log (append-only): `/data/grader_data/audit_logs/lessons.jsonl`
 
-### API endpoint
-- `GET /live/grader/daily-lesson`
-- `GET /live/grader/daily-lesson/latest`
-- `GET /live/grader/daily-lesson?days_back=1`
+### API endpoints
+- `GET /live/grader/daily-lesson` - Get today's lesson
+- `GET /live/grader/daily-lesson/latest` - Get most recent lesson
+- `GET /live/grader/daily-lesson?days_back=1` - Get lesson from N days ago
+- `GET /live/grader/bias/{sport}?stat_type=X` - Get bias for specific stat type
+- `POST /live/grader/run-audit` - Manually trigger audit
+
+### Performance Monitoring (v20.2)
+Monitor OVER/UNDER bias in daily performance:
+```bash
+# Check OVER/UNDER split for yesterday
+curl -s "/live/picks/grading-summary?date=$(date -v-1d +%Y-%m-%d)" -H "X-API-Key: KEY" | \
+  jq '{
+    over: {wins: [.graded_picks[] | select(.side == "Over" and .result == "WIN")] | length,
+           losses: [.graded_picks[] | select(.side == "Over" and .result == "LOSS")] | length},
+    under: {wins: [.graded_picks[] | select(.side == "Under" and .result == "WIN")] | length,
+            losses: [.graded_picks[] | select(.side == "Under" and .result == "LOSS")] | length}
+  }'
+```
+
+**Feb 3, 2026 Benchmark:**
+| Market | Win Rate | Status |
+|--------|----------|--------|
+| SPREAD | 82.1% | ✅ Target |
+| UNDER | 81.6% | ✅ Target |
+| OVER | 19.1% | ⚠️ Needs recalibration |
+
+### v20.3 Learning Loop Verification (Feb 4, 2026)
+
+**Status: ✅ FULLY OPERATIONAL**
+
+| Component | Status | Evidence |
+|-----------|--------|----------|
+| Grader Available | ✅ | `available: true` |
+| Picks Graded | ✅ | 242 picks from Feb 3 (136W-66L-40P) |
+| Weights Initialized | ✅ | All 11 stat types (spread, total, moneyline, sharp + props) |
+| Spread Bias | ✅ | 53 samples, 84.9% hit rate |
+| Total Bias | ✅ | 32 samples, 56.2% hit rate |
+| Factor Correlations | ✅ | 5 categories: pace, vacuum, officials, glitch, esoteric |
+| Weight Adjustments | ✅ | `applied: true` (pace -0.0004, vacuum -0.0002, officials -0.0016) |
+
+**Signals Being Tracked for Learning (28 total):**
+- **Context Layer**: pace (0.088), vacuum (0.032), officials (0.313)
+- **GLITCH**: void_moon (0.155), kp_index (0.0)
+- **Esoteric**: numerology (0.114), astro (0.003), fib_alignment (0.146), vortex (0.058), daily_edge (-0.313)
+
+**What This Proves:**
+1. v20.2 fix is working - game stat types (spread, total) are being processed
+2. Factor correlations are calculated for all 28 signals
+3. Weight adjustments are actually applied (not just calculated)
+4. The learning loop will automatically recalibrate based on performance data
 
 ### Verification (post-deploy gate)
 ```bash
@@ -5717,13 +7725,44 @@ API_BASE=https://web-production-7b2a.up.railway.app \
 API_KEY=YOUR_KEY \
 bash scripts/verify_autograder_e2e.sh --mode pre
 
-# Check today’s lesson (may 404 before 6AM ET)
+# Check today's lesson (may 404 before 6AM ET)
 curl -s "$API_BASE/live/grader/daily-lesson" -H "X-API-Key: $API_KEY"
+
+# Verify game stat types are being audited (v20.2)
+curl -s -X POST "$API_BASE/live/grader/run-audit" -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" -d '{"days_back": 1}' | \
+  jq '.results.results.NBA | {spread: .spread.bias_analysis.sample_size, total: .total.bias_analysis.sample_size}'
+# Both should show sample_size > 0
 ```
 
 ### Failure policy
 - If lesson file missing before 6 AM ET: return **404** (expected).
 - After 6 AM ET: lesson should exist for the day.
+- If game stat types show "No graded predictions found" but picks exist: Check `_initialize_weights()` includes game_stat_types (see Lesson 32)
+
+### Learning Loop Troubleshooting
+
+| Symptom | Likely Cause | Fix |
+|---------|--------------|-----|
+| `sample_size: 0` for spread/total | Weights not initialized for game stat types | Check `_initialize_weights()` (Lesson 32) |
+| `hit_rate: null` | No graded picks in date range | Check grading-summary endpoint |
+| `factor_bias: null` | Signal tracking not wired | Check PredictionRecord fields (v19.1) |
+| `weight_adjustments: null` | Bias calculation failed | Check calculate_bias() logs |
+| `applied: false` | Trap reconciliation blocked it | Check has_recent_trap_adjustment() |
+| Daily lesson empty | No games completed for date | Expected if games still in progress |
+
+### Quick Health Check Command
+```bash
+# Full learning loop health check (run after any auto_grader changes)
+curl -s "/live/grader/bias/NBA?stat_type=spread&days_back=1" -H "X-API-Key: KEY" | \
+  jq '{
+    status: (if .bias.sample_size > 0 then "✅ HEALTHY" else "❌ NO DATA" end),
+    sample_size: .bias.sample_size,
+    hit_rate: .bias.overall.hit_rate,
+    factors_tracked: (.bias.factor_bias | keys | length),
+    adjustments_applied: (.weight_adjustments != null)
+  }'
+```
 
 ---
 
@@ -5766,3 +7805,4 @@ python3 -c 'import socket; print(socket.gethostbyname("github.com"))'
 1) Ensure guard tests run in CI (e.g., `tests/test_option_a_scoring_guard.py`).
 2) Keep a one-line invariant in this file: Option A is canonical and context is modifier-only.
 3) Add a drift-scan to `scripts/ci_sanity_check.sh` to block `BASE_5` / context-weighted strings.
+# 1770205770

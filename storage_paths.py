@@ -137,6 +137,11 @@ def get_predictions_file() -> str:
     return os.path.join(get_store_dir(), "predictions.jsonl")
 
 
+def get_graded_picks_file() -> str:
+    """Get graded_picks.jsonl path (append-only grade records)."""
+    return os.path.join(get_store_dir(), "graded_picks.jsonl")
+
+
 def get_weights_file() -> str:
     """Get weights.json path."""
     mount_root = get_mount_root()
@@ -164,6 +169,7 @@ def get_storage_health() -> dict:
         mount_root = get_mount_root()
         store_dir = get_store_dir()
         predictions_file = get_predictions_file()
+        graded_picks_file = get_graded_picks_file()
         weights_file = get_weights_file()
         sentinel_file = os.path.join(store_dir, ".volume_sentinel")
 
@@ -224,6 +230,7 @@ def get_storage_health() -> dict:
             "writable": writable,
             "absolute_paths": {
                 "predictions": predictions_file,
+                "graded_picks": graded_picks_file,
                 "weights": weights_file,
                 "store_dir": store_dir,
             },
@@ -232,6 +239,9 @@ def get_storage_health() -> dict:
             "predictions_size_bytes": pred_size,
             "predictions_last_modified": pred_modified,
             "predictions_line_count": pred_line_count,
+            "graded_picks_file": graded_picks_file,
+            "graded_picks_exists": os.path.exists(graded_picks_file),
+            "graded_picks_size_bytes": os.path.getsize(graded_picks_file) if os.path.exists(graded_picks_file) else 0,
             "weights_file": weights_file,
             "weights_exists": weights_exists,
             "weights_last_modified": weights_modified,

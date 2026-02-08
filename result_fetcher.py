@@ -78,7 +78,7 @@ ODDS_API_SPORTS = {
 
 # Stat type mappings for grading
 STAT_TYPE_MAP = {
-    # NBA
+    # NBA - Odds API format (player_X)
     "player_points": "points",
     "player_rebounds": "rebounds",
     "player_assists": "assists",
@@ -90,17 +90,38 @@ STAT_TYPE_MAP = {
     "player_points_rebounds": "pr",
     "player_points_assists": "pa",
     "player_rebounds_assists": "ra",
-    # NHL
+    # NBA - Direct format (used in our stat_type field)
+    "points": "points",
+    "rebounds": "rebounds",
+    "assists": "assists",
+    "threes": "three_pointers_made",  # v20.3: "threes" → "three_pointers_made"
+    "3pt": "three_pointers_made",
+    "steals": "steals",
+    "blocks": "blocks",
+    "turnovers": "turnovers",
+    "pra": "pra",
+    "pts+reb+ast": "pra",
+    # NHL - Odds API format
     "player_goals": "goals",
     "player_shots": "shots",
     "player_saves": "saves",
-    # NFL
+    # NHL - Direct format
+    "goals": "goals",
+    "shots": "shots",
+    "saves": "saves",
+    # NFL - Odds API format
     "player_pass_yds": "passing_yards",
     "player_rush_yds": "rushing_yards",
     "player_rec_yds": "receiving_yards",
     "player_pass_tds": "passing_touchdowns",
     "player_rush_tds": "rushing_touchdowns",
     "player_receptions": "receptions",
+    # NFL - Direct format
+    "passing_yards": "passing_yards",
+    "rushing_yards": "rushing_yards",
+    "receiving_yards": "receiving_yards",
+    "receptions": "receptions",
+    "touchdowns": "touchdowns",
 }
 
 
@@ -749,7 +770,8 @@ def normalize_player_name(name: str) -> str:
 def match_player_stats(
     player_name: str,
     stat_type: str,
-    all_stats: List[PlayerStatline]
+    all_stats: List[PlayerStatline],
+    expected_teams: Optional[List[str]] = None
 ) -> Optional[float]:
     """
     Find a player's actual stat value from the statlines.
@@ -758,22 +780,99 @@ def match_player_stats(
         player_name: Player name to match
         stat_type: Stat type (player_points, player_assists, etc.)
         all_stats: List of all player statlines
+        expected_teams: Optional list of team names (home_team, away_team) to validate against
 
     Returns:
         Actual stat value or None if not found
     """
+    if not player_name or not all_stats:
+        return None
+
     normalized_name = normalize_player_name(player_name)
-    stat_key = STAT_TYPE_MAP.get(stat_type, stat_type.replace("player_", ""))
+
+    # v20.3: Clean up stat_type - handle formats like "player_points_over_under"
+    # Strip trailing _over, _under, _alternate from market keys
+    clean_stat_type = stat_type.lower() if stat_type else ""
+    for suffix in ["_over_under", "_over", "_under", "_alternate", "_line"]:
+        clean_stat_type = clean_stat_type.replace(suffix, "")
+
+    # Now look up in STAT_TYPE_MAP or use cleaned version
+    stat_key = STAT_TYPE_MAP.get(clean_stat_type, clean_stat_type.replace("player_", ""))
+
+    # Also try the original stat_type in case it's already correct
+    stat_key_original = STAT_TYPE_MAP.get(stat_type, stat_type.replace("player_", "") if stat_type else "")
+
+    # v20.11: Normalize expected teams for comparison
+    normalized_expected_teams = []
+    if expected_teams:
+        normalized_expected_teams = [normalize_player_name(t) for t in expected_teams if t]
+
+    # v20.11: Track matches with and without team validation
+    matches_with_team = []
+    matches_without_team = []
 
     for statline in all_stats:
         if normalize_player_name(statline.player_name) == normalized_name:
-            # Check if we have this stat
-            if stat_key in statline.stats:
-                return statline.stats[stat_key]
-            # Try direct attribute
-            if hasattr(statline, stat_key):
-                return getattr(statline, stat_key, None)
+            # Check if we have this stat - try cleaned key first, then original
+            stat_value = None
+            matched_key = None
+            for key in [stat_key, stat_key_original]:
+                if key in statline.stats:
+                    stat_value = statline.stats[key]
+                    matched_key = key
+                    break
+                # Try direct attribute
+                if hasattr(statline, key) and getattr(statline, key, None) is not None:
+                    stat_value = getattr(statline, key)
+                    matched_key = key
+                    break
 
+            if stat_value is not None:
+                # v20.11: Check if statline team matches expected teams
+                statline_team_normalized = normalize_player_name(statline.team) if statline.team else ""
+                team_matches = False
+                if normalized_expected_teams:
+                    for exp_team in normalized_expected_teams:
+                        if exp_team and statline_team_normalized:
+                            # Check if either contains the other (handles "Orlando Magic" vs "Magic")
+                            if exp_team in statline_team_normalized or statline_team_normalized in exp_team:
+                                team_matches = True
+                                break
+                else:
+                    # No expected teams provided, consider it a match
+                    team_matches = True
+
+                if team_matches:
+                    matches_with_team.append((statline, stat_value, matched_key))
+                else:
+                    matches_without_team.append((statline, stat_value, matched_key))
+
+    # v20.11: Prefer matches where team validates
+    if matches_with_team:
+        statline, stat_value, matched_key = matches_with_team[0]
+        logger.debug("Matched %s stat '%s' = %s (team: %s)",
+                    player_name, matched_key, stat_value, statline.team)
+        return stat_value
+
+    # v20.11: Fall back to matches without team validation, but log warning
+    if matches_without_team:
+        statline, stat_value, matched_key = matches_without_team[0]
+        logger.warning(
+            "TEAM MISMATCH: Player %s found on team '%s' but expected one of %s. "
+            "Stat '%s' = %s. This may indicate a data quality issue.",
+            player_name, statline.team, expected_teams, matched_key, stat_value
+        )
+        return stat_value
+
+    # Check if player was found but stat wasn't available
+    for statline in all_stats:
+        if normalize_player_name(statline.player_name) == normalized_name:
+            logger.debug("Stats available for %s: %s (wanted: %s/%s)",
+                        player_name, list(statline.stats.keys()), stat_key, stat_key_original)
+            return None  # Player found but stat not available
+
+    # Player not found in stats
+    logger.debug("Player %s not found in %d statlines", player_name, len(all_stats))
     return None
 
 
@@ -880,6 +979,23 @@ def grade_game_pick(
             return ("WIN" if home_score > away_score else "LOSS"), float(spread)
         else:
             return ("WIN" if away_score > home_score else "LOSS"), float(-spread)
+
+    elif "sharp" in pick_type_lower:
+        # v20.5: SHARP picks - ALWAYS grade as moneyline (who won)
+        # BUG FIX: The `line` field contains line_variance (movement amount like 1.5),
+        # NOT the actual spread. Grading as spread with line_variance is incorrect.
+        # Sharp signals indicate "sharps bet on HOME/AWAY" - grade on straight-up winner.
+        picked_home = normalize_player_name(picked_team) in normalize_player_name(home_team)
+
+        # Tie = PUSH
+        if home_score == away_score:
+            return "PUSH", 0.0
+
+        # Grade as moneyline - did the sharp side win?
+        if picked_home:
+            return ("WIN" if home_score > away_score else "LOSS"), 0.0
+        else:
+            return ("WIN" if away_score > home_score else "LOSS"), 0.0
 
     return "PUSH", 0.0
 
@@ -999,10 +1115,17 @@ async def auto_grade_picks(
                 stats = all_player_stats.get(sport, [])
 
                 prop_type = pick.get("prop_type") or pick.get("stat_type") or pick.get("market", "")
+                # v20.11: Pass expected teams for team validation to prevent mismatches
+                expected_teams = [
+                    pick.get("home_team"),
+                    pick.get("away_team"),
+                    pick.get("player_team"),  # Also include player's team if available
+                ]
                 actual_value = match_player_stats(
                     player_name,
                     prop_type,
-                    stats
+                    stats,
+                    expected_teams=expected_teams
                 )
 
                 if actual_value is None:
@@ -1038,6 +1161,14 @@ async def auto_grade_picks(
 
                 # Grade the game pick
                 pick_type = pick.get("pick_type") or pick.get("market", "")
+                # v20.3: Extract picked team for spread/moneyline grading
+                # Try multiple field names where the selected team might be stored
+                picked_team = (
+                    pick.get("selection") or
+                    pick.get("picked_team") or
+                    pick.get("team") or
+                    pick.get("side", "")  # side sometimes contains team name
+                )
                 result, actual_value = grade_game_pick(
                     pick_type=pick_type,
                     pick_side=pick.get("side", ""),
@@ -1045,7 +1176,8 @@ async def auto_grade_picks(
                     home_score=matched_game.home_score,
                     away_score=matched_game.away_score,
                     home_team=matched_game.home_team,
-                    away_team=matched_game.away_team
+                    away_team=matched_game.away_team,
+                    picked_team=picked_team
                 )
 
                 # v18.0: Record outcome for officials tracking
@@ -1211,25 +1343,26 @@ def get_result_fetcher():
 
 if __name__ == "__main__":
     import sys
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
 
     async def main():
         date = sys.argv[1] if len(sys.argv) > 1 else None
         result = await auto_grade_picks(date=date)
-        print(f"\nAuto-grade results:")
-        print(f"  Games fetched: {result['games_fetched']}")
-        print(f"  Stats fetched: {result['stats_fetched']}")
-        print(f"  Picks graded: {result['picks_graded']}")
-        print(f"  Picks failed: {result['picks_failed']}")
+        logger.info("\nAuto-grade results:")
+        logger.info(f"  Games fetched: {result['games_fetched']}")
+        logger.info(f"  Stats fetched: {result['stats_fetched']}")
+        logger.info(f"  Picks graded: {result['picks_graded']}")
+        logger.info(f"  Picks failed: {result['picks_failed']}")
 
         if result.get("summary"):
             s = result["summary"]
-            print(f"\nSummary:")
-            print(f"  Record: {s['wins']}-{s['losses']}-{s['pushes']}")
-            print(f"  Hit rate: {s['hit_rate']}")
+            logger.info("\nSummary:")
+            logger.info(f"  Record: {s['wins']}-{s['losses']}-{s['pushes']}")
+            logger.info(f"  Hit rate: {s['hit_rate']}")
 
         if result.get("graded_picks"):
-            print(f"\nGraded picks:")
+            logger.info("\nGraded picks:")
             for g in result["graded_picks"][:10]:
-                print(f"  {g['player']}: {g['line']} {g['side']} -> {g['actual']} = {g['result']}")
+                logger.info(f"  {g['player']}: {g['line']} {g['side']} -> {g['actual']} = {g['result']}")
 
     asyncio.run(main())

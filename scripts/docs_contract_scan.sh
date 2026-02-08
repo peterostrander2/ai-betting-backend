@@ -36,6 +36,7 @@ for doc in "${DOCS[@]}"; do
     if rg -n "$pat" "$doc" >/tmp/docs_contract_forbidden 2>/dev/null; then
       FILTERED=$(cat /tmp/docs_contract_forbidden | rg -v -i "$ALLOW_CONTEXT" || true)
       if [[ "$pat" == "BASE_5" || "$pat" == "5-engine" || "$pat" == "five-engine" ]]; then
+        FILTERED=$(echo "$FILTERED" | rg -vi "No BASE_5|option_a_drift|BASE_5 introduced" || true)
         FILTERED=$(echo "$FILTERED" | rg -i "weight|engine|formula|score|=" || true)
       fi
       if [[ "$pat" == "ENGINE_WEIGHTS\\[\\\"context\\\"\\]" ]]; then

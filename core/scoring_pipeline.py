@@ -28,6 +28,7 @@ try:
         ENGINE_WEIGHT_ESOTERIC,
         ENGINE_WEIGHT_JARVIS,
         COMMUNITY_MIN_SCORE,
+        JARVIS_BASELINE_FLOOR,
         validate_score_threshold,
     )
     INVARIANTS_AVAILABLE = True
@@ -38,6 +39,7 @@ except ImportError:
     ENGINE_WEIGHT_ESOTERIC = 0.20
     ENGINE_WEIGHT_JARVIS = 0.20
     COMMUNITY_MIN_SCORE = 6.5
+    JARVIS_BASELINE_FLOOR = 4.5
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +66,12 @@ def compute_final_score_option_a(
     jason_sim_boost: float,
     serp_boost: float,
     cap: Optional[float] = None,
+    ensemble_adjustment: float = 0.0,
+    totals_calibration_adj: float = 0.0,
 ) -> Tuple[float, float]:
     """
     Option A final score formula:
-    FINAL = BASE_4 + CONTEXT_MOD + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+    FINAL = BASE_4 + CONTEXT_MOD + capped(confluence + msrf + jason_sim + serp + ensemble + totals_cal)
     """
     context_modifier = clamp_context_modifier(context_modifier, cap=cap)
     try:
@@ -77,7 +81,15 @@ def compute_final_score_option_a(
         jason_sim_boost = max(-JASON_SIM_BOOST_CAP, min(JASON_SIM_BOOST_CAP, jason_sim_boost))
     except Exception:
         pass
-    final_score = base_score + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost
+    # Cap total boosts (confluence + msrf + jason_sim + serp + ensemble + totals_cal) to prevent score inflation
+    total_boosts = confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + totals_calibration_adj
+    try:
+        from core.scoring_contract import TOTAL_BOOST_CAP
+        if total_boosts > TOTAL_BOOST_CAP:
+            total_boosts = TOTAL_BOOST_CAP
+    except Exception:
+        pass
+    final_score = base_score + context_modifier + total_boosts
     # Clamp final score to [0, 10]
     final_score = max(0.0, min(10.0, final_score))
     return final_score, context_modifier
@@ -89,13 +101,36 @@ def compute_harmonic_boost(research_score: float, esoteric_score: float) -> floa
         from core.scoring_contract import HARMONIC_CONVERGENCE_THRESHOLD, HARMONIC_BOOST
     except Exception:
         HARMONIC_CONVERGENCE_THRESHOLD = 7.5
-        HARMONIC_BOOST = 1.5
+        HARMONIC_BOOST = 1.0  # v20.11: Lowered from 1.5 to match recalibration
     if research_score >= HARMONIC_CONVERGENCE_THRESHOLD and esoteric_score >= HARMONIC_CONVERGENCE_THRESHOLD:
         return HARMONIC_BOOST
     return 0.0
 
 # =============================================================================
-# PUBLIC API - SINGLE SCORING FUNCTION
+# LEGACY/UNUSED — score_candidate() is NOT called in production.
+#
+# Production scoring happens in live_data_router.py:calculate_jarvis_engine_score()
+# (lines 2819-3037) which computes real jarvis_rs from sacred number triggers,
+# gematria signals, and mid-spread goldilocks. That function feeds into the
+# BASE_4 formula via the JarvisSavantEngine singleton.
+#
+# This function is a dormant demo/reference implementation. The hardcoded
+# jarvis_score below is a placeholder — the real engine produces jarvis_rs
+# values starting at JARVIS_BASELINE_FLOOR (4.5) with additive trigger
+# contributions. Most picks get 4.5 because sacred number triggers are
+# statistically rare by design:
+#
+#   Sacred triggers and their rarity:
+#     IMMORTAL (2178): +3.5 → 8.0  — requires gematria sum = 2178 (very rare)
+#     ORDER (201):     +2.5 → 7.0  — gematria sum = 201
+#     MASTER/WILL/SOCIETY (33/93/322): +2.0 → 6.5
+#     BEAST/JESUS/TESLA (666/888/369): +1.5 → 6.0
+#
+#   Simple gematria (a=1..z=26) produces player+team sums typically in the
+#   100-400 range, so most matchups don't match ANY sacred number. This is
+#   intentional: Jarvis should only boost when genuine alignment exists.
+#   The GOLD_STAR gate (jarvis_rs >= 6.5) therefore requires at minimum a
+#   +2.0 trigger, making GOLD_STAR picks rare — correct behavior.
 # =============================================================================
 
 def score_candidate(
@@ -103,10 +138,10 @@ def score_candidate(
     context: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
-    Score a single candidate (game or prop pick).
+    LEGACY/UNUSED — Score a single candidate (game or prop pick).
 
-    This is the ONLY function that should compute final_score.
-    All other code should call this function, not duplicate the math.
+    NOT called in production. Production uses compute_final_score_option_a()
+    for the final score math and live_data_router.py for engine scoring.
 
     Args:
         candidate: Normalized candidate dict with required fields:
@@ -276,8 +311,9 @@ def score_candidate(
     # =========================================================================
     # ENGINE 4: JARVIS SCORE (0-10)
     # =========================================================================
-    # Simplified - real implementation would call jarvis_savant_engine
-    jarvis_score = 5.0  # Default baseline
+    # Placeholder — production uses calculate_jarvis_engine_score() in
+    # live_data_router.py which computes real triggers from gematria sums.
+    jarvis_score = JARVIS_BASELINE_FLOOR + 0.5  # Baseline floor + small offset
     jarvis_reasons = ["Gematria triggers", "Mid-spread check"]
 
     # =========================================================================
@@ -493,5 +529,10 @@ def _validate_candidate(candidate: Dict[str, Any]) -> None:
 # =============================================================================
 
 __all__ = [
+    # Active production functions
+    "clamp_context_modifier",
+    "compute_final_score_option_a",
+    "compute_harmonic_boost",
+    # Legacy/reference (not used in production)
     "score_candidate",
 ]

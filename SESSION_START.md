@@ -29,6 +29,14 @@ curl -s "https://web-production-7b2a.up.railway.app/live/best-bets/NBA" \
   -H "X-API-Key: your_key" | jq '.game_picks.picks[0] | {start_time_et, rest_days, book_count, market_book_count, bet_string}'
 ```
 
+## Go/No-Go gate (run before deploy)
+
+```bash
+# Full 12-check gate (ALLOW_EMPTY=1 required for local runs)
+API_KEY="YOUR_KEY" SKIP_NETWORK=0 SKIP_PYTEST=0 ALLOW_EMPTY=1 \
+  bash scripts/prod_go_nogo.sh
+```
+
 ## Common tasks
 
 - If data looks like demo/fallback, verify `ODDS_API_KEY` and `PLAYBOOK_API_KEY` in the backend environment.

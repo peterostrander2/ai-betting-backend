@@ -5297,3 +5297,291 @@ curl "https://web-production-7b2a.up.railway.app/live/debug/integrations?quick=t
 
 ---
 
+
+## Session Log: February 4, 2026 - Tech Debt Cleanup & Health Check
+
+### Summary
+
+Completed technical debt review, cleanup, and system health verification.
+
+---
+
+### Work Completed
+
+#### 1. Frontend Integration Complete ✅
+
+All 5 frontend integration priorities marked complete:
+
+| Priority | Feature | Status |
+|----------|---------|--------|
+| 1 | Context Score Display | ✅ Complete |
+| 2 | Context Layer Details | ✅ Complete |
+| 3 | Harmonic Convergence Badge | ✅ Complete |
+| 4 | MSRF Turn Date Resonance | ✅ Complete |
+| 5 | Officials Impact | ✅ Complete |
+
+**Commit:** `e0ff9e7` - docs: mark Priority 4-5 complete
+
+---
+
+#### 2. Technical Debt Cleanup ✅
+
+Reviewed all 3 tech debt items from `tasks/todo.md`:
+
+| Item | Finding | Action |
+|------|---------|--------|
+| Consolidate Titanium logic | Already consolidated - `tiering.check_titanium_rule()` calls `core/titanium.evaluate_titanium()` | N/A |
+| Clean up services/ directory | Both files actively used in v18.x (`officials_tracker.py`, `ml_data_pipeline.py`) | N/A |
+| Remove `new_endpoints.py` | Deprecated, not imported anywhere | **Deleted** |
+
+**Deleted:** `legacy/new_endpoints.py` (~370 lines of dead code)
+
+**Commit:** `8c9629d` - chore: clean up tech debt - remove deprecated new_endpoints.py
+
+---
+
+#### 3. System Health Check ✅
+
+**API Usage (Feb 4, 2026):**
+
+| API | Used | Limit | % Used | Status |
+|-----|------|-------|--------|--------|
+| Playbook | 11,047 | 25,000 | 44.2% | 🟢 Healthy |
+| Odds API | 13,705 | 100,000 | 13.7% | ✅ Healthy |
+
+**Grader Status:**
+
+| Metric | Value |
+|--------|-------|
+| Total Predictions | 635 |
+| Today's Picks | 116 |
+| Pending to Grade | 69 |
+| Graded Today | 47 |
+| Weight Learning | Active (5 sports) |
+
+**NBA Learned Weights (spread market):**
+
+| Factor | Weight | Change |
+|--------|--------|--------|
+| LSTM | 0.200 | baseline |
+| Vacuum | 0.179 | ↑ increased |
+| Defense | 0.150 | baseline |
+| Pace | 0.116 | ↓ decreased |
+| Park Factor | 0.100 | baseline |
+| Officials | 0.067 | ↓ decreased |
+
+Learning loop actively adjusting weights based on graded results.
+
+---
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `legacy/new_endpoints.py` | Deleted |
+| `legacy/README.md` | Updated to reflect deletion |
+| `tasks/todo.md` | Marked all tech debt resolved |
+| `docs/FRONTEND_INTEGRATION.md` | Marked Priority 4-5 complete |
+
+---
+
+### Production Status
+
+```
+Version: v20.4
+Build: 8c9629d
+Status: FROZEN (production-ready)
+All 14 integrations: Configured ✅
+Storage: 4.7 MB predictions
+Redis: Connected ✅
+Scheduler: Running ✅
+```
+
+---
+
+### Verification Commands
+
+```bash
+# Health check
+curl "https://web-production-7b2a.up.railway.app/health"
+
+# API usage
+curl "https://web-production-7b2a.up.railway.app/live/api-usage" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+
+# Grader status
+curl "https://web-production-7b2a.up.railway.app/live/grader/status" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+
+# Learned weights
+curl "https://web-production-7b2a.up.railway.app/live/grader/weights/NBA" \
+  -H "X-API-Key: bookie-prod-2026-xK9mP2nQ7vR4"
+```
+
+---
+
+## Session Log: February 4, 2026 - Grader Bug Fixes & Performance Analysis
+
+### Summary
+
+Investigated pick performance, found and fixed 4 bugs in grading system.
+
+---
+
+### Bugs Found & Fixed
+
+#### Bug 1: SHARP Picks 0% Hit Rate (v20.5)
+
+**Symptom:** SHARP picks showing 0% hit rate across all sports (NBA 0/14, NHL 0/8, NCAAB 0/7)
+
+**Root Cause:** SHARP picks stored `line_variance` (movement amount like 1.5) in the `line` field, but grading logic treated it as actual spread.
+
+**Fix:** Grade SHARP picks as moneyline only (who won), ignoring incorrect `line` field.
+
+**File:** `result_fetcher.py` lines 930-943
+
+**Commit:** `2b517a0`
+
+---
+
+#### Bug 2: `/grader/queue` PYTZ_AVAILABLE Undefined
+
+**Symptom:** `{"detail":"name 'PYTZ_AVAILABLE' is not defined"}`
+
+**Root Cause:** Variable `PYTZ_AVAILABLE` used but never defined.
+
+**Fix:** Replace with `core.time_et.now_et()` (single source of truth for ET time).
+
+**File:** `live_data_router.py` line 9213
+
+**Commit:** `fbe077c`
+
+---
+
+#### Bug 3: `/grader/daily-report` Datetime Comparison Error
+
+**Symptom:** `{"detail":"can't compare offset-naive and offset-aware datetimes"}`
+
+**Root Cause:** `datetime.now()` (naive) compared with stored timestamps (potentially aware).
+
+**Fix:** Use `core.time_et.now_et()` and handle both naive/aware timestamps.
+
+**File:** `live_data_router.py` lines 9016-9050
+
+**Commit:** `fbe077c`
+
+---
+
+#### Bug 4: Daily Report Counting 2 Days Instead of 1
+
+**Symptom:** Daily report showing ~290 picks for "yesterday" (should be ~150)
+
+**Root Cause:** Date filter logic was wrong:
+```python
+cutoff = now - timedelta(days=days_back + 1)  # 2 days ago (WRONG)
+end_cutoff = now - timedelta(days=days_back - 1)  # today
+```
+
+**Fix:** Use exact day boundaries:
+```python
+report_day_start = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0)
+report_day_end = report_day_start + timedelta(days=1)
+```
+
+**File:** `live_data_router.py` lines 9030-9050
+
+**Commit:** `453a035`
+
+---
+
+### Performance After Fixes
+
+**Pick Performance (1 day sample):**
+
+| Type | Count | Hit Rate | Notes |
+|------|-------|----------|-------|
+| SPREAD | 46 | 73.9% | Excellent |
+| TOTAL | 36 | 50.0% | Break-even |
+| MONEYLINE | 7 | 14.3% | Small sample |
+| SHARP | 21 | 19.0% | Was 0% before fix |
+
+**API Health:**
+- Playbook: 44.2% used (healthy)
+- Odds API: 13.7% used (healthy)
+
+---
+
+### Lessons Added
+
+- **Lesson 41:** SHARP pick grading - line_variance ≠ actual spread
+
+---
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `result_fetcher.py` | SHARP grading fix (moneyline only) |
+| `live_data_router.py` | PYTZ fix, datetime fix, date window fix |
+| `CLAUDE.md` | Added Lesson 41, updated to v20.5 |
+
+---
+
+### Commits
+
+```
+2b517a0 fix(grader): SHARP picks grade as moneyline, not line_variance
+fbe077c fix: grader endpoints datetime/pytz errors
+453a035 fix(grader): daily-report date window was 2 days instead of 1
+```
+
+---
+
+### Version
+
+**v20.5** - All grader bugs fixed, SHARP picks now grading correctly.
+
+---
+
+#### Bug 5: `/grader/performance/{sport}` Datetime Comparison Error
+
+**Symptom:** `Internal Server Error` on performance endpoint
+
+**Root Cause:** Same naive vs aware datetime comparison bug:
+```python
+cutoff = datetime.now() - timedelta(days=days_back)
+datetime.fromisoformat(p.timestamp) >= cutoff  # Fails if timestamp is TZ-aware
+```
+
+**Fix:** Use `now_et()` and handle mixed timezone timestamps (same pattern as daily-report fix).
+
+**File:** `live_data_router.py` lines 8933-8944
+
+**Commit:** `78a9609`
+
+---
+
+### Updated Commits List
+
+```
+2b517a0 fix(grader): SHARP picks grade as moneyline, not line_variance
+fbe077c fix: grader endpoints datetime/pytz errors
+453a035 fix(grader): daily-report date window was 2 days instead of 1
+5f08ca6 docs: add session log for grader bug fixes (v20.5)
+78a9609 fix(grader): performance endpoint datetime comparison error
+```
+
+---
+
+### All Grader Endpoints Verified Working
+
+| Endpoint | Status |
+|----------|--------|
+| `/grader/status` | ✅ |
+| `/grader/queue` | ✅ |
+| `/grader/daily-report` | ✅ |
+| `/grader/performance/{sport}` | ✅ |
+| `/grader/bias/{sport}` | ✅ |
+| `/grader/weights/{sport}` | ✅ |
+
+---

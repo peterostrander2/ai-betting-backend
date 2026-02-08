@@ -475,6 +475,21 @@ def normalize_pick(pick: dict) -> dict:
         "jarvis": pick.get("jarvis_score") or pick.get("jarvis_rs", 0)
     }
 
+    # === DESCRIPTION (human-readable pick summary) ===
+    if not pick.get("description"):
+        player_name = pick.get("player_name") or pick.get("player")
+        matchup = pick.get("matchup") or f"{away_team} @ {home_team}"
+        if player_name:
+            prop_label = (pick.get("prop_type") or pick.get("stat_type") or "Prop").replace("_", " ").title()
+            pick["description"] = f"{player_name} {prop_label} {side_label} {line}" if line is not None else f"{player_name} {prop_label}"
+        elif pick_type == "moneyline" or "MONEYLINE" in (market_label or "").upper() or "ML" in (market_label or "").upper():
+            odds_str = f" {odds_american:+d}" if odds_american else ""
+            pick["description"] = f"{matchup} — {selection or side_label} ML{odds_str}"
+        elif selection or side_label:
+            pick["description"] = f"{matchup} — {market_label} {side_label} {line}" if line is not None else f"{matchup} — {market_label} {side_label}"
+        else:
+            pick["description"] = f"{matchup} — {market_label} {line}" if line is not None else matchup
+
     return pick
 
 

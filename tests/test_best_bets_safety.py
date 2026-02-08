@@ -34,6 +34,26 @@ def test_error_returns_500_without_request_id():
         assert "scoring engine exploded" not in str(detail)
 
 
+def test_error_returns_structured_code_in_debug():
+    """best-bets crash returns detail.code with request_id in debug mode."""
+    with patch("live_data_router._best_bets_inner", new_callable=AsyncMock) as mock_inner:
+        mock_inner.side_effect = RuntimeError("integration blew up")
+
+        from main import app
+        client = TestClient(app)
+
+        resp = client.get(
+            "/live/best-bets/nba?debug=1",
+            headers={"X-API-Key": "test-key"}
+        )
+
+        assert resp.status_code == 500
+        body = resp.json()
+        detail = body.get("detail", {})
+        assert detail.get("code") == "BEST_BETS_FAILED"
+        assert "request_id" in detail
+
+
 def test_warm_skips_cache_hot():
     """warm_best_bets_cache skips sports with warm cache."""
     import asyncio

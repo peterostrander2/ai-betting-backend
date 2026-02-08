@@ -13,7 +13,7 @@ import os
 import time
 import logging
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger("serpapi")
 
@@ -139,7 +139,7 @@ def get_search_trend(query: str, location: str = "United States") -> Dict[str, A
             "interest_level": "HIGH" if trend_score >= 0.7 else "MODERATE" if trend_score >= 0.5 else "LOW",
             "source": "serpapi_live",
             "query": query,
-            "fetched_at": datetime.utcnow().isoformat()
+            "fetched_at": datetime.now(tz=timezone.utc).isoformat()
         }
 
         # Update cache

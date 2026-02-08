@@ -1,7 +1,7 @@
 # Frontend Integration Guide
 
-**Last Updated:** February 2, 2026
-**Backend Version:** v17.3
+**Last Updated:** February 4, 2026
+**Backend Version:** v20.4
 **Frontend Repo:** [bookie-member-app](https://github.com/peterostrander2/bookie-member-app)
 
 ---
@@ -34,38 +34,26 @@ When working on frontend, check:
 
 ---
 
-## Pending Frontend Work
+## Completed Frontend Work
 
-### Priority 1: Add 5th Engine (Context Score)
+### Priority 1: Add Context Score Display ✅ COMPLETE (Feb 2026)
 
 **Backend provides:** `context_modifier` (bounded ±0.35) and `context_score` (raw 0-10 for transparency)
 
-**Current state:** Frontend shows 4 engines; context is a modifier, not a weighted engine.
+**Implementation:**
+- `PropsSmashList.jsx` - Displays context_score with tooltip "modifier ±0.35"
+- `GameSmashList.jsx` - Displays context_score with tooltip "modifier ±0.35"
 
-**Files to modify:**
-- `PropsSmashList.jsx` - Add context_score to engine breakdown
-- `GameSmashList.jsx` - Add context_score to engine breakdown
-- `SmashSpotsPage.jsx` - Update any engine legends
-
-**Display suggestion:**
-```jsx
-// Current (4 engines)
-AI: 7.2 | Research: 4.5 | Esoteric: 4.8 | Jarvis: 5.0
-
-// Updated (context as modifier)
-AI: 7.2 | Research: 4.5 | Esoteric: 4.8 | Jarvis: 5.0 | Context Mod: +0.18
-```
-
-**Engine Weights for reference:**
+**Engine Weights (Option A - matches scoring_contract.py):**
 - AI: 25%
 - Research: 35%
 - Esoteric: 20%
 - Jarvis: 20%
-- **Context: modifier only (±0.35 cap)**
+- **Context: modifier only (±0.35 cap) - NOT a weighted engine**
 
 ---
 
-### Priority 2: Context Layer Details (Tooltip/Expandable)
+### Priority 2: Context Layer Details (Tooltip/Expandable) ✅ COMPLETE
 
 **Backend provides:**
 ```json
@@ -99,22 +87,17 @@ Context Score: 7.2
 
 ---
 
-### Priority 3: Harmonic Convergence Badge
+### Priority 3: Harmonic Convergence Badge ✅ COMPLETE
 
 **Backend provides:** `harmonic_boost` (0 or 1.5)
 
 **When it triggers:** Research >= 7.5 AND Esoteric >= 7.5 (Math + Magic alignment)
 
-**Display suggestion:** Special badge/glow when `harmonic_boost > 0`
-```jsx
-{pick.harmonic_boost > 0 && (
-  <Badge color="purple">HARMONIC</Badge>
-)}
-```
+**Implementation:** Purple HARMONIC badge displays when `harmonic_boost > 0` in both SmashList components.
 
 ---
 
-### Priority 4: MSRF Turn Date Resonance
+### Priority 4: MSRF Turn Date Resonance ✅ COMPLETE
 
 **Backend provides:**
 ```json
@@ -128,27 +111,17 @@ Context Score: 7.2
 }
 ```
 
-**Display suggestion:** Show when `msrf_boost > 0`:
-```jsx
-{pick.msrf_boost > 0 && (
-  <Badge color="gold">TURN DATE: {pick.msrf_metadata?.level}</Badge>
-)}
-```
+**Implementation:** Gold "TURN DATE" badge displays when `msrf_boost > 0` in both SmashList components (PropsSmashList:984, GameSmashList:721).
 
 ---
 
-### Priority 5: Officials Impact (When Available)
+### Priority 5: Officials Impact ✅ COMPLETE
 
 **Backend provides:** `context_layer.officials_adjustment`
 
 **Note:** Officials data comes from ESPN, may not be available for all games (refs assigned close to game time).
 
-**Display suggestion:** Show when non-zero:
-```jsx
-{pick.context_layer?.officials_adjustment !== 0 && (
-  <span>Ref Factor: {pick.context_layer.officials_adjustment > 0 ? '+' : ''}{pick.context_layer.officials_adjustment}</span>
-)}
-```
+**Implementation:** Shows "Refs: +/-X.XX" with color coding (green positive, red negative) in the expandable Context Details section when `officials_adjustment !== 0` (PropsSmashList:1052, GameSmashList:788).
 
 ---
 
@@ -177,12 +150,12 @@ Context Score: 7.2
         "has_started": false,
         "is_live": false,
 
-        // 5 ENGINE SCORES (all 0-10)
-        "ai_score": 7.19,
-        "research_score": 4.5,
-        "esoteric_score": 4.8,
-        "jarvis_score": 5.0,
-        "context_score": 7.17,        // NEW - 30% weight
+        // 4 WEIGHTED ENGINES + CONTEXT MODIFIER (all 0-10)
+        "ai_score": 7.19,             // 25% weight
+        "research_score": 4.5,        // 35% weight
+        "esoteric_score": 4.8,        // 20% weight
+        "jarvis_score": 5.0,          // 20% weight
+        "context_score": 7.17,        // modifier ±0.35 (NOT weighted)
         "final_score": 9.65,
 
         // Tier
@@ -274,21 +247,26 @@ done
 
 ---
 
-## Files to Modify (Frontend Repo)
+## Files Modified (Frontend Repo) ✅
 
-| File | Changes Needed |
-|------|----------------|
-| `PropsSmashList.jsx` | Add context_score to engine display |
-| `GameSmashList.jsx` | Add context_score to engine display |
-| `SmashSpotsPage.jsx` | Update engine legend, add Harmonic badge |
-| `signalEngine.js` | Add context layer signal parsing (optional) |
+| File | Status |
+|------|--------|
+| `PropsSmashList.jsx` | ✅ All 5 priorities implemented (context_score, context_layer, harmonic, MSRF, officials) |
+| `GameSmashList.jsx` | ✅ All 5 priorities implemented (context_score, context_layer, harmonic, MSRF, officials) |
+| `SmashSpotsPage.jsx` | ✅ Engine legend updated |
+| `CLAUDE.md` | ✅ Documentation updated with Option A weights |
 
 ---
 
 ## Changelog
 
+### v20.4 (Feb 2026)
+- Fixed frontend tooltips to match Option A weights (AI 25%, Research 35%, Esoteric 20%, Jarvis 20%)
+- Clarified context_score is a modifier (±0.35 cap), not a weighted engine
+- Marked Priority 1-5 as COMPLETE (all frontend integration work done)
+
 ### v17.3 (Feb 2026)
-- Added `context_score` (5th engine, 30% weight)
+- Added `context_score` (modifier, ±0.35 cap - displayed for transparency)
 - Added `context_layer` with def_rank, pace, vacuum
 - Added `harmonic_boost` for Math+Magic alignment
 - Added `msrf_boost` and `msrf_metadata` for turn date resonance

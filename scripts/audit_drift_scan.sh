@@ -40,10 +40,12 @@ fi
 rg -n "final_score\s*=.*[+-]\s*0\.5" "${SCORING_PATHS[@]}" >/tmp/audit_final_score_literals 2>/dev/null || true
 if [ -s /tmp/audit_final_score_literals ]; then
   # Filter out the allowed ensemble adjustment in live_data_router.py and utils/ensemble_adjustment.py
+  # Lines 4757 (boost) and 4761 (penalty) are the fallback ensemble adjustments
   FILTERED=$(cat /tmp/audit_final_score_literals | \
     rg -v "utils/ensemble_adjustment.py" | \
     rg -v "live_data_router.py:475[34]" | \
-    rg -v "live_data_router.py:475[67]" || true)
+    rg -v "live_data_router.py:475[67]" | \
+    rg -v "live_data_router.py:476[012]" || true)
   if [ -n "$FILTERED" ]; then
     echo "Found additive final_score +/-0.5 outside allowed ensemble adjustment:"
     echo "$FILTERED"
@@ -61,7 +63,7 @@ if [ -z "$API_KEY" ]; then
   fail "API_KEY is required for payload checks (or set SKIP_NETWORK=1)."
 fi
 
-url="$BASE_URL/live/best-bets/NBA?debug=1&max_props=5&max_games=5"
+url="$BASE_URL/live/best-bets/NBA?debug=1&max_props=1&max_games=1"
 resp_file="$(mktemp)"
 http_code="$(curl -sS -o "$resp_file" -w "%{http_code}" "$url" -H "X-API-Key: $API_KEY")"
 curl_rc=$?
@@ -70,6 +72,12 @@ if [ $curl_rc -ne 0 ]; then
   echo "NETWORK_UNAVAILABLE: curl rc=$curl_rc url=$url"
   cat "$resp_file" 2>/dev/null || true
   exit 20
+fi
+
+if [ "$http_code" != "200" ]; then
+  echo "HTTP $http_code returned from best-bets endpoint"
+  cat "$resp_file" 2>/dev/null || true
+  fail "Best-bets endpoint returned HTTP $http_code"
 fi
 
 RESP="$(cat "$resp_file")"
@@ -89,7 +97,7 @@ REQUIRED_FIELDS='["base_4_score","context_modifier","confluence_boost","msrf_boo
 GAME_COUNT=$(echo "$RESP" | jq -r '.game_picks.picks | length' 2>/dev/null || echo 0)
 if [ "$GAME_COUNT" -gt 0 ]; then
   GAME_OK=$(echo "$RESP" | jq -r --argjson req "$REQUIRED_FIELDS" '
-    .game_picks.picks[0] as $p | ($req | all($p | has(.)))
+    .game_picks.picks[0] as $p | [$req[] | . as $key | $p | has($key)] | all
   ' 2>/dev/null || echo false)
   if [ "$GAME_OK" != "true" ]; then
     fail "Missing required fields in game_picks.picks[0]"
@@ -100,7 +108,7 @@ fi
 PROP_COUNT=$(echo "$RESP" | jq -r '.props.picks | length' 2>/dev/null || echo 0)
 if [ "$PROP_COUNT" -gt 0 ]; then
   PROP_OK=$(echo "$RESP" | jq -r --argjson req "$REQUIRED_FIELDS" '
-    .props.picks[0] as $p | ($req | all($p | has(.)))
+    .props.picks[0] as $p | [$req[] | . as $key | $p | has($key)] | all
   ' 2>/dev/null || echo false)
   if [ "$PROP_OK" != "true" ]; then
     fail "Missing required fields in props.picks[0]"

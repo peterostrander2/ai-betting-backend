@@ -63,6 +63,12 @@ SERP_MONTHLY_QUOTA = _env_int("SERP_MONTHLY_QUOTA", 5000)
 SERP_TIMEOUT = _env_float("SERP_TIMEOUT", 2.0)  # Strict 2s timeout
 SERP_CACHE_TTL = _env_int("SERP_CACHE_TTL", 5400)  # 90 minutes
 
+# v20.9: Props SERP - disabled by default to save quota (~60% of daily calls)
+# Props consume ~220 unique per-player queries with near-zero cache hit rate.
+# Disabling saves quota for game SERP (high cache hit rate, higher impact signals).
+# Set SERP_PROPS_ENABLED=true to re-enable without code changes.
+SERP_PROPS_ENABLED = _env_bool("SERP_PROPS_ENABLED", False)
+
 # =============================================================================
 # BOOST CAPS (Engine-Specific Limits)
 # =============================================================================
@@ -306,6 +312,7 @@ def get_serp_status() -> Dict[str, Any]:
         "enabled": SERP_INTEL_ENABLED,
         "shadow_mode": SERP_SHADOW_MODE,
         "shadow_mode_reason": "Observation mode - signals logged but not applied" if SERP_SHADOW_MODE else "Live mode - boosts active",
+        "props_enabled": SERP_PROPS_ENABLED,
         "quota": _quota_tracker.to_dict(),
         "cache": _cache_stats.to_dict(),
         "config": {
@@ -334,6 +341,7 @@ __all__ = [
     # Config
     "SERP_SHADOW_MODE",
     "SERP_INTEL_ENABLED",
+    "SERP_PROPS_ENABLED",
     "SERP_DAILY_QUOTA",
     "SERP_MONTHLY_QUOTA",
     "SERP_TIMEOUT",

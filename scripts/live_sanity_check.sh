@@ -44,7 +44,7 @@ for SPORT in $SPORTS; do
   fi
   PICKS_LEN=$(echo "$RESP" | jq -r '.picks | length' 2>/dev/null || echo 0)
   if [ "$PICKS_LEN" -gt 0 ]; then
-    OK=$(echo "$RESP" | jq -r --argjson req "$REQUIRED_FIELDS" '.picks[0] as $p | ($req | all($p | has(.)))' 2>/dev/null || echo false)
+    OK=$(echo "$RESP" | jq -r --argjson req "$REQUIRED_FIELDS" '.picks[0] as $p | [$req[] | . as $key | $p | has($key)] | all' 2>/dev/null || echo false)
     if [ "$OK" != "true" ]; then
       fail "Missing required fields in /live/in-play/$SPORT_LOWER pick payload"
     fi
@@ -66,7 +66,7 @@ for SPORT in $SPORTS; do
   fi
   P2_LEN=$(echo "$RESP2" | jq -r '.live_picks | length' 2>/dev/null || echo 0)
   if [ "$P2_LEN" -gt 0 ]; then
-    OK2=$(echo "$RESP2" | jq -r --argjson req "$REQUIRED_FIELDS" '.live_picks[0] as $p | ($req | all($p | has(.)))' 2>/dev/null || echo false)
+    OK2=$(echo "$RESP2" | jq -r --argjson req "$REQUIRED_FIELDS" '.live_picks[0] as $p | [$req[] | . as $key | $p | has($key)] | all' 2>/dev/null || echo false)
     if [ "$OK2" != "true" ]; then
       fail "Missing required fields in /in-game/$SPORT_LOWER live_picks payload"
     fi

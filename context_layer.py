@@ -1225,12 +1225,12 @@ class ContextGenerator:
 # ============================================================
 
 if __name__ == "__main__":
-    print("=" * 70)
-    print("🔥 BOOKIE-O-EM CONTEXT LAYER v2.0 - MULTI-SPORT")
-    print("=" * 70)
-    
+    logger.info("=" * 70)
+    logger.info("BOOKIE-O-EM CONTEXT LAYER v2.0 - MULTI-SPORT")
+    logger.info("=" * 70)
+
     # Test NBA
-    print("\n📊 NBA TEST - Pascal Siakam vs Washington")
+    logger.info("\nNBA TEST - Pascal Siakam vs Washington")
     nba_ctx = ContextGenerator.generate_context(
         sport="NBA",
         player_name="Pascal Siakam",
@@ -1243,11 +1243,11 @@ if __name__ == "__main__":
         game_total=241.0,
         game_spread=-5.5
     )
-    print(f"  Final: {nba_ctx['waterfall']['finalPrediction']} pts")
-    print(f"  Smash: {'✅' if nba_ctx['waterfall']['isSmashSpot'] else '❌'}")
-    
+    logger.info(f"  Final: {nba_ctx['waterfall']['finalPrediction']} pts")
+    logger.info(f"  Smash: {'YES' if nba_ctx['waterfall']['isSmashSpot'] else 'NO'}")
+
     # Test NFL
-    print("\n🏈 NFL TEST - CeeDee Lamb vs Giants")
+    logger.info("\nNFL TEST - CeeDee Lamb vs Giants")
     nfl_ctx = ContextGenerator.generate_context(
         sport="NFL",
         player_name="CeeDee Lamb",
@@ -1259,11 +1259,11 @@ if __name__ == "__main__":
         injuries=[{"status": "OUT", "target_share": 28.0, "snaps_per_game": 58}],
         game_spread=-6.5
     )
-    print(f"  Final: {nfl_ctx['waterfall']['finalPrediction']} yds")
-    print(f"  Smash: {'✅' if nfl_ctx['waterfall']['isSmashSpot'] else '❌'}")
-    
+    logger.info(f"  Final: {nfl_ctx['waterfall']['finalPrediction']} yds")
+    logger.info(f"  Smash: {'YES' if nfl_ctx['waterfall']['isSmashSpot'] else 'NO'}")
+
     # Test MLB
-    print("\n⚾ MLB TEST - Shohei Ohtani at Coors Field")
+    logger.info("\nMLB TEST - Shohei Ohtani at Coors Field")
     mlb_ctx = ContextGenerator.generate_context(
         sport="MLB",
         player_name="Shohei Ohtani",
@@ -1274,12 +1274,12 @@ if __name__ == "__main__":
         stat_type="total_bases",
         home_team="Colorado Rockies"
     )
-    print(f"  Final: {mlb_ctx['waterfall']['finalPrediction']} TB")
-    print(f"  Park Factor: {mlb_ctx['lstm_features']['park_factor']}")
-    print(f"  Smash: {'✅' if mlb_ctx['waterfall']['isSmashSpot'] else '❌'}")
-    
+    logger.info(f"  Final: {mlb_ctx['waterfall']['finalPrediction']} TB")
+    logger.info(f"  Park Factor: {mlb_ctx['lstm_features']['park_factor']}")
+    logger.info(f"  Smash: {'YES' if mlb_ctx['waterfall']['isSmashSpot'] else 'NO'}")
+
     # Test NHL
-    print("\n🏒 NHL TEST - Connor McDavid vs Columbus")
+    logger.info("\nNHL TEST - Connor McDavid vs Columbus")
     nhl_ctx = ContextGenerator.generate_context(
         sport="NHL",
         player_name="Connor McDavid",
@@ -1290,12 +1290,12 @@ if __name__ == "__main__":
         stat_type="points",
         injuries=[{"status": "OUT", "time_on_ice": 22.0}]
     )
-    print(f"  Final: {nhl_ctx['waterfall']['finalPrediction']} pts")
-    print(f"  Smash: {'✅' if nhl_ctx['waterfall']['isSmashSpot'] else '❌'}")
-    
-    print("\n" + "=" * 70)
-    print("✅ MULTI-SPORT CONTEXT LAYER READY!")
-    print("=" * 70)
+    logger.info(f"  Final: {nhl_ctx['waterfall']['finalPrediction']} pts")
+    logger.info(f"  Smash: {'YES' if nhl_ctx['waterfall']['isSmashSpot'] else 'NO'}")
+
+    logger.info("\n" + "=" * 70)
+    logger.info("MULTI-SPORT CONTEXT LAYER READY!")
+    logger.info("=" * 70)
 
 
 # ============================================================
@@ -2630,35 +2630,35 @@ class PlayerMatchupService:
 # ============================================================
 
 if __name__ == "__main__":
-    print("=" * 70)
-    print("🦓 BOOKIE-O-EM OFFICIALS LAYER - MULTI-SPORT")
-    print("=" * 70)
-    
+    logger.info("=" * 70)
+    logger.info("BOOKIE-O-EM OFFICIALS LAYER - MULTI-SPORT")
+    logger.info("=" * 70)
+
     # Test NBA
-    print("\n🏀 NBA: Scott Foster + Tony Brothers")
+    logger.info("\nNBA: Scott Foster + Tony Brothers")
     nba = OfficialsService.analyze_crew("NBA", "Scott Foster", "Tony Brothers")
-    print(f"   Over %: {nba.get('over_pct')}% | Rec: {nba.get('total_recommendation')}")
-    
+    logger.info(f"   Over %: {nba.get('over_pct')}% | Rec: {nba.get('total_recommendation')}")
+
     # Test NFL
-    print("\n🏈 NFL: Bill Vinovich")
+    logger.info("\nNFL: Bill Vinovich")
     nfl = OfficialsService.analyze_crew("NFL", "Bill Vinovich")
-    print(f"   Over %: {nfl.get('over_pct')}% | Penalties: {nfl.get('penalties_per_game')}")
-    
+    logger.info(f"   Over %: {nfl.get('over_pct')}% | Penalties: {nfl.get('penalties_per_game')}")
+
     # Test MLB
-    print("\n⚾ MLB: Pat Hoberg")
+    logger.info("\nMLB: Pat Hoberg")
     mlb = OfficialsService.analyze_crew("MLB", "Pat Hoberg")
-    print(f"   Over %: {mlb.get('over_pct')}% | Zone: {mlb.get('zone_impact', 'N/A')}")
-    
+    logger.info(f"   Over %: {mlb.get('over_pct')}% | Zone: {mlb.get('zone_impact', 'N/A')}")
+
     # Test NHL
-    print("\n🏒 NHL: Wes McCauley")
+    logger.info("\nNHL: Wes McCauley")
     nhl = OfficialsService.analyze_crew("NHL", "Wes McCauley")
-    print(f"   Over %: {nhl.get('over_pct')}% | Penalties: {nhl.get('penalties_per_game')}")
-    
+    logger.info(f"   Over %: {nhl.get('over_pct')}% | Penalties: {nhl.get('penalties_per_game')}")
+
     # Test NCAAB
-    print("\n🎓 NCAAB: Ted Valentine")
+    logger.info("\nNCAAB: Ted Valentine")
     ncaab = OfficialsService.analyze_crew("NCAAB", "Ted Valentine")
-    print(f"   Over %: {ncaab.get('over_pct')}% | Rec: {ncaab.get('total_recommendation')}")
-    
-    print("\n" + "=" * 70)
-    print("✅ MULTI-SPORT OFFICIALS LAYER READY!")
-    print("=" * 70)
+    logger.info(f"   Over %: {ncaab.get('over_pct')}% | Rec: {ncaab.get('total_recommendation')}")
+
+    logger.info("\n" + "=" * 70)
+    logger.info("MULTI-SPORT OFFICIALS LAYER READY!")
+    logger.info("=" * 70)

@@ -295,7 +295,10 @@ register_integration(
     endpoints=["/live/esoteric-edge", "/live/best-bets/{sport}"],
     jobs=[],
     validate_fn="validate_serpapi",
-    notes="News/trending analysis. Fail soft on endpoints, loud on health check."
+    notes="News/trending analysis. Fail soft on endpoints, loud on health check. "
+          "v20.9: SERP_PROPS_ENABLED=false (default) skips SERP for props to save quota. "
+          "Runtime config: SERP_SHADOW_MODE, SERP_INTEL_ENABLED, SERP_PROPS_ENABLED, "
+          "SERP_DAILY_QUOTA, SERP_MONTHLY_QUOTA, SERP_TIMEOUT, SERP_CACHE_TTL."
 )
 
 register_integration(
@@ -891,6 +894,18 @@ def mark_integration_used(name: str):
     INTEGRATION_USAGE[name]["used_count"] = INTEGRATION_USAGE[name].get("used_count", 0) + 1
 
 
+def get_usage_snapshot() -> Dict[str, Dict[str, Any]]:
+    """Return a snapshot of integration usage counts."""
+    _ensure_usage_registry()
+    snapshot: Dict[str, Dict[str, Any]] = {}
+    for name, usage in INTEGRATION_USAGE.items():
+        snapshot[name] = {
+            "used_count": usage.get("used_count", 0),
+            "last_used_at": usage.get("last_used_at"),
+        }
+    return snapshot
+
+
 def get_health_check_loud() -> Dict[str, Any]:
     """
     LOUD health check - clearly shows all failures.
@@ -1031,6 +1046,8 @@ RUNTIME_ENV_VARS = [
     "ARTIFACTS_DIR",
     "BACKEND_DIR",
     "BASE_URL",
+    "BEST_BETS_PROPS_TIME_BUDGET_S",
+    "BEST_BETS_TIME_BUDGET_S",
     "CUDA_VISIBLE_DEVICES",
     "DEBUG_MODE",
     "ENABLE_DEMO",
@@ -1048,7 +1065,10 @@ RUNTIME_ENV_VARS = [
     "LAST_USED",
     "MARKET_SIGNALS_ENABLED",
     "MATH_GLITCH_ENABLED",
+    "MAX_GAMES",
+    "MAX_PROPS",
     "MSRF_ENABLED",
+    "NETWORK_TIMEOUT_S",
     "NOAA_ENABLED",
     "ODDS_API_BASE",
     "PLAYBOOK_API_BASE",
@@ -1063,6 +1083,7 @@ RUNTIME_ENV_VARS = [
     "REFS_ENABLED",
     "REQUIRE_PROPS",
     "ROOT_DIR",
+    "RUNS",
     "SKIP_NETWORK",
     "SKIP_PYTEST",
     "SPORTS",

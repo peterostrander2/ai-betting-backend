@@ -1,0 +1,6 @@
+{
+  "name": "prod_endpoint_matrix",
+  "date_et": "20260204",
+  "status": "FAIL",
+  "output": "Traceback (most recent call last):\n  File \"<stdin>\", line 68, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: '../docs/ENDPOINT_MATRIX_REPORT.md'\n"
+}

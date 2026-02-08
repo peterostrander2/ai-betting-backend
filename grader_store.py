@@ -20,13 +20,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Import storage_paths - SINGLE SOURCE OF TRUTH for Railway volume
-from storage_paths import get_store_dir, get_predictions_file, get_weights_file, get_audit_dir
+from storage_paths import get_store_dir, get_predictions_file, get_graded_picks_file, get_weights_file, get_audit_dir
 
 # =============================================================================
 # SINGLE SOURCE OF TRUTH: All paths from storage_paths.py (Railway volume)
 # =============================================================================
 STORAGE_ROOT = get_store_dir()
 PREDICTIONS_FILE = get_predictions_file()
+GRADED_PICKS_FILE = get_graded_picks_file()
 WEIGHTS_FILE = get_weights_file()
 AUDIT_DIR = get_audit_dir()
 
@@ -40,6 +41,7 @@ def ensure_storage_writable():
         # Create all required directories
         Path(STORAGE_ROOT).mkdir(parents=True, exist_ok=True)
         Path(AUDIT_DIR).mkdir(parents=True, exist_ok=True)
+        Path(GRADED_PICKS_FILE).parent.mkdir(parents=True, exist_ok=True)
 
         # Test write
         test_file = os.path.join(STORAGE_ROOT, ".write_test")
@@ -78,11 +80,10 @@ def _make_pick_id(pick: Dict[str, Any]) -> str:
     side = pick.get("side", "")
     subject = player_id if player_id else side
 
-    line = pick.get("line", 0)
-    book = pick.get("book_key", "consensus")
-    date_et = pick.get("date_et", "")
+    line = pick.get("line") or 0  # Handle None explicitly
+    date_et = pick.get("date_et", "") or ""
 
-    key = f"{sport}|{event_id}|{market}|{subject}|{line:.1f}|{book}|{date_et}"
+    key = f"{sport}|{event_id}|{market}|{subject}|{float(line):.1f}|{date_et}"
     return hashlib.sha1(key.encode()).hexdigest()[:12]
 
 
@@ -219,6 +220,57 @@ def load_predictions(date_et: Optional[str] = None) -> List[Dict[str, Any]]:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     except Exception as e:
         logger.exception("Failed to load predictions: %s", e)
+
+    # Merge grade records from graded_picks.jsonl
+    predictions = _merge_grade_records(predictions)
+
+    return predictions
+
+
+def _merge_grade_records(predictions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Overlay grade records from graded_picks.jsonl onto predictions.
+
+    Builds a lookup from graded_picks.jsonl and applies grade fields
+    (grade_status, result, actual_value, graded_at) to matching picks.
+    """
+    if not predictions or not os.path.exists(GRADED_PICKS_FILE):
+        return predictions
+
+    grade_lookup: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(GRADED_PICKS_FILE, 'r') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            try:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                        pid = record.get("pick_id")
+                        if pid:
+                            # Last record wins (most recent grade)
+                            grade_lookup[pid] = record
+                    except json.JSONDecodeError:
+                        continue
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        logger.warning("Failed to load grade records: %s", e)
+        return predictions
+
+    if not grade_lookup:
+        return predictions
+
+    for pred in predictions:
+        pid = pred.get("pick_id")
+        if pid and pid in grade_lookup:
+            grade = grade_lookup[pid]
+            pred["grade_status"] = grade.get("grade_status", "GRADED")
+            pred["result"] = grade.get("result")
+            pred["actual_value"] = grade.get("actual_value")
+            pred["graded_at"] = grade.get("graded_at")
 
     return predictions
 
@@ -398,7 +450,10 @@ def get_storage_stats() -> Dict[str, Any]:
 
 def mark_graded(pick_id: str, result: str, actual_value: float, graded_at: str) -> bool:
     """
-    Mark a prediction as graded (update in place).
+    Mark a prediction as graded by appending a grade record to graded_picks.jsonl.
+
+    This is append-only: predictions.jsonl is NEVER rewritten. Grade records
+    are stored separately and merged at read time by load_predictions().
 
     Args:
         pick_id: Pick identifier
@@ -407,48 +462,28 @@ def mark_graded(pick_id: str, result: str, actual_value: float, graded_at: str) 
         graded_at: ISO timestamp
 
     Returns:
-        True if updated, False if not found
+        True if grade record appended successfully
     """
-    if not os.path.exists(PREDICTIONS_FILE):
-        return False
-
     try:
-        # Read all predictions
-        predictions = []
-        updated = False
+        record = {
+            "pick_id": pick_id,
+            "grade_status": "GRADED",
+            "result": result,
+            "actual_value": actual_value,
+            "graded_at": graded_at,
+        }
 
-        with open(PREDICTIONS_FILE, 'r') as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-            try:
-                for line in f:
-                    if line.strip():
-                        pred = json.loads(line)
-                        if pred.get("pick_id") == pick_id:
-                            pred["grade_status"] = "GRADED"
-                            pred["result"] = result
-                            pred["actual_value"] = actual_value
-                            pred["graded_at"] = graded_at
-                            updated = True
-                        predictions.append(pred)
-            finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-
-        if not updated:
-            return False
-
-        # Write back atomically
-        with open(PREDICTIONS_FILE, 'w') as f:
+        with open(GRADED_PICKS_FILE, 'a') as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
-                for pred in predictions:
-                    f.write(json.dumps(pred) + "\n")
+                f.write(json.dumps(record) + "\n")
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         return True
 
     except Exception as e:
-        logger.exception("Failed to mark pick graded: %s", e)
+        logger.exception("Failed to append grade record: %s", e)
         return False
 
 

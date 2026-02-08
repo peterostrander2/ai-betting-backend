@@ -1,0 +1,6 @@
+{
+  "name": "endpoint_matrix",
+  "date_et": "20260203",
+  "status": "SKIPPED",
+  "reason": "SKIP_NETWORK=1"
+}

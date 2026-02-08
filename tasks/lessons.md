@@ -96,6 +96,10 @@ Watch for these patterns that have caused production issues:
 - [ ] Missing keys in API response structures
 - [ ] Titanium logic duplicated instead of using `core/titanium.py`
 - [ ] Storage paths hardcoded instead of using env vars
+- [ ] Scoring adjustments applied to `final_score` but NOT surfaced as a pick field
+- [ ] Env vars used in scripts but missing from `RUNTIME_ENV_VARS` in `integration_registry.py`
+- [ ] `__file__` or `os.path.dirname(__file__)` used inside Python heredocs (`python3 - <<'PY'`)
+- [ ] Go/no-go run locally without `ALLOW_EMPTY=1`
 
 ---
 
@@ -344,3 +348,172 @@ Daily 6 AM audit → auto_grader.grade_prediction() → /data/grader_data/weight
 **Lesson:**
 - Key takeaway for future development
 ```
+
+---
+
+### 10. v20.5 Datetime/Timezone Bugs (Feb 4, 2026)
+
+**What happened:**
+- `/grader/queue` returned `name 'PYTZ_AVAILABLE' is not defined`
+- `/grader/daily-report` returned `can't compare offset-naive and offset-aware datetimes`
+- `/grader/performance/{sport}` returned `Internal Server Error` (same datetime bug)
+- Daily report showed ~290 picks for "yesterday" instead of ~150 (2-day window bug)
+
+**Impact:** All grader endpoints broken, performance analysis unavailable
+
+**Root cause (4 bugs):**
+1. `PYTZ_AVAILABLE` variable used but never defined
+2. `datetime.now()` (naive) compared with `datetime.fromisoformat(timestamp)` (potentially aware)
+3. Same naive vs aware bug copy-pasted to multiple endpoints
+4. Date window math: `days_back + 1` and `days_back - 1` created 2-day window
+
+**Fix:**
+1. Replace `PYTZ_AVAILABLE` with `core.time_et.now_et()`
+2. Use timezone-aware datetime and handle both naive/aware stored timestamps:
+   ```python
+   from core.time_et import now_et
+   from zoneinfo import ZoneInfo
+   et_tz = ZoneInfo("America/New_York")
+   cutoff = now_et() - timedelta(days=days_back)
+   
+   ts = datetime.fromisoformat(p.timestamp)
+   if ts.tzinfo is None:
+       ts = ts.replace(tzinfo=et_tz)
+   ```
+3. Use exact day boundaries with `.replace(hour=0, minute=0, second=0, microsecond=0)`
+
+**Lesson:**
+- NEVER use `datetime.now()` in grader code - use `now_et()` from `core.time_et`
+- NEVER use `pytz` - use `core.time_et` (single source of truth) or `zoneinfo`
+- ALWAYS handle both naive and aware timestamps when parsing stored data
+- NEVER use `days_back + 1` math - use exact day boundaries with `.replace()`
+- When fixing a datetime bug, grep the entire codebase for the same pattern
+- Run `grep -n "datetime.now()" *.py | grep fromisoformat` after datetime fixes
+
+---
+
+### 11. SHARP Picks 0% Hit Rate (Feb 4, 2026)
+
+**What happened:**
+- SHARP picks showing 0% hit rate across all sports (NBA 0/14, NHL 0/8, NCAAB 0/7)
+- Made the sharp signal feature appear broken
+
+**Impact:** SHARP picks incorrectly graded, learning loop getting bad data
+
+**Root cause:**
+- SHARP picks stored `line_variance` (movement amount like 1.5) in the `line` field
+- Grading logic treated `line` as actual spread
+- Example: line_variance=1.5 meant "Lakers +1.5 spread" instead of actual spread
+
+**Fix:**
+- Grade SHARP picks as moneyline only (who won the game)
+- Ignore the `line` field since it contains variance, not actual spread:
+  ```python
+  elif "sharp" in pick_type_lower:
+      # ALWAYS grade as moneyline - line field is line_variance
+      if picked_home:
+          return ("WIN" if home_score > away_score else "LOSS"), 0.0
+  ```
+
+**Lesson:**
+- NEVER store `line_variance` in a field named `line` - they have different meanings
+- NEVER assume a field contains what its name suggests - trace data flow
+- Always verify grading logic with actual data examples
+- When pick types behave unexpectedly, check what data is actually stored
+
+---
+
+### 12. Unsurfaced Scoring Adjustments Break Sanity Math (Feb 4, 2026)
+
+**What happened:**
+- `endpoint_matrix_sanity.sh` math check showed diff=0.748 (threshold 0.02)
+- `totals_calibration_adj` (±0.75 from v20.4) was applied to `final_score` but NOT surfaced as a pick payload field
+- The sanity script recomputes final_score from surfaced fields, so the hidden adjustment caused a mismatch
+
+**Impact:** Go/no-go gate blocked, math check appeared broken
+
+**Root cause:** When `TOTALS_SIDE_CALIBRATION` was added (v20.4), the adjustment was applied to `final_score` via a local variable but never added to the pick output dict. The sanity formula couldn't account for it.
+
+**Fix:**
+1. Added `"totals_calibration_adj": round(totals_calibration_adj, 3)` to pick output dict in `live_data_router.py`
+2. Updated jq formula in `endpoint_matrix_sanity.sh` to include `+ ($p.totals_calibration_adj // 0)`
+
+**Lesson:**
+- **INVARIANT:** Every adjustment to `final_score` MUST be surfaced as its own named field in pick payloads
+- When adding a new scoring adjustment, update: (1) pick dict, (2) sanity formula, (3) CLAUDE.md Boost Inventory, (4) canonical formula
+- The endpoint matrix math check exists to catch exactly this class of bug
+
+---
+
+### 13. Script-Only Env Vars Need RUNTIME_ENV_VARS Registration (Feb 4, 2026)
+
+**What happened:**
+- `env_drift_scan.sh` failed because `MAX_GAMES`, `MAX_PROPS`, and `RUNS` were used in scripts but not registered in `RUNTIME_ENV_VARS`
+- These variables seemed "unimportant" because they were only used by test/sanity scripts
+
+**Impact:** Go/no-go gate blocked on env_drift check
+
+**Root cause:** The env drift scan intentionally scans ALL `.sh` and `.py` files for env var references. Any env var used anywhere must be registered.
+
+**Fix:** Added all three to `RUNTIME_ENV_VARS` in `integration_registry.py` in alphabetical order.
+
+**Lesson:**
+- ANY env var referenced in ANY file must be in either `INTEGRATION_CONTRACTS` or `RUNTIME_ENV_VARS`
+- Run `bash scripts/env_drift_scan.sh` after adding env vars to scripts
+- The scan is intentionally aggressive - register everything
+
+---
+
+### 14. Python Heredoc `__file__` Path Resolution Bug (Feb 4, 2026)
+
+**What happened:**
+- `prod_endpoint_matrix.sh` failed with `FileNotFoundError: ../docs/ENDPOINT_MATRIX_REPORT.md`
+- The script used `os.path.dirname(__file__)` inside a `python3 - <<'PY'` heredoc
+
+**Impact:** Go/no-go gate blocked (prod_endpoint_matrix check failed)
+
+**Root cause:** Inside Python heredocs, `__file__` resolves to `"<stdin>"`, so `os.path.dirname(__file__)` returns empty string `""`. The constructed path `os.path.join("", "..", "docs", ...)` resolved incorrectly.
+
+**Fix:** Changed to project-relative path: `os.path.join("docs", "ENDPOINT_MATRIX_REPORT.md")` - works because shell scripts run from project root.
+
+**Lesson:**
+- NEVER use `__file__`, `os.path.dirname(__file__)`, or `Path(__file__)` inside Python heredocs
+- In heredocs, always use project-relative paths
+- Test heredoc scripts by running them directly: `bash scripts/script_name.sh`
+
+---
+
+### 15. Technical Debt Cleanup: 5-Item Audit Resolution (Feb 4, 2026)
+
+**What happened:**
+- Learning Audit Report identified 5 technical debt items across storage, observability, and live betting
+- All 5 items resolved in a single coordinated cleanup
+
+**Items resolved:**
+
+1. **mark_graded() append-only violation (HIGH)** — `grader_store.py` was rewriting entire `predictions.jsonl` on every grade. Now grades are appended to a separate `graded_picks.jsonl` file; `predictions.jsonl` is never modified. `load_predictions()` merges grade records at read time. Corrupted partial writes are skipped gracefully.
+
+2. **Odds staleness guard (MEDIUM)** — Added `ODDS_STALENESS_THRESHOLD_SECONDS = 120` to `scoring_contract.py`. Live endpoints now track `odds_fetched_at` and compute `odds_age_seconds`. Stale odds are flagged and `live_adjustment` is suppressed.
+
+3. **Market suspended detection (MEDIUM)** — Live endpoints now detect suspended markets using the heuristic: if `odds_american` is None AND `book` is falsy, the market is suspended. Each live pick includes a `market_status` field.
+
+4. **Training drop telemetry (LOW)** — `auto_grader.py` now tracks drop reasons in `last_drop_stats` dict (unsupported_sport, below_score_threshold, duplicate_id, missing_pick_id, conversion_failed). Exposed via `/grader/status`.
+
+5. **Weight version hash (LOW)** — `/grader/status` now includes `weights_version_hash` (SHA256[:12] of weights.json content), `weights_file_exists`, and `weights_last_modified_et`.
+
+**Files modified:**
+- `storage_paths.py` — Added `get_graded_picks_file()`
+- `grader_store.py` — Rewrote `mark_graded()`, updated `load_predictions()` to merge grades
+- `core/scoring_contract.py` — Added `ODDS_STALENESS_THRESHOLD_SECONDS`
+- `auto_grader.py` — Added `last_drop_stats` tracking
+- `main.py` — Added weight hash + drop stats to `/grader/status`
+- `live_data_router.py` — Added odds staleness + market status to live endpoints
+- `tests/test_tech_debt_cleanup.py` — 19 tests covering all 5 items
+
+**Lesson:**
+- Append-only storage patterns are safer than read-modify-write for crash resilience
+- Always separate mutable data (grades) from immutable data (predictions)
+- Telemetry for dropped training data helps diagnose learning loop issues
+- When fixing multiple related items, coordinate in a single pass to avoid drift
+
+---

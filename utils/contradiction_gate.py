@@ -4,6 +4,9 @@ Contradiction Gate - Prevents both sides of same bet from being returned.
 Ensures we never recommend both Over AND Under on the same line,
 or both sides of a spread/ML on the same game.
 
+v20.12: Also prevents redundant same-side picks (e.g., Team spread + Team ML).
+These aren't contradictions but are ~90% correlated - if the team loses, both lose.
+
 Master Prompt Requirement #11:
 - Define unique_key: (sport, date_et, event_id, market, prop_type, player_id/team_id, line)
 - If conflict occurs, keep the higher final_score; drop the other; log contradiction_blocked=true
@@ -53,6 +56,8 @@ def make_unique_key(pick) -> str:
     # Use absolute value of line for spreads so +1.5 and -1.5 create same key
     if market in ["SPREAD", "SPREADS"] and line != 0:
         line_str = f"{abs(line):.1f}"
+    elif market in ["TOTAL", "TOTALS"]:
+        line_str = "ANY"  # Group all totals on same game together
     else:
         line_str = f"{line:.1f}" if line else "0.0"
 
@@ -252,9 +257,117 @@ def filter_contradictions(picks: List[Any], debug: bool = False) -> Tuple[List[A
     return kept_picks, debug_info
 
 
+def filter_redundant_same_side(picks: List[Any], debug: bool = False) -> Tuple[List[Any], Dict[str, Any]]:
+    """
+    Filter redundant same-side picks (e.g., Team spread + Team ML).
+
+    v20.12: When a team's spread AND moneyline both qualify, keep only the higher-scoring one.
+    These aren't contradictions but are ~90% correlated - if the team loses, both bets lose.
+
+    Args:
+        picks: List of pick objects or dicts
+        debug: If True, include detailed redundancy info
+
+    Returns:
+        Tuple of (filtered_picks, debug_info)
+    """
+    if not picks:
+        return [], {"redundant_groups": 0, "redundant_dropped": 0}
+
+    def _get(pick, key, default=""):
+        if isinstance(pick, dict):
+            return pick.get(key, default)
+        return getattr(pick, key, default)
+
+    # Group by (event_id, side/team picked) to find spread+ML on same team
+    from collections import defaultdict
+    groups = defaultdict(list)
+
+    for pick in picks:
+        market = (_get(pick, "market") or _get(pick, "pick_type") or "").upper()
+
+        # Only check spread vs moneyline redundancy
+        if market not in ["SPREAD", "SPREADS", "MONEYLINE", "ML", "H2H"]:
+            continue
+
+        event_id = _get(pick, "canonical_event_id") or _get(pick, "event_id") or _get(pick, "matchup", "")
+        side = (_get(pick, "side") or "").upper()
+
+        if event_id and side:
+            # Group key: event + team picked
+            group_key = f"{event_id}|{side}"
+            groups[group_key].append(pick)
+
+    # Find groups with both spread AND ML
+    redundant_groups = []
+    picks_to_drop = set()
+
+    for group_key, group in groups.items():
+        if len(group) < 2:
+            continue
+
+        markets = [(_get(p, "market") or _get(p, "pick_type") or "").upper() for p in group]
+
+        # Check if we have both spread and ML
+        has_spread = any(m in ["SPREAD", "SPREADS"] for m in markets)
+        has_ml = any(m in ["MONEYLINE", "ML", "H2H"] for m in markets)
+
+        if has_spread and has_ml:
+            # Sort by score, keep highest
+            sorted_group = sorted(
+                group,
+                key=lambda p: _get(p, "final_score", 0) or _get(p, "total_score", 0),
+                reverse=True
+            )
+            winner = sorted_group[0]
+            losers = sorted_group[1:]
+
+            for loser in losers:
+                loser_id = _get(loser, "pick_id") or id(loser)
+                picks_to_drop.add(loser_id)
+
+            redundant_groups.append({
+                "group_key": group_key,
+                "kept": {
+                    "market": _get(winner, "market") or _get(winner, "pick_type"),
+                    "score": _get(winner, "final_score", 0) or _get(winner, "total_score", 0),
+                    "side": _get(winner, "side")
+                },
+                "dropped": [{
+                    "market": _get(p, "market") or _get(p, "pick_type"),
+                    "score": _get(p, "final_score", 0) or _get(p, "total_score", 0),
+                    "side": _get(p, "side")
+                } for p in losers]
+            })
+
+            logger.info(
+                f"Redundancy filter: {group_key} | "
+                f"Kept: {_get(winner, 'market') or _get(winner, 'pick_type')} "
+                f"({_get(winner, 'final_score', 0) or _get(winner, 'total_score', 0):.2f}) | "
+                f"Dropped: {[_get(p, 'market') or _get(p, 'pick_type') for p in losers]}"
+            )
+
+    # Filter out redundant picks
+    filtered = []
+    for pick in picks:
+        pick_id = _get(pick, "pick_id") or id(pick)
+        if pick_id not in picks_to_drop:
+            filtered.append(pick)
+
+    debug_info = {
+        "redundant_groups": len(redundant_groups),
+        "redundant_dropped": len(picks_to_drop),
+        "redundant_details": redundant_groups if debug else []
+    }
+
+    return filtered, debug_info
+
+
 def apply_contradiction_gate(props: List[Any], game_picks: List[Any], debug: bool = False) -> Tuple[List[Any], List[Any], Dict[str, Any]]:
     """
     Apply contradiction gate to both props and game picks separately.
+
+    v20.12: Also applies redundancy filter to prevent same-team spread + ML.
 
     Args:
         props: List of prop picks
@@ -264,20 +377,26 @@ def apply_contradiction_gate(props: List[Any], game_picks: List[Any], debug: boo
     Returns:
         Tuple of (filtered_props, filtered_game_picks, combined_debug_info)
     """
+    # Step 1: Filter contradictions (opposite sides)
     filtered_props, props_debug = filter_contradictions(props, debug)
     filtered_game_picks, games_debug = filter_contradictions(game_picks, debug)
+
+    # Step 2: Filter redundant same-side picks (spread + ML on same team)
+    filtered_game_picks, redundancy_debug = filter_redundant_same_side(filtered_game_picks, debug)
 
     combined_debug = {
         "props_contradictions": props_debug["contradictions_detected"],
         "props_dropped": props_debug["picks_dropped"],
         "games_contradictions": games_debug["contradictions_detected"],
         "games_dropped": games_debug["picks_dropped"],
+        "games_redundant_dropped": redundancy_debug["redundant_dropped"],
         "total_contradictions": props_debug["contradictions_detected"] + games_debug["contradictions_detected"],
-        "total_dropped": props_debug["picks_dropped"] + games_debug["picks_dropped"]
+        "total_dropped": props_debug["picks_dropped"] + games_debug["picks_dropped"] + redundancy_debug["redundant_dropped"]
     }
 
     if debug:
         combined_debug["props_groups"] = props_debug["contradiction_groups"]
         combined_debug["games_groups"] = games_debug["contradiction_groups"]
+        combined_debug["redundant_groups"] = redundancy_debug["redundant_details"]
 
     return filtered_props, filtered_game_picks, combined_debug

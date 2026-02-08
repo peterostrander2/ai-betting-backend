@@ -32,9 +32,6 @@ v12.0 ENGINE SEPARATION (Production Hardened):
 │  ├─ Gematria (dominant driver)                              │
 │  ├─ Sacred triggers: 2178/201/33/93/322                     │
 │  └─ Jarvis numerology (distinct from generic)               │
-│                                                              │
-│  NOTE: Public Fade, Mid-Spread, Trap Gate methods are       │
-│  DEPRECATED in this file. Use research_engine.py instead.   │
 ├─────────────────────────────────────────────────────────────┤
 │  CONFLUENCE LEVELS:                                          │
 │  IMMORTAL (+10): 2178 + both ≥7.5 + alignment ≥80%          │
@@ -60,17 +57,16 @@ v12.0 ENGINE SEPARATION (Production Hardened):
 
 import os
 import json
-import math
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 from collections import defaultdict
-import hashlib
+from core.scoring_contract import CONFLUENCE_LEVELS
 
 # Import Tiering module - SINGLE SOURCE OF TRUTH for tier configs (v11.08)
 try:
-    from tiering import tier_from_score, get_tier_config, TIER_CONFIG
+    from tiering import tier_from_score
     TIERING_AVAILABLE = True
 except ImportError:
     TIERING_AVAILABLE = False
@@ -507,172 +503,6 @@ class JarvisSavantEngine:
         }
 
     # ========================================================================
-    # PUBLIC FADE SIGNAL (DEPRECATED - Use research_engine.py instead)
-    # ========================================================================
-
-    def calculate_public_fade_signal(self, public_pct: float) -> Dict[str, Any]:
-        """
-        DEPRECATED: This method is kept for backwards compatibility.
-        Use research_engine.calculate_public_fade_signal() instead.
-
-        As of v12.0, Public Fade is a RESEARCH ENGINE signal, not Jarvis.
-        This prevents double-counting in the 4-engine architecture.
-
-        PUBLIC FADE CRUSH ZONE (v10.1 spec):
-        ≥80% public on chalk  →  -0.95 influence
-        ≥75% public on chalk  →  -0.85 influence
-        ≥70% public on chalk  →  -0.75 influence
-        ≥65% public on chalk  →  -0.65 influence
-        """
-        # Graduated fade based on public percentage
-        if public_pct >= 80:
-            signal = "FADE_PUBLIC"
-            adjustment = -0.95
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - MAXIMUM CRUSH ZONE. Strong fade."
-        elif public_pct >= 75:
-            signal = "FADE_PUBLIC"
-            adjustment = -0.85
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - HIGH CRUSH ZONE. Fade recommended."
-        elif public_pct >= 70:
-            signal = "FADE_PUBLIC"
-            adjustment = -0.75
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - CRUSH ZONE. Fade the public side."
-        elif public_pct >= 65:
-            signal = "FADE_PUBLIC"
-            adjustment = -0.65
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - EARLY CRUSH. Consider fading."
-        elif public_pct <= 20:
-            signal = "FOLLOW_PUBLIC"
-            adjustment = -0.95
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - Extreme contrarian. Follow public."
-        elif public_pct <= 25:
-            signal = "FOLLOW_PUBLIC"
-            adjustment = -0.85
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - Strong contrarian value."
-        elif public_pct <= 30:
-            signal = "FOLLOW_PUBLIC"
-            adjustment = -0.75
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - Contrarian value on public side."
-        elif public_pct <= 35:
-            signal = "LEAN_PUBLIC"
-            adjustment = -0.65
-            is_crush_zone = False
-            explanation = f"Public at {public_pct}% - Slight contrarian lean."
-        else:
-            signal = "NEUTRAL"
-            adjustment = 0.0
-            is_crush_zone = False
-            explanation = f"Public at {public_pct}% - No strong fade signal."
-
-        return {
-            "public_pct": public_pct,
-            "is_crush_zone": is_crush_zone,
-            "signal": signal,
-            "adjustment": adjustment,
-            "influence": adjustment,  # Alias for router compatibility
-            "explanation": explanation
-        }
-
-    # ========================================================================
-    # MID SPREAD SIGNAL (DEPRECATED - Use research_engine.py instead)
-    # ========================================================================
-
-    def calculate_mid_spread_signal(self, spread: float) -> Dict[str, Any]:
-        """
-        DEPRECATED: This method is kept for backwards compatibility.
-        Use research_engine.calculate_goldilocks_signal() instead.
-
-        As of v12.0, Goldilocks Zone is a RESEARCH ENGINE signal, not Jarvis.
-
-        +20% boost in Goldilocks zone (spread between +4 and +9) per v10.1 spec.
-        """
-        abs_spread = abs(spread)
-
-        # Goldilocks zone: 4-9 points (most predictable range per spec)
-        if 4 <= abs_spread <= 9:
-            signal = "GOLDILOCKS"
-            adjustment = 0.20
-            explanation = f"Spread {spread} in Goldilocks zone (+4 to +9). Most predictable range."
-        elif abs_spread < 4:
-            signal = "PICKEM"
-            adjustment = 0.0
-            explanation = f"Spread {spread} is pick'em territory. High variance."
-        elif abs_spread >= 14:
-            signal = "TRAP_ZONE"
-            adjustment = -0.20
-            explanation = f"Spread {spread} in trap zone. Fade large favorites."
-        elif abs_spread > 9:
-            signal = "BLOWOUT"
-            adjustment = -0.10
-            explanation = f"Spread {spread} indicates potential blowout. Garbage time risk."
-        else:
-            signal = "STANDARD"
-            adjustment = 0.05
-            explanation = f"Spread {spread} in standard range."
-
-        return {
-            "spread": spread,
-            "abs_spread": abs_spread,
-            "signal": signal,
-            "adjustment": adjustment,
-            "modifier": adjustment,  # Alias for router compatibility
-            "explanation": explanation
-        }
-
-    # ========================================================================
-    # LARGE SPREAD TRAP (DEPRECATED - Use research_engine.py instead)
-    # ========================================================================
-
-    def calculate_large_spread_trap(self, spread: float, total: float) -> Dict[str, Any]:
-        """
-        DEPRECATED: This method is kept for backwards compatibility.
-        Use research_engine.calculate_trap_gate_signal() instead.
-
-        As of v12.0, Trap Gate is a RESEARCH ENGINE signal, not Jarvis.
-
-        -20% trap gate for spreads > 14 (likely trap games).
-        """
-        abs_spread = abs(spread)
-
-        if abs_spread >= 14:
-            signal = "TRAP_GATE"
-            adjustment = -0.20
-            is_trap = True
-            explanation = f"Spread {spread} > 14. TRAP GATE active. Large favorites cover < 50% historically."
-        elif abs_spread >= 10:
-            signal = "CAUTION"
-            adjustment = -0.10
-            is_trap = False
-            explanation = f"Spread {spread} in caution zone. Monitor for trap."
-        else:
-            signal = "CLEAR"
-            adjustment = 0.0
-            is_trap = False
-            explanation = "Spread in normal range."
-
-        # Additional check: High total + large spread = likely backdoor cover
-        if total > 230 and abs_spread >= 10:
-            adjustment -= 0.05
-            explanation += " High total increases backdoor cover risk."
-
-        return {
-            "spread": spread,
-            "total": total,
-            "signal": signal,
-            "is_trap": is_trap,
-            "adjustment": adjustment,
-            "modifier": adjustment,  # Alias for router compatibility
-            "explanation": explanation
-        }
-
-    # ========================================================================
     # CONFLUENCE - THE HEART (v10.1 Dual-Score Alignment System)
     # ========================================================================
 
@@ -692,12 +522,12 @@ class JarvisSavantEngine:
         v10.1 Spec Formula:
         Alignment = 1 - |research - esoteric| / 10
 
-        CONFLUENCE LEVELS:
-        - IMMORTAL (+10): 2178 + both ≥7.5 + alignment ≥80%
-        - JARVIS_PERFECT (+7): Trigger + both ≥7.5 + alignment ≥80%
-        - PERFECT (+5): both ≥7.5 + alignment ≥80%
-        - STRONG (+3): Both high OR aligned ≥70%
-        - MODERATE (+1): Aligned ≥60%
+        CONFLUENCE LEVELS (v20.10 — from scoring_contract.py):
+        - IMMORTAL (+2.0): 2178 + both ≥7.5 + alignment ≥80%
+        - JARVIS_PERFECT (+2.0): Trigger + both ≥7.5 + alignment ≥80%
+        - PERFECT (+2.0): both ≥7.5 + alignment ≥80%
+        - STRONG (+1.5): Both high OR aligned ≥70%
+        - MODERATE (+0.5): Aligned ≥60%
         - DIVERGENT (+0): Models disagree
         """
         # Calculate alignment percentage (0-100%)
@@ -712,19 +542,20 @@ class JarvisSavantEngine:
         aligned_60 = alignment_pct >= 60
 
         # Determine confluence level based on v10.1 spec
+        # v20.10: Boost values from CONFLUENCE_LEVELS (scoring_contract.py) — single source of truth
         if immortal_detected and both_high and aligned_80:
             level = "IMMORTAL"
-            boost = 10
+            boost = CONFLUENCE_LEVELS["IMMORTAL"]
             color = "rainbow"
             action = "IMMORTAL CONFLUENCE - MAXIMUM SMASH"
         elif jarvis_triggered and both_high and aligned_80:
             level = "JARVIS_PERFECT"
-            boost = 7
+            boost = CONFLUENCE_LEVELS["JARVIS_PERFECT"]
             color = "gold"
             action = "JARVIS PERFECT - STRONG SMASH"
         elif both_high and aligned_80:
             level = "PERFECT"
-            boost = 5
+            boost = CONFLUENCE_LEVELS["PERFECT"]
             color = "purple"
             action = "PERFECT CONFLUENCE - PLAY"
         elif aligned_70:
@@ -735,23 +566,23 @@ class JarvisSavantEngine:
             )
             if _strong_eligible:
                 level = "STRONG"
-                boost = 3
+                boost = CONFLUENCE_LEVELS["STRONG"]
                 color = "green"
                 action = "STRONG CONFLUENCE - LEAN"
             else:
                 # Downgrade: high alignment but no active signals backing it
                 level = "MODERATE"
-                boost = 1
+                boost = CONFLUENCE_LEVELS["MODERATE"]
                 color = "blue"
                 action = "MODERATE - MONITOR (STRONG downgraded: missing active signal)"
         elif aligned_60:
             level = "MODERATE"
-            boost = 1
+            boost = CONFLUENCE_LEVELS["MODERATE"]
             color = "blue"
             action = "MODERATE - MONITOR"
         else:
             level = "DIVERGENT"
-            boost = 0
+            boost = CONFLUENCE_LEVELS["DIVERGENT"]
             color = "red"
             action = "DIVERGENT - PASS"
 
@@ -1911,72 +1742,75 @@ def calculate_full_esoteric_analysis(
 # ============================================================================
 
 if __name__ == "__main__":
-    print("=" * 70)
-    print("JARVIS SAVANT ENGINE v7.3 - TESTING")
-    print("=" * 70)
+    # Configure logging for test mode
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+    logger.info("=" * 70)
+    logger.info("JARVIS SAVANT ENGINE v7.3 - TESTING")
+    logger.info("=" * 70)
 
     # Test Phase 1
-    print("\n[PHASE 1: CONFLUENCE CORE]")
+    logger.info("\n[PHASE 1: CONFLUENCE CORE]")
     jarvis = JarvisSavantEngine()
 
     # Test 2178 validation
-    print("\n2178 Validation:")
+    logger.info("\n2178 Validation:")
     validation = jarvis.validate_2178()
-    print(f"  Is Immortal: {validation['is_immortal']}")
-    print(f"  Proof: {validation['proof']}")
+    logger.info(f"  Is Immortal: {validation['is_immortal']}")
+    logger.info(f"  Proof: {validation['proof']}")
 
     # Test trigger detection
-    print("\nTrigger Detection:")
+    logger.info("\nTrigger Detection:")
     trigger = jarvis.check_jarvis_trigger(2178)
-    print(f"  Triggers Hit: {trigger['triggers_hit']}")
-    print(f"  Total Boost: {trigger['total_boost']}")
+    logger.info(f"  Triggers Hit: {trigger['triggers_hit']}")
+    logger.info(f"  Total Boost: {trigger['total_boost']}")
 
     # Test gematria
-    print("\nGematria Signal:")
+    logger.info("\nGematria Signal:")
     gematria = jarvis.calculate_gematria_signal("LeBron James", "Lakers", "Celtics")
-    print(f"  Signal: {gematria['signal']}")
-    print(f"  Weight: {gematria['weight']}")
+    logger.info(f"  Signal: {gematria['signal']}")
+    logger.info(f"  Weight: {gematria['weight']}")
 
     # Test Phase 2
-    print("\n[PHASE 2: VEDIC/ASTRO]")
+    logger.info("\n[PHASE 2: VEDIC/ASTRO]")
     vedic = VedicAstroEngine()
 
-    print("\nPlanetary Hour:")
+    logger.info("\nPlanetary Hour:")
     hour = vedic.calculate_planetary_hour()
-    print(f"  Day Ruler: {hour['day_ruler']}")
-    print(f"  Hour Ruler: {hour['hour_ruler']}")
-    print(f"  Favorable: {hour['is_favorable']}")
+    logger.info(f"  Day Ruler: {hour['day_ruler']}")
+    logger.info(f"  Hour Ruler: {hour['hour_ruler']}")
+    logger.info(f"  Favorable: {hour['is_favorable']}")
 
-    print("\nNakshatra:")
+    logger.info("\nNakshatra:")
     nakshatra = vedic.calculate_nakshatra()
-    print(f"  Name: {nakshatra['nakshatra_name']}")
-    print(f"  Nature: {nakshatra['nature']}")
+    logger.info(f"  Name: {nakshatra['nakshatra_name']}")
+    logger.info(f"  Nature: {nakshatra['nature']}")
 
-    print("\nRetrograde Check:")
+    logger.info("\nRetrograde Check:")
     retro = vedic.is_planet_retrograde("Mercury")
-    print(f"  Mercury Retrograde: {retro['is_retrograde']}")
+    logger.info(f"  Mercury Retrograde: {retro['is_retrograde']}")
 
-    print("\nAstro Score:")
+    logger.info("\nAstro Score:")
     astro = vedic.calculate_astro_score()
-    print(f"  Overall Score: {astro['overall_score']}")
-    print(f"  Rating: {astro['rating']}")
+    logger.info(f"  Overall Score: {astro['overall_score']}")
+    logger.info(f"  Rating: {astro['rating']}")
 
     # Test Phase 3
-    print("\n[PHASE 3: LEARNING LOOP]")
+    logger.info("\n[PHASE 3: LEARNING LOOP]")
     learning = EsotericLearningLoop()
 
-    print("\nCurrent Weights:")
+    logger.info("\nCurrent Weights:")
     weights = learning.get_weights()
     for key, val in weights["weights"].items():
-        print(f"  {key}: {val}")
+        logger.info(f"  {key}: {val}")
 
-    print("\nPerformance Summary:")
+    logger.info("\nPerformance Summary:")
     perf = learning.get_performance()
-    print(f"  Total Picks: {perf['total_picks']}")
-    print(f"  Overall Record: {perf['overall']}")
+    logger.info(f"  Total Picks: {perf['total_picks']}")
+    logger.info(f"  Overall Record: {perf['overall']}")
 
     # Test full analysis
-    print("\n[FULL ESOTERIC ANALYSIS]")
+    logger.info("\n[FULL ESOTERIC ANALYSIS]")
     analysis = calculate_full_esoteric_analysis(
         player="LeBron James",
         team="Lakers",
@@ -1987,12 +1821,12 @@ if __name__ == "__main__":
         model_probability=58
     )
 
-    print(f"\n  Total Esoteric Score: {analysis['total_score']}/10")
-    print(f"  Confluence Level: {analysis['confluence']['level']}")
-    print(f"  Blended Probability: {analysis['blended']['blended_probability']}%")
-    print(f"  Bet Tier: {analysis['tier']['tier']}")
-    print(f"  Action: {analysis['tier']['explanation']}")
+    logger.info(f"\n  Total Esoteric Score: {analysis['total_score']}/10")
+    logger.info(f"  Confluence Level: {analysis['confluence']['level']}")
+    logger.info(f"  Blended Probability: {analysis['blended']['blended_probability']}%")
+    logger.info(f"  Bet Tier: {analysis['tier']['tier']}")
+    logger.info(f"  Action: {analysis['tier']['explanation']}")
 
-    print("\n" + "=" * 70)
-    print("ALL TESTS COMPLETE")
-    print("=" * 70)
+    logger.info("\n" + "=" * 70)
+    logger.info("ALL TESTS COMPLETE")
+    logger.info("=" * 70)

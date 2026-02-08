@@ -20,7 +20,7 @@ No double-counting with Esoteric or Jarvis engines.
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List
 from dataclasses import dataclass
 
 # Configure logging
@@ -813,14 +813,16 @@ def get_research_score(
 # =============================================================================
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("RESEARCH ENGINE v1.0 - TEST")
-    print("=" * 60)
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+    logger.info("=" * 60)
+    logger.info("RESEARCH ENGINE v1.0 - TEST")
+    logger.info("=" * 60)
 
     engine = get_research_engine()
 
     # Test 1: High public fade scenario
-    print("\nTest 1: High Public Fade (80% public)")
+    logger.info("\nTest 1: High Public Fade (80% public)")
     result = engine.calculate_research_score(
         public_pct=80,
         sharp_money_pct=65,
@@ -828,12 +830,12 @@ if __name__ == "__main__":
         total=220,
         injury_impact_pct=5
     )
-    print(f"  Score: {result.research_score}")
-    print(f"  Pillars: {result.pillars_fired}")
-    print(f"  Confluence: {result.confluence_level}")
+    logger.info(f"  Score: {result.research_score}")
+    logger.info(f"  Pillars: {result.pillars_fired}")
+    logger.info(f"  Confluence: {result.confluence_level}")
 
     # Test 2: Perfect storm scenario
-    print("\nTest 2: Perfect Storm (multiple pillars)")
+    logger.info("\nTest 2: Perfect Storm (multiple pillars)")
     result = engine.calculate_research_score(
         public_pct=75,
         sharp_money_pct=70,
@@ -844,20 +846,20 @@ if __name__ == "__main__":
         injury_impact_pct=20,
         key_player_out=True
     )
-    print(f"  Score: {result.research_score}")
-    print(f"  Pillars: {result.pillars_fired}")
-    print(f"  Confluence: {result.confluence_level}")
+    logger.info(f"  Score: {result.research_score}")
+    logger.info(f"  Pillars: {result.pillars_fired}")
+    logger.info(f"  Confluence: {result.confluence_level}")
 
     # Test 3: Trap game scenario
-    print("\nTest 3: Trap Game (large spread)")
+    logger.info("\nTest 3: Trap Game (large spread)")
     result = engine.calculate_research_score(
         public_pct=55,
         spread=-15.5,
         total=215
     )
-    print(f"  Score: {result.research_score}")
-    print(f"  Pillars: {result.pillars_fired}")
+    logger.info(f"  Score: {result.research_score}")
+    logger.info(f"  Pillars: {result.pillars_fired}")
 
-    print("\n" + "=" * 60)
-    print("Tests complete!")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("Tests complete!")
+    logger.info("=" * 60)

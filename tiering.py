@@ -36,7 +36,123 @@ TITANIUM_REQUIRES_JARVIS = True  # Prefer Jarvis as one of the qualifying engine
 # =============================================================================
 # COMMUNITY OUTPUT FILTER
 # =============================================================================
-COMMUNITY_MIN_SCORE = 6.5  # Only show picks >= 6.5 to community
+# v20.12: Raised from 6.5 to 7.0 to match MIN_FINAL_SCORE in scoring_contract.py
+COMMUNITY_MIN_SCORE = 7.0  # Only show picks >= 7.0 to community
+
+# =============================================================================
+# v20.12: QUALITY GATES FOR REDUCED PICK VOLUME
+# =============================================================================
+try:
+    from core.scoring_contract import (
+        BASE_SCORE_GATES,
+        ENGINE_ALIGNMENT_GATE,
+        EDGE_LEAN_CONFLUENCE_MINIMUM,
+        CONCENTRATION_LIMITS,
+    )
+    QUALITY_GATES_AVAILABLE = True
+except ImportError:
+    QUALITY_GATES_AVAILABLE = False
+    BASE_SCORE_GATES = {"edge_lean_min": 6.0, "gold_star_min": 6.8}
+    ENGINE_ALIGNMENT_GATE = {"min_engines_above_threshold": 2, "threshold": 6.5}
+    EDGE_LEAN_CONFLUENCE_MINIMUM = "MODERATE"
+    CONCENTRATION_LIMITS = {"max_per_matchup": 2, "max_per_sport_per_day": 8, "max_props_per_player": 1}
+
+# =============================================================================
+# v20.12: QUALITY GATE HELPER FUNCTIONS
+# =============================================================================
+
+def check_base_score_gate(base_score: float, target_tier: str) -> Tuple[bool, str]:
+    """
+    Check if base_score meets minimum threshold for the target tier.
+    Prevents boost-inflated weak picks from reaching higher tiers.
+
+    Args:
+        base_score: Pre-boost weighted engine score
+        target_tier: "EDGE_LEAN" or "GOLD_STAR"
+
+    Returns:
+        Tuple of (passes_gate: bool, reason: str)
+    """
+    if target_tier == "GOLD_STAR":
+        min_required = BASE_SCORE_GATES.get("gold_star_min", 6.8)
+        if base_score < min_required:
+            return False, f"base_score {base_score:.2f} < {min_required} (GOLD_STAR minimum)"
+        return True, "base_score gate passed"
+
+    elif target_tier == "EDGE_LEAN":
+        min_required = BASE_SCORE_GATES.get("edge_lean_min", 6.0)
+        if base_score < min_required:
+            return False, f"base_score {base_score:.2f} < {min_required} (EDGE_LEAN minimum)"
+        return True, "base_score gate passed"
+
+    return True, "no base_score gate for tier"
+
+
+def check_engine_alignment(
+    ai_score: float,
+    research_score: float,
+    esoteric_score: float,
+    jarvis_score: float
+) -> Tuple[bool, int, List[str]]:
+    """
+    Check engine alignment gate - prevents picks with 1 great + 3 terrible engines.
+    At least 2 of 4 engines must be >= threshold for quality alignment.
+
+    Args:
+        ai_score: AI engine score (0-10)
+        research_score: Research engine score (0-10)
+        esoteric_score: Esoteric engine score (0-10)
+        jarvis_score: Jarvis engine score (0-10)
+
+    Returns:
+        Tuple of (passes_gate: bool, engines_passing: int, passing_engine_names: List[str])
+    """
+    threshold = ENGINE_ALIGNMENT_GATE.get("threshold", 6.5)
+    min_required = ENGINE_ALIGNMENT_GATE.get("min_engines_above_threshold", 2)
+
+    engines = {
+        "ai": ai_score,
+        "research": research_score,
+        "esoteric": esoteric_score,
+        "jarvis": jarvis_score,
+    }
+
+    passing_engines = [name for name, score in engines.items() if score >= threshold]
+    count = len(passing_engines)
+
+    passes = count >= min_required
+    return passes, count, passing_engines
+
+
+def check_confluence_minimum(confluence_level: str) -> Tuple[bool, str]:
+    """
+    Check if confluence level meets minimum for EDGE_LEAN tier.
+    DIVERGENT confluence indicates engines disagree - not suitable for action.
+
+    Args:
+        confluence_level: One of IMMORTAL, PERFECT, STRONG, MODERATE, DIVERGENT
+
+    Returns:
+        Tuple of (passes_gate: bool, reason: str)
+    """
+    # Order of confluence levels from best to worst
+    confluence_order = ["IMMORTAL", "JARVIS_PERFECT", "PERFECT", "HARMONIC_CONVERGENCE",
+                        "STRONG", "MODERATE", "DIVERGENT"]
+
+    min_level = EDGE_LEAN_CONFLUENCE_MINIMUM  # "MODERATE"
+
+    if confluence_level not in confluence_order:
+        # Unknown level - fail safe
+        return False, f"Unknown confluence level: {confluence_level}"
+
+    level_idx = confluence_order.index(confluence_level)
+    min_idx = confluence_order.index(min_level)
+
+    if level_idx <= min_idx:  # Lower index = better
+        return True, f"confluence {confluence_level} meets minimum {min_level}"
+    else:
+        return False, f"confluence {confluence_level} below minimum {min_level}"
+
 
 # =============================================================================
 # TIER CONFIGURATION - SINGLE SOURCE OF TRUTH
@@ -157,29 +273,53 @@ def tier_from_score(
     final_score: float,
     confluence: Dict[str, Any] = None,
     nhl_dog_protocol: bool = False,
-    titanium_triggered: bool = False
+    titanium_triggered: bool = False,
+    base_score: float = None,
+    ai_score: float = None,
+    research_score: float = None,
+    esoteric_score: float = None,
+    jarvis_score: float = None,
 ) -> Dict[str, Any]:
     """
     Determine bet tier based on final score and special conditions.
 
     SINGLE SOURCE OF TRUTH for tier determination.
 
+    v20.12: Added quality gates to reduce pick volume:
+    - base_score gate: Prevents boost-inflated weak picks
+    - engine alignment gate: Requires 2/4 engines >= 6.5
+    - confluence minimum: EDGE_LEAN requires at least MODERATE confluence
+
     Priority order:
     1. Titanium (if titanium_triggered=True)
     2. NHL Dog Protocol (if nhl_dog_protocol=True)
-    3. Score-based tiers (GOLD_STAR, EDGE_LEAN, MONITOR, PASS)
+    3. Score-based tiers with quality gates (GOLD_STAR, EDGE_LEAN, MONITOR, PASS)
 
     Args:
         final_score: The calculated final score (0-10 scale)
         confluence: Optional confluence data with level and boost
         nhl_dog_protocol: Whether NHL dog protocol is triggered
         titanium_triggered: Whether Titanium rule is triggered (3/4 engines >= 8.0 STRICT)
+        base_score: Pre-boost weighted engine score (for base_score gate)
+        ai_score: AI engine score (for alignment gate)
+        research_score: Research engine score (for alignment gate)
+        esoteric_score: Esoteric engine score (for alignment gate)
+        jarvis_score: Jarvis engine score (for alignment gate)
 
     Returns:
-        Dict with tier, units, action, badge, explanation
+        Dict with tier, units, action, badge, explanation, quality_gate_results
     """
     confluence = confluence or {}
     confluence_level = confluence.get("level", "DIVERGENT")
+
+    # Track quality gate results for transparency
+    quality_gate_results = {
+        "base_score_gate": None,
+        "engine_alignment_gate": None,
+        "confluence_gate": None,
+        "gates_passed": True,
+        "downgrade_reason": None,
+    }
 
     # PRIORITY 1: Titanium (overrides everything except when explicitly not triggered)
     if titanium_triggered:
@@ -195,7 +335,8 @@ def tier_from_score(
             "final_score": round(final_score, 2),
             "confluence_level": confluence_level,
             "nhl_dog_protocol": nhl_dog_protocol,
-            "titanium_triggered": True
+            "titanium_triggered": True,
+            "quality_gate_results": quality_gate_results,
         }
 
     # PRIORITY 2: NHL Dog Protocol
@@ -212,20 +353,78 @@ def tier_from_score(
             "final_score": round(final_score, 2),
             "confluence_level": confluence_level,
             "nhl_dog_protocol": True,
-            "titanium_triggered": False
+            "titanium_triggered": False,
+            "quality_gate_results": quality_gate_results,
         }
 
-    # PRIORITY 3: Score-based tiers (v12.0 thresholds)
+    # PRIORITY 3: Score-based tiers with v20.12 quality gates
     if final_score >= 7.5:
-        tier = "GOLD_STAR"
+        initial_tier = "GOLD_STAR"
     elif final_score >= 6.5:
-        tier = "EDGE_LEAN"
+        initial_tier = "EDGE_LEAN"
     elif final_score >= 5.5:
-        tier = "MONITOR"
+        initial_tier = "MONITOR"
     else:
-        tier = "PASS"
+        initial_tier = "PASS"
+
+    tier = initial_tier
+
+    # v20.12: Apply quality gates for EDGE_LEAN and GOLD_STAR
+    if tier in ("GOLD_STAR", "EDGE_LEAN") and QUALITY_GATES_AVAILABLE:
+        downgrade_reasons = []
+
+        # Gate 1: Base score gate (if base_score provided)
+        if base_score is not None:
+            passes, reason = check_base_score_gate(base_score, tier)
+            quality_gate_results["base_score_gate"] = {"passed": passes, "reason": reason}
+            if not passes:
+                downgrade_reasons.append(f"base_score: {reason}")
+
+        # Gate 2: Engine alignment gate (if engine scores provided)
+        if all(s is not None for s in [ai_score, research_score, esoteric_score, jarvis_score]):
+            passes, count, engines = check_engine_alignment(
+                ai_score, research_score, esoteric_score, jarvis_score
+            )
+            quality_gate_results["engine_alignment_gate"] = {
+                "passed": passes,
+                "engines_passing": count,
+                "passing_engines": engines,
+                "threshold": ENGINE_ALIGNMENT_GATE.get("threshold", 6.5),
+                "required": ENGINE_ALIGNMENT_GATE.get("min_engines_above_threshold", 2),
+            }
+            if not passes:
+                downgrade_reasons.append(
+                    f"engine_alignment: only {count}/4 engines >= {ENGINE_ALIGNMENT_GATE.get('threshold', 6.5)}"
+                )
+
+        # Gate 3: Confluence minimum gate (for EDGE_LEAN only - prevents DIVERGENT actions)
+        if tier == "EDGE_LEAN":
+            passes, reason = check_confluence_minimum(confluence_level)
+            quality_gate_results["confluence_gate"] = {"passed": passes, "reason": reason}
+            if not passes:
+                downgrade_reasons.append(f"confluence: {reason}")
+
+        # Apply downgrades if any gates failed
+        if downgrade_reasons:
+            quality_gate_results["gates_passed"] = False
+            quality_gate_results["downgrade_reason"] = "; ".join(downgrade_reasons)
+
+            # Downgrade tier
+            if tier == "GOLD_STAR":
+                tier = "EDGE_LEAN"
+                # Re-check EDGE_LEAN gates after downgrade
+                if confluence_level == "DIVERGENT":
+                    tier = "MONITOR"
+            elif tier == "EDGE_LEAN":
+                tier = "MONITOR"
 
     config = TIER_CONFIG[tier]
+    explanation = f"{config['badge']} - {config['description']}."
+    if config['units'] > 0:
+        explanation += f" {config['units']} unit play."
+    if quality_gate_results.get("downgrade_reason"):
+        explanation += f" (Downgraded from {initial_tier}: {quality_gate_results['downgrade_reason']})"
+
     return {
         "tier": tier,
         "unit_size": config["units"],
@@ -233,11 +432,13 @@ def tier_from_score(
         "action": config["action"],
         "badge": config["badge"],
         "kelly_multiplier": config["kelly_multiplier"],
-        "explanation": f"{config['badge']} - {config['description']}. {config['units']} unit play." if config['units'] > 0 else f"{config['badge']} - {config['description']}.",
+        "explanation": explanation,
         "final_score": round(final_score, 2),
         "confluence_level": confluence_level,
         "nhl_dog_protocol": nhl_dog_protocol,
-        "titanium_triggered": False
+        "titanium_triggered": False,
+        "quality_gate_results": quality_gate_results,
+        "initial_tier": initial_tier if tier != initial_tier else None,
     }
 
 

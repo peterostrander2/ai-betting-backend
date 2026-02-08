@@ -20,10 +20,13 @@ Signals Tracked:
 
 import os
 import json
+import logging
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 # Storage path
 ESOTERIC_STORAGE_PATH = os.getenv("ESOTERIC_STORAGE_PATH", "./esoteric_data")
@@ -142,7 +145,7 @@ class EsotericGrader:
                         EsotericPrediction(**p) for p in data
                     ]
             except Exception as e:
-                print(f"Error loading predictions: {e}")
+                logger.error(f"Error loading predictions: {e}")
                 self.predictions = []
 
     def _save_predictions(self):
@@ -152,7 +155,7 @@ class EsotericGrader:
             with open(pred_file, "w") as f:
                 json.dump([asdict(p) for p in self.predictions], f, indent=2)
         except Exception as e:
-            print(f"Error saving predictions: {e}")
+            logger.error(f"Error saving predictions: {e}")
 
     def _load_accuracy_cache(self):
         """Load or initialize accuracy cache."""
@@ -175,7 +178,7 @@ class EsotericGrader:
             with open(cache_file, "w") as f:
                 json.dump(self.accuracy_cache, f, indent=2)
         except Exception as e:
-            print(f"Error saving accuracy cache: {e}")
+            logger.error(f"Error saving accuracy cache: {e}")
 
     def log_prediction(
         self,

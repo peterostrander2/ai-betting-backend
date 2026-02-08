@@ -523,9 +523,10 @@ class TestTieringSingleSource:
         assert result["tier"] == "GOLD_STAR"
 
     def test_tier_from_score_edge_lean(self):
-        """Score >= 6.5 and < 7.5 should return EDGE_LEAN (v12.0 thresholds)."""
+        """Score >= 7.0 and < 7.5 should return EDGE_LEAN (v20.12: requires MODERATE confluence)."""
         from tiering import tier_from_score
-        result = tier_from_score(final_score=7.0)
+        # v20.12: Must pass confluence to avoid DIVERGENT default which downgrades to MONITOR
+        result = tier_from_score(final_score=7.0, confluence={"level": "MODERATE"})
         assert result["tier"] == "EDGE_LEAN"
 
     def test_tier_from_score_monitor(self):
@@ -735,10 +736,10 @@ class TestV15EngineSeparation:
     """Verify v15.0 4-engine separation is correct."""
 
     def test_community_min_score_constant_exists(self):
-        """COMMUNITY_MIN_SCORE should be defined in tiering."""
+        """COMMUNITY_MIN_SCORE should be defined in tiering (v20.12: raised to 7.0)."""
         try:
             from tiering import COMMUNITY_MIN_SCORE
-            assert COMMUNITY_MIN_SCORE == 6.5, f"Expected 6.5, got {COMMUNITY_MIN_SCORE}"
+            assert COMMUNITY_MIN_SCORE == 7.0, f"Expected 7.0, got {COMMUNITY_MIN_SCORE}"
         except ImportError:
             # Constant may be defined locally in live_data_router
             pass
@@ -833,10 +834,10 @@ class TestV15JarvisStandalone:
             engine = JarvisSavantEngine()
 
             # Required methods for standalone Jarvis
+            # NOTE: calculate_mid_spread_signal moved to research_engine.py in v12.0
             required_methods = [
                 "check_jarvis_trigger",
                 "calculate_gematria_signal",
-                "calculate_mid_spread_signal"
             ]
 
             for method in required_methods:

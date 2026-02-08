@@ -6,7 +6,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, Response, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import httpx
 import time
 import logging
@@ -138,9 +138,9 @@ except ImportError:
     logger.warning("tiering module not available - using legacy tier logic")
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
-from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL
+from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, MIN_PROPS_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, SPORT_TOTALS_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS, CONFLUENCE_LEVELS, PERSIST_TIERS
 from core.scoring_pipeline import compute_final_score_option_a, compute_harmonic_boost
-from core.telemetry import apply_used_integrations_debug
+from core.telemetry import apply_used_integrations_debug, attach_integration_telemetry_debug, record_daily_integration_rollup
 
 # Import Time ET - SINGLE SOURCE OF TRUTH for ET timezone
 try:
@@ -262,8 +262,7 @@ try:
     WEATHER_MODULE_AVAILABLE = True
 except ImportError:
     WEATHER_MODULE_AVAILABLE = False
-    # Note: logger not yet defined here, use print for startup logging
-    print("[WARNING] weather module not available - weather scoring disabled")
+    logger.warning("weather module not available - weather scoring disabled")
 
 # Import Travel Module for rest days and fatigue analysis (v16.0)
 try:
@@ -273,7 +272,7 @@ try:
     TRAVEL_MODULE_AVAILABLE = True
 except ImportError:
     TRAVEL_MODULE_AVAILABLE = False
-    print("[WARNING] travel module not available - rest days calculation disabled")
+    logger.warning("travel module not available - rest days calculation disabled")
 
 # Import ESPN Lineups/Officials Module for referee data (v17.2)
 try:
@@ -285,7 +284,7 @@ try:
     ESPN_OFFICIALS_AVAILABLE = True
 except ImportError:
     ESPN_OFFICIALS_AVAILABLE = False
-    print("[WARNING] espn_lineups module not available - officials data disabled")
+    logger.warning("espn_lineups module not available - officials data disabled")
 
     async def get_officials_for_game(*args, **kwargs):
         return {"available": False, "reason": "MODULE_NOT_LOADED"}
@@ -300,7 +299,7 @@ try:
     ML_INTEGRATION_AVAILABLE = True
 except ImportError:
     ML_INTEGRATION_AVAILABLE = False
-    print("[WARNING] ml_integration module not available - using heuristic AI scores")
+    logger.warning("ml_integration module not available - using heuristic AI scores")
 
 # Import Context Layer Services for Pillars 13-17 (v17.0)
 try:
@@ -314,7 +313,7 @@ try:
     CONTEXT_LAYER_AVAILABLE = True
 except ImportError:
     CONTEXT_LAYER_AVAILABLE = False
-    print("[WARNING] context_layer module not available - using default context values")
+    logger.warning("context_layer module not available - using default context values")
 
 # Import Ensemble Model for Game Picks (v17.0)
 try:
@@ -322,7 +321,7 @@ try:
     ENSEMBLE_AVAILABLE = True
 except ImportError:
     ENSEMBLE_AVAILABLE = False
-    print("[WARNING] ensemble model not available - skipping ensemble prediction")
+    logger.warning("ensemble model not available - skipping ensemble prediction")
 
 # Import SERP Intelligence for betting signals (v17.4)
 try:
@@ -334,12 +333,14 @@ try:
         is_serp_available,
         get_serp_status,
         SERP_SHADOW_MODE,
+        SERP_PROPS_ENABLED,
     )
     SERP_INTEL_AVAILABLE = True
 except ImportError:
     SERP_INTEL_AVAILABLE = False
     SERP_SHADOW_MODE = True  # Default to shadow mode if module not available
-    print("[WARNING] serp_intelligence module not available - SERP signals disabled")
+    SERP_PROPS_ENABLED = False
+    logger.warning("serp_intelligence module not available - SERP signals disabled")
 
 # Import Gematria Twitter Intelligence for community consensus signals (v17.9)
 try:
@@ -350,7 +351,7 @@ try:
     GEMATRIA_INTEL_AVAILABLE = True
 except ImportError:
     GEMATRIA_INTEL_AVAILABLE = False
-    print("[WARNING] gematria_twitter_intel module not available - Gematria community signals disabled")
+    logger.warning("gematria_twitter_intel module not available - Gematria community signals disabled")
 
 # Import Astronomical API for Void-of-Course moon detection (v17.5 - Phase 2.2)
 try:
@@ -358,7 +359,7 @@ try:
     ASTRONOMICAL_API_AVAILABLE = True
 except ImportError:
     ASTRONOMICAL_API_AVAILABLE = False
-    print("[WARNING] astronomical_api module not available - VOC detection disabled")
+    logger.warning("astronomical_api module not available - VOC detection disabled")
     def is_void_moon_now():
         return (False, 0.0)
 
@@ -2315,7 +2316,7 @@ async def get_lines(sport: str):
     cache_key = f"lines:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
-        return JSONResponse(_sanitize_public(cached))
+        return cached  # Return dict for internal callers, FastAPI auto-serializes for endpoints
 
     sport_config = SPORT_MAPPINGS[sport_lower]
     data = []
@@ -2336,7 +2337,7 @@ async def get_lines(sport: str):
                     logger.info("Playbook lines retrieved for %s: %d games", sport, len(lines))
                     result = {"sport": sport.upper(), "source": "playbook", "count": len(lines), "data": lines}
                     api_cache.set(cache_key, result)
-                    return JSONResponse(_sanitize_public(result))
+                    return result  # Return dict for internal callers, FastAPI auto-serializes for endpoints
                 except ValueError as e:
                     logger.error("Failed to parse Playbook lines response: %s", e)
 
@@ -2406,7 +2407,7 @@ async def get_lines(sport: str):
 
     result = {"sport": sport.upper(), "source": "odds_api" if data else "none", "count": len(data), "data": data}
     api_cache.set(cache_key, result)
-    return JSONResponse(_sanitize_public(result))
+    return result  # Return dict for internal callers, FastAPI auto-serializes for endpoints
 
 
 @router.get("/props/{sport}")
@@ -2671,10 +2672,65 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                            max_events=12, max_props=10, max_games=10):
     sport_upper = sport.upper()
     used_integrations = set()
+    integration_calls = {}
+    integration_impact = {}
+    usage_snapshot_before = {}
+
+    try:
+        from integration_registry import get_usage_snapshot
+        usage_snapshot_before = get_usage_snapshot()
+    except Exception:
+        usage_snapshot_before = {}
+
+    def _ensure_integration_entry(name: str) -> Dict[str, Any]:
+        entry = integration_calls.get(name)
+        if entry is None:
+            entry = {
+                "called": 0,
+                "status": None,
+                "latency_total_ms": 0.0,
+                "latency_samples": 0,
+                "cache_hit": None,
+                "cache_hits": 0,
+                "cache_samples": 0,
+            }
+            integration_calls[name] = entry
+        return entry
+
+    def _record_integration_call(name: str, status: str | None = None, latency_ms: float | None = None, cache_hit: bool | None = None) -> None:
+        entry = _ensure_integration_entry(name)
+        entry["called"] += 1
+        if status is not None:
+            entry["status"] = status
+        if latency_ms is not None:
+            entry["latency_total_ms"] += float(latency_ms)
+            entry["latency_samples"] += 1
+        if cache_hit is not None:
+            entry["cache_hit"] = bool(cache_hit)
+            entry["cache_samples"] += 1
+            if cache_hit:
+                entry["cache_hits"] += 1
+
+    def _record_integration_impact(name: str, nonzero_boost: bool = False, reasons_count: int = 0, affected_ranking: bool | None = None) -> None:
+        entry = integration_impact.get(name)
+        if entry is None:
+            entry = {"nonzero_boost": 0, "reasons_count": 0, "affected_ranking": 0}
+            integration_impact[name] = entry
+        if nonzero_boost:
+            entry["nonzero_boost"] += 1
+        entry["reasons_count"] += int(reasons_count)
+        if affected_ranking:
+            entry["affected_ranking"] += 1
+
+    # Initialize paid integrations with default entries for debug visibility
+    for _name in ("odds_api", "playbook_api", "balldontlie", "serpapi"):
+        _ensure_integration_entry(_name)
+        integration_impact.setdefault(_name, {"nonzero_boost": 0, "reasons_count": 0, "affected_ranking": 0})
 
     def _mark_integration_used(name: str) -> None:
         """Track integration usage for this run + update last_used_at."""
         used_integrations.add(name)
+        _record_integration_call(name, status="OK")
         try:
             from integration_registry import mark_integration_used
             mark_integration_used(name)
@@ -2683,7 +2739,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             pass
 
     # --- v16.0 PERFORMANCE: Time budget + per-stage timings ---
-    TIME_BUDGET_S = 25.0  # Increased from 15.0 to allow props scoring after games
+    TIME_BUDGET_S = float(os.getenv("BEST_BETS_TIME_BUDGET_S", "55"))  # Configurable; increased default to allow both games AND props scoring to complete
     _t0 = time.time()
     _deadline = _t0 + TIME_BUDGET_S
     _timings = {}  # stage_name → elapsed_seconds
@@ -2707,7 +2763,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     daily_energy = get_daily_energy()
 
     # Fetch sharp money for both categories
+    _sharp_start = time.time()
     sharp_data = await get_sharp_money(sport)
+    _sharp_latency_ms = (time.time() - _sharp_start) * 1000.0
+    _sharp_source = (sharp_data.get("source") or "").lower() if isinstance(sharp_data, dict) else ""
+    if "playbook" in _sharp_source:
+        _record_integration_call("playbook_api", status="OK", latency_ms=_sharp_latency_ms)
+    if "odds_api" in _sharp_source:
+        _record_integration_call("odds_api", status="OK", latency_ms=_sharp_latency_ms)
     sharp_lookup = {}
     for signal in sharp_data.get("data", []):
         game_key = f"{signal.get('away_team')}@{signal.get('home_team')}"
@@ -3653,7 +3716,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "home_team": home_team,
                 "away_team": away_team,
                 "home_pick": pick_side.lower() == home_team.lower() if pick_side and home_team else True,
-                "event_id": candidate.get("id", "unknown"),
+                "event_id": event_id or "unknown",
                 "injuries": _formatted_injuries,
                 "odds": -110,  # Default
                 "days_rest": 1,  # Could be enriched from schedule
@@ -3819,6 +3882,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         research_reasons.append(
             f"Research: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + ESPN:{espn_odds_boost} + Liquidity:{liquidity_boost} + Base:{base_research})"
         )
+
+        if (sharp_boost + public_boost + liquidity_boost) > 0:
+            _record_integration_impact(
+                "playbook_api",
+                nonzero_boost=True,
+                reasons_count=len(research_reasons),
+            )
+        if line_boost > 0 or espn_odds_boost > 0:
+            _record_integration_impact(
+                "odds_api",
+                nonzero_boost=True,
+                reasons_count=1,
+            )
 
         # ===== WEATHER IMPACT ON RESEARCH (v17.9) =====
         weather_adj = 0.0
@@ -4340,8 +4416,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         if _is_game_pick and sport_upper in ("NFL", "MLB", "NCAAF"):
             try:
                 from alt_data_sources.weather import get_weather_context_sync
-                # Get venue from candidate if available
-                _weather_venue = candidate.get("venue", "") if isinstance(candidate, dict) else ""
+                # v20.11: Venue not passed to calculate_pick_score, use home_team for lookup
+                _weather_venue = ""
                 weather_ctx = get_weather_context_sync(sport_upper, home_team, _weather_venue)
                 if weather_ctx.get("status") == "VALIDATED":
                     weather_adj = weather_ctx.get("score_modifier", 0.0)
@@ -4423,11 +4499,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     get_combined_live_signals, is_live_signals_enabled
                 )
                 if is_live_signals_enabled():
-                    _home_score = candidate.get("home_score", 0) if isinstance(candidate, dict) else 0
-                    _away_score = candidate.get("away_score", 0) if isinstance(candidate, dict) else 0
-                    _period = candidate.get("period", 1) if isinstance(candidate, dict) else 1
-                    _current_line = candidate.get("line", 0) if isinstance(candidate, dict) else 0
-                    _event_id = candidate.get("event_id", "") if isinstance(candidate, dict) else ""
+                    # v20.11: Live game data not passed to calculate_pick_score, use defaults
+                    # TODO: Pass live game data (home_score, away_score, period) for proper live signals
+                    _home_score = 0
+                    _away_score = 0
+                    _period = 1
+                    _current_line = spread or 0
+                    _event_id = event_id or ""
                     _is_home_pick = pick_side and home_team and pick_side.lower() in home_team.lower()
 
                     live_signals = get_combined_live_signals(
@@ -4480,22 +4558,22 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             both_high = research_score >= 7.5 and esoteric_score >= 7.5
             jarvis_high = jarvis_rs is not None and jarvis_rs >= 7.5
             if immortal_detected and both_high and jarvis_high and alignment_pct >= 80:
-                confluence = {"level": "IMMORTAL", "boost": 10, "alignment_pct": alignment_pct}
+                confluence = {"level": "IMMORTAL", "boost": CONFLUENCE_LEVELS["IMMORTAL"], "alignment_pct": alignment_pct}
             elif jarvis_triggered and both_high and jarvis_high and alignment_pct >= 80:
-                confluence = {"level": "JARVIS_PERFECT", "boost": 7, "alignment_pct": alignment_pct}
+                confluence = {"level": "JARVIS_PERFECT", "boost": CONFLUENCE_LEVELS["JARVIS_PERFECT"], "alignment_pct": alignment_pct}
             elif both_high and jarvis_high and alignment_pct >= 80:
-                confluence = {"level": "PERFECT", "boost": 5, "alignment_pct": alignment_pct}
+                confluence = {"level": "PERFECT", "boost": CONFLUENCE_LEVELS["PERFECT"], "alignment_pct": alignment_pct}
             elif alignment_pct >= 70:
                 # v15.3: STRONG requires alignment >= 80% AND active signal
                 _strong_ok = alignment_pct >= 80 and (jarvis_active or _research_sharp_present)
                 if _strong_ok:
-                    confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
+                    confluence = {"level": "STRONG", "boost": CONFLUENCE_LEVELS["STRONG"], "alignment_pct": alignment_pct}
                 else:
-                    confluence = {"level": "MODERATE", "boost": 1, "alignment_pct": alignment_pct}
+                    confluence = {"level": "MODERATE", "boost": CONFLUENCE_LEVELS["MODERATE"], "alignment_pct": alignment_pct}
             elif alignment_pct >= 60:
-                confluence = {"level": "MODERATE", "boost": 1, "alignment_pct": alignment_pct}
+                confluence = {"level": "MODERATE", "boost": CONFLUENCE_LEVELS["MODERATE"], "alignment_pct": alignment_pct}
             else:
-                confluence = {"level": "DIVERGENT", "boost": 0, "alignment_pct": alignment_pct}
+                confluence = {"level": "DIVERGENT", "boost": CONFLUENCE_LEVELS["DIVERGENT"], "alignment_pct": alignment_pct}
 
         # ===== v17.3 HARMONIC CONVERGENCE CHECK =====
         # "Golden Boost" when Math (Research) + Magic (Esoteric) both exceed threshold
@@ -4568,8 +4646,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         if SERP_INTEL_AVAILABLE and is_serp_available():
             try:
-                if player_name:
-                    # Prop bets - use prop intelligence
+                _serp_start = time.time()
+                if player_name and not SERP_PROPS_ENABLED:
+                    # v20.9: Skip SERP for props — saves ~60% of daily quota
+                    # Props rely on LSTM, context layer, GLITCH, Phase 8 signals instead
+                    # Per-player SERP queries are unique (near-zero cache hit rate)
+                    # Re-enable with SERP_PROPS_ENABLED=true env var
+                    serp_status = "SKIPPED_PROPS"
+                    serp_reasons.append("SERP: Skipped for props (quota optimization)")
+                elif player_name:
+                    # Prop bets - use prop intelligence (SERP_PROPS_ENABLED=true)
                     serp_intel = get_serp_prop_intelligence(
                         sport=sport_upper,
                         player_name=player_name,
@@ -4579,13 +4665,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         prop_line=prop_line
                     )
                 else:
-                    # Game bets - use game intelligence
-                    serp_intel = get_serp_betting_intelligence(
-                        sport=sport_upper,
-                        home_team=home_team,
-                        away_team=away_team,
-                        pick_side=pick_side,
-                    )
+                    # Game bets - check pre-fetch cache first (v20.7)
+                    _serp_target = pick_side if pick_side in [home_team, away_team] else home_team
+                    _serp_cache_key = (home_team.lower(), away_team.lower(), _serp_target.lower())
+                    if _serp_cache_key in _serp_game_cache:
+                        serp_intel = _serp_game_cache[_serp_cache_key]
+                    else:
+                        serp_intel = get_serp_betting_intelligence(
+                            sport=sport_upper,
+                            home_team=home_team,
+                            away_team=away_team,
+                            pick_side=pick_side,
+                        )
 
                 if serp_intel and serp_intel.get("available"):
                     serp_status = "OK"
@@ -4612,6 +4703,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                         serp_intel["boosts_raw"].get("esoteric", 0),
                                         serp_intel["boosts_raw"].get("jarvis", 0),
                                         serp_intel["boosts_raw"].get("context", 0))
+                _record_integration_call("serpapi", status=serp_status, latency_ms=(time.time() - _serp_start) * 1000.0)
             except Exception as e:
                 logger.debug("SERP intelligence failed: %s", e)
                 serp_status = "ERROR"
@@ -4622,6 +4714,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         else:
             serp_status = "UNAVAILABLE"
             serp_reasons.append("SERP module not available")
+
+        _record_integration_impact(
+            "serpapi",
+            nonzero_boost=serp_boost_total != 0.0,
+            reasons_count=len(serp_reasons),
+        )
 
         # ===== v17.9 GEMATRIA TWITTER INTELLIGENCE =====
         # Community consensus signals from gematria Twitter accounts
@@ -4791,8 +4889,36 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "base_score": base_score
             }
 
-        # FINAL = BASE_4 + CONTEXT_MOD + CONFLUENCE + MSRF + JASON + SERP
+        # FINAL = BASE_4 + CONTEXT_MOD + CONFLUENCE + MSRF + JASON + SERP + ENSEMBLE + TOTALS_CAL
         jason_sim_boost = jason_output.get("jason_sim_boost", 0.0)
+
+        # ===== v20.4 TOTALS SIDE CALIBRATION (computed before final score) =====
+        # Applied INSIDE TOTAL_BOOST_CAP to prevent score clustering at 10.0
+        totals_calibration_adj = 0.0
+        if pick_type == "TOTAL" and TOTALS_SIDE_CALIBRATION.get("enabled", False):
+            pick_side_lower = (pick_side or "").lower()
+            if "over" in pick_side_lower:
+                totals_calibration_adj = TOTALS_SIDE_CALIBRATION.get("over_penalty", 0.0)
+                context_reasons.append(f"TOTALS_CALIBRATION: OVER penalty ({totals_calibration_adj:+.2f})")
+            elif "under" in pick_side_lower:
+                totals_calibration_adj = TOTALS_SIDE_CALIBRATION.get("under_boost", 0.0)
+                context_reasons.append(f"TOTALS_CALIBRATION: UNDER boost ({totals_calibration_adj:+.2f})")
+            if totals_calibration_adj != 0.0:
+                logger.debug("TOTALS_CALIBRATION[%s]: side=%s, adj=%.2f",
+                           game_str[:30], pick_side, totals_calibration_adj)
+
+        # ===== v20.11 SPORT-SPECIFIC TOTALS CALIBRATION =====
+        # NHL Totals: 26% win rate (Feb 5 data) - needs severe penalty
+        # NCAAB Totals: 46% win rate - moderate penalty
+        sport_totals_adj = 0.0
+        if pick_type == "TOTAL" and SPORT_TOTALS_CALIBRATION.get("enabled", False):
+            sport_totals_adj = SPORT_TOTALS_CALIBRATION.get(sport_upper, 0.0)
+            if sport_totals_adj != 0.0:
+                totals_calibration_adj += sport_totals_adj
+                context_reasons.append(f"SPORT_TOTALS_CAL: {sport_upper} penalty ({sport_totals_adj:+.2f})")
+                logger.info("SPORT_TOTALS_CALIBRATION[%s]: sport=%s, adj=%.2f, total_adj=%.2f",
+                           game_str[:30], sport_upper, sport_totals_adj, totals_calibration_adj)
+
         final_score, context_modifier = compute_final_score_option_a(
             base_score=base_score,
             context_modifier=context_modifier,
@@ -4800,6 +4926,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             msrf_boost=msrf_boost,
             jason_sim_boost=jason_sim_boost,
             serp_boost=serp_boost_total,
+            totals_calibration_adj=totals_calibration_adj,
         )
 
         # ===== v17.8 PILLAR 16: OFFICIALS TENDENCY INTEGRATION =====
@@ -4944,6 +5071,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # Use trained ensemble model to predict hit probability for game picks
         # Game pick types: SPREAD, TOTAL, MONEYLINE, SHARP (not "GAME" - that's the default)
         ensemble_metadata = None
+        ensemble_adjustment = 0.0
         _GAME_PICK_TYPES = {"SPREAD", "TOTAL", "MONEYLINE", "SHARP", "GAME"}
 
         if pick_type in _GAME_PICK_TYPES and ENSEMBLE_AVAILABLE and ML_INTEGRATION_AVAILABLE:
@@ -4970,19 +5098,26 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     ensemble_confidence = ensemble_metadata.get("confidence", 0)
                     ai_reasons.append(f"Ensemble hit prob: {hit_prob:.1%} (conf: {ensemble_confidence:.0f}%)")
 
-                    # Adjust final score based on ensemble prediction
-                    try:
-                        from utils.ensemble_adjustment import apply_ensemble_adjustment
-                        final_score, ensemble_reasons = apply_ensemble_adjustment(final_score, hit_prob)
-                        ai_reasons.extend(ensemble_reasons)
-                    except Exception:
-                        # Fallback to inline adjustments if helper unavailable
-                        if hit_prob > 0.6:
-                            final_score = min(10.0, final_score + 0.5)
-                            ai_reasons.append("Ensemble boost: +0.5 (prob > 60%)")
-                        elif hit_prob < 0.4:
-                            final_score = max(0.0, final_score - 0.5)
-                            ai_reasons.append("Ensemble penalty: -0.5 (prob < 40%)")
+                    # Determine ensemble adjustment value (applied INSIDE TOTAL_BOOST_CAP)
+                    if hit_prob > 0.6:
+                        ensemble_adjustment = ENSEMBLE_ADJUSTMENT_STEP
+                        ai_reasons.append(f"Ensemble boost: +{ENSEMBLE_ADJUSTMENT_STEP} (prob > 60%)")
+                    elif hit_prob < 0.4:
+                        ensemble_adjustment = -ENSEMBLE_ADJUSTMENT_STEP
+                        ai_reasons.append(f"Ensemble penalty: -{ENSEMBLE_ADJUSTMENT_STEP} (prob < 40%)")
+
+                    # Recompute final_score with ensemble_adjustment inside the cap
+                    if ensemble_adjustment != 0.0:
+                        final_score, context_modifier = compute_final_score_option_a(
+                            base_score=base_score,
+                            context_modifier=context_modifier,
+                            confluence_boost=confluence_boost,
+                            msrf_boost=msrf_boost,
+                            jason_sim_boost=jason_sim_boost,
+                            serp_boost=serp_boost_total,
+                            totals_calibration_adj=totals_calibration_adj,
+                            ensemble_adjustment=ensemble_adjustment,
+                        )
             except Exception as e:
                 logger.debug(f"Ensemble prediction unavailable: {e}")
 
@@ -5017,7 +5152,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 final_score=final_score,
                 confluence=confluence,
                 nhl_dog_protocol=False,
-                titanium_triggered=titanium_triggered
+                titanium_triggered=titanium_triggered,
+                # v20.12: Pass engine scores for quality gates
+                base_score=base_score,
+                ai_score=ai_scaled,
+                research_score=research_score,
+                esoteric_score=esoteric_score,
+                jarvis_score=(jarvis_rs if jarvis_rs is not None else 0),
             )
         else:
             # Fallback tier determination (v12.0 thresholds)
@@ -5160,6 +5301,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "live_adjustment": round(live_boost, 2),
             "live_reasons": live_reasons,
             "base_4_score": round(base_score, 2),
+            "ensemble_adjustment": round(ensemble_adjustment, 3),
+            "totals_calibration_adj": round(totals_calibration_adj, 3),
+            "sport_totals_adj": round(sport_totals_adj, 3),  # v20.11: Sport-specific totals penalty
             # Detailed breakdowns
             "scoring_breakdown": {
                 "research_score": round(research_score, 2),
@@ -5174,6 +5318,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "confluence_boost": confluence_boost,
                 "msrf_boost": msrf_boost,
                 "serp_boost": serp_boost_total,
+                "ensemble_adjustment": round(ensemble_adjustment, 3),
                 "live_adjustment": round(live_boost, 2),
                 "alignment_pct": confluence.get("alignment_pct", 0),
                 "gold_star_gates": _gold_gates,
@@ -5455,6 +5600,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     if isinstance(injuries_data, Exception):
         logger.debug("Injuries fetch failed in parallel: %s", injuries_data)
         injuries_data = {"data": []}
+
+    # Record when odds data was fetched (for live endpoint staleness checks)
+    _odds_fetched_at = now_et().isoformat() if TIME_ET_AVAILABLE else datetime.now().isoformat()
 
     # Integration usage telemetry (best-bets scoring cycle, request-scoped)
     if isinstance(props_data, dict):
@@ -5963,6 +6111,85 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 _resolve_attempted, _resolve_succeeded, _resolve_timed_out, _timings.get("player_resolution", 0))
 
     # ============================================
+    # SERP PRE-FETCH: Parallel game-level SERP intelligence (v20.7)
+    # Reduces ~107 sequential SerpAPI calls (~17s) to parallel (~2-3s)
+    # Results cached in _serp_game_cache for use in calculate_pick_score()
+    # ============================================
+    _s = time.time()
+    _serp_game_cache: Dict[tuple, Dict[str, Any]] = {}
+    _serp_prefetch_count = 0
+
+    if SERP_INTEL_AVAILABLE and is_serp_available() and not _past_deadline():
+        # Extract unique (home_team, away_team) pairs from games + props
+        _unique_serp_games: set = set()
+        if raw_games:
+            for _g in raw_games:
+                _ht = _g.get("home_team", "")
+                _at = _g.get("away_team", "")
+                if _ht and _at:
+                    _unique_serp_games.add((_ht, _at))
+        if prop_games:
+            for _g in prop_games:
+                _ht = _g.get("home_team", "")
+                _at = _g.get("away_team", "")
+                if _ht and _at:
+                    _unique_serp_games.add((_ht, _at))
+
+        if _unique_serp_games:
+            import concurrent.futures
+
+            def _prefetch_serp_game(home: str, away: str, target: str) -> tuple:
+                """Fetch SERP intel for one game+target combination."""
+                try:
+                    result = get_serp_betting_intelligence(
+                        sport=sport_upper,
+                        home_team=home,
+                        away_team=away,
+                        pick_side=target,
+                    )
+                    return (home.lower(), away.lower(), target.lower()), result
+                except Exception as e:
+                    logger.debug("SERP prefetch error %s@%s target=%s: %s", away, home, target, e)
+                    return (home.lower(), away.lower(), target.lower()), None
+
+            # Build task list: both home and away targets for each game
+            _serp_prefetch_tasks = []
+            for _ht, _at in _unique_serp_games:
+                _serp_prefetch_tasks.append((_ht, _at, _ht))   # home as target
+                _serp_prefetch_tasks.append((_ht, _at, _at))   # away as target
+
+            # Run all in parallel threads (each call makes ~9 sequential SerpAPI calls internally)
+            _max_workers = min(16, len(_serp_prefetch_tasks))
+            _loop = asyncio.get_event_loop()
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=_max_workers) as _executor:
+                    _futs = [
+                        _loop.run_in_executor(_executor, _prefetch_serp_game, h, a, t)
+                        for h, a, t in _serp_prefetch_tasks
+                    ]
+                    _serp_results = await asyncio.wait_for(
+                        asyncio.gather(*_futs, return_exceptions=True),
+                        timeout=12.0
+                    )
+                    for _sr in _serp_results:
+                        if isinstance(_sr, Exception):
+                            continue
+                        _key, _val = _sr
+                        if _val is not None:
+                            _serp_game_cache[_key] = _val
+                            _serp_prefetch_count += 1
+            except asyncio.TimeoutError:
+                logger.warning("SERP PREFETCH: timed out after 12s (%d cached)", _serp_prefetch_count)
+                _timed_out_components.append("serp_prefetch")
+            except Exception as e:
+                logger.warning("SERP PREFETCH: failed: %s", e)
+
+        logger.info("SERP PREFETCH: %d results cached for %d unique games in %.2fs",
+                     _serp_prefetch_count, len(_unique_serp_games), time.time() - _s)
+
+    _record("serp_prefetch", _s)
+
+    # ============================================
     # CATEGORY 1: GAME PICKS (Spreads, Totals, ML) — runs FIRST (fast, no player resolution)
     # ============================================
     _s = time.time()
@@ -6310,7 +6537,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 total=220,
                 public_pct=50,
                 pick_type="SHARP",
-                pick_side=signal.get("side", "HOME"),
+                pick_side=signal.get("sharp_side", "home"),
                 prop_line=0,
                 game_datetime=_sharp_game_dt,
                 game_bookmakers=_sharp_bookmakers,  # v17.6: Multi-book for Benford
@@ -6338,7 +6565,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 away_team=away_team,
                 player_team="",
                 pick_type="SHARP",
-                pick_side=signal.get("side", "HOME"),
+                pick_side=signal.get("sharp_side", "home"),
                 injuries_data=_injuries_by_team,
                 rest_days_override=_rest_override
             )
@@ -6348,10 +6575,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "league": sport.upper(),
                 "event_id": signal.get("game_id", ""),
                 "pick_type": "SHARP",
-                "pick": f"Sharp on {signal.get('side', 'HOME')}",
-                "pick_side": f"{signal.get('side', 'HOME')} SHARP",
-                "side": home_team if signal.get("side") == "HOME" else away_team,  # Required for contradiction gate
-                "team": home_team if signal.get("side") == "HOME" else away_team,
+                "pick": f"Sharp on {signal.get('sharp_side', 'home')}",
+                "pick_side": f"{signal.get('sharp_side', 'home').upper()} SHARP",
+                "side": home_team if signal.get("sharp_side") == "home" else away_team,  # Required for contradiction gate
+                "team": home_team if signal.get("sharp_side") == "home" else away_team,
                 "line": signal.get("line_variance", 0),
                 "odds": -110,
                 "book": "",
@@ -6371,7 +6598,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "is_live": False,
                 "is_live_bet_candidate": False,
                 "market": "sharp_money",
-                "recommendation": f"SHARP ON {signal.get('side', 'HOME').upper()}",
+                "recommendation": f"SHARP ON {signal.get('sharp_side', 'home').upper()}",
                 "best_book": "",
                 "best_book_link": "",
                 "signals_fired": signals_fired,
@@ -6398,15 +6625,21 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # ============================================
     # CATEGORY 2: PLAYER PROPS (uses pre-resolved player cache — instant lookups)
     # ============================================
+    # Reset deadline for props — game scoring consumed the shared budget,
+    # so props get their own dedicated time window (Lesson 49).
+    PROPS_TIME_BUDGET_S = float(os.getenv("BEST_BETS_PROPS_TIME_BUDGET_S", "30"))
+    _deadline = time.time() + PROPS_TIME_BUDGET_S
     _s = time.time()
     props_picks = []
     _props_scoring_error = False
     invalid_injury_count = 0
     try:
+        _props_deadline_hit = False
         for game in prop_games:
             if _past_deadline():
                 _timed_out_components.append("props_scoring")
                 logger.warning("TIME BUDGET: Props scoring hit deadline after %d picks (%.1fs)", len(props_picks), _elapsed())
+                _props_deadline_hit = True
                 break
             home_team = game.get("home_team", "")
             away_team = game.get("away_team", "")
@@ -6485,6 +6718,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             _prop_book_count = len(_prop_books_all)
 
             for prop in _props_list:
+                if _past_deadline():
+                    _timed_out_components.append("props_scoring")
+                    logger.warning("TIME BUDGET: Props scoring hit deadline after %d picks (%.1fs)", len(props_picks), _elapsed())
+                    _props_deadline_hit = True
+                    break
                 player = prop.get("player", "Unknown")
                 market = prop.get("market", "")
                 line = prop.get("line", 0)
@@ -6684,6 +6922,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "home_away": _ctx_mods.get("home_away"),
                     "vacuum_score": _ctx_mods.get("vacuum_score"),
                 })
+            if _props_deadline_hit:
+                break
     except HTTPException:
         _props_scoring_error = True
         logger.warning("Props fetch failed for %s", sport)
@@ -6759,8 +6999,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # Capture ALL candidates for debug/distribution before filtering
     _all_prop_candidates = deduplicated_props  # Keep ref for debug output
 
-    # v15.0: Filter to community minimum score (6.5)
-    filtered_props = [p for p in deduplicated_props if p["total_score"] >= COMMUNITY_MIN_SCORE]
+    # v20.13: Props use lower threshold (6.5) because SERP disabled for props (saves API quota)
+    # Props cannot get SERP boosts (+4.3 max) that game picks receive
+    filtered_props = [p for p in deduplicated_props if p["total_score"] >= MIN_PROPS_SCORE]
     filtered_below_6_5_props = len(deduplicated_props) - len(filtered_props)
 
     # v15.3: Deduplicate game picks too
@@ -6805,6 +7046,26 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # Take top N after diversity filtering
     top_props = filtered_props_diverse[:max_props]
     top_game_picks = filtered_games_diverse[:max_games]
+
+    # v20.12: Apply max_per_sport_per_day concentration limit (quality over quantity)
+    # Limit total picks (props + games combined) to configured max
+    try:
+        from core.scoring_contract import CONCENTRATION_LIMITS
+        max_per_sport = CONCENTRATION_LIMITS.get("max_per_sport_per_day", 8)
+        total_picks = len(top_props) + len(top_game_picks)
+        if total_picks > max_per_sport:
+            # Keep best picks from combined pool, prioritizing by score
+            combined = [(p, "prop") for p in top_props] + [(g, "game") for g in top_game_picks]
+            combined.sort(key=lambda x: x[0].get("final_score", 0) or x[0].get("total_score", 0), reverse=True)
+            combined = combined[:max_per_sport]
+            top_props = [p for p, t in combined if t == "prop"]
+            top_game_picks = [p for p, t in combined if t == "game"]
+            _picks_dropped_sport_limit = total_picks - max_per_sport
+            logger.info("CONCENTRATION_LIMIT: Reduced %d picks to %d (max_per_sport_per_day=%d)",
+                       total_picks, max_per_sport, max_per_sport)
+    except Exception as e:
+        logger.warning("CONCENTRATION_LIMIT: Failed to apply sport limit: %s", e)
+        # Continue without enforcement
 
     # CRITICAL FIX: Enforce book_key defaults before API response (BOTH props and games)
     # Applied UNCONDITIONALLY - never allow empty book_key in response
@@ -6921,10 +7182,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         date_et_for_store = _start_et.date().isoformat()
 
         # Persist all picks (props + games)
-        all_picks_to_persist = top_props + top_game_picks
+        # v20.12: Filter to only quality tiers - uses PERSIST_TIERS from scoring_contract.py
+        # MONITOR and PASS tiers are filtered out - they don't provide value for the learning loop
+        all_candidates = top_props + top_game_picks
+        all_picks_to_persist = [p for p in all_candidates if p.get("tier", "").upper() in PERSIST_TIERS]
+        _tier_filtered_count = len(all_candidates) - len(all_picks_to_persist)
 
-        logger.info("GRADER_STORE: Attempting to persist %d picks (date_et=%s)",
-                    len(all_picks_to_persist), date_et_for_store)
+        logger.info("GRADER_STORE: Attempting to persist %d picks (date_et=%s), filtered %d non-quality tiers",
+                    len(all_picks_to_persist), date_et_for_store, _tier_filtered_count)
 
         for pick in all_picks_to_persist:
             # Ensure required fields for grading
@@ -7054,7 +7319,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "status": games_status,
             "picks": top_game_picks
         },
-        "meta": {},  # FIX: Required by best-bets response contract
+        "meta": {
+            "odds_fetched_at": _odds_fetched_at,
+        },
         "esoteric": {
             "daily_energy": daily_energy,
             "astro_status": astro_status,
@@ -7066,6 +7333,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         "_elapsed_s": round(_elapsed(), 2),
         "_timed_out_components": _timed_out_components if _timed_out_components else None,
     }
+
+    try:
+        from integration_registry import get_usage_snapshot
+        usage_snapshot_after = get_usage_snapshot()
+        for name in ("odds_api", "playbook_api", "balldontlie", "serpapi"):
+            before = usage_snapshot_before.get(name, {}).get("used_count", 0)
+            after = usage_snapshot_after.get(name, {}).get("used_count", 0)
+            if after > before:
+                entry = integration_calls.get(name, {"called": 0})
+                if entry.get("called", 0) == 0:
+                    _record_integration_call(name, status="OK")
+    except Exception:
+        pass
 
     # === DEBUG MODE: Return top 25 candidates with full engine breakdown ===
     if debug_mode:
@@ -7133,6 +7413,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "total_elapsed_s": round(_elapsed(), 2),
             "timed_out_components": _timed_out_components,
             "time_budget_s": TIME_BUDGET_S,
+            "props_time_budget_s": PROPS_TIME_BUDGET_S,
             "max_events": max_events,
             "max_props": max_props,
             "max_games": max_games,
@@ -7233,6 +7514,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "shadow_mode": SERP_SHADOW_MODE if SERP_INTEL_AVAILABLE else True,
                 "mode": "shadow" if (SERP_INTEL_AVAILABLE and SERP_SHADOW_MODE) else ("live" if SERP_INTEL_AVAILABLE else "disabled"),
                 "status": get_serp_status() if (SERP_INTEL_AVAILABLE and callable(get_serp_status)) else {"error": "serp_intel_unavailable"},
+                "prefetch_cached": _serp_prefetch_count,
+                "prefetch_games": len(_serp_game_cache) if _serp_game_cache else 0,
             },
             # v17.3 ESPN Integration telemetry
             "espn": {
@@ -7248,9 +7531,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             },
         }
         apply_used_integrations_debug(result, used_integrations, debug_mode)
+        attach_integration_telemetry_debug(result, integration_calls, integration_impact, debug_mode)
+        record_daily_integration_rollup(date_et, integration_calls, integration_impact)
         # Don't cache debug responses
         return result
 
+    record_daily_integration_rollup(date_et, integration_calls, integration_impact)
     if cache_key:
         api_cache.set(cache_key, result, ttl=120)  # 2 minute TTL
     return result
@@ -7278,8 +7564,34 @@ async def get_live_bets(sport: str):
     # Get best bets first
     best_bets_response = await get_best_bets(sport)
 
+    # Odds staleness check
+    odds_fetched_at_str = best_bets_response.get("meta", {}).get("odds_fetched_at")
+    odds_age_seconds = None
+    staleness_status = "UNKNOWN"
+    try:
+        if odds_fetched_at_str and TIME_ET_AVAILABLE:
+            from datetime import datetime as _dt
+            _fetched = _dt.fromisoformat(odds_fetched_at_str)
+            _now = now_et()
+            if _fetched.tzinfo is None:
+                from zoneinfo import ZoneInfo
+                _fetched = _fetched.replace(tzinfo=ZoneInfo("America/New_York"))
+            odds_age_seconds = (_now - _fetched).total_seconds()
+            staleness_status = "STALE" if odds_age_seconds > ODDS_STALENESS_THRESHOLD_SECONDS else "FRESH"
+    except Exception:
+        pass
+
     # Filter to only live/started games
     live_picks = []
+    market_suspended_count = 0
+
+    def _detect_market_status(pick):
+        """Check if market appears suspended (no active bookmaker lines)."""
+        odds = pick.get("odds_american")
+        book = pick.get("book")
+        if odds is None and not book:
+            return "suspended", "No active bookmaker lines"
+        return "open", None
 
     # Process props
     for pick in best_bets_response.get("props", {}).get("picks", []):
@@ -7293,6 +7605,16 @@ async def get_live_bets(sport: str):
                     pick["status"] = "LIVE"
                     pick["started_at"] = started_at
                     pick["live_bet_eligible"] = True
+                    pick["staleness_status"] = staleness_status
+                    pick["odds_age_seconds"] = odds_age_seconds
+                    mkt_status, mkt_reason = _detect_market_status(pick)
+                    pick["market_status"] = mkt_status
+                    if mkt_reason:
+                        pick["market_suspended_reason"] = mkt_reason
+                    if mkt_status == "suspended":
+                        market_suspended_count += 1
+                    if staleness_status == "STALE":
+                        pick["live_adjustment"] = 0
                     live_picks.append(pick)
 
     # Process game picks
@@ -7306,7 +7628,20 @@ async def get_live_bets(sport: str):
                     pick["status"] = "LIVE"
                     pick["started_at"] = started_at
                     pick["live_bet_eligible"] = True
+                    pick["staleness_status"] = staleness_status
+                    pick["odds_age_seconds"] = odds_age_seconds
+                    mkt_status, mkt_reason = _detect_market_status(pick)
+                    pick["market_status"] = mkt_status
+                    if mkt_reason:
+                        pick["market_suspended_reason"] = mkt_reason
+                    if mkt_status == "suspended":
+                        market_suspended_count += 1
+                    if staleness_status == "STALE":
+                        pick["live_adjustment"] = 0
                     live_picks.append(pick)
+
+    if market_suspended_count > 0:
+        logger.info("LIVE IN-PLAY: %d picks with suspended markets detected", market_suspended_count)
 
     # Sort by final_score descending
     live_picks.sort(key=_stable_pick_sort_key)
@@ -7317,6 +7652,12 @@ async def get_live_bets(sport: str):
         "picks": live_picks,
         "live_games_count": len(live_picks),
         "community_threshold": 6.5,
+        "market_suspended_count": market_suspended_count,
+        "odds_staleness": {
+            "status": staleness_status,
+            "odds_age_seconds": round(odds_age_seconds, 1) if odds_age_seconds is not None else None,
+            "threshold_seconds": ODDS_STALENESS_THRESHOLD_SECONDS,
+        },
         "timestamp": datetime.now().isoformat()
     }
 
@@ -7352,6 +7693,23 @@ async def get_in_game_picks(sport: str):
     # Get best-bets and filter to MISSED_START picks
     best_bets_result = await get_best_bets(sport)
 
+    # Odds staleness check
+    odds_fetched_at_str = best_bets_result.get("meta", {}).get("odds_fetched_at")
+    odds_age_seconds = None
+    staleness_status = "UNKNOWN"
+    try:
+        if odds_fetched_at_str and TIME_ET_AVAILABLE:
+            from datetime import datetime as _dt
+            _fetched = _dt.fromisoformat(odds_fetched_at_str)
+            _now = now_et()
+            if _fetched.tzinfo is None:
+                from zoneinfo import ZoneInfo
+                _fetched = _fetched.replace(tzinfo=ZoneInfo("America/New_York"))
+            odds_age_seconds = (_now - _fetched).total_seconds()
+            staleness_status = "STALE" if odds_age_seconds > ODDS_STALENESS_THRESHOLD_SECONDS else "FRESH"
+    except Exception:
+        pass
+
     # Filter props and game picks to only MISSED_START
     live_props = [
         p for p in best_bets_result.get("props", {}).get("picks", [])
@@ -7361,6 +7719,26 @@ async def get_in_game_picks(sport: str):
         p for p in best_bets_result.get("game_picks", {}).get("picks", [])
         if p.get("game_status") == "MISSED_START"
     ]
+
+    # Annotate live picks with staleness and market status info
+    market_suspended_count = 0
+    for pick in live_props + live_game_picks:
+        pick["staleness_status"] = staleness_status
+        pick["odds_age_seconds"] = odds_age_seconds
+        if staleness_status == "STALE":
+            pick["live_adjustment"] = 0
+        # Market status detection
+        odds = pick.get("odds_american")
+        book = pick.get("book")
+        if odds is None and not book:
+            pick["market_status"] = "suspended"
+            pick["market_suspended_reason"] = "No active bookmaker lines"
+            market_suspended_count += 1
+        else:
+            pick["market_status"] = "open"
+
+    if market_suspended_count > 0:
+        logger.info("IN-GAME: %d picks with suspended markets detected", market_suspended_count)
 
     # Get BallDontLie context for NBA
     bdl_context = None
@@ -7396,6 +7774,12 @@ async def get_in_game_picks(sport: str):
         "trigger_windows": {
             "games_in_window": len(trigger_games),
             "games": trigger_games
+        },
+        "market_suspended_count": market_suspended_count,
+        "odds_staleness": {
+            "status": staleness_status,
+            "odds_age_seconds": round(odds_age_seconds, 1) if odds_age_seconds is not None else None,
+            "threshold_seconds": ODDS_STALENESS_THRESHOLD_SECONDS,
         },
         "bdl_context": bdl_context,
         "bdl_configured": bdl_context is not None and bdl_context.get("available", False),
@@ -7558,6 +7942,19 @@ async def debug_pick_breakdown(sport: str):
         research_score = min(10.0, base_research + sharp_boost + line_boost + public_boost)
         research_reasons.append(f"Total: {round(research_score, 2)}/10 (Sharp:{sharp_boost} + RLM:{line_boost} + Public:{public_boost} + Base:{base_research})")
 
+        if (sharp_boost + public_boost) > 0:
+            _record_integration_impact(
+                "playbook_api",
+                nonzero_boost=True,
+                reasons_count=len(research_reasons),
+            )
+        if line_boost > 0:
+            _record_integration_impact(
+                "odds_api",
+                nonzero_boost=True,
+                reasons_count=1,
+            )
+
         # Pillar score for backwards compatibility
         pillar_score = sharp_boost + line_boost + public_boost
 
@@ -7666,11 +8063,11 @@ async def debug_pick_breakdown(sport: str):
             alignment = 1 - abs(research_score - esoteric_score) / 10
             alignment_pct = alignment * 100
             if alignment_pct >= 80 and research_score >= 7.5 and esoteric_score >= 7.5:
-                confluence = {"level": "PERFECT", "boost": 5, "alignment_pct": alignment_pct}
+                confluence = {"level": "PERFECT", "boost": CONFLUENCE_LEVELS["PERFECT"], "alignment_pct": alignment_pct}
             elif alignment_pct >= 70:
-                confluence = {"level": "STRONG", "boost": 3, "alignment_pct": alignment_pct}
+                confluence = {"level": "STRONG", "boost": CONFLUENCE_LEVELS["STRONG"], "alignment_pct": alignment_pct}
             else:
-                confluence = {"level": "DIVERGENT", "boost": 0, "alignment_pct": alignment_pct}
+                confluence = {"level": "DIVERGENT", "boost": CONFLUENCE_LEVELS["DIVERGENT"], "alignment_pct": alignment_pct}
 
         confluence_boost = confluence.get("boost", 0)
 
@@ -7722,7 +8119,18 @@ async def debug_pick_breakdown(sport: str):
 
         # --- BET TIER ---
         if TIERING_AVAILABLE:
-            bet_tier = tier_from_score(final_score, confluence, titanium_triggered=titanium_triggered)
+            bet_tier = tier_from_score(
+                final_score=final_score,
+                confluence=confluence,
+                nhl_dog_protocol=False,
+                titanium_triggered=titanium_triggered,
+                # v20.12: Pass engine scores for quality gates
+                base_score=base_score,
+                ai_score=ai_scaled,
+                research_score=research_score,
+                esoteric_score=esoteric_score,
+                jarvis_score=jarvis_rs,
+            )
         else:
             # Fallback tier determination (v12.0 thresholds)
             if titanium_triggered:
@@ -8482,12 +8890,38 @@ async def grader_status():
     try:
         if AUTO_GRADER_AVAILABLE:
             grader = get_grader()  # Use singleton - CRITICAL for data persistence!
+
+            # Weight version hash for tracking which weights are loaded
+            weights_version_hash = None
+            weights_file_exists = False
+            weights_last_modified_et = None
+            try:
+                import hashlib as _hashlib
+                from storage_paths import get_weights_file as _get_weights_file
+                _wf = _get_weights_file()
+                weights_file_exists = os.path.exists(_wf)
+                if weights_file_exists:
+                    with open(_wf, 'rb') as _f:
+                        weights_version_hash = _hashlib.sha256(_f.read()).hexdigest()[:12]
+                    weights_last_modified_et = datetime.fromtimestamp(
+                        os.path.getmtime(_wf)
+                    ).isoformat()
+            except Exception:
+                pass
+
+            # Training drop stats (if available from last load)
+            training_drops = getattr(grader, 'last_drop_stats', None)
+
             result["weight_learning"] = {
                 "available": True,
                 "supported_sports": grader.SUPPORTED_SPORTS,
                 "predictions_logged": sum(len(p) for p in grader.predictions.values()),
                 "weights_loaded": bool(grader.weights),
+                "weights_version_hash": weights_version_hash,
+                "weights_file_exists": weights_file_exists,
+                "weights_last_modified_et": weights_last_modified_et,
                 "storage_path": grader.storage_path,
+                "training_drops": training_drops,
                 "note": "Use /grader/weights/{sport} to see learned weights"
             }
         else:
@@ -9133,13 +9567,25 @@ async def get_grader_performance(sport: str, days_back: int = 7):
     sport_upper = sport.upper()
     predictions = grader.predictions.get(sport_upper, [])
 
+    # v20.5: Use timezone-aware datetime for comparison
+    from core.time_et import now_et
+    from zoneinfo import ZoneInfo
+    et_tz = ZoneInfo("America/New_York")
+    cutoff = now_et() - timedelta(days=days_back)
+
     # Filter to graded predictions within timeframe
-    cutoff = datetime.now() - timedelta(days=days_back)
-    graded = [
-        p for p in predictions
-        if p.actual_value is not None and
-        datetime.fromisoformat(p.timestamp) >= cutoff
-    ]
+    graded = []
+    for p in predictions:
+        if p.actual_value is None:
+            continue
+        try:
+            ts = datetime.fromisoformat(p.timestamp)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=et_tz)
+            if ts >= cutoff:
+                graded.append(p)
+        except (ValueError, TypeError):
+            continue
 
     if not graded:
         return {
@@ -9211,8 +9657,12 @@ async def get_daily_community_report(days_back: int = 1):
     try:
         grader = get_grader()  # Use singleton
 
-        report_date = (datetime.now() - timedelta(days=days_back)).strftime("%B %d, %Y")
-        today = datetime.now().strftime("%B %d, %Y")
+        # v20.5: Use timezone-aware datetimes to avoid comparison errors
+        from core.time_et import now_et
+        now = now_et()
+
+        report_date = (now - timedelta(days=days_back)).strftime("%B %d, %Y")
+        today = now.strftime("%B %d, %Y")
 
         # Collect performance across all sports
         sports_data = {}
@@ -9223,15 +9673,28 @@ async def get_daily_community_report(days_back: int = 1):
 
         for sport in ["NBA", "NFL", "MLB", "NHL"]:
             predictions = grader.predictions.get(sport, [])
-            cutoff = datetime.now() - timedelta(days=days_back + 1)
-            end_cutoff = datetime.now() - timedelta(days=days_back - 1)
 
-            # Filter to yesterday's graded predictions
-            graded = [
-                p for p in predictions
-                if p.actual_value is not None and
-                cutoff <= datetime.fromisoformat(p.timestamp) <= end_cutoff
-            ]
+            # v20.5: Fix date window - should be exactly 1 day, not 2
+            # For days_back=1 (yesterday): 00:00 yesterday to 00:00 today
+            from zoneinfo import ZoneInfo
+            et_tz = ZoneInfo("America/New_York")
+            report_day_start = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
+            report_day_end = report_day_start + timedelta(days=1)
+
+            # Filter to report day's graded predictions
+            graded = []
+            for p in predictions:
+                if p.actual_value is None:
+                    continue
+                try:
+                    ts = datetime.fromisoformat(p.timestamp)
+                    # Make timezone-aware if naive
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=et_tz)
+                    if report_day_start <= ts < report_day_end:
+                        graded.append(p)
+                except (ValueError, TypeError):
+                    continue
 
             if graded:
                 hits = sum(1 for p in graded if p.hit)
@@ -9406,13 +9869,10 @@ async def get_grader_queue(
         raise HTTPException(status_code=503, detail="Pick logger not available")
 
     try:
-        # Get date in ET
+        # Get date in ET (use core.time_et single source of truth)
         if not date:
-            if PYTZ_AVAILABLE:
-                ET_TZ = pytz.timezone("America/New_York")
-                date = datetime.now(ET_TZ).strftime("%Y-%m-%d")
-            else:
-                date = datetime.now().strftime("%Y-%m-%d")
+            from core.time_et import now_et
+            date = now_et().strftime("%Y-%m-%d")
 
         pick_logger = get_pick_logger()
         picks = pick_logger.get_picks_for_date(date)
@@ -9770,6 +10230,86 @@ async def get_logged_picks_today(sport: Optional[str] = None):
     except Exception as e:
         logger.exception("Failed to get today's picks: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/picks/graded")
+async def get_graded_picks(date: Optional[str] = None, sport: Optional[str] = None):
+    """
+    Get all picks with grading status for the Grading page.
+
+    Returns both pending and graded picks from grader_store.
+    Frontend uses the 'graded' boolean to split into tabs.
+
+    Query params:
+    - date: Date filter (YYYY-MM-DD), defaults to today ET
+    - sport: Sport filter (NBA, NFL, etc.), defaults to all
+    """
+    if not GRADER_STORE_AVAILABLE:
+        return {"picks": [], "error": "Grader store not available"}
+
+    try:
+        # Default to today in ET
+        if not date:
+            from core.time_et import now_et
+            date = now_et().strftime("%Y-%m-%d")
+
+        # Load all predictions with grade records merged
+        all_picks = grader_store.load_predictions(date_et=date)
+
+        # Optional sport filter
+        if sport:
+            all_picks = [p for p in all_picks if p.get("sport", "").upper() == sport.upper()]
+
+        # Map to frontend format expected by Grading.jsx
+        picks_out = []
+        for p in all_picks:
+            is_graded = p.get("grade_status") == "GRADED"
+            side = p.get("side", "")
+            recommendation = side if side else ""
+            # Build recommendation string (OVER/UNDER for props)
+            if not recommendation and p.get("market", ""):
+                market = p.get("market", "").upper()
+                if "OVER" in market:
+                    recommendation = "OVER"
+                elif "UNDER" in market:
+                    recommendation = "UNDER"
+
+            picks_out.append({
+                "id": p.get("pick_id"),
+                "pick_id": p.get("pick_id"),
+                "player": p.get("player_name") or p.get("side") or "Game",
+                "team": p.get("home_team") or p.get("team", ""),
+                "opponent": p.get("away_team") or "",
+                "matchup": p.get("matchup", ""),
+                "sport": p.get("sport", ""),
+                "stat": p.get("stat_type") or p.get("market", ""),
+                "line": p.get("line"),
+                "projection": p.get("projection") or p.get("line"),
+                "edge": p.get("edge") or 0,
+                "recommendation": recommendation,
+                "final_score": p.get("final_score"),
+                "tier": p.get("tier", "STANDARD"),
+                "units": p.get("units", 1.0),
+                "graded": is_graded,
+                "result": p.get("result") if is_graded else None,
+                "actual": p.get("actual_value") if is_graded else None,
+                "graded_at": p.get("graded_at") if is_graded else None,
+                "date_et": p.get("date_et"),
+                "pick_type": p.get("pick_type", ""),
+            })
+
+        return {
+            "picks": picks_out,
+            "date": date,
+            "total": len(picks_out),
+            "graded_count": sum(1 for p in picks_out if p["graded"]),
+            "pending_count": sum(1 for p in picks_out if not p["graded"]),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.exception("Failed to get graded picks: %s", e)
+        return {"picks": [], "error": str(e)}
 
 
 @router.post("/picks/grade")
@@ -11705,169 +12245,6 @@ async def get_retrograde_status():
         "mercury": vedic.is_planet_retrograde("Mercury"),
         "venus": vedic.is_planet_retrograde("Venus"),
         "mars": vedic.is_planet_retrograde("Mars"),
-        "timestamp": datetime.now().isoformat()
-    }
-
-
-# ============================================================================
-# PHASE 3: LEARNING LOOP ENDPOINTS (DEPRECATED)
-# ============================================================================
-# DEPRECATED: Use /grader/* endpoints instead. These will be removed in v15.0.
-# ============================================================================
-
-@router.post("/learning/log-pick", deprecated=True)
-async def log_esoteric_pick(pick_data: Dict[str, Any]):
-    """
-    DEPRECATED: Use /grader/* endpoints for prediction tracking.
-
-    Log a pick for learning loop tracking.
-
-    Request Body:
-    {
-        "sport": "NBA",
-        "game_id": "game_123",
-        "pick_type": "spread",
-        "selection": "Lakers",
-        "line": -3.5,
-        "odds": -110,
-        "esoteric_analysis": {...}  // From confluence analysis
-    }
-
-    Returns pick_id for later grading.
-    """
-    loop = get_esoteric_loop()
-    if not loop:
-        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
-
-    required_fields = ["sport", "game_id", "pick_type", "selection", "line", "odds"]
-    for field in required_fields:
-        if field not in pick_data:
-            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
-
-    # If esoteric_analysis not provided, generate it
-    esoteric_analysis = pick_data.get("esoteric_analysis", {})
-    if not esoteric_analysis:
-        jarvis = get_jarvis_savant()
-        vedic = get_vedic_astro()
-        if jarvis and vedic:
-            gematria = jarvis.calculate_gematria_signal(
-                pick_data.get("player", "Player"),
-                pick_data.get("team", "Team"),
-                pick_data.get("opponent", "Opponent")
-            )
-            astro = vedic.calculate_astro_score()
-            esoteric_analysis = {
-                "gematria": gematria,
-                "astro": astro,
-                "total_score": 5.0
-            }
-
-    pick_id = loop.log_pick(
-        sport=pick_data["sport"],
-        game_id=pick_data["game_id"],
-        pick_type=pick_data["pick_type"],
-        selection=pick_data["selection"],
-        line=pick_data["line"],
-        odds=pick_data["odds"],
-        esoteric_analysis=esoteric_analysis
-    )
-
-    return {
-        "status": "logged",
-        "pick_id": pick_id,
-        "timestamp": datetime.now().isoformat()
-    }
-
-
-@router.post("/learning/grade-pick", deprecated=True)
-async def grade_esoteric_pick(grade_data: Dict[str, Any]):
-    """
-    DEPRECATED: Use /grader/* endpoints for prediction grading.
-
-    Grade a pick with actual result.
-
-    Request Body:
-    {
-        "pick_id": "ESO_NBA_game123_20241215123456",
-        "result": "WIN"  // WIN, LOSS, or PUSH
-    }
-    """
-    loop = get_esoteric_loop()
-    if not loop:
-        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
-
-    pick_id = grade_data.get("pick_id")
-    result = grade_data.get("result")
-
-    if not pick_id or not result:
-        raise HTTPException(status_code=400, detail="Missing pick_id or result")
-
-    grade_result = loop.grade_pick(pick_id, result)
-
-    if "error" in grade_result:
-        raise HTTPException(status_code=404, detail=grade_result["error"])
-
-    return grade_result
-
-
-@router.get("/learning/performance", deprecated=True)
-async def get_learning_performance(days_back: int = 30):
-    """
-    DEPRECATED: Use /grader/performance/{sport} instead.
-
-    Get esoteric learning loop performance summary.
-
-    Shows:
-    - Overall hit rate
-    - Performance by signal type
-    - Performance by confluence level
-    - Performance by bet tier
-    """
-    loop = get_esoteric_loop()
-    if not loop:
-        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
-
-    return loop.get_performance(days_back)
-
-
-@router.get("/learning/weights", deprecated=True)
-async def get_learning_weights():
-    """DEPRECATED: Use /grader/weights/{sport} instead. Get current learned weights for esoteric signals."""
-    loop = get_esoteric_loop()
-    if not loop:
-        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
-
-    return loop.get_weights()
-
-
-@router.post("/learning/adjust-weights", deprecated=True)
-async def adjust_learning_weights(learning_rate: float = 0.05):
-    """
-    DEPRECATED: Use /grader/adjust-weights/{sport} instead.
-
-    Trigger weight adjustment based on historical performance.
-
-    Uses gradient-based adjustment:
-    - Increases weights for signals with hit rate > 55%
-    - Decreases weights for signals with hit rate < 48%
-    """
-    loop = get_esoteric_loop()
-    if not loop:
-        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
-
-    return loop.adjust_weights(learning_rate)
-
-
-@router.get("/learning/recent-picks", deprecated=True)
-async def get_recent_picks(limit: int = 20):
-    """DEPRECATED: Use /grader/* endpoints instead. Get recent esoteric picks for review."""
-    loop = get_esoteric_loop()
-    if not loop:
-        raise HTTPException(status_code=503, detail="EsotericLearningLoop not available")
-
-    return {
-        "picks": loop.get_recent_picks(limit),
-        "count": min(limit, len(loop.picks)),
         "timestamp": datetime.now().isoformat()
     }
 

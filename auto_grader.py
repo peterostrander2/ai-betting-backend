@@ -41,7 +41,7 @@ import json
 import os
 import logging
 import fcntl
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict, field
 from collections import defaultdict
@@ -53,6 +53,15 @@ try:
     GRADER_STORE_AVAILABLE = True
 except ImportError:
     GRADER_STORE_AVAILABLE = False
+
+# v20.1: Import ET timezone helpers for consistent datetime handling
+try:
+    from core.time_et import now_et, ET
+    TIME_ET_AVAILABLE = True
+except ImportError:
+    TIME_ET_AVAILABLE = False
+    from zoneinfo import ZoneInfo
+    ET = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -163,20 +172,27 @@ class AutoGrader:
     
     def _initialize_weights(self):
         """Initialize default weights for all sports and stat types."""
-        stat_types = {
+        # v20.2: PROP stat types (player-level predictions)
+        prop_stat_types = {
             "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "pra"],
             "NFL": ["passing_yards", "rushing_yards", "receiving_yards", "receptions", "touchdowns"],
             "MLB": ["hits", "runs", "rbis", "strikeouts", "total_bases", "walks"],
             "NHL": ["goals", "assists", "points", "shots", "saves", "blocks"],
             "NCAAB": ["points", "rebounds", "assists", "threes"]
         }
-        
+
+        # v20.2: GAME stat types (game-level predictions: spread, total, moneyline, sharp)
+        # These are stored with these stat_type values when picks are persisted
+        game_stat_types = ["spread", "total", "moneyline", "sharp"]
+
         for sport in self.SUPPORTED_SPORTS:
             self.weights[sport] = {}
-            for stat in stat_types.get(sport, ["points"]):
+
+            # Initialize PROP stat types
+            for stat in prop_stat_types.get(sport, ["points"]):
                 self.weights[sport][stat] = WeightConfig()
-                
-                # Sport-specific default adjustments
+
+                # Sport-specific default adjustments for props
                 if sport == "MLB":
                     self.weights[sport][stat].park_factor = 0.15
                     self.weights[sport][stat].pace = 0.08  # Less relevant for MLB
@@ -184,6 +200,19 @@ class AutoGrader:
                     self.weights[sport][stat].vacuum = 0.22  # Injuries huge in NFL
                 elif sport == "NHL":
                     self.weights[sport][stat].pace = 0.18  # Pace matters in hockey
+
+            # v20.2: Initialize GAME stat types (spread, total, moneyline, sharp)
+            for stat in game_stat_types:
+                self.weights[sport][stat] = WeightConfig()
+
+                # Sport-specific default adjustments for game picks
+                if sport == "MLB":
+                    self.weights[sport][stat].park_factor = 0.15
+                    self.weights[sport][stat].pace = 0.08
+                elif sport == "NFL":
+                    self.weights[sport][stat].vacuum = 0.22
+                elif sport == "NHL":
+                    self.weights[sport][stat].pace = 0.18
     
     def _load_state(self):
         """Load persisted weights and prediction history from grader_store."""
@@ -226,16 +255,29 @@ class AutoGrader:
             raw_predictions = grader_store_load_predictions()
             count = 0
             seen_ids = set()
+            drop_stats = {
+                "unsupported_sport": 0,
+                "below_score_threshold": 0,
+                "duplicate_id": 0,
+                "missing_pick_id": 0,
+                "conversion_failed": 0,
+            }
 
             for pick in raw_predictions:
                 sport = pick.get("sport", "").upper()
                 if sport not in self.SUPPORTED_SPORTS:
+                    drop_stats["unsupported_sport"] += 1
                     continue
                 score = pick.get("final_score", 0.0)
                 if isinstance(score, (int, float)) and score < MIN_FINAL_SCORE:
+                    drop_stats["below_score_threshold"] += 1
                     continue
                 pick_id = pick.get("pick_id", "")
-                if not pick_id or pick_id in seen_ids:
+                if not pick_id:
+                    drop_stats["missing_pick_id"] += 1
+                    continue
+                if pick_id in seen_ids:
+                    drop_stats["duplicate_id"] += 1
                     continue
                 seen_ids.add(pick_id)
 
@@ -244,8 +286,14 @@ class AutoGrader:
                 if record:
                     self.predictions[sport].append(record)
                     count += 1
+                else:
+                    drop_stats["conversion_failed"] += 1
 
-            logger.info("Loaded %d predictions from grader_store", count)
+            self.last_drop_stats = drop_stats
+            total_dropped = sum(drop_stats.values())
+            logger.info("Loaded %d predictions from grader_store (dropped %d: %s)",
+                        count, total_dropped,
+                        {k: v for k, v in drop_stats.items() if v > 0})
         except Exception as e:
             logger.exception("Failed to load from grader_store: %s", e)
 
@@ -543,7 +591,12 @@ class AutoGrader:
         Returns bias metrics per adjustment factor.
         """
         sport = sport.upper()
-        cutoff = datetime.now() - timedelta(days=days_back)
+        # v20.1: Use ET timezone for consistent datetime handling
+        if TIME_ET_AVAILABLE:
+            now = now_et()
+        else:
+            now = datetime.now(timezone.utc).astimezone(ET)
+        cutoff = now - timedelta(days=days_back)
 
         # Filter relevant predictions
         relevant = []
@@ -552,7 +605,14 @@ class AutoGrader:
             if record.actual_value is None:
                 continue
 
+            # v20.1: Parse timestamp, handling both aware and naive formats
             record_date = datetime.fromisoformat(record.timestamp)
+            if record_date.tzinfo is None:
+                # If timestamp is naive, assume UTC then convert to ET
+                record_date = record_date.replace(tzinfo=timezone.utc).astimezone(ET)
+            else:
+                # Convert to ET for consistent comparison
+                record_date = record_date.astimezone(ET)
             if record_date < cutoff:
                 continue
 
@@ -567,7 +627,7 @@ class AutoGrader:
 
             # GAP 5 fix: Confidence decay - older picks weighted less
             if apply_confidence_decay:
-                days_old = (datetime.now() - record_date).days
+                days_old = (now - record_date).days
                 weight = 0.7 ** days_old  # 70% decay per day (1.0 today, 0.7 yesterday, 0.49 2 days ago)
                 weights.append(weight)
             else:
@@ -1014,22 +1074,39 @@ class AutoGrader:
     def run_daily_audit(self, days_back: int = 1) -> Dict:
         """
         Run full audit across all sports and stat types.
-        
+
         Call this daily after games complete.
         """
+        # v20.1: Reload predictions from grader_store to get freshly graded picks
+        # This is critical because picks are graded by result_fetcher AFTER auto_grader startup
+        logger.info("Reloading predictions from grader_store before audit...")
+        self.predictions.clear()
+        self._load_predictions_from_grader_store()
+
         results = {}
-        
-        stat_types = {
-            "NBA": ["points", "rebounds", "assists"],
-            "NFL": ["passing_yards", "rushing_yards", "receiving_yards"],
-            "MLB": ["hits", "strikeouts", "total_bases"],
-            "NHL": ["goals", "assists", "shots"],
-            "NCAAB": ["points", "rebounds"]
+
+        # v20.3: Separate stat types for PROP picks vs GAME picks
+        # PROP stat types - MUST MATCH _initialize_weights() to audit all prop types
+        prop_stat_types = {
+            "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "pra"],
+            "NFL": ["passing_yards", "rushing_yards", "receiving_yards", "receptions", "touchdowns"],
+            "MLB": ["hits", "runs", "rbis", "strikeouts", "total_bases", "walks"],
+            "NHL": ["goals", "assists", "points", "shots", "saves", "blocks"],
+            "NCAAB": ["points", "rebounds", "assists", "threes"]
         }
-        
+
+        # GAME stat types (game-level predictions - spread, total, moneyline)
+        game_stat_types = ["spread", "total", "moneyline", "sharp"]
+
         for sport in self.SUPPORTED_SPORTS:
             results[sport] = {}
-            for stat in stat_types.get(sport, ["points"]):
+            # Audit PROP picks
+            for stat in prop_stat_types.get(sport, ["points"]):
+                result = self.adjust_weights(sport, stat, days_back, apply_changes=True)
+                results[sport][stat] = result
+
+            # v20.1: Also audit GAME picks (spread, total, moneyline)
+            for stat in game_stat_types:
                 result = self.adjust_weights(sport, stat, days_back, apply_changes=True)
                 results[sport][stat] = result
         
@@ -1168,7 +1245,7 @@ class AutoGrader:
                     except (ValueError, TypeError):
                         continue
 
-        print(f"Saved {graded_count} graded picks to {path}")
+        logger.info(f"Saved {graded_count} graded picks to {path}")
         return path
 
     def load_daily_grading_jsonl(self, date_str: str) -> List[Dict]:
@@ -1239,15 +1316,28 @@ class AutoGrader:
         Called by DailyScheduler after grading.
         """
         sport = sport.upper()
-        cutoff = datetime.now() - timedelta(days=days_back)
+        # v20.1: Use ET timezone for consistent datetime handling
+        if TIME_ET_AVAILABLE:
+            now = now_et()
+        else:
+            now = datetime.now(timezone.utc).astimezone(ET)
+        cutoff = now - timedelta(days=days_back)
 
         predictions = self.predictions.get(sport, [])
 
         # Filter to recent predictions
-        recent = [
-            p for p in predictions
-            if datetime.fromisoformat(p.timestamp) >= cutoff
-        ]
+        recent = []
+        for p in predictions:
+            # v20.1: Parse timestamp, handling both aware and naive formats
+            record_date = datetime.fromisoformat(p.timestamp)
+            if record_date.tzinfo is None:
+                # If timestamp is naive, assume UTC then convert to ET
+                record_date = record_date.replace(tzinfo=timezone.utc).astimezone(ET)
+            else:
+                # Convert to ET for consistent comparison
+                record_date = record_date.astimezone(ET)
+            if record_date >= cutoff:
+                recent.append(p)
 
         # Count graded predictions
         graded = [p for p in recent if p.actual_value is not None]
@@ -1563,20 +1653,23 @@ learning = LearningLoop()
 # ============================================
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("🎓 AUTO-GRADER TEST")
-    print("=" * 60)
-    
+    # Configure logging for test mode
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+    logger.info("=" * 60)
+    logger.info("AUTO-GRADER TEST")
+    logger.info("=" * 60)
+
     grader = AutoGrader(storage_path="./test_grader_data")
-    
+
     # Test weight retrieval
-    print("\n📊 Default Weights:")
+    logger.info("\nDefault Weights:")
     for sport in ["NBA", "NFL", "MLB"]:
         weights = grader.get_weights(sport, "points" if sport != "MLB" else "hits")
-        print(f"  {sport}: {weights}")
-    
+        logger.info(f"  {sport}: {weights}")
+
     # Test prediction logging
-    print("\n📝 Logging test predictions...")
+    logger.info("\nLogging test predictions...")
     pred_id = grader.log_prediction(
         sport="NBA",
         player_name="LeBron James",
@@ -1590,15 +1683,15 @@ if __name__ == "__main__":
             "lstm_brain": -1.5
         }
     )
-    print(f"  Logged: {pred_id}")
-    
+    logger.info(f"  Logged: {pred_id}")
+
     # Test grading
-    print("\n📈 Grading prediction...")
+    logger.info("\nGrading prediction...")
     grade = grader.grade_prediction(pred_id, actual_value=29.0)
-    print(f"  Result: {grade}")
-    
+    logger.info(f"  Result: {grade}")
+
     # Test context feature calculation
-    print("\n🔬 Context Feature Calculation:")
+    logger.info("\nContext Feature Calculation:")
     context = ContextFeatureCalculator.calculate_context_features(
         sport="NBA",
         team_id="LAL",
@@ -1608,8 +1701,8 @@ if __name__ == "__main__":
         ],
         game_stats={"home_pace": 102.5, "away_pace": 98.5}
     )
-    print(f"  {context}")
-    
-    print("\n" + "=" * 60)
-    print("✅ Auto-Grader tests complete!")
-    print("=" * 60)
+    logger.info(f"  {context}")
+
+    logger.info("\n" + "=" * 60)
+    logger.info("Auto-Grader tests complete!")
+    logger.info("=" * 60)

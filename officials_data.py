@@ -17,7 +17,10 @@ Metrics:
 - total_games: Sample size for credibility
 """
 
+import logging
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -600,25 +603,28 @@ def get_database_stats() -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
     # Test the module
-    print("Officials Database Stats:")
-    print("=" * 40)
+    logger.info("Officials Database Stats:")
+    logger.info("=" * 40)
     stats = get_database_stats()
     for sport, data in stats.items():
-        print(f"\n{sport}:")
-        print(f"  Referees: {data['count']}")
-        print(f"  Avg Over %: {data['avg_over_tendency']:.1%}")
+        logger.info("\n%s:", sport)
+        logger.info("  Referees: %s", data['count'])
+        logger.info("  Avg Over %%: %.1f%%", data['avg_over_tendency'] * 100)
 
-    print("\n" + "=" * 40)
-    print("Sample Lookups:")
-    print(f"Scott Foster (NBA): {get_referee_tendency('NBA', 'Scott Foster')}")
-    print(f"Carl Cheffers (NFL): {get_referee_tendency('NFL', 'Carl Cheffers')}")
-    print(f"Wes McCauley (NHL): {get_referee_tendency('NHL', 'Wes McCauley')}")
+    logger.info("\n" + "=" * 40)
+    logger.info("Sample Lookups:")
+    logger.info("Scott Foster (NBA): %s", get_referee_tendency('NBA', 'Scott Foster'))
+    logger.info("Carl Cheffers (NFL): %s", get_referee_tendency('NFL', 'Carl Cheffers'))
+    logger.info("Wes McCauley (NHL): %s", get_referee_tendency('NHL', 'Wes McCauley'))
 
-    print("\n" + "=" * 40)
-    print("Adjustment Examples:")
+    logger.info("\n" + "=" * 40)
+    logger.info("Adjustment Examples:")
     adj, reason = calculate_officials_adjustment("NBA", "Scott Foster", "TOTAL", "Over")
-    print(f"NBA Over with Scott Foster: {adj:+.2f} - {reason}")
+    logger.info("NBA Over with Scott Foster: %+.2f - %s", adj, reason)
 
     adj, reason = calculate_officials_adjustment("NFL", "Carl Cheffers", "SPREAD", "home", is_home_team=True)
-    print(f"NFL Home with Carl Cheffers: {adj:+.2f} - {reason}")
+    logger.info("NFL Home with Carl Cheffers: %+.2f - %s", adj, reason)

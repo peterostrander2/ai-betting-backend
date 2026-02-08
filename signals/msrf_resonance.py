@@ -407,16 +407,32 @@ def get_significant_dates_from_player_history(
 
     try:
         from alt_data_sources.balldontlie import search_player, get_player_game_stats
+        import asyncio
 
-        # Search for player
-        player = search_player(player_name)
+        # Check if we're in an async context - if so, skip (can't call async from sync in async context)
+        try:
+            asyncio.get_running_loop()
+            # We're inside FastAPI async context - can't safely call async functions
+            logger.debug("MSRF: Skipping player history (in async context)")
+            return []
+        except RuntimeError:
+            pass  # No running loop - safe to use asyncio.run()
+
+        # Search for player (async function)
+        try:
+            player = asyncio.run(search_player(player_name))
+        except Exception:
+            return []
         if not player or not player.get("id"):
             return []
 
         player_id = player["id"]
 
-        # Get recent game stats
-        stats = get_player_game_stats(player_id, last_n_games=20)
+        # Get recent game stats (async function)
+        try:
+            stats = asyncio.run(get_player_game_stats(player_id, last_n_games=20))
+        except Exception:
+            return []
         if not stats or not stats.get("games"):
             return []
 

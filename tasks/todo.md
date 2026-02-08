@@ -49,11 +49,11 @@ After making changes:
 
 ## Known Technical Debt
 
-*Low priority - only address if explicitly requested*
+*Reviewed Feb 4, 2026 - all items resolved or N/A*
 
-- [ ] Consolidate duplicate Titanium logic (should all use `core/titanium.py`)
-- [ ] Clean up legacy files in `services/` directory
-- [ ] Remove deprecated `new_endpoints.py`
+- [x] ~~Consolidate duplicate Titanium logic~~ - **N/A**: Already consolidated. `tiering.check_titanium_rule()` calls `core/titanium.evaluate_titanium()`.
+- [x] ~~Clean up legacy files in `services/`~~ - **N/A**: Both files (`officials_tracker.py`, `ml_data_pipeline.py`) are actively used in v18.x production.
+- [x] Remove deprecated `new_endpoints.py` - **DONE**: Deleted Feb 4, 2026 (~370 lines of dead code removed)
 
 ---
 

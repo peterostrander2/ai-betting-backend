@@ -17,13 +17,14 @@ Date: 2026-02-03
 3) **Isolation from runtime scoring**: **PASS**
 - Runtime scoring only logs picks and persists; no weight updates during request path.
 
-4) **Observability**: **PARTIAL PASS**
+4) **Observability**: **PASS** (updated Feb 4, 2026)
 - `/grader/status` and `/debug/learning/latest` expose key stats.
-- **Missing**: weight version hash and explicit “dropped samples + reasons” in learning endpoints.
+- ✅ Weight version hash (`SHA256[:12]`) now surfaced in `/grader/status`.
+- ✅ Training drop telemetry (`last_drop_stats`) now exposed in `/grader/status`.
 
-5) **Trap Learning Loop reconciliation**: **PARTIAL PASS**
+5) **Trap Learning Loop reconciliation**: **PASS** (updated Feb 4, 2026)
 - Uses separate JSONL files with file locking.
-- **Append-only guarantee** for grader_store is violated by `mark_graded()` rewriting the predictions file.
+- ✅ **Append-only guarantee** now enforced: grades written to separate `graded_picks.jsonl`, `predictions.jsonl` never modified.
 
 ---
 
@@ -92,8 +93,9 @@ Date: 2026-02-03
 - `grader_store.get_storage_stats()` provides counts + file sizes (`grader_store.py:338-396`).
 - `grader_store.load_predictions_with_reconciliation()` provides reconciliation + skip reasons (`grader_store.py:226-335`).
 
-**Missing**
-- No weight version hash or file timestamp surfaced in learning endpoints (only file mtime on grader_store predictions). Weight file timestamp exists in `storage_paths.get_storage_health()` but not surfaced in `/grader/status`.
+**Missing** — ✅ RESOLVED (Feb 4, 2026)
+- ~~No weight version hash or file timestamp surfaced in learning endpoints.~~ Weight version hash (`SHA256[:12]`), `weights_file_exists`, and `weights_last_modified_et` are now included in `/grader/status` response.
+- **Tests:** `tests/test_tech_debt_cleanup.py::TestWeightVersionHash` (2 tests)
 
 ---
 
@@ -123,24 +125,27 @@ Date: 2026-02-03
 | `evaluations.jsonl` | Trap eval history | `TrapLearningLoop._save_evaluations()` | `${RAILWAY_VOLUME_MOUNT_PATH}/trap_learning/evaluations.jsonl` | Append + lock (`trap_learning_loop.py:797-807`) |
 | `adjustments.jsonl` | Trap adjustment log | `TrapLearningLoop._save_adjustments()` | `${RAILWAY_VOLUME_MOUNT_PATH}/trap_learning/adjustments.jsonl` | Append + lock (`trap_learning_loop.py:808-817`) |
 
-**Non-append behavior (issue):** `grader_store.mark_graded()` rewrites the entire predictions file (not append-only) (`grader_store.py:399-447`).
+**Non-append behavior (issue):** ~~`grader_store.mark_graded()` rewrites the entire predictions file (not append-only).~~ ✅ RESOLVED: Grades now appended to separate `graded_picks.jsonl`; `predictions.jsonl` is never modified.
 
 ---
 
 ## Prioritized Bug List
 
-### 1) **Append-only requirement violated by `mark_graded()`** (Severity: HIGH)
+### 1) **Append-only requirement violated by `mark_graded()`** (Severity: HIGH) — ✅ RESOLVED (Feb 4, 2026)
 - **Evidence:** `grader_store.mark_graded()` reads the entire JSONL and rewrites it (`grader_store.py:399-447`).
 - **Impact:** Violates append-only invariant, risk of corruption on crash during rewrite.
-- **Fix suggestion:** Append a grade record (immutable) or write to a separate graded log; reconcile on read.
+- **Fix:** Grades now appended to separate `graded_picks.jsonl` via `storage_paths.get_graded_picks_file()`. `predictions.jsonl` is never modified. `load_predictions()` merges grade records at read time. Corrupted partial writes are skipped gracefully.
+- **Tests:** `tests/test_tech_debt_cleanup.py::TestMarkGradedAppendOnly` (6 tests)
 
-### 2) **Learning storage count exceeds “two products” requirement** (Severity: MEDIUM)
+### 2) **Learning storage count exceeds "two products" requirement** (Severity: MEDIUM)
 - **Evidence:** trap_learning_loop writes 3 JSONL files under `${RAILWAY_VOLUME_MOUNT_PATH}/trap_learning` (`trap_learning_loop.py:198-209`).
-- **Impact:** Conflicts with “exactly two storage products” requirement. Clarify or update requirement.
+- **Impact:** Conflicts with "exactly two storage products" requirement. Clarify or update requirement.
 
-### 3) **No explicit training drop telemetry** (Severity: LOW)
+### 3) **No explicit training drop telemetry** (Severity: LOW) — ✅ RESOLVED (Feb 4, 2026)
 - **Evidence:** Filters/dedup occur on load (`auto_grader.py:219-240`) but counts are not exposed in `/grader/status` or `/debug/learning/latest`.
 - **Impact:** Reduced observability of training data quality.
+- **Fix:** Added `last_drop_stats` dict to `auto_grader.py` tracking: unsupported_sport, below_score_threshold, duplicate_id, missing_pick_id, conversion_failed. Exposed in `/grader/status` response.
+- **Tests:** `tests/test_tech_debt_cleanup.py::TestTrainingDropTelemetry` (3 tests)
 
 ---
 
@@ -292,13 +297,15 @@ Date: 2026-02-03
 
 ### Live Betting Bug List (Prioritized)
 
-1) **Missing odds staleness guard + telemetry** (Severity: HIGH)
+1) **Missing odds staleness guard + telemetry** (Severity: HIGH) — ✅ RESOLVED (Feb 4, 2026)
 - No `odds_timestamp` or `odds_age_seconds` in live responses; no stale-odds fail-soft behavior.
-- Fix suggestion: include `fetched_at` from odds source, compute age, and skip live enhancements if stale.
+- **Fix:** Added `ODDS_STALENESS_THRESHOLD_SECONDS = 120` to `scoring_contract.py`. Live endpoints now record `odds_fetched_at`, compute `odds_age_seconds`, and set `staleness_status` to "FRESH" or "STALE". When stale, `live_adjustment` is suppressed.
+- **Tests:** `tests/test_tech_debt_cleanup.py::TestOddsStaleness` (2 tests)
 
-2) **Missing market suspended/availability checks** (Severity: MEDIUM)
+2) **Missing market suspended/availability checks** (Severity: MEDIUM) — ✅ RESOLVED (Feb 4, 2026)
 - No explicit `market_status` or `suspended` check for live markets in response shaping.
-- Fix suggestion: add `market_status` from odds feed and skip picks when suspended.
+- **Fix:** Live endpoints now detect suspended markets using heuristic: if `odds_american` is None AND `book` is falsy, market is suspended. Each live pick includes `market_status: "open"` or `"suspended"`.
+- **Tests:** `tests/test_tech_debt_cleanup.py::TestMarketStatusDetection` (4 tests)
 
 3) **No live-specific in-play snapshot in payload** (Severity: LOW)
 - No `period`, `clock`, `score_snapshot` fields exposed with live picks.
