@@ -17,11 +17,12 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger("serpapi")
 
-# Import guardrails for quota/cache tracking
+# Import guardrails for quota/cache/rate-limit tracking
 try:
     from core.serp_guardrails import (
         record_cache_hit, record_cache_miss, record_cache_error,
-        increment_quota, check_quota_available, SERP_CACHE_TTL, SERP_TIMEOUT
+        increment_quota, check_quota_available, SERP_CACHE_TTL, SERP_TIMEOUT,
+        check_rate_limit, record_rate_limit_error, record_successful_call
     )
     GUARDRAILS_AVAILABLE = True
 except ImportError:
@@ -66,6 +67,16 @@ def get_search_trend(query: str, location: str = "United States") -> Dict[str, A
         if GUARDRAILS_AVAILABLE:
             record_cache_hit()
         return {**_trend_cache[cache_key], "source": "cache"}
+
+    # Check rate-limit cooldown before making API call
+    if GUARDRAILS_AVAILABLE:
+        rate_ok, rate_reason = check_rate_limit()
+        if not rate_ok:
+            return {
+                "trend_score": 0.5,
+                "source": "rate_limited",
+                "reason": rate_reason
+            }
 
     # Check quota before making API call
     if GUARDRAILS_AVAILABLE:
@@ -146,9 +157,10 @@ def get_search_trend(query: str, location: str = "United States") -> Dict[str, A
         _trend_cache[cache_key] = result
         _cache_time[cache_key] = now
 
-        # Track quota usage
+        # Track quota usage and clear rate-limit state on success
         if GUARDRAILS_AVAILABLE:
             increment_quota()
+            record_successful_call()
 
         # Mark usage only after successful response with expected fields
         if isinstance(data, dict) and "search_information" in data:
@@ -163,13 +175,17 @@ def get_search_trend(query: str, location: str = "United States") -> Dict[str, A
         return result
 
     except Exception as e:
-        logger.warning("SerpAPI error for '%s': %s", query, e)
+        error_str = str(e)
+        logger.warning("SerpAPI error for '%s': %s", query, error_str)
         if GUARDRAILS_AVAILABLE:
             record_cache_error()
+            # Detect rate-limit errors (429) and activate cooldown
+            if "429" in error_str or "rate limit" in error_str.lower():
+                record_rate_limit_error()
         return {
             "trend_score": 0.5,
             "source": "fallback",
-            "error": str(e)
+            "error": error_str
         }
 
 

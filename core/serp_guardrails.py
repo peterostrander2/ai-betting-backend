@@ -18,6 +18,7 @@ Environment Variables:
 """
 
 import os
+import time
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
@@ -148,6 +149,56 @@ _quota_tracker = QuotaTracker()
 # =============================================================================
 
 @dataclass
+class RateLimitTracker:
+    """Tracks rate-limit state to avoid wasting time on 429 errors."""
+    is_rate_limited: bool = False
+    rate_limited_until: float = 0.0  # Unix timestamp
+    consecutive_429s: int = 0
+    cooldown_seconds: int = 300  # 5 minute default cooldown
+
+    def record_429(self):
+        """Record a 429 error and activate cooldown."""
+        self.consecutive_429s += 1
+        self.is_rate_limited = True
+        # Exponential backoff: 5min, 10min, 20min, max 1 hour
+        backoff = min(3600, self.cooldown_seconds * (2 ** min(self.consecutive_429s - 1, 3)))
+        self.rate_limited_until = time.time() + backoff
+        logger.warning("SERP rate-limited (429). Cooldown for %d seconds.", backoff)
+
+    def record_success(self):
+        """Record a successful call - reset rate limit state."""
+        if self.is_rate_limited:
+            logger.info("SERP rate limit cleared - API responding normally")
+        self.is_rate_limited = False
+        self.consecutive_429s = 0
+
+    def is_in_cooldown(self) -> tuple[bool, str]:
+        """Check if we're in rate-limit cooldown. Returns (in_cooldown, reason)."""
+        if not self.is_rate_limited:
+            return False, ""
+        if time.time() >= self.rate_limited_until:
+            # Cooldown expired, allow retry
+            return False, ""
+        remaining = int(self.rate_limited_until - time.time())
+        return True, f"RATE_LIMITED_COOLDOWN_{remaining}s"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Export tracker state."""
+        in_cooldown, reason = self.is_in_cooldown()
+        return {
+            "is_rate_limited": self.is_rate_limited,
+            "in_cooldown": in_cooldown,
+            "cooldown_reason": reason,
+            "consecutive_429s": self.consecutive_429s,
+            "cooldown_expires_at": datetime.fromtimestamp(self.rate_limited_until, tz=timezone.utc).isoformat() if self.rate_limited_until > 0 else None,
+        }
+
+
+# Global rate limit tracker
+_rate_limit_tracker = RateLimitTracker()
+
+
+@dataclass
 class CacheStats:
     """Tracks cache performance."""
     hits: int = 0
@@ -217,6 +268,38 @@ def increment_quota(count: int = 1):
     logger.debug("SERP quota incremented by %d (daily: %d/%d, monthly: %d/%d)",
                  count, _quota_tracker.daily_used, SERP_DAILY_QUOTA,
                  _quota_tracker.monthly_used, SERP_MONTHLY_QUOTA)
+
+
+# =============================================================================
+# RATE LIMIT API
+# =============================================================================
+
+def check_rate_limit() -> tuple[bool, str]:
+    """
+    Check if SERP is rate-limited (429 cooldown).
+
+    Returns:
+        (is_available: bool, reason: str if not available)
+    """
+    in_cooldown, reason = _rate_limit_tracker.is_in_cooldown()
+    if in_cooldown:
+        return False, reason
+    return True, ""
+
+
+def record_rate_limit_error():
+    """Record a 429 rate-limit error. Activates cooldown."""
+    _rate_limit_tracker.record_429()
+
+
+def record_successful_call():
+    """Record a successful API call. Clears rate-limit state."""
+    _rate_limit_tracker.record_success()
+
+
+def get_rate_limit_status() -> Dict[str, Any]:
+    """Get current rate limit status."""
+    return _rate_limit_tracker.to_dict()
 
 
 def cap_boost(engine: str, value: float) -> float:
@@ -306,13 +389,16 @@ def get_serp_status() -> Dict[str, Any]:
     Get comprehensive SERP integration status for /debug/integrations.
 
     Returns:
-        Dict with shadow_mode, quota, cache stats, and config
+        Dict with shadow_mode, quota, cache stats, rate_limit, and config
     """
+    rate_limit_status = _rate_limit_tracker.to_dict()
     return {
         "enabled": SERP_INTEL_ENABLED,
         "shadow_mode": SERP_SHADOW_MODE,
         "shadow_mode_reason": "Observation mode - signals logged but not applied" if SERP_SHADOW_MODE else "Live mode - boosts active",
         "props_enabled": SERP_PROPS_ENABLED,
+        "rate_limited": rate_limit_status.get("in_cooldown", False),
+        "rate_limit": rate_limit_status,
         "quota": _quota_tracker.to_dict(),
         "cache": _cache_stats.to_dict(),
         "config": {
@@ -326,8 +412,12 @@ def get_serp_status() -> Dict[str, Any]:
 
 
 def is_serp_available() -> bool:
-    """Check if SERP intelligence is available and within quota."""
+    """Check if SERP intelligence is available (enabled, within quota, not rate-limited)."""
     if not SERP_INTEL_ENABLED:
+        return False
+    # Check rate limit first (faster than quota check)
+    rate_ok, _ = check_rate_limit()
+    if not rate_ok:
         return False
     available, _ = check_quota_available()
     return available
