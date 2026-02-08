@@ -4365,18 +4365,27 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # Apply Phase 1 dormant signal boosts
         esoteric_raw += biorhythm_boost + gann_boost + founders_boost
 
-        # ===== ALTITUDE IMPACT (v17.9) =====
+        # ===== ALTITUDE IMPACT (v20.12) =====
         altitude_adj = 0.0
-        try:
-            from context_layer import StadiumAltitudeService
-            altitude_adj, altitude_reasons = StadiumAltitudeService.get_altitude_adjustment(
-                sport=sport, home_team=home_team, pick_type=pick_type, pick_side=pick_side
-            )
-            if altitude_adj != 0.0:
-                esoteric_raw += altitude_adj
-                esoteric_reasons.extend(altitude_reasons)
-        except Exception as e:
-            logger.debug("Altitude adjustment failed: %s", e)
+        altitude_reason = ""
+        if _is_game_pick and sport_upper in ("NFL", "MLB"):
+            try:
+                from alt_data_sources.stadium import calculate_altitude_impact, lookup_altitude, STADIUM_ENABLED
+                if STADIUM_ENABLED:
+                    _altitude = lookup_altitude(home_team)
+                    if _altitude and _altitude > 1000:
+                        _alt_impact = calculate_altitude_impact(sport_upper, _altitude)
+                        if _alt_impact.get("overall_impact") != "NONE":
+                            altitude_adj = _alt_impact.get("scoring_impact", 0.0)
+                            _alt_reasons = _alt_impact.get("reasons", [])
+                            if altitude_adj != 0 and _alt_reasons:
+                                esoteric_reasons.append(f"Altitude: {_alt_reasons[0]}")
+                                esoteric_raw += altitude_adj
+                                logger.debug("ALTITUDE[%s]: alt=%d ft, adj=%.2f", home_team or "?", _altitude, altitude_adj)
+            except ImportError:
+                logger.debug("Stadium altitude module not available")
+            except Exception as e:
+                logger.debug("Altitude impact failed: %s", e)
 
         # ===== PHASE 8 (v18.2) NEW ESOTERIC SIGNALS =====
         phase8_boost = 0.0
@@ -4876,7 +4885,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         try:
             from alt_data_sources.travel import calculate_distance, calculate_fatigue_impact, TRAVEL_ENABLED
             if TRAVEL_ENABLED and away_team and home_team:
-                _rest_days = rest_days if 'rest_days' in dir() else 1
+                _rest_days = _rest_days_for_team(away_team) or 1
                 _distance = calculate_distance(away_team, home_team)
                 if _distance > 0:
                     _fatigue = calculate_fatigue_impact(sport, _distance, _rest_days, 0)
