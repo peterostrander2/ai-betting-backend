@@ -89,7 +89,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 57-60 | **v20.11 Real Data Sources** | NOAA Kp-index, ESPN live scores, Improved void moon, LSTM Playbook API training |
 | 61 | **v20.11 Rivalry Database** | Comprehensive MAJOR_RIVALRIES expansion: 204 rivalries covering all teams in 5 sports |
 | 62 | **v20.11 Post-Base Signals** | Hook/Expert/Prop signals mutated research_score AFTER base_score — NO EFFECT on final_score |
-| 63 | **v20.12 Dormant Features** | Stadium altitude, travel fatigue fix, gematria twitter enabled |
+| 63 | **v20.12 Dormant Features** | Stadium altitude, travel fatigue fix, gematria twitter, officials tendency fallback |
 
 ### NEVER DO Sections (28 Categories)
 - ML & GLITCH (rules 1-10)
@@ -120,6 +120,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.11 Real Data Sources (rules 182-191)
 - v20.11 Rivalry Database (rules 192-197)
 - v20.11 Post-Base Signals Architecture (rules 198-202)
+- v20.12 Dormant Features & API Timing Fallbacks (rules 203-207)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -7566,6 +7567,34 @@ final_score = compute_final_score_option_a(
     expert_consensus_boost=expert_boost,    # Post-base additive
     prop_correlation_adjustment=prop_corr,  # Post-base additive
 )
+```
+
+---
+
+## 🚫 NEVER DO THESE (v20.12 - Dormant Features & API Timing Fallbacks)
+
+203. **NEVER** assume external API data is always available at fetch time — ESPN assigns officials 1-2 hours before game, best-bets runs earlier (10 AM, 12 PM, 6 PM)
+204. **NEVER** skip fallback logic when external data sources have timing gaps — use existing tendency databases (officials_data.py, stadium.py) with `confidence: "LOW"` markers
+205. **NEVER** add dormant features without env var gates — all new features must be gated (STADIUM_ENABLED, TRAVEL_ENABLED, etc.) for instant rollback
+206. **NEVER** use undefined variables in fallback logic — `rest_days if 'rest_days' in dir()` pattern fails; use the proper closure function `_rest_days_for_team()`
+207. **NEVER** add altitude/stadium impact without using the same integration pattern as surface — check `STADIUM_ENABLED`, import lazily, add to `esoteric_reasons` and `esoteric_raw`
+
+**Officials Fallback Pattern (v20.12 - Lesson 55):**
+```python
+# ESPN data unavailable (officials not yet assigned)
+officials_data = _find_espn_data(_officials_by_game, home_team, away_team)
+lead_official = ""
+
+if officials_data and officials_data.get("available"):
+    lead_official = officials_data.get("lead_official", "")
+
+# FALLBACK: Use tendency database when ESPN unavailable
+if not lead_official and sport_upper in ["NBA", "NFL", "NHL"]:
+    fallback_officials = get_likely_officials_for_game(sport_upper, home_team, game_datetime)
+    if fallback_officials and fallback_officials.get("lead_official"):
+        lead_official = fallback_officials.get("lead_official")
+        officials_data = {"available": True, "source": "tendency_database_fallback",
+                         "confidence": "LOW", **fallback_officials}
 ```
 
 ---
