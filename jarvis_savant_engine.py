@@ -32,9 +32,6 @@ v12.0 ENGINE SEPARATION (Production Hardened):
 │  ├─ Gematria (dominant driver)                              │
 │  ├─ Sacred triggers: 2178/201/33/93/322                     │
 │  └─ Jarvis numerology (distinct from generic)               │
-│                                                              │
-│  NOTE: Public Fade, Mid-Spread, Trap Gate methods are       │
-│  DEPRECATED in this file. Use research_engine.py instead.   │
 ├─────────────────────────────────────────────────────────────┤
 │  CONFLUENCE LEVELS:                                          │
 │  IMMORTAL (+10): 2178 + both ≥7.5 + alignment ≥80%          │
@@ -60,18 +57,16 @@ v12.0 ENGINE SEPARATION (Production Hardened):
 
 import os
 import json
-import math
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 from collections import defaultdict
-import hashlib
 from core.scoring_contract import CONFLUENCE_LEVELS
 
 # Import Tiering module - SINGLE SOURCE OF TRUTH for tier configs (v11.08)
 try:
-    from tiering import tier_from_score, get_tier_config, TIER_CONFIG
+    from tiering import tier_from_score
     TIERING_AVAILABLE = True
 except ImportError:
     TIERING_AVAILABLE = False
@@ -505,172 +500,6 @@ class JarvisSavantEngine:
             "signal": "STRONG" if signal_strength > 0.7 else "MODERATE" if signal_strength > 0.4 else "WEAK",
             "triggered": triggered,
             "influence": influence
-        }
-
-    # ========================================================================
-    # PUBLIC FADE SIGNAL (DEPRECATED - Use research_engine.py instead)
-    # ========================================================================
-
-    def calculate_public_fade_signal(self, public_pct: float) -> Dict[str, Any]:
-        """
-        DEPRECATED: This method is kept for backwards compatibility.
-        Use research_engine.calculate_public_fade_signal() instead.
-
-        As of v12.0, Public Fade is a RESEARCH ENGINE signal, not Jarvis.
-        This prevents double-counting in the 4-engine architecture.
-
-        PUBLIC FADE CRUSH ZONE (v10.1 spec):
-        ≥80% public on chalk  →  -0.95 influence
-        ≥75% public on chalk  →  -0.85 influence
-        ≥70% public on chalk  →  -0.75 influence
-        ≥65% public on chalk  →  -0.65 influence
-        """
-        # Graduated fade based on public percentage
-        if public_pct >= 80:
-            signal = "FADE_PUBLIC"
-            adjustment = -0.95
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - MAXIMUM CRUSH ZONE. Strong fade."
-        elif public_pct >= 75:
-            signal = "FADE_PUBLIC"
-            adjustment = -0.85
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - HIGH CRUSH ZONE. Fade recommended."
-        elif public_pct >= 70:
-            signal = "FADE_PUBLIC"
-            adjustment = -0.75
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - CRUSH ZONE. Fade the public side."
-        elif public_pct >= 65:
-            signal = "FADE_PUBLIC"
-            adjustment = -0.65
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - EARLY CRUSH. Consider fading."
-        elif public_pct <= 20:
-            signal = "FOLLOW_PUBLIC"
-            adjustment = -0.95
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - Extreme contrarian. Follow public."
-        elif public_pct <= 25:
-            signal = "FOLLOW_PUBLIC"
-            adjustment = -0.85
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - Strong contrarian value."
-        elif public_pct <= 30:
-            signal = "FOLLOW_PUBLIC"
-            adjustment = -0.75
-            is_crush_zone = True
-            explanation = f"Public at {public_pct}% - Contrarian value on public side."
-        elif public_pct <= 35:
-            signal = "LEAN_PUBLIC"
-            adjustment = -0.65
-            is_crush_zone = False
-            explanation = f"Public at {public_pct}% - Slight contrarian lean."
-        else:
-            signal = "NEUTRAL"
-            adjustment = 0.0
-            is_crush_zone = False
-            explanation = f"Public at {public_pct}% - No strong fade signal."
-
-        return {
-            "public_pct": public_pct,
-            "is_crush_zone": is_crush_zone,
-            "signal": signal,
-            "adjustment": adjustment,
-            "influence": adjustment,  # Alias for router compatibility
-            "explanation": explanation
-        }
-
-    # ========================================================================
-    # MID SPREAD SIGNAL (DEPRECATED - Use research_engine.py instead)
-    # ========================================================================
-
-    def calculate_mid_spread_signal(self, spread: float) -> Dict[str, Any]:
-        """
-        DEPRECATED: This method is kept for backwards compatibility.
-        Use research_engine.calculate_goldilocks_signal() instead.
-
-        As of v12.0, Goldilocks Zone is a RESEARCH ENGINE signal, not Jarvis.
-
-        +20% boost in Goldilocks zone (spread between +4 and +9) per v10.1 spec.
-        """
-        abs_spread = abs(spread)
-
-        # Goldilocks zone: 4-9 points (most predictable range per spec)
-        if 4 <= abs_spread <= 9:
-            signal = "GOLDILOCKS"
-            adjustment = 0.20
-            explanation = f"Spread {spread} in Goldilocks zone (+4 to +9). Most predictable range."
-        elif abs_spread < 4:
-            signal = "PICKEM"
-            adjustment = 0.0
-            explanation = f"Spread {spread} is pick'em territory. High variance."
-        elif abs_spread >= 14:
-            signal = "TRAP_ZONE"
-            adjustment = -0.20
-            explanation = f"Spread {spread} in trap zone. Fade large favorites."
-        elif abs_spread > 9:
-            signal = "BLOWOUT"
-            adjustment = -0.10
-            explanation = f"Spread {spread} indicates potential blowout. Garbage time risk."
-        else:
-            signal = "STANDARD"
-            adjustment = 0.05
-            explanation = f"Spread {spread} in standard range."
-
-        return {
-            "spread": spread,
-            "abs_spread": abs_spread,
-            "signal": signal,
-            "adjustment": adjustment,
-            "modifier": adjustment,  # Alias for router compatibility
-            "explanation": explanation
-        }
-
-    # ========================================================================
-    # LARGE SPREAD TRAP (DEPRECATED - Use research_engine.py instead)
-    # ========================================================================
-
-    def calculate_large_spread_trap(self, spread: float, total: float) -> Dict[str, Any]:
-        """
-        DEPRECATED: This method is kept for backwards compatibility.
-        Use research_engine.calculate_trap_gate_signal() instead.
-
-        As of v12.0, Trap Gate is a RESEARCH ENGINE signal, not Jarvis.
-
-        -20% trap gate for spreads > 14 (likely trap games).
-        """
-        abs_spread = abs(spread)
-
-        if abs_spread >= 14:
-            signal = "TRAP_GATE"
-            adjustment = -0.20
-            is_trap = True
-            explanation = f"Spread {spread} > 14. TRAP GATE active. Large favorites cover < 50% historically."
-        elif abs_spread >= 10:
-            signal = "CAUTION"
-            adjustment = -0.10
-            is_trap = False
-            explanation = f"Spread {spread} in caution zone. Monitor for trap."
-        else:
-            signal = "CLEAR"
-            adjustment = 0.0
-            is_trap = False
-            explanation = "Spread in normal range."
-
-        # Additional check: High total + large spread = likely backdoor cover
-        if total > 230 and abs_spread >= 10:
-            adjustment -= 0.05
-            explanation += " High total increases backdoor cover risk."
-
-        return {
-            "spread": spread,
-            "total": total,
-            "signal": signal,
-            "is_trap": is_trap,
-            "adjustment": adjustment,
-            "modifier": adjustment,  # Alias for router compatibility
-            "explanation": explanation
         }
 
     # ========================================================================

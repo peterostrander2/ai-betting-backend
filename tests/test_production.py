@@ -834,10 +834,10 @@ class TestV15JarvisStandalone:
             engine = JarvisSavantEngine()
 
             # Required methods for standalone Jarvis
+            # NOTE: calculate_mid_spread_signal moved to research_engine.py in v12.0
             required_methods = [
                 "check_jarvis_trigger",
                 "calculate_gematria_signal",
-                "calculate_mid_spread_signal"
             ]
 
             for method in required_methods:

@@ -529,5 +529,10 @@ def _validate_candidate(candidate: Dict[str, Any]) -> None:
 # =============================================================================
 
 __all__ = [
+    # Active production functions
+    "clamp_context_modifier",
+    "compute_final_score_option_a",
+    "compute_harmonic_boost",
+    # Legacy/reference (not used in production)
     "score_candidate",
 ]

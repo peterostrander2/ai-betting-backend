@@ -18,6 +18,10 @@ Coverage areas:
 
 import pytest
 from unittest.mock import patch, MagicMock
+
+# Skip entire module if context_layer dependencies are missing
+pytest.importorskip("loguru", reason="loguru required for context_layer tests")
+
 from context_layer import (
     standardize_team,
     DefensiveRankService,

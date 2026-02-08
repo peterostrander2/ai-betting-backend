@@ -11,19 +11,15 @@ Comprehensive esoteric signals for sports betting analysis.
 
 import math
 from datetime import datetime, date, timedelta
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 import random
-import hashlib
 
 # Import comprehensive player birth data
-from player_birth_data import get_all_players, get_player_data, get_players_by_sport, PLAYER_COUNTS
+from player_birth_data import get_all_players, get_player_data
 
 # Import astronomical calculations for accurate moon data
 from astronomical_api import (
-    get_live_moon_data,
     get_moon_sign_now,
-    is_void_moon_now,
-    get_moon_betting_signal,
     calculate_void_of_course,
     calculate_moon_phase
 )
