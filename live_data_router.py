@@ -6,7 +6,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, Response, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import httpx
 import time
 import logging
@@ -262,8 +262,7 @@ try:
     WEATHER_MODULE_AVAILABLE = True
 except ImportError:
     WEATHER_MODULE_AVAILABLE = False
-    # Note: logger not yet defined here, use print for startup logging
-    print("[WARNING] weather module not available - weather scoring disabled")
+    logger.warning("weather module not available - weather scoring disabled")
 
 # Import Travel Module for rest days and fatigue analysis (v16.0)
 try:
@@ -273,7 +272,7 @@ try:
     TRAVEL_MODULE_AVAILABLE = True
 except ImportError:
     TRAVEL_MODULE_AVAILABLE = False
-    print("[WARNING] travel module not available - rest days calculation disabled")
+    logger.warning("travel module not available - rest days calculation disabled")
 
 # Import ESPN Lineups/Officials Module for referee data (v17.2)
 try:
@@ -285,7 +284,7 @@ try:
     ESPN_OFFICIALS_AVAILABLE = True
 except ImportError:
     ESPN_OFFICIALS_AVAILABLE = False
-    print("[WARNING] espn_lineups module not available - officials data disabled")
+    logger.warning("espn_lineups module not available - officials data disabled")
 
     async def get_officials_for_game(*args, **kwargs):
         return {"available": False, "reason": "MODULE_NOT_LOADED"}
@@ -300,7 +299,7 @@ try:
     ML_INTEGRATION_AVAILABLE = True
 except ImportError:
     ML_INTEGRATION_AVAILABLE = False
-    print("[WARNING] ml_integration module not available - using heuristic AI scores")
+    logger.warning("ml_integration module not available - using heuristic AI scores")
 
 # Import Context Layer Services for Pillars 13-17 (v17.0)
 try:
@@ -314,7 +313,7 @@ try:
     CONTEXT_LAYER_AVAILABLE = True
 except ImportError:
     CONTEXT_LAYER_AVAILABLE = False
-    print("[WARNING] context_layer module not available - using default context values")
+    logger.warning("context_layer module not available - using default context values")
 
 # Import Ensemble Model for Game Picks (v17.0)
 try:
@@ -322,7 +321,7 @@ try:
     ENSEMBLE_AVAILABLE = True
 except ImportError:
     ENSEMBLE_AVAILABLE = False
-    print("[WARNING] ensemble model not available - skipping ensemble prediction")
+    logger.warning("ensemble model not available - skipping ensemble prediction")
 
 # Import SERP Intelligence for betting signals (v17.4)
 try:
@@ -341,7 +340,7 @@ except ImportError:
     SERP_INTEL_AVAILABLE = False
     SERP_SHADOW_MODE = True  # Default to shadow mode if module not available
     SERP_PROPS_ENABLED = False
-    print("[WARNING] serp_intelligence module not available - SERP signals disabled")
+    logger.warning("serp_intelligence module not available - SERP signals disabled")
 
 # Import Gematria Twitter Intelligence for community consensus signals (v17.9)
 try:
@@ -352,7 +351,7 @@ try:
     GEMATRIA_INTEL_AVAILABLE = True
 except ImportError:
     GEMATRIA_INTEL_AVAILABLE = False
-    print("[WARNING] gematria_twitter_intel module not available - Gematria community signals disabled")
+    logger.warning("gematria_twitter_intel module not available - Gematria community signals disabled")
 
 # Import Astronomical API for Void-of-Course moon detection (v17.5 - Phase 2.2)
 try:
@@ -360,7 +359,7 @@ try:
     ASTRONOMICAL_API_AVAILABLE = True
 except ImportError:
     ASTRONOMICAL_API_AVAILABLE = False
-    print("[WARNING] astronomical_api module not available - VOC detection disabled")
+    logger.warning("astronomical_api module not available - VOC detection disabled")
     def is_void_moon_now():
         return (False, 0.0)
 
