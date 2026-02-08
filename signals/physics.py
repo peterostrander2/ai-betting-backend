@@ -519,6 +519,8 @@ def get_kp_index(game_time: datetime = None) -> Dict[str, Any]:
     Higher values indicate geomagnetic storms which may affect
     human behavior and decision-making.
 
+    Uses NOAA Space Weather API when available, falls back to simulation.
+
     Args:
         game_time: Game start time
 
@@ -534,14 +536,37 @@ def get_kp_index(game_time: datetime = None) -> Dict[str, Any]:
             "storm_level": None
         }
 
-    # TODO: Integrate with NOAA Space Weather API
-    # https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json
+    # Try NOAA live data first
+    try:
+        from alt_data_sources.noaa import get_kp_betting_signal
+        noaa_result = get_kp_betting_signal(game_time)
 
+        # Check if we got real data (not fallback/disabled)
+        source = noaa_result.get("source", "")
+        if source in ("noaa_live", "cache"):
+            return {
+                "score": noaa_result.get("score", 0.5),
+                "reason": noaa_result.get("reason", "KP_NOAA"),
+                "triggered": noaa_result.get("triggered", False),
+                "kp_value": noaa_result.get("kp_value"),
+                "storm_level": noaa_result.get("storm_level"),
+                "source": source,
+                "recommendation": noaa_result.get("recommendation"),
+                "timestamp": noaa_result.get("timestamp")
+            }
+        # If fallback/disabled, continue to simulation below
+        logger.debug("NOAA returned %s, using simulation fallback", source)
+    except ImportError:
+        logger.debug("NOAA module not available, using simulation")
+    except Exception as e:
+        logger.warning("NOAA API error, using simulation: %s", e)
+
+    # Fallback to simulation
     if game_time is None:
         game_time = datetime.now()
 
     try:
-        # Simulate Kp-index based on time (real integration needed)
+        # Simulate Kp-index based on time
         # Kp typically ranges 0-9, average ~2-3
         hour = game_time.hour
         day_of_year = game_time.timetuple().tm_yday
@@ -581,7 +606,7 @@ def get_kp_index(game_time: datetime = None) -> Dict[str, Any]:
             "triggered": triggered,
             "kp_value": round(kp_value, 1),
             "storm_level": storm_level,
-            "note": "SIMULATED - integrate NOAA Space Weather API"
+            "source": "simulation"
         }
 
     except Exception as e:

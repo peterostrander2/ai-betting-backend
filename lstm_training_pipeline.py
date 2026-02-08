@@ -242,6 +242,191 @@ class HistoricalDataFetcher:
             logger.debug(f"Error fetching historical props: {e}")
             return []
 
+    @classmethod
+    def build_training_data_real(
+        cls,
+        sport: str,
+        stat_type: str,
+        max_players: int = 100,
+        min_games: int = 20
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Build training data from real Playbook API game logs.
+
+        Enhancement 4: Uses fetch_player_games() to get real historical data.
+        Falls back gracefully if API unavailable.
+
+        Args:
+            sport: Sport (NBA, NFL, MLB, NHL, NCAAB)
+            stat_type: Stat type to train on (points, rebounds, etc.)
+            max_players: Maximum number of players to fetch
+            min_games: Minimum games required per player
+
+        Returns:
+            X: (n_samples, 15, 6) feature sequences
+            y: (n_samples,) target values
+        """
+        sport = sport.upper()
+        all_sequences = []
+        all_targets = []
+
+        # Stat type mapping from our stat_type to Playbook API field names
+        STAT_FIELD_MAP = {
+            # NBA
+            "points": "points",
+            "rebounds": "rebounds",
+            "assists": "assists",
+            "threes": "threePointersMade",
+            # NFL
+            "passing_yards": "passingYards",
+            "rushing_yards": "rushingYards",
+            "receiving_yards": "receivingYards",
+            # MLB
+            "hits": "hits",
+            "total_bases": "totalBases",
+            "strikeouts": "strikeouts",
+            # NHL
+            "shots": "shots",
+            # NCAAB
+        }
+
+        api_stat_field = STAT_FIELD_MAP.get(stat_type, stat_type)
+
+        # Fetch player list
+        players = cls.fetch_players(sport, limit=max_players)
+        if not players:
+            logger.warning(f"No players fetched for {sport} - API may be unavailable")
+            return np.array([]), np.array([])
+
+        logger.info(f"Fetched {len(players)} players for {sport}/{stat_type}")
+
+        players_processed = 0
+        for player in players:
+            player_name = player.get("name", player.get("fullName", "Unknown"))
+            player_id = player.get("id", player.get("playerId"))
+
+            if not player_name or player_name == "Unknown":
+                continue
+
+            # Fetch game logs for this player
+            games = cls.fetch_player_games(sport, player_name)
+
+            if len(games) < min_games:
+                continue
+
+            # Sort games by date
+            try:
+                games = sorted(games, key=lambda g: g.get("date", g.get("gameDate", "1900-01-01")))
+            except Exception:
+                pass
+
+            # Extract stat values and build sequences
+            game_records = []
+            for game in games:
+                # Get stat value
+                stat_value = game.get(api_stat_field) or game.get(stat_type) or game.get("stats", {}).get(api_stat_field)
+                if stat_value is None:
+                    continue
+
+                try:
+                    stat_value = float(stat_value)
+                except (ValueError, TypeError):
+                    continue
+
+                # Extract context features with defaults
+                minutes = game.get("minutes", game.get("mins", 25.0))
+                try:
+                    # Handle "MM:SS" format
+                    if isinstance(minutes, str) and ":" in minutes:
+                        parts = minutes.split(":")
+                        minutes = float(parts[0]) + float(parts[1]) / 60
+                    else:
+                        minutes = float(minutes) if minutes else 25.0
+                except (ValueError, TypeError):
+                    minutes = 25.0
+
+                # Home/away (1=home, 0=away)
+                home_away = 1 if game.get("isHome", game.get("homeAway", "away")).lower() in ("home", "h", "1", "true") else 0
+
+                # Opponent defensive rank (estimate from API or default)
+                opp_def_rank = game.get("oppDefRank", game.get("defRank", 16.0))
+                try:
+                    opp_def_rank = float(opp_def_rank) if opp_def_rank else 16.0
+                except (ValueError, TypeError):
+                    opp_def_rank = 16.0
+
+                # Game pace (estimate or default)
+                game_pace = game.get("pace", game.get("gamePace", 100.0))
+                try:
+                    game_pace = float(game_pace) if game_pace else 100.0
+                except (ValueError, TypeError):
+                    game_pace = 100.0
+
+                # Usage vacuum (estimate or default)
+                vacuum = game.get("vacuum", game.get("usageVacuum", 0.1))
+                try:
+                    vacuum = float(vacuum) if vacuum else 0.1
+                except (ValueError, TypeError):
+                    vacuum = 0.1
+
+                game_records.append({
+                    "stat_value": stat_value,
+                    "minutes": minutes,
+                    "home_away": home_away,
+                    "opp_def_rank": opp_def_rank,
+                    "game_pace": game_pace,
+                    "vacuum": vacuum,
+                })
+
+            if len(game_records) < TrainingConfig.SEQUENCE_LENGTH:
+                continue
+
+            # Calculate player average for normalization
+            player_avg = np.mean([g["stat_value"] for g in game_records])
+            if player_avg <= 0:
+                player_avg = 1.0
+
+            # Build sequences using rolling window
+            for i in range(len(game_records) - TrainingConfig.SEQUENCE_LENGTH):
+                sequence = game_records[i:i + TrainingConfig.SEQUENCE_LENGTH]
+                target_game = sequence[-1]
+
+                # Build feature matrix (15, 6)
+                features = np.zeros((TrainingConfig.SEQUENCE_LENGTH, TrainingConfig.NUM_FEATURES))
+
+                for j, game in enumerate(sequence):
+                    features[j, 0] = game["stat_value"] / max(player_avg, 1.0)  # Normalized stat
+                    features[j, 1] = game["minutes"] / 48.0  # Normalized minutes
+                    features[j, 2] = game["home_away"]
+                    features[j, 3] = game["vacuum"]
+                    features[j, 4] = (game["opp_def_rank"] - 1) / 31.0  # Normalized rank
+                    features[j, 5] = (game["game_pace"] - 90) / 20.0  # Normalized pace
+
+                # Target: normalized error (actual - line) / line
+                # Since we don't have historical lines, use player_avg as proxy
+                target = (target_game["stat_value"] - player_avg) / max(player_avg, 1.0)
+
+                all_sequences.append(features)
+                all_targets.append(target)
+
+            players_processed += 1
+            if players_processed % 10 == 0:
+                logger.info(f"Processed {players_processed}/{len(players)} players, {len(all_sequences)} sequences so far")
+
+        if not all_sequences:
+            logger.warning(f"No training sequences built for {sport}/{stat_type}")
+            return np.array([]), np.array([])
+
+        X = np.array(all_sequences, dtype=np.float32)
+        y = np.array(all_targets, dtype=np.float32)
+
+        # Clip targets to reasonable range
+        y = np.clip(y, -2.0, 2.0)
+
+        logger.info(f"Built {len(X)} real training sequences for {sport}/{stat_type} from {players_processed} players")
+
+        return X, y
+
 
 # ============================================================
 # SYNTHETIC DATA GENERATOR
@@ -465,20 +650,42 @@ class LSTMTrainingPipeline:
         """
         sport = sport.upper()
         logger.info(f"Training LSTM for {sport}/{stat_type}...")
-        
-        # Generate training data
-        if use_synthetic:
+
+        # v20.11: Enhancement 4 - Try real data first, fallback to synthetic
+        data_source = "unknown"
+        X, y = np.array([]), np.array([])
+
+        if not use_synthetic:
+            # Try fetching real data from Playbook API
+            logger.info(f"Attempting to fetch real training data for {sport}/{stat_type}...")
+            try:
+                X, y = HistoricalDataFetcher.build_training_data_real(
+                    sport=sport,
+                    stat_type=stat_type,
+                    max_players=num_players,
+                    min_games=20
+                )
+                if len(X) >= TrainingConfig.MIN_SAMPLES_PER_SPORT:
+                    data_source = "real_playbook"
+                    logger.info(f"Using REAL data: {len(X)} samples from Playbook API")
+                else:
+                    logger.warning(f"Real data insufficient ({len(X)} < {TrainingConfig.MIN_SAMPLES_PER_SPORT}), falling back to synthetic")
+                    X, y = np.array([]), np.array([])
+            except Exception as e:
+                logger.warning(f"Real data fetch failed: {e}, falling back to synthetic")
+                X, y = np.array([]), np.array([])
+
+        # Fallback to synthetic if real data unavailable or insufficient
+        if len(X) < TrainingConfig.MIN_SAMPLES_PER_SPORT:
+            data_source = "synthetic"
+            logger.info(f"Using SYNTHETIC data for {sport}/{stat_type}")
             X, y = SyntheticDataGenerator.generate_training_data(
                 sport=sport,
                 stat_type=stat_type,
                 num_players=num_players,
                 games_per_player=82 if sport in ["NBA", "NHL"] else 17 if sport == "NFL" else 162
             )
-        else:
-            # TODO: Implement real data fetching
-            logger.warning("Real data fetching not implemented - using synthetic")
-            X, y = SyntheticDataGenerator.generate_training_data(sport, stat_type, num_players)
-        
+
         if len(X) < 100:
             return {"error": f"Insufficient training data: {len(X)} samples"}
         
@@ -504,8 +711,9 @@ class LSTMTrainingPipeline:
         result["stat_type"] = stat_type
         result["samples"] = len(X)
         result["model_path"] = save_path
-        
-        logger.success(f"Training complete: val_loss={result.get('best_val_loss', 'N/A'):.4f}")
+        result["data_source"] = data_source  # v20.11: Track whether real or synthetic data used
+
+        logger.success(f"Training complete: val_loss={result.get('best_val_loss', 'N/A'):.4f}, data_source={data_source}")
         
         return result
     

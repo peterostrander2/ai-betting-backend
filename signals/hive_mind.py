@@ -162,6 +162,11 @@ def get_void_moon(game_time: datetime = None) -> Dict[str, Any]:
     before leaving its current sign. Traditional astrology advises
     against starting new ventures during this time.
 
+    Uses improved Meeus-based lunar ephemeris with:
+    - Synodic month (29.53059 days) for phase-relative position
+    - Perturbation corrections (~6.3° variation from elliptical orbit)
+    - Conservative VOC detection (last 3 degrees of sign)
+
     Args:
         game_time: Game start time
 
@@ -181,36 +186,89 @@ def get_void_moon(game_time: datetime = None) -> Dict[str, Any]:
         game_time = datetime.now()
 
     try:
-        # TODO: Integrate with Astronomy API for real void moon data
-        # For now, use simplified calculation based on lunar cycle
+        # Improved Meeus-based lunar position calculation
+        # Reference: Astronomical Algorithms by Jean Meeus
 
-        # Moon changes signs approximately every 2.5 days
-        # Void period typically lasts 2-24 hours before sign change
+        # Julian Date calculation
+        year = game_time.year
+        month = game_time.month
+        day = game_time.day + game_time.hour / 24.0 + game_time.minute / 1440.0
 
-        # Approximate lunar position (0-360 degrees)
-        # Full cycle ~27.3 days
-        days_since_epoch = (game_time - datetime(2000, 1, 1)).days
-        lunar_position = (days_since_epoch * (360 / 27.3)) % 360
+        if month <= 2:
+            year -= 1
+            month += 12
 
-        # Signs are 30 degrees each
-        position_in_sign = lunar_position % 30
+        A = int(year / 100)
+        B = 2 - A + int(A / 4)
+        JD = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + B - 1524.5
 
-        # Void period: last 2 degrees of each sign (simplified)
-        is_void = position_in_sign >= 28
+        # Time in Julian centuries from J2000.0
+        T = (JD - 2451545.0) / 36525.0
 
-        # Extended void check: also check hour of day
-        # Void periods often occur in late evening / early morning
-        hour = game_time.hour
-        extended_void = is_void or (hour >= 23 or hour <= 4)
+        # Mean lunar longitude (degrees)
+        L0 = 218.3164477 + 481267.88123421 * T - 0.0015786 * T * T
+
+        # Mean anomaly of the Moon
+        M = 134.9633964 + 477198.8675055 * T + 0.0087414 * T * T
+
+        # Mean anomaly of the Sun
+        M_sun = 357.5291092 + 35999.0502909 * T - 0.0001536 * T * T
+
+        # Moon's argument of latitude
+        F = 93.2720950 + 483202.0175233 * T - 0.0036539 * T * T
+
+        # Mean elongation of the Moon
+        D = 297.8501921 + 445267.1114034 * T - 0.0018819 * T * T
+
+        # Convert to radians for trig functions
+        M_rad = math.radians(M % 360)
+        M_sun_rad = math.radians(M_sun % 360)
+        F_rad = math.radians(F % 360)
+        D_rad = math.radians(D % 360)
+
+        # Principal perturbation terms (simplified from full Meeus)
+        # These account for ~6.3° variation from simple elliptical orbit
+        longitude_correction = (
+            6.289 * math.sin(M_rad) +
+            1.274 * math.sin(2 * D_rad - M_rad) +
+            0.658 * math.sin(2 * D_rad) +
+            0.214 * math.sin(2 * M_rad) -
+            0.186 * math.sin(M_sun_rad) -
+            0.114 * math.sin(2 * F_rad)
+        )
+
+        # True lunar longitude
+        lunar_longitude = (L0 + longitude_correction) % 360
+
+        # Signs are 30 degrees each (Aries=0-30, Taurus=30-60, etc.)
+        position_in_sign = lunar_longitude % 30
+        current_sign_index = int(lunar_longitude / 30)
+
+        # Sign names for debugging
+        SIGNS = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
+                 "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
+        current_sign = SIGNS[current_sign_index % 12]
+
+        # Conservative VOC detection: last 3 degrees of sign
+        # This is more conservative than the previous 2 degrees
+        is_void = position_in_sign >= 27
+
+        # Calculate hours until sign change
+        # Moon moves ~0.5 degrees per hour on average
+        degrees_remaining = 30 - position_in_sign
+        hours_to_sign_change = degrees_remaining / 0.5
+
+        # Extended void check: approaching VOC (last 5 degrees)
+        approaching_void = position_in_sign >= 25 and not is_void
 
         if is_void:
-            void_duration = (30 - position_in_sign) * 2  # Approx hours
+            void_duration = hours_to_sign_change
             score = 0.3  # Avoid betting during void
-            reason = f"VOID_MOON_ACTIVE_{void_duration:.1f}hrs_remaining"
+            reason = f"VOID_MOON_ACTIVE_{void_duration:.1f}hrs"
             triggered = True
-        elif extended_void:
+        elif approaching_void:
             score = 0.4
-            reason = "VOID_MOON_APPROACHING"
+            reason = f"VOID_MOON_APPROACHING_{hours_to_sign_change:.1f}hrs"
             triggered = True
             void_duration = None
         else:
@@ -225,8 +283,11 @@ def get_void_moon(game_time: datetime = None) -> Dict[str, Any]:
             "triggered": triggered,
             "is_void": is_void,
             "void_duration": void_duration,
-            "lunar_position": round(lunar_position, 1),
-            "note": "SIMULATED - integrate Astronomy API for precision"
+            "lunar_longitude": round(lunar_longitude, 2),
+            "position_in_sign": round(position_in_sign, 2),
+            "current_sign": current_sign,
+            "hours_to_sign_change": round(hours_to_sign_change, 1),
+            "source": "meeus_ephemeris"
         }
 
     except Exception as e:

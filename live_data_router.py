@@ -4499,11 +4499,17 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     get_combined_live_signals, is_live_signals_enabled
                 )
                 if is_live_signals_enabled():
-                    # v20.11: Live game data not passed to calculate_pick_score, use defaults
-                    # TODO: Pass live game data (home_score, away_score, period) for proper live signals
-                    _home_score = 0
-                    _away_score = 0
-                    _period = 1
+                    # v20.11: Lookup live scores from ESPN scoreboard (Enhancement 2)
+                    _live_data = _find_espn_data(_live_scores_by_teams, home_team, away_team) if home_team and away_team else None
+                    if _live_data:
+                        _home_score = _live_data.get("home_score", 0)
+                        _away_score = _live_data.get("away_score", 0)
+                        _period = _live_data.get("period", 1)
+                    else:
+                        # Fallback to defaults if ESPN data not available
+                        _home_score = 0
+                        _away_score = 0
+                        _period = 1
                     _current_line = spread or 0
                     _event_id = event_id or ""
                     _is_home_pick = pick_side and home_team and pick_side.lower() in home_team.lower()
@@ -5730,6 +5736,55 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 _espn_events_by_teams[(_normalize_team_name(home_team), _normalize_team_name(away_team))] = event_id
 
     logger.info("ESPN EVENTS LOOKUP: %d games mapped", len(_espn_events_by_teams))
+
+    # v20.11: Build live scores lookup from ESPN scoreboard for live signals (Enhancement 2)
+    # Maps (home_team_lower, away_team_lower) -> {home_score, away_score, period, status}
+    _live_scores_by_teams = {}
+    if espn_scoreboard and isinstance(espn_scoreboard, dict):
+        for event in espn_scoreboard.get("events", []):
+            competitions = event.get("competitions", [])
+            if not competitions:
+                continue
+            comp = competitions[0]
+            competitors = comp.get("competitors", [])
+
+            # Extract status info
+            status_obj = comp.get("status", {})
+            status_type = status_obj.get("type", {})
+            game_status = status_type.get("state", "pre")  # pre, in, post
+            period = status_obj.get("period", 1)
+
+            home_team = None
+            away_team = None
+            home_score = 0
+            away_score = 0
+
+            for team_data in competitors:
+                team_info = team_data.get("team", {})
+                team_name = team_info.get("displayName", "").lower()
+                score_str = team_data.get("score", "0")
+                try:
+                    score = int(score_str) if score_str else 0
+                except (ValueError, TypeError):
+                    score = 0
+
+                if team_data.get("homeAway") == "home":
+                    home_team = team_name
+                    home_score = score
+                else:
+                    away_team = team_name
+                    away_score = score
+
+            if home_team and away_team:
+                key = (_normalize_team_name(home_team), _normalize_team_name(away_team))
+                _live_scores_by_teams[key] = {
+                    "home_score": home_score,
+                    "away_score": away_score,
+                    "period": period,
+                    "status": game_status,  # "pre", "in", "post"
+                }
+
+    logger.info("LIVE SCORES LOOKUP: %d games with scores", len(_live_scores_by_teams))
 
     # v17.9: REST DAYS from ESPN schedule (lookback window)
     _rest_days_by_team = {}
