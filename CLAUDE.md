@@ -8634,3 +8634,25 @@ SERP_INTEL_ENABLED=true
 3. **Monitor quota via debug endpoint** — `/live/debug/integrations` shows quota usage
 
 **Fixed in:** v20.12 (Feb 8, 2026)
+
+### Active Paid Integrations (v20.12)
+
+| Integration | Purpose | Cost Model | Status |
+|-------------|---------|------------|--------|
+| **Playbook API** | Sharp money splits, line movement, player game logs | Subscription | ✅ Active |
+| **Odds API** | Live odds from 15+ sportsbooks | Subscription | ✅ Active |
+| **BallDontLie** | NBA player stats, game data | Subscription | ✅ Active |
+| ~~SerpAPI~~ | ~~Google search trends~~ | ~~Per-call~~ | ❌ Canceled |
+
+**Free Integrations (No Cost):**
+- ESPN APIs (scores, injuries, officials, schedules)
+- NOAA (space weather Kp-index)
+- Astronomy calculations (lunar phases, void moon)
+
+**Environment Variables for Paid APIs:**
+```bash
+PLAYBOOK_API_KEY=xxx      # Required
+THE_ODDS_API_KEY=xxx      # Required  
+BALLDONTLIE_API_KEY=xxx   # Required
+SERPAPI_KEY=              # Leave empty (canceled)
+```
