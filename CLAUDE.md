@@ -35,7 +35,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 
 ## 📚 MASTER INDEX (Quick Reference)
 
-### Critical Invariants (27 Total)
+### Critical Invariants (26 Total)
 | # | Name | Summary |
 |---|------|---------|
 | 1 | Storage Persistence | ALL data under `RAILWAY_VOLUME_MOUNT_PATH=/data` |
@@ -43,8 +43,8 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 3 | ET Today-Only Gating | ALL picks for games in today's ET window ONLY |
 | 4 | Option A Scoring | 4-engine base (AI 25%, Research 35%, Esoteric 20%, Jarvis 20%) + context modifier |
 | 5 | Jarvis Additive | Jarvis is weighted engine, NOT separate boost |
-| 6 | Output Filtering | `final_score >= 7.0` required for output (v20.12) |
-| 7 | Contradiction Gate + Redundancy | No opposite sides (Over/Under) + no correlated same-side (spread+ML) |
+| 6 | Output Filtering | `final_score >= 6.5` required for output |
+| 7 | Contradiction Gate | Never output both Over AND Under on same line |
 | 8 | Best-Bets Contract | Response MUST have `props.picks[]` and `game_picks.picks[]` |
 | 9 | Pick Persistence | Picks logged to grader_store for learning loop |
 | 9.1 | Two Storage Systems | grader_store (picks) + weights.json (learning) |
@@ -64,10 +64,9 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 23 | SERP Intelligence | Web search boost capped at 4.3 |
 | 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
-| 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 (v20.11) |
-| 27 | Concentration Limits | max_per_matchup=2, max_props_per_player=1, max_per_sport=8 (v20.12) |
+| 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 3.5 |
 
-### Lessons Learned (69 Total) - Key Categories
+### Lessons Learned (55 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -86,22 +85,8 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
-| 56 | **v20.10 Contradiction Gate** | Totals Over/Under at different lines not caught — line_str included in key prevented grouping |
-| 57 | **v20.10 Score Clustering** | Post-hoc ensemble+totals_cal bypassed TOTAL_BOOST_CAP — all scores clustered at 10.0 |
-| 58 | **v20.10 Grader Dedup** | book_key in pick ID caused same bet from 5 sportsbooks to create 5 grader entries |
-| 59 | **v20.12 Concentration Limits** | Diversity filter enforces max_per_matchup=2 on ALL pick types (props + games) |
-| 60 | **v20.12 Spread+ML Redundancy** | Same-team spread + ML are ~90% correlated — both lose together; keep higher scorer |
-| 61 | **v20.12 Async Context** | Can't call asyncio.run() inside FastAPI — detect running loop first, graceful degradation |
-| 62 | **v20.12 Variable Name Typos** | base_4_score vs base_score caused NameError — Python doesn't catch at compile time |
-| 63 | **v20.12 Append-Only Grading** | mark_graded() was rewriting entire file — use separate graded_picks.jsonl for crash safety |
-| 64 | **v20.12 Odds Staleness Guard** | ODDS_STALENESS_THRESHOLD_SECONDS=120 — suppress live_adjustment when odds are stale |
-| 65 | **v20.12 Market Status Detection** | If odds=None AND book=falsy, market is suspended — add market_status field to live picks |
-| 66 | **v20.12 Training Drop Telemetry** | last_drop_stats tracks why picks are dropped (unsupported_sport, duplicate_id, etc.) |
-| 67 | **v20.12 Weight Version Hash** | weights_version_hash (SHA256[:12]) in /grader/status for learning loop debugging |
-| 68 | **v20.12 PERSIST_TIERS** | Only EDGE_LEAN, GOLD_STAR, TITANIUM_SMASH saved to learning loop — MONITOR/PASS add noise |
-| 69 | **v20.11 Sport-Specific Totals** | NHL totals blocked (-4.0 penalty) due to 26% win rate; NCAAB penalized (-0.75) |
 
-### NEVER DO Sections (29 Categories)
+### NEVER DO Sections (25 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -110,7 +95,6 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - API & Data (rules 31-40)
 - ESPN Integration (rules 41-55)
 - SERP Intelligence (rules 56-65)
-- **v20.12 Concentration Limits (rules 189-196)** — Diversity filter, max_per_matchup
 - Esoteric/Phase 1 (rules 66-80)
 - v17.6 Vortex & Benford (rules 81-90)
 - v19.0 Trap Learning (rules 91-100)
@@ -128,8 +112,6 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.7 Parallel Pre-Fetch & Performance (rules 164-172)
 - v20.8 Props Indentation & Code Placement (rules 173-177)
 - v20.9 Frontend/Backend Endpoint Contract (rules 178-181)
-- v20.10 Scoring Cap & Dedup (rules 182-188)
-- **v20.12 Tech Debt Cleanup (rules 206-210)** — Append-only grading, staleness, market status, telemetry
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -149,32 +131,21 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 ### Key Files Reference
 | File | Purpose |
 |------|---------|
-| `core/scoring_contract.py` | Scoring constants (Option A weights, thresholds, boost caps, calibration, CONCENTRATION_LIMITS) |
+| `core/scoring_contract.py` | Scoring constants (Option A weights, thresholds, boost caps, calibration) |
 | `core/scoring_pipeline.py` | Score calculation (single source of truth) |
 | `live_data_router.py` | Main API endpoints, pick scoring |
 | `utils/pick_normalizer.py` | Pick contract normalization (single source for all pick fields) |
-| `utils/diversity_filter.py` | Concentration limits filter (max_per_matchup, max_props_per_player) |
-| `utils/contradiction_gate.py` | Prevents opposite side picks |
 | `auto_grader.py` | Learning loop, bias calculation, weight updates |
 | `result_fetcher.py` | Game result fetching, pick grading |
 | `grader_store.py` | Pick persistence (predictions.jsonl) |
+| `utils/contradiction_gate.py` | Prevents opposite side picks |
 | `integration_registry.py` | Env var registry, integration config |
 
-### Current Version: v20.12 (Feb 6, 2026)
-**Latest Fixes (v20.12):**
-- Lesson 59: Concentration limits now apply to ALL pick types (props + game picks)
-- Invariant 27: CONCENTRATION_LIMITS in `scoring_contract.py` (max_per_matchup=2, max_props_per_player=1)
-- `utils/diversity_filter.py` imports limits from `scoring_contract.py` (single source of truth)
-- Game picks now subject to `max_per_matchup` limit (prevents 3 spread picks on same game)
-- MIN_FINAL_SCORE raised from 6.5 to 7.0 (quality over quantity)
-- TOTAL_BOOST_CAP lowered from 2.0 to 1.5 (prevents score saturation at 10.0)
-- All 35 diversity filter tests updated and passing
-
-**Previous Fixes (v20.10):**
-- Lesson 56: Contradiction gate Over/Under at different lines not caught — used `line_str = "ANY"` for TOTAL market
-- Lesson 57: Score 10.0 clustering — `ensemble_adjustment` and `totals_calibration_adj` applied OUTSIDE `TOTAL_BOOST_CAP`, now moved inside
-- Lesson 58: Grader duplicate counting — `book_key` in pick ID caused 5x inflation, removed from `_make_pick_id()`
-- All 6 additive boosts now compete within `TOTAL_BOOST_CAP` in `compute_final_score_option_a()`
+### Current Version: v20.10 (Feb 8, 2026)
+**Latest Fix (v20.10):**
+- Lesson 56: SHARP signal field name mismatch — `signal.get("side")` should be `signal.get("sharp_side")`
+- Root cause: Signal dictionary uses `sharp_side` but pick creation used `side`, causing all SHARP picks to be treated as HOME team
+- Fix: Changed all `signal.get("side")` to `signal.get("sharp_side")` with lowercase comparison
 
 **Previous Fix (v20.9):**
 - Lesson 55: Frontend Grading page called `GET /live/picks/graded` but endpoint didn't exist — frontend fell back to MOCK_PICKS silently
@@ -193,7 +164,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 **Previous Fixes (v20.6):**
 - Lesson 49: Props timeout — TIME_BUDGET_S configurable, increased 40→55s default
 - Lesson 50: Empty description fields — auto-generated in `normalize_pick()`
-- Lesson 51: Score inflation — TOTAL_BOOST_CAP = 1.5 prevents boost stacking to 10.0 (v20.10: 3.5→2.0, v20.11: 2.0→1.5)
+- Lesson 51: Score inflation — TOTAL_BOOST_CAP = 3.5 prevents boost stacking to 10.0
 - Lesson 52: Jarvis baseline misconception — 4.5 baseline is by design (sacred triggers are rare)
 - Invariant 26: Total Boost Cap enforcement in `compute_final_score_option_a()`
 
@@ -402,18 +373,15 @@ CONTEXT_MODIFIER_CAP = 0.35  # Context is a bounded modifier, NOT an engine
 **Scoring Formula (EXACT):**
 ```python
 BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
-total_boosts = min(TOTAL_BOOST_CAP, confluence + msrf + jason_sim + serp + ensemble_adjustment + totals_calibration_adj)
-FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + live_adjustment)
+FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + live_adjustment + totals_calibration_adj
 ```
 
 **Boosts are additive (NOT engines):**
 - `msrf_boost` and `serp_boost` must remain separate (do NOT fold into confluence).
 - Each boost must be present in payloads with status + reasons (even when 0.0 / unavailable).
-- `ensemble_adjustment` and `totals_calibration_adj` are **INSIDE** `TOTAL_BOOST_CAP` (v20.10 fix).
-  They compete with confluence/msrf/jason/serp for the same 2.0 cap budget.
-- `ensemble_adjustment`: +0.5 if hit_prob > 0.60, -0.5 if hit_prob < 0.40, else 0.0. Surfaced via `ai_reasons`.
+- `ensemble_adjustment` is applied post-base for game picks when the ensemble model is available
+  (+0.5 if hit_prob > 0.60, -0.5 if hit_prob < 0.40, else 0.0). Currently surfaced via `ai_reasons`.
 - Live in-game adjustment: `live_adjustment` (bounded ±0.50) applied to **research_score** when game_status is LIVE.
-  `live_adjustment` is the only boost OUTSIDE the cap (applied directly to research_score, not additive post-base).
 
 **Non-negotiable rule for any NEW final_score adjustment:**
 - Must be **bounded**
@@ -438,14 +406,10 @@ context_modifier ∈ [-0.35, +0.35]
 
 **Final score (clamped):**
 ```
-total_boosts = min(TOTAL_BOOST_CAP, confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + totals_calibration_adj)
-FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + live_adjustment)
+total_boosts = min(TOTAL_BOOST_CAP, confluence_boost + msrf_boost + jason_sim_boost + serp_boost)
+FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + ensemble_adjustment + live_adjustment + totals_calibration_adj)
 ```
-**TOTAL_BOOST_CAP = 1.5** — prevents score inflation from stacking multiple boosts (Invariant 26, v20.10: 3.5→2.0, v20.11: 2.0→1.5)
-
-**All 6 additive boosts inside the cap (v20.10):**
-- `confluence_boost`, `msrf_boost`, `jason_sim_boost`, `serp_boost`, `ensemble_adjustment`, `totals_calibration_adj`
-- Previously `ensemble_adjustment` and `totals_calibration_adj` were applied OUTSIDE the cap, causing scores to cluster at 10.0 (Lesson 57)
+**TOTAL_BOOST_CAP = 3.5** — prevents score inflation from stacking multiple boosts (Invariant 26)
 
 **Ensemble adjustment:**
 - Uses `ENSEMBLE_ADJUSTMENT_STEP` (no magic ±0.5 literals).
@@ -456,14 +420,14 @@ FINAL = clamp(0, 10, BASE_4 + context_modifier + total_boosts + live_adjustment)
 
 | Boost | Source | Cap | Notes |
 |---|---|---|---|
-| confluence_boost | `live_data_router.py` | `CONFLUENCE_BOOST_CAP` (2.0) | Derived from confluence levels (v20.10 rescaled) |
+| confluence_boost | `live_data_router.py` | `CONFLUENCE_BOOST_CAP` (10.0) | Derived from confluence levels |
 | msrf_boost | `signals/msrf_resonance.py` | `MSRF_BOOST_CAP` (1.0) | 0.0 / 0.25 / 0.5 / 1.0 |
 | jason_sim_boost | `jason_sim_confluence.py` | `JASON_SIM_BOOST_CAP` (1.5) | Can be negative (block rules) |
 | serp_boost | `alt_data_sources/serp_intelligence.py` | `SERP_BOOST_CAP_TOTAL` (4.3) | Total SERP capped |
-| ensemble_adjustment | `live_data_router.py` | `ENSEMBLE_ADJUSTMENT_STEP` (0.5) | +0.5 / -0.5 step **(v20.10: inside cap)** |
-| totals_calibration_adj | `live_data_router.py` | ±0.75 | OVER penalty / UNDER boost **(v20.10: inside cap)** |
-| **SUM of above 6** | `core/scoring_pipeline.py` | **`TOTAL_BOOST_CAP` (1.5)** | **All 6 boosts compete within same cap (Inv. 26, v20.10)** |
-| live_adjustment | `live_data_router.py` | ±0.50 | In-game adjustment to research_score **(OUTSIDE cap)** |
+| **SUM of above 4** | `core/scoring_pipeline.py` | **`TOTAL_BOOST_CAP` (3.5)** | **Prevents score inflation (Inv. 26)** |
+| ensemble_adjustment | `utils/ensemble_adjustment.py` | `ENSEMBLE_ADJUSTMENT_STEP` (0.5) | +0.5 / -0.5 step |
+| live_adjustment | `live_data_router.py` | ±0.50 | In-game adjustment to research_score |
+| totals_calibration_adj | `live_data_router.py` | ±0.75 | OVER penalty / UNDER boost from `TOTALS_SIDE_CALIBRATION` |
 
 ---
 
@@ -531,7 +495,7 @@ API_KEY=YOUR_KEY bash scripts/perf_audit_best_bets.sh
     "context_modifier": float,   # bounded modifier (authoritative)
     "context_score": float,      # backward-compat only (do not use for weighting)
     "base_score": float,         # Weighted sum before boosts
-    "confluence_boost": float,   # STRONG (+1.5), MODERATE (+0.5), DIVERGENT (+0), HARMONIC_CONVERGENCE (+2.0)
+    "confluence_boost": float,   # STRONG (+3), MODERATE (+1), DIVERGENT (+0), HARMONIC_CONVERGENCE (+4.5)
     "jason_sim_boost": float,    # Can be negative
     "final_score": float,        # BASE + confluence + jason_sim
 
@@ -596,7 +560,7 @@ API_KEY=YOUR_KEY bash scripts/perf_audit_best_bets.sh
 
 ---
 
-### INVARIANT 6: Output Filtering (7.0 MINIMUM)
+### INVARIANT 6: Output Filtering (6.5 MINIMUM)
 
 **RULE:** NEVER return any pick with `final_score < 6.5` to frontend
 
@@ -633,33 +597,26 @@ top_picks = no_contradictions[:max_picks]
 
 ---
 
-### INVARIANT 7: Contradiction Gate + Redundancy Filter (MANDATORY)
+### INVARIANT 7: Contradiction Gate (MANDATORY)
 
-**RULE 1 (Contradictions):** NEVER return both sides of same bet (Over AND Under, Team A AND Team B)
+**RULE:** NEVER return both sides of same bet (Over AND Under, Team A AND Team B)
 
-**RULE 2 (Redundancies):** NEVER return spread AND moneyline on same team (~90% correlated, both lose together)
-
-**Unique Key Format (Contradictions):**
+**Unique Key Format:**
 ```
 {sport}|{date_et}|{event_id}|{market}|{prop_type}|{player_id/team_id}|{line}
 ```
 
-**Detection Rules (Contradictions):**
+**Detection Rules:**
 1. **Totals/Props:** Detect Over vs Under on same line
 2. **Spreads:** Use `abs(line)` so +1.5 and -1.5 match
 3. **Moneylines:** Use "Game" as subject for both teams
 4. **Player Props:** Check markets with "PLAYER_" prefix (player_points, player_assists, etc.)
 
-**Detection Rules (Redundancies):**
-1. Group by `{event_id}|{side}` (ignoring market type)
-2. If group has both SPREAD and MONEYLINE, keep only highest-scoring pick
-3. Dropped picks are NOT contradictions — they're correlated exposure
-
 **Priority When Duplicates Found:**
 - Keep pick with higher `final_score`
 - Tiebreaker: Preferred book (draftkings > fanduel > betmgm > caesars > pinnacle)
 
-**Implementation:** `utils/contradiction_gate.py` → `apply_contradiction_gate(props, games)` (calls both filters)
+**Implementation:** `utils/contradiction_gate.py` → `apply_contradiction_gate(props, games)`
 
 **Tests:** 8 tests verify all cases (totals, props, spreads, player props)
 
@@ -1532,7 +1489,7 @@ Check Cache (5-10 min TTL)
    - Confluence boost + MSRF/SERP (if enabled) + Jason Sim boost
    - Tier assignment (TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN)
          ↓
-4. FILTER: Score threshold (>= 7.0)
+4. FILTER: Score threshold (>= 6.5)
    - Drops: All picks with final_score < 6.5
          ↓
 5. FILTER: Contradiction gate
@@ -2448,7 +2405,7 @@ FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_bo
        + msrf_boost + serp_boost (if enabled)
 ```
 
-All engines score 0-10. Min output threshold: **7.0** (picks below this are filtered out, v20.12: raised from 6.5).
+All engines score 0-10. Min output threshold: **6.5** (picks below this are filtered out).
 
 ### Engine 1: AI Score (25%)
 - 8 AI Models (0-8 scaled to 0-10) - `advanced_ml_backend.py`
@@ -2478,13 +2435,13 @@ All engines score 0-10. Min output threshold: **7.0** (picks below this are filt
 
 ### Confluence (Option A — STRONG gate + HARMONIC_CONVERGENCE)
 - Alignment = `1 - abs(research - esoteric) / 10`
-- **HARMONIC_CONVERGENCE (+2.0)**: Research ≥ 7.5 AND Esoteric ≥ 7.5 ("Golden Boost" when Math+Magic align)
-- **STRONG (+1.5)**: alignment ≥ 80% **AND** at least one active signal (`jarvis_active`, `research_sharp_present`, or `jason_sim_boost != 0`). If alignment ≥70% but no active signal, downgrades to MODERATE.
-- MODERATE (+0.5): alignment ≥ 60%
+- **HARMONIC_CONVERGENCE (+4.5)**: Research ≥ 8.0 AND Esoteric ≥ 8.0 ("Golden Boost" when Math+Magic align)
+- **STRONG (+3)**: alignment ≥ 80% **AND** at least one active signal (`jarvis_active`, `research_sharp_present`, or `jason_sim_boost != 0`). If alignment ≥70% but no active signal, downgrades to MODERATE.
+- MODERATE (+1): alignment ≥ 60%
 - DIVERGENT (+0): below 60%
-- PERFECT/JARVIS_PERFECT/IMMORTAL (+2.0): both ≥7.5 + jarvis ≥7.5 + alignment ≥80% (capped at TOTAL_BOOST_CAP)
+- PERFECT/IMMORTAL: both ≥7.5 + jarvis ≥7.5 + alignment ≥80%
 
-**Why the gate**: Without it, two engines that are both mediocre (e.g., R=4.0, E=4.0) get 100% alignment and STRONG +1.5 boost for free, inflating scores without real conviction.
+**Why the gate**: Without it, two engines that are both mediocre (e.g., R=4.0, E=4.0) get 100% alignment and STRONG +3 boost for free, inflating scores without real conviction.
 
 **HARMONIC_CONVERGENCE**: When both Research (market signals) and Esoteric (cosmic signals) score ≥8.0, it represents exceptional alignment between analytical and intuitive sources. This adds +1.5 scaled boost (equivalent to +15 on 100-point).
 
@@ -3646,10 +3603,10 @@ curl /live/grader/bias/NBA?days_back=7 -H "X-API-Key: KEY" | jq '.pick_type_brea
 
 ### INVARIANT 26: Total Boost Cap (v20.6)
 
-**RULE:** The sum of all additive boosts (confluence + msrf + jason_sim + serp) MUST be capped at `TOTAL_BOOST_CAP` (1.5) before being added to `base_score`. Context modifier is excluded from this cap.
+**RULE:** The sum of all additive boosts (confluence + msrf + jason_sim + serp) MUST be capped at `TOTAL_BOOST_CAP` (3.5) before being added to `base_score`. Context modifier is excluded from this cap.
 
 **Why This Exists:**
-v20.10 recalibrated from 3.5 to 2.0 to fix score saturation (all picks hitting 10.0). Confluence levels were proportionally rescaled (STRONG from 3.0→1.5, MODERATE from 1.0→0.5, top tiers capped at 2.0). This creates visible score differentiation (picks spread across 7.5-10.0 instead of clustering at 10.0) and makes SERP's +0.5 contribution meaningful as a tiebreaker.
+Individual boost caps (confluence 10.0, msrf 1.0, jason_sim 1.5, serp 4.3) allowed a theoretical max of 16.8 additional points. In practice, picks with mediocre base scores (~6.5) were being inflated to 10.0 through boost stacking, eliminating score differentiation. TOTAL_BOOST_CAP ensures boosts improve good picks but can't rescue bad ones.
 
 **Implementation:**
 ```python
@@ -3662,9 +3619,9 @@ final_score = max(0.0, min(10.0, final_score))
 ```
 
 **Constants (core/scoring_contract.py):**
-- `TOTAL_BOOST_CAP = 1.5` — max sum of all boosts (v20.10: 3.5→2.0, v20.11: 2.0→1.5)
+- `TOTAL_BOOST_CAP = 3.5` — max sum of 4 boosts
 - `SERP_BOOST_CAP_TOTAL = 4.3` — individual SERP cap (still applies first)
-- `CONFLUENCE_BOOST_CAP = 2.0` — individual confluence cap (v20.10: rescaled from 10.0)
+- `CONFLUENCE_BOOST_CAP = 10.0` — individual confluence cap
 - `MSRF_BOOST_CAP = 1.0` — individual MSRF cap
 - `JASON_SIM_BOOST_CAP = 1.5` — individual Jason cap
 
@@ -4392,20 +4349,10 @@ grep -n "get_sharp_money(" live_data_router.py
 # If called anywhere other than the decorator line, it's dual-use
 ```
 
-**ALL Dual-Use Functions (MUST return dict, not JSONResponse):**
-| Function | Commits Fixed | Internal Callers |
-|----------|---------------|------------------|
-| `get_sharp_money()` | d7279e9 | `_best_bets_inner()` |
-| `get_props()` | f1a0661 | `_best_bets_inner()` |
-| `get_lines()` | d1c4547 | `_best_bets_inner()`, grader |
-| `get_injuries()` | a9a75eb | `_best_bets_inner()`, context layer |
+**Files Affected:**
+- `live_data_router.py:1758-1989` - `get_sharp_money()` fixed to return dict
 
-**Before adding @router decorator to ANY function, ask:**
-1. Is this function called anywhere else in Python code?
-2. If yes, it MUST return dict (not JSONResponse)
-3. FastAPI auto-serializes dicts to JSON for HTTP responses
-
-**Fixed in:** Multiple commits (d7279e9, f1a0661, d1c4547, e5da153)
+**Fixed in:** Commit `d7279e9` (Feb 2026)
 
 ### Lesson 10: Undefined Variables in Nested Functions
 **Problem:** Multiple `NameError` and `TypeError` crashes in `calculate_pick_score()` due to undefined variables or None comparisons.
@@ -5922,7 +5869,7 @@ datetime.fromisoformat(p.timestamp) >= cutoff  # Same error
 **Root Cause:** Individual boost caps existed (confluence 10.0, msrf 1.0, jason_sim 1.5, serp 4.3) but NO cap on their SUM. Theoretical max boost was 16.8 points. In practice, confluence 3.0 + msrf 1.0 + serp 2.0 + jason 0.5 = 6.5 boosts on a 6.5 base = 13.0 → clamped to 10.0.
 
 **The Fix:**
-1. Added `TOTAL_BOOST_CAP = 3.5` in `core/scoring_contract.py` (v20.10: 3.5→2.0, v20.11: 2.0→1.5 to prevent score saturation)
+1. Added `TOTAL_BOOST_CAP = 3.5` in `core/scoring_contract.py`
 2. In `compute_final_score_option_a()`: sum of confluence+msrf+jason_sim+serp capped to `TOTAL_BOOST_CAP` before adding to base_score
 3. Context modifier is excluded from the cap (it's a bounded modifier, not a boost)
 4. Updated `test_option_a_scoring_guard.py` to test new cap behavior
@@ -6209,443 +6156,42 @@ done
 
 **Fixed in:** v20.9 (Feb 5, 2026)
 
----
+### Lesson 56: SHARP Signal Field Name Mismatch — Wrong Team Graded (v20.10)
+**Problem:** SHARP picks showed 18% hit rate (2W-9L) with all picks showing `actual: 0.0`. Sharp money signals were always being graded as HOME team wins regardless of the actual sharp side.
 
-### Lesson 56: Contradiction Gate — Over/Under at Different Lines Not Caught (v20.10)
-**Problem:** The contradiction gate was supposed to prevent recommending both Over AND Under on the same game total, but picks like "Over 226.5" and "Under 224.5" on the same game were both getting through. The gate only blocked exact-line contradictions (e.g., Over 226.5 vs Under 226.5).
+**Root Cause:** The SHARP signal dictionary uses `sharp_side` field with lowercase values ("home" or "away"), but the pick creation code used `signal.get("side", "HOME")` which always returned the default "HOME" since the `side` field doesn't exist in the signal.
 
-**Root Cause:** `make_unique_key()` in `utils/contradiction_gate.py` included `{line_str}` in the key for TOTAL markets. Over 226.5 produced key `NBA|...|TOTAL|...|226.5` and Under 224.5 produced `NBA|...|TOTAL|...|224.5` — two different keys. Since they never grouped together, `is_opposite_side()` was never called to detect the Over/Under conflict.
-
-**The Fix:**
-1. Changed `make_unique_key()` to use `line_str = "ANY"` for TOTAL/TOTALS markets instead of the actual line value
-2. This ensures all totals on the same game produce the SAME key regardless of line value
-3. `is_opposite_side()` already correctly detects Over vs Under — it just needed the keys to match first
-
-**Key Insight:** The contradiction detection logic (`is_opposite_side()`) was correct. The bug was in the grouping logic (`make_unique_key()`) — picks that should have been compared were never grouped together because the key was too specific.
-
-**Files Modified:**
-- `utils/contradiction_gate.py` — Changed line_str for TOTAL market from `f"{line:.1f}"` to `"ANY"`
-
-**Fixed in:** v20.10 (Feb 5, 2026)
-
----
-
-### Lesson 57: Score 10.0 Clustering — Post-Hoc Adjustments Bypass Boost Cap (v20.10)
-**Problem:** Nearly every Under pick was scoring exactly 10.0, making it impossible to rank or differentiate picks. The "best bets" endpoint was returning a wall of identical 10.0-scored picks with no meaningful ordering.
-
-**Root Cause:** `ensemble_adjustment` (+0.5) and `totals_calibration_adj` (+0.75 for Under) were being applied AFTER `compute_final_score_option_a()` returned — completely bypassing `TOTAL_BOOST_CAP` (1.5). The math: base ~5.3 + context ~0.1 + capped boosts 2.0 + ensemble 0.5 + totals_cal 0.75 = 8.65, but with higher confluence/MSRF the raw total_boosts could be 3.5+ before capping, so: 5.3 + 0.1 + 2.0 + 0.5 + 0.75 = 8.65 minimum, and stronger picks easily hit 10.0. The clamp to 10.0 destroyed all differentiation.
-
-**The Fix:**
-1. Added `ensemble_adjustment` and `totals_calibration_adj` as parameters to `compute_final_score_option_a()` in `core/scoring_pipeline.py`
-2. Included both in `total_boosts` BEFORE applying `TOTAL_BOOST_CAP`: `total_boosts = confluence + msrf + jason_sim + serp + ensemble_adjustment + totals_calibration_adj`
-3. Removed the post-hoc additions from `live_data_router.py` — no more adding to final_score after compute returns
-4. Now all 6 additive boosts compete within the same cap, producing real differentiation (e.g., 7.2, 8.1, 9.3 instead of all 10.0)
-
-**Key Insight:** The single-source-of-truth principle (Invariant 4) was violated. `compute_final_score_option_a()` was supposed to be the ONLY place final_score math happens, but adjustments were being added outside it in the caller. Any additive adjustment to final_score MUST go through the scoring function to respect the cap.
-
-**Files Modified:**
-- `core/scoring_pipeline.py` — Added `ensemble_adjustment` and `totals_calibration_adj` parameters, included in `total_boosts`
-- `live_data_router.py` — Pass ensemble/totals_cal into `compute_final_score_option_a()` instead of adding post-hoc
-
-**Fixed in:** v20.10 (Feb 5, 2026)
-
----
-
-### Lesson 58: Duplicate Pick Counting — book_key in Grader Pick ID (v20.10)
-**Problem:** The grading summary was showing inflated records (e.g., 25-10 when the real record was 5-2). The same logical bet (e.g., "Knicks Under 226.5") appeared as 5 separate graded picks because it came from 5 different sportsbooks.
-
-**Root Cause:** `grader_store.py:_make_pick_id()` included `book_key` in the deterministic pick ID hash. The key was `{sport}|{event_id}|{market}|{subject}|{line}|{book}|{date_et}`, so the same pick from DraftKings, FanDuel, BetMGM, Caesars, and PointsBet each got unique IDs. The grading-summary endpoint counted all of them, inflating wins and losses by the number of sportsbooks.
-
-**The Fix:**
-1. Removed `book_key` from `_make_pick_id()` key string in `grader_store.py`
-2. New key: `{sport}|{event_id}|{market}|{subject}|{line}|{date_et}` — same logical bet from any book produces the same ID
-3. This matches the dedup logic already used in `live_data_router.py`'s local `_make_pick_id()`
-
-**Key Insight:** Dedup IDs must be based on the LOGICAL bet (what was bet on), not the SOURCE (where it came from). Including book_key means "Knicks Under 226.5 at DraftKings" and "Knicks Under 226.5 at FanDuel" are treated as different bets, which inflates every metric.
-
-**Files Modified:**
-- `grader_store.py` — Removed `book_key` from `_make_pick_id()` key
-
-**Fixed in:** v20.10 (Feb 5, 2026)
-
----
-
-### Lesson 59: Concentration Limits — Game Picks Now Subject to max_per_matchup (v20.12)
-**Problem:** The diversity filter was not applying `max_per_matchup` limits to game picks (spread, total, moneyline). This allowed 3+ picks on the same game to surface, violating the principle of quality over quantity.
-
-**Root Cause:** The original `apply_diversity_gate()` only applied player + game limits to props, but passed `max_per_player=999` for game picks, effectively bypassing concentration limits. The v20.12 behavioral change required game picks to also respect `max_per_matchup=2`.
-
-**The Fix:**
-1. Updated `apply_diversity_gate()` in `utils/diversity_filter.py` to apply `max_per_game=MAX_PICKS_PER_MATCHUP` to game picks
-2. Reduced `MAX_PICKS_PER_MATCHUP` from 3 to 2 in `scoring_contract.py:CONCENTRATION_LIMITS`
-3. Updated 5 tests in `tests/test_diversity_filter.py` to match new behavior:
-   - `test_game_limit_enforced`: expects 2 kept, 3 dropped (was 3/2)
-   - `test_game_picks_also_game_limited`: renamed from `test_non_prop_types_not_game_limited`
-   - `test_player_prop_market_types`: expects 2 kept (was 3)
-   - `test_mixed_players_and_games`: expects 4 props kept (was 5)
-   - `test_max_per_game_default`: verifies `MAX_PICKS_PER_MATCHUP == 2`
-
-**Key Insight:** Concentration limits exist in `scoring_contract.py` as the single source of truth. Any filter that enforces these limits MUST import from `CONCENTRATION_LIMITS`, not define its own constants. When the contract changes, all downstream code inherits the change automatically.
-
-**Pipeline Order (must be preserved):**
-1. Deduplication → 2. Score filter (MIN_FINAL_SCORE) → 3. Contradiction gate → 4. Diversity gate → 5. Final slice
-
-**Files Modified:**
-- `core/scoring_contract.py` — Added `CONCENTRATION_LIMITS` dict (max_per_matchup=2, max_props_per_player=1, max_per_sport_per_day=8)
-- `utils/diversity_filter.py` — Imports limits from scoring_contract, applies to ALL pick types
-- `tests/test_diversity_filter.py` — 5 tests updated for v20.12 behavior
-
-**Fixed in:** v20.12 (Feb 6, 2026)
-
-### Lesson 60: Same-Team Spread + ML Redundancy — Correlated Bets Both Lose Together (v20.12)
-**Problem:** When Southern Illinois +1.5 (spread) AND Southern Illinois ML both surfaced as picks on the same game, both lost together when the team lost. These are ~90% correlated bets — they're not contradictions (opposite sides), but they both depend on the same team winning.
-
-**Why This Wasn't Caught Before:** The contradiction gate (Invariant 7) only prevents OPPOSITE sides:
-- Over vs Under ✓ (caught)
-- Team A vs Team B ✓ (caught)
-- Team A spread + Team A ML ✗ (NOT caught — same side, different markets)
-
-The unique key in `make_unique_key()` includes market type (SPREAD vs ML), so spread and moneyline picks never group together for contradiction detection. This is correct behavior — they're not contradictions, they're REDUNDANCIES.
-
-**The Fix:**
-1. Added `filter_redundant_same_side()` in `utils/contradiction_gate.py`
-2. Groups by `event_id|side` (ignoring market type) to find spread+ML pairs
-3. Keeps only the higher-scoring pick when both spread AND ML exist for same team
-4. Called from `apply_contradiction_gate()` AFTER contradiction filtering
-
-**Key Insight:** Contradictions (opposite sides) and redundancies (correlated same-side) are DIFFERENT problems requiring DIFFERENT solutions:
-- **Contradiction Gate**: Prevents betting AGAINST yourself (Over AND Under)
-- **Redundancy Filter**: Prevents double-exposure to same outcome (spread + ML on same team)
-
-**The Correlation Math:**
-- If a team covers the spread, they usually win outright (~90% correlation)
-- If a team loses outright, they usually don't cover either
-- Betting both is essentially 2x exposure to the same outcome
-
-**Pipeline Order (updated):**
-1. Deduplication → 2. Score filter → 3. Contradiction gate → 3.5. Redundancy filter → 4. Diversity gate → 5. Final slice
-
-**Files Modified:**
-- `utils/contradiction_gate.py` — Added `filter_redundant_same_side()`, updated `apply_contradiction_gate()`
-
-**Fixed in:** v20.12 (Feb 6, 2026)
-
-### Lesson 61: Async Context Detection — Can't Call asyncio.run() Inside FastAPI (v20.12)
-**Problem:** MSRF module crashed with `RuntimeError: cannot run event loop while another loop is running` when calling async BallDontLie functions from sync code inside FastAPI's async context.
-
-**Root Cause:** MSRF is a sync function that calls async `search_player()` and `get_player_game_stats()`. When MSRF is invoked from FastAPI (which already has an event loop running), `asyncio.run()` fails because you can't nest event loops.
-
-**The Pattern That Causes This:**
 ```python
-# WRONG - crashes inside FastAPI
-def sync_msrf_function():
-    result = asyncio.run(async_balldontlie_call())  # RuntimeError!
+# BUG — signal has "sharp_side", not "side"
+sharp_side = "home" if money_pct > ticket_pct else "away"  # Line 1924
+data.append({
+    "sharp_side": sharp_side,  # The actual field name
+    ...
+})
+
+# Pick creation used wrong field name
+"side": home_team if signal.get("side") == "HOME" else away_team  # Line 6326
+# signal.get("side") returns None, defaults to "HOME"
+# So ALL picks get side=home_team regardless of actual sharp_side
 ```
 
-**The Safe Async Wrapper Pattern:**
-```python
-def _run_async_safely(coro):
-    """Run async code from sync context, detecting if already in async loop."""
-    try:
-        loop = asyncio.get_running_loop()
-        # Already in async context (FastAPI) - can't nest, skip gracefully
-        return None
-    except RuntimeError:
-        # No loop running - safe to create one
-        try:
-            return asyncio.run(coro)
-        except Exception:
-            return None  # Graceful degradation
-```
+**The Fix:** Changed all `signal.get("side", "HOME")` to `signal.get("sharp_side", "home")` and updated comparisons from uppercase "HOME" to lowercase "home":
+- Lines 6286, 6314: `pick_side=signal.get("sharp_side", "home")`
+- Lines 6324-6327: Use `signal.get("sharp_side")` with lowercase comparison
+- Line 6347: `signal.get('sharp_side', 'home').upper()`
 
-**Key Insight:** Sync functions that call async code MUST detect whether they're being called from an async context (FastAPI) or a sync context (tests, scripts). The fix is graceful degradation — if async call can't run, return None and continue with fallback data.
-
-**Files Modified:**
-- `signals/msrf_resonance.py` — Added `_run_async_safely()` wrapper (lines 407-433)
-
-**Commits:** 8217e33, 6d39f6d
-
-### Lesson 62: Variable Name Typos Cause Silent NameError Crashes (v20.12)
-**Problem:** Best-bets endpoint crashed with `NameError: name 'base_4_score' is not defined` because the variable was defined as `base_score` at line 4604 but referenced as `base_4_score` at line 4929.
-
-**Why This Is Insidious:**
-1. Python doesn't catch variable name typos at compile time
-2. The error only surfaces at runtime when the code path is hit
-3. Similar variable names (`base_score`, `base_4_score`, `base_4_engine_score`) are easy to confuse
-
-**Historical Variable Name Bugs (ALL in live_data_router.py):**
-| Wrong Name | Correct Name | Commit |
-|------------|--------------|--------|
-| `base_4_score` | `base_score` | cacc9d9 |
-| `game_date` | `_game_date_obj` | f52cfce |
-| `candidate` (closure) | `candidate` (param) | bcedd80 |
-| `mid_spread_mod` (uninitialized) | `mid_spread_mod = 0` | 31ed92a |
+**Impact:** Before fix, ~50% of SHARP picks were graded against the wrong team (when sharps actually bet AWAY, pick was graded as if they bet HOME).
 
 **Prevention:**
-1. Use EXACT variable names - don't rely on "similar" names
-2. When renaming a variable, grep for ALL usages: `grep -n "old_name" *.py`
-3. Run `python3 -m py_compile <file>` after every edit (catches some issues)
-4. Test ALL code paths, not just the happy path
-
-**Fixed in:** Commit cacc9d9 (Feb 6, 2026)
-
-### Lesson 63: Append-Only Grading — mark_graded() Crash Safety (v20.12)
-**Problem:** `grader_store.mark_graded()` was rewriting the entire `predictions.jsonl` file on every grade operation. If the process crashed mid-write (OOM, deploy, power loss), the file could be corrupted, losing ALL historical predictions.
-
-**Root Cause:** The original implementation used read-modify-write pattern:
-1. Read entire `predictions.jsonl` into memory
-2. Find and update the matching pick
-3. Write entire file back
-This is NOT crash-safe — a partial write corrupts everything.
-
-**The Fix:**
-1. Created separate `graded_picks.jsonl` file for grade records (append-only)
-2. `mark_graded()` now APPENDS a grade record — never modifies `predictions.jsonl`
-3. `load_predictions()` merges grade records at read time
-4. Corrupted lines are skipped gracefully (JSON parse errors logged, not fatal)
-
-**Key Pattern — Append-Only Storage:**
-```python
-# WRONG - read-modify-write (crash-unsafe)
-predictions = json.load(f)
-predictions[i]["grade_status"] = "GRADED"
-json.dump(predictions, f)  # ❌ If crash here, file is corrupted
-
-# CORRECT - append-only (crash-safe)
-with open(graded_picks_file, 'a') as f:
-    f.write(json.dumps(grade_record) + '\n')  # ✅ Crash-safe
-```
-
-**Prevention:**
-- Always separate mutable data (grades) from immutable data (predictions)
-- Use append-only patterns for any data that accumulates over time
-- Merge records at read time, not write time
+1. **NEVER assume field names** — always trace back to where the data dictionary is created
+2. **Field name consistency** — if data source uses `sharp_side`, consuming code must also use `sharp_side`
+3. **Beware of silent defaults** — `signal.get("side", "HOME")` returning "HOME" masked the bug because HOME is a valid value
+4. **Unit test SHARP grading** with both HOME and AWAY scenarios
 
 **Files Modified:**
-- `storage_paths.py` — Added `get_graded_picks_file()`
-- `grader_store.py` — Rewrote `mark_graded()`, updated `load_predictions()` to merge grades
+- `live_data_router.py` — Fixed 7 occurrences of `signal.get("side")` to `signal.get("sharp_side")`
 
-**Fixed in:** Commit a9a5f8e (Feb 4, 2026)
-
-### Lesson 64: Odds Staleness Guard — Live Adjustment Suppression (v20.12)
-**Problem:** Live betting picks were applying `live_adjustment` based on odds that could be minutes old. Stale odds create false signals — the market may have already moved.
-
-**Root Cause:** No staleness check existed. Live endpoints would fetch odds, cache them, and apply adjustments even if the cache was minutes old.
-
-**The Fix:**
-1. Added `ODDS_STALENESS_THRESHOLD_SECONDS = 120` to `scoring_contract.py`
-2. Live endpoints now track `odds_fetched_at` timestamp
-3. Compute `odds_age_seconds = now - odds_fetched_at`
-4. If `odds_age_seconds > 120`, mark odds as STALE and suppress `live_adjustment`
-
-**Key Insight:** For live betting, data freshness IS quality. A 3-minute-old line might be 10 cents off — that's the entire edge.
-
-**Implementation Pattern:**
-```python
-from core.scoring_contract import ODDS_STALENESS_THRESHOLD_SECONDS
-
-odds_age = (datetime.now() - odds_fetched_at).total_seconds()
-if odds_age > ODDS_STALENESS_THRESHOLD_SECONDS:
-    live_adjustment = 0.0  # Suppress — data too old
-    pick["odds_stale"] = True
-```
-
-**Prevention:**
-- Any live/real-time endpoint MUST track data timestamps
-- Define staleness thresholds as constants in `scoring_contract.py`
-- Log staleness events for monitoring
-
-**Files Modified:**
-- `core/scoring_contract.py` — Added `ODDS_STALENESS_THRESHOLD_SECONDS`
-- `live_data_router.py` — Added staleness detection to live endpoints
-
-**Fixed in:** Commit a9a5f8e (Feb 4, 2026)
-
-### Lesson 65: Market Status Detection — Suspended Market Handling (v20.12)
-**Problem:** When markets are suspended (halftime, injury timeout, review), the API returns null/empty odds. The system was treating these as valid picks with "-110" default odds.
-
-**Root Cause:** No detection logic for suspended markets. The code assumed all returned markets were active.
-
-**The Fix:**
-1. Added `_detect_market_status()` function in `live_data_router.py`
-2. Heuristic: if `odds_american is None` AND `book` is falsy, market is suspended
-3. Each live pick now includes `market_status` field ("open" or "suspended")
-4. Suspended picks can be filtered or flagged in output
-
-**Detection Logic:**
-```python
-def _detect_market_status(pick: dict) -> str:
-    odds = pick.get("odds_american")
-    book = pick.get("book")
-    if odds is None and not book:
-        return "suspended"
-    return "open"
-```
-
-**Why Both Conditions:**
-- `odds is None` alone is not enough — some books don't report odds for certain markets
-- `book` being falsy indicates no book is offering the line
-- Both together strongly indicate market suspension
-
-**Prevention:**
-- When integrating betting APIs, always handle suspended/unavailable states
-- Add explicit status fields rather than inferring from missing data
-
-**Files Modified:**
-- `live_data_router.py` — Added `_detect_market_status()` (lines 7355-7401)
-
-**Fixed in:** Commit a9a5f8e (Feb 4, 2026)
-
-### Lesson 66: Training Drop Telemetry — Tracking Why Picks Are Dropped (v20.12)
-**Problem:** The learning loop was dropping picks during training data conversion, but there was no visibility into WHY. Could be unsupported sports, missing IDs, score thresholds — impossible to debug.
-
-**Root Cause:** `auto_grader.py` silently dropped picks without tracking reasons. When the learning loop showed poor results, there was no way to diagnose if the issue was data quality, filtering, or actual model performance.
-
-**The Fix:**
-1. Added `last_drop_stats` dict in `auto_grader.py` to track drop reasons
-2. Counters for: `unsupported_sport`, `below_score_threshold`, `duplicate_id`, `missing_pick_id`, `conversion_failed`
-3. Exposed via `/grader/status` endpoint for monitoring
-
-**Telemetry Structure:**
-```python
-last_drop_stats = {
-    "unsupported_sport": 0,      # Sport not in weights.json
-    "below_score_threshold": 0,  # Score < MIN_FINAL_SCORE
-    "duplicate_id": 0,           # Same pick_id already processed
-    "missing_pick_id": 0,        # No pick_id field
-    "conversion_failed": 0,      # Exception during conversion
-}
-```
-
-**Why This Matters:**
-- If 80% of picks are dropped for "unsupported_sport", weights.json needs more sports
-- If "duplicate_id" is high, deduplication upstream is failing
-- Telemetry enables data-driven debugging
-
-**Prevention:**
-- When filtering/dropping data, ALWAYS track why
-- Expose drop stats via health/status endpoints
-- Use counters, not just boolean flags
-
-**Files Modified:**
-- `auto_grader.py` — Added `last_drop_stats` tracking (line 292)
-- `main.py` — Added drop stats to `/grader/status`
-
-**Fixed in:** Commit a9a5f8e (Feb 4, 2026)
-
-### Lesson 67: Weight Version Hash — Learning Loop Debugging (v20.12)
-**Problem:** When debugging learning loop issues, it was impossible to know which version of `weights.json` was active. The file could be updated, but there was no version identifier.
-
-**Root Cause:** No versioning mechanism for weights. When weights drifted or caused issues, there was no way to correlate production behavior with a specific weights file state.
-
-**The Fix:**
-1. Compute SHA256 hash of `weights.json` content
-2. Use first 12 characters as `weights_version_hash`
-3. Expose in `/grader/status` along with `weights_file_exists` and `weights_last_modified_et`
-
-**Hash Computation:**
-```python
-import hashlib
-
-with open(weights_file, 'rb') as f:
-    content = f.read()
-weights_version_hash = hashlib.sha256(content).hexdigest()[:12]
-```
-
-**Why SHA256[:12]:**
-- Full SHA256 is 64 chars — too long for logs
-- 12 chars = 48 bits of entropy — sufficient for versioning
-- Any content change produces a different hash
-
-**Debugging Pattern:**
-```bash
-# Check current weights version
-curl /grader/status | jq '.weights_version_hash'
-# Returns: "a1b2c3d4e5f6"
-
-# Compare across environments/deploys
-# If hash differs, weights have changed
-```
-
-**Prevention:**
-- Any file that affects model behavior should have a version identifier
-- Use content hashes, not timestamps (more reliable)
-- Expose version info in status endpoints
-
-**Files Modified:**
-- `live_data_router.py` — Added hash computation (lines 8662-8687)
-- `main.py` — Added `weights_version_hash` to `/grader/status`
-
-**Fixed in:** Commit a9a5f8e (Feb 4, 2026)
-
-### Lesson 68: PERSIST_TIERS — Quality Tier Filtering for Learning Loop (v20.12)
-**Problem:** The learning loop was training on ALL picks including MONITOR and PASS tiers. These low-confidence picks add noise to weight learning without providing useful signal — they're below the output threshold for a reason.
-
-**Root Cause:** No tier filter existed before persistence. Every scored pick was saved to `grader_store`, diluting the training data with picks the system wasn't confident enough to show users.
-
-**The Fix:**
-1. Added `PERSIST_TIERS` constant to `scoring_contract.py`:
-```python
-PERSIST_TIERS = {"EDGE_LEAN", "GOLD_STAR", "TITANIUM_SMASH"}
-```
-2. Filter picks before `grader_store.persist_pick()` — only quality tiers are saved
-3. MONITOR and PASS tiers are still scored (for debugging) but NOT persisted
-
-**Why Quality Tiers Only:**
-- EDGE_LEAN (≥7.0): Above visibility threshold, real picks shown to users
-- GOLD_STAR (≥7.5): High-confidence picks that passed all gates
-- TITANIUM_SMASH: Multi-engine alignment (3/4 ≥ 8.0)
-- MONITOR (≥5.5): Below threshold, not actionable
-- PASS (<5.5): System explicitly recommends against
-
-**Key Insight:** Learning should focus on picks the system was confident enough to surface. Training on PASS picks teaches the model about noise, not signal.
-
-**Files Modified:**
-- `core/scoring_contract.py` — Added `PERSIST_TIERS`
-- `live_data_router.py` — Filter before persistence
-
-**Fixed in:** Commit 637e227 (Feb 6, 2026)
-
-### Lesson 69: Sport-Specific Totals Calibration — NHL Totals Blocking (v20.11)
-**Problem:** NHL totals had a catastrophic 26% win rate (6-17) in grading data. The model was consistently wrong on NHL over/under picks, destroying bankroll.
-
-**Grading Data Analysis (Feb 5, 2026):**
-| Sport | Totals Win Rate | Action |
-|-------|-----------------|--------|
-| NHL | 26% (6-17) | BLOCK — unacceptable |
-| NCAAB | 46% | Moderate penalty |
-| NBA | 52% | No change |
-
-**Root Cause:** `TOTALS_SIDE_CALIBRATION` (Lesson 38) applied the same Over/Under bias correction to ALL sports. But NHL totals have different dynamics — the model's edge doesn't exist there.
-
-**The Fix:**
-1. Added `SPORT_TOTALS_CALIBRATION` to `scoring_contract.py`:
-```python
-SPORT_TOTALS_CALIBRATION = {
-    "enabled": True,
-    "NHL": -4.0,    # BLOCK: 10.0 → 6.0 (below MIN_FINAL_SCORE 7.0)
-    "NCAAB": -0.75, # Penalty: 10.0 → 9.25
-    "NBA": 0.0,     # No change
-    "NFL": 0.0,     # No data yet
-    "MLB": 0.0,     # No data yet
-}
-```
-2. Penalty is applied to `final_score` BEFORE the MIN_FINAL_SCORE filter
-3. NHL totals with -4.0 penalty can't reach 7.0 threshold, effectively blocking them
-
-**Why Blocking vs Disabling:**
-- Blocking via penalty keeps the scoring pipeline intact
-- NHL totals are still scored (for monitoring recovery)
-- When NHL totals improve, reduce penalty gradually — no code changes needed
-- Feature flag approach would require code deployment to re-enable
-
-**Key Insight:** When a category has catastrophic win rate, don't just disable it — add a calibration penalty so it self-heals as performance improves.
-
-**Files Modified:**
-- `core/scoring_contract.py` — Added `SPORT_TOTALS_CALIBRATION`
-- `live_data_router.py` — Apply sport-specific penalty to totals
-
-**Fixed in:** Commit c712179 (Feb 5, 2026)
+**Fixed in:** v20.10 (Feb 8, 2026)
 
 ---
 
@@ -7242,7 +6788,7 @@ if day_start <= ts < day_end:  # Exclusive end
 
 ## 🚫 NEVER DO THESE (v20.6 - Boost Caps & Production)
 
-156. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (1.5) — this causes score inflation and clustering at 10.0
+156. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (3.5) — this causes score inflation and clustering at 10.0
 157. **NEVER** add a new additive boost without updating `TOTAL_BOOST_CAP` logic in `compute_final_score_option_a()` — uncapped boosts compound silently
 158. **NEVER** hardcode timeout values in API endpoints — always use `os.getenv()` with a sensible default and register in `integration_registry.py`
 159. **NEVER** assume `TIME_BUDGET_S` only needs to cover game scoring — props scoring shares the same budget and needs time too
@@ -7309,88 +6855,6 @@ for pick in candidates:
             if deadline:       # Check AFTER append
                 break
 ```
-
-## 🚫 NEVER DO THESE (v20.10 - Scoring Cap & Dedup)
-
-182. **NEVER** apply additive adjustments (ensemble, totals_calibration, or any future boost) to `final_score` AFTER `compute_final_score_option_a()` returns — all additive boosts MUST be passed as parameters so they compete within `TOTAL_BOOST_CAP`; post-hoc additions bypass the cap and cause score clustering at 10.0 (Lesson 57)
-183. **NEVER** add a new boost/adjustment without adding it to `total_boosts` inside `compute_final_score_option_a()` — the scoring function is the single source of truth for final_score math (Invariant 4); anything outside it is a cap bypass
-184. **NEVER** include `book_key` (sportsbook name) in pick dedup/grader IDs — the same logical bet from different books is ONE pick, not N picks; including book inflates all grading metrics by the number of sportsbooks (Lesson 58)
-185. **NEVER** include the line value in contradiction gate keys for TOTAL markets — Over 226.5 and Under 224.5 on the same game are contradictions; use `line_str = "ANY"` for totals so all lines group together (Lesson 56)
-186. **NEVER** assume contradiction gate is working just because exact-line contradictions are caught — test with DIFFERENT lines on the same game total to verify grouping
-187. **NEVER** add post-hoc `final_score += X` in `live_data_router.py` or any caller — if you need to adjust the score, add a parameter to `compute_final_score_option_a()` and include it in `total_boosts`
-188. **NEVER** assume scores are well-distributed without checking — if most picks score 10.0, look for adjustments applied outside the boost cap
-
-## 🚫 NEVER DO THESE (v20.12 - Concentration Limits & Diversity Filter)
-
-189. **NEVER** define concentration limits (max_per_matchup, max_props_per_player, max_per_sport_per_day) anywhere except `scoring_contract.py:CONCENTRATION_LIMITS` — this is the single source of truth; all filters MUST import from there
-190. **NEVER** hardcode limit values (1, 2, 3, 8) in diversity filter code — always use `CONCENTRATION_LIMITS.get("key", default)` so changes propagate automatically
-191. **NEVER** assume game picks bypass concentration limits — v20.12 applies `max_per_matchup` to ALL pick types (props AND game picks like spread/total/moneyline)
-192. **NEVER** change the filtering pipeline order (Dedup → Score filter → Contradiction gate → Redundancy filter → Diversity gate → Final slice) — each stage depends on the previous stage's output
-193. **NEVER** update test assertions for diversity filter without verifying against `CONCENTRATION_LIMITS` values in `scoring_contract.py` — test expectations must match the contract
-194. **NEVER** apply diversity limits BEFORE contradiction gate — contradictions must be removed first, then diversity limits applied to the remaining valid picks
-195. **NEVER** forget that `MAX_PICKS_PER_MATCHUP` is 2 (not 3) as of v20.12 — old tests expecting 3 per game will fail
-196. **NEVER** skip the diversity filter when processing game picks — both `filtered_props` and `filtered_games` must go through `apply_diversity_gate()`
-197. **NEVER** surface both spread AND moneyline on the same team — these are ~90% correlated bets that both lose together; the redundancy filter (`filter_redundant_same_side()`) keeps only the higher-scoring one (Lesson 60)
-198. **NEVER** confuse contradictions with redundancies — contradictions are OPPOSITE sides (Over/Under, Team A/Team B); redundancies are CORRELATED same-side bets (spread+ML on same team); they require different filters
-
-## 🚫 NEVER DO THESE (v20.12 - Recurring Bug Patterns)
-
-199. **NEVER** return `JSONResponse()` from functions that are BOTH endpoint handlers AND called internally — FastAPI auto-serializes dicts to JSON; internal callers need `.get()` method which JSONResponse doesn't have (Lesson 9)
-200. **NEVER** add `@router.get/post` decorator without checking if the function is called elsewhere — grep for function name to detect dual-use; dual-use functions MUST return dict
-201. **NEVER** call `asyncio.run()` from sync code that might be invoked from FastAPI — use `asyncio.get_running_loop()` first to detect if already in async context; return None for graceful degradation (Lesson 61)
-202. **NEVER** use similar variable names like `base_score`, `base_4_score`, `base_4_engine_score` without grep-checking all usages — Python doesn't catch name typos at compile time; NameError only surfaces at runtime (Lesson 62)
-203. **NEVER** rename a variable without grep-replacing ALL occurrences — `grep -n "old_name" live_data_router.py` must show 0 results after rename
-204. **NEVER** define a variable inside a try/if block if it's used outside that block — initialize ALL variables at function start, before any try blocks (Lesson 10, 31)
-205. **NEVER** assume `python3 -m py_compile` catches all bugs — it only checks syntax, not undefined variables or type errors; test all code paths manually
-
-## 🚫 NEVER DO THESE (v20.12 - Tech Debt Cleanup)
-
-206. **NEVER** use read-modify-write for grading — `mark_graded()` MUST append to `graded_picks.jsonl`, never modify `predictions.jsonl`; read-modify-write is not crash-safe (Lesson 63)
-207. **NEVER** apply `live_adjustment` to stale odds — check `ODDS_STALENESS_THRESHOLD_SECONDS` (120s); if `odds_age > threshold`, suppress the adjustment (Lesson 64)
-208. **NEVER** treat null odds as valid picks — if `odds_american is None AND book is falsy`, the market is suspended; add `market_status` field (Lesson 65)
-209. **NEVER** silently drop picks in the learning loop — track drop reasons in `last_drop_stats` dict (unsupported_sport, duplicate_id, etc.) for debugging (Lesson 66)
-210. **NEVER** modify weights without a version hash — `weights_version_hash` (SHA256[:12]) must be tracked in `/grader/status` for debugging; any change produces a different hash (Lesson 67)
-211. **NEVER** persist MONITOR or PASS tier picks to the learning loop — only `PERSIST_TIERS` (EDGE_LEAN, GOLD_STAR, TITANIUM_SMASH) should be saved; low-confidence picks add noise, not signal (Lesson 68)
-212. **NEVER** surface NHL totals without checking `SPORT_TOTALS_CALIBRATION` penalty — NHL has 26% win rate and -4.0 penalty blocks them from reaching MIN_FINAL_SCORE threshold (Lesson 69)
-
----
-
-## ✅ VERIFICATION CHECKLIST (Diversity Filter)
-
-Run these after ANY change to diversity filter or concentration limits:
-
-```bash
-# 1. Run diversity filter unit tests
-pytest tests/test_diversity_filter.py -v
-
-# 2. Verify all 35 tests pass
-pytest tests/test_diversity_filter.py --tb=short 2>&1 | tail -5
-# Should show: "35 passed"
-
-# 3. Verify CONCENTRATION_LIMITS in contract
-python3 -c "from core.scoring_contract import CONCENTRATION_LIMITS; print(CONCENTRATION_LIMITS)"
-# Expected: {'max_per_matchup': 2, 'max_per_sport_per_day': 8, 'max_props_per_player': 1}
-
-# 4. Verify diversity_filter imports from contract
-grep -n "from core.scoring_contract import CONCENTRATION_LIMITS" utils/diversity_filter.py
-# Should show the import line
-
-# 5. Verify game picks use MAX_PICKS_PER_MATCHUP
-grep -n "MAX_PICKS_PER_MATCHUP" utils/diversity_filter.py
-# Should show usage in apply_diversity_gate()
-
-# 6. Test production endpoint (check diversity debug output)
-curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
-  jq '.debug.diversity_filter // .debug.concentration_limits'
-# Should show limits applied
-```
-
-**Common Test Failures:**
-| Failure | Likely Cause | Fix |
-|---------|--------------|-----|
-| `test_game_limit_enforced` expects wrong count | max_per_matchup changed | Update test to expect 2 kept, not 3 |
-| `test_max_per_game_default` fails | MAX_PICKS_PER_MATCHUP != 2 | Check scoring_contract.py value |
-| Import error for CONCENTRATION_LIMITS | Missing from scoring_contract | Add dict to scoring_contract.py |
 
 ---
 
