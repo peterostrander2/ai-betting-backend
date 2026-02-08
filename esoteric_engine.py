@@ -1582,73 +1582,253 @@ def calculate_rivalry_intensity(
     # Each entry: ({team1_keywords}, {team2_keywords}, intensity_level)
     MAJOR_RIVALRIES = {
         "NBA": [
-            # Historic rivalries
+            # === HISTORIC/LEGENDARY RIVALRIES ===
             ({"celtics", "boston"}, {"lakers", "los angeles lakers", "la lakers"}, "HIGH"),
-            ({"celtics", "boston"}, {"knicks", "new york"}, "HIGH"),
+            ({"celtics", "boston"}, {"sixers", "76ers", "philadelphia"}, "HIGH"),
             ({"bulls", "chicago"}, {"pistons", "detroit"}, "HIGH"),
-            ({"bulls", "chicago"}, {"knicks", "new york"}, "HIGH"),  # 90s playoff battles
-            ({"sixers", "76ers", "philadelphia"}, {"celtics", "boston"}, "HIGH"),  # 21 playoff series
-            # Modern/Regional rivalries
+            ({"bulls", "chicago"}, {"knicks", "new york"}, "HIGH"),
+            ({"lakers", "los angeles lakers"}, {"spurs", "san antonio"}, "HIGH"),
+            # === ATLANTIC DIVISION ===
+            ({"celtics", "boston"}, {"knicks", "new york"}, "HIGH"),
+            ({"nets", "brooklyn"}, {"knicks", "new york"}, "HIGH"),
+            ({"sixers", "76ers", "philadelphia"}, {"knicks", "new york"}, "MEDIUM"),
+            ({"raptors", "toronto"}, {"nets", "brooklyn"}, "MEDIUM"),
+            ({"raptors", "toronto"}, {"sixers", "76ers", "philadelphia"}, "MEDIUM"),
+            # === CENTRAL DIVISION ===
+            ({"bulls", "chicago"}, {"cavaliers", "cleveland"}, "MEDIUM"),
+            ({"pacers", "indiana"}, {"pistons", "detroit"}, "MEDIUM"),
+            ({"pacers", "indiana"}, {"bulls", "chicago"}, "MEDIUM"),
+            ({"bucks", "milwaukee"}, {"bulls", "chicago"}, "MEDIUM"),
+            ({"cavaliers", "cleveland"}, {"pistons", "detroit"}, "MEDIUM"),
+            # === SOUTHEAST DIVISION ===
             ({"heat", "miami"}, {"knicks", "new york"}, "MEDIUM"),
-            ({"warriors", "golden state"}, {"cavaliers", "cleveland"}, "MEDIUM"),
+            ({"heat", "miami"}, {"bulls", "chicago"}, "MEDIUM"),
+            ({"hawks", "atlanta"}, {"heat", "miami"}, "MEDIUM"),
+            ({"hornets", "charlotte"}, {"hawks", "atlanta"}, "MEDIUM"),
+            ({"magic", "orlando"}, {"heat", "miami"}, "MEDIUM"),
+            ({"wizards", "washington"}, {"cavaliers", "cleveland"}, "MEDIUM"),
+            # === NORTHWEST DIVISION ===
+            ({"nuggets", "denver"}, {"jazz", "utah"}, "MEDIUM"),
+            ({"trail blazers", "portland", "blazers"}, {"thunder", "oklahoma city", "okc"}, "MEDIUM"),
+            ({"timberwolves", "minnesota"}, {"nuggets", "denver"}, "MEDIUM"),
+            ({"thunder", "oklahoma city", "okc"}, {"jazz", "utah"}, "MEDIUM"),
+            # === PACIFIC DIVISION ===
+            ({"warriors", "golden state"}, {"cavaliers", "cleveland"}, "HIGH"),
             ({"lakers", "los angeles lakers"}, {"clippers", "los angeles clippers"}, "MEDIUM"),
+            ({"warriors", "golden state"}, {"lakers", "los angeles lakers"}, "MEDIUM"),
+            ({"kings", "sacramento"}, {"lakers", "los angeles lakers"}, "MEDIUM"),
+            ({"suns", "phoenix"}, {"lakers", "los angeles lakers"}, "MEDIUM"),
+            # === SOUTHWEST DIVISION ===
             ({"mavericks", "dallas"}, {"spurs", "san antonio"}, "MEDIUM"),
-            ({"lakers", "los angeles lakers"}, {"spurs", "san antonio"}, "MEDIUM"),  # 2000s era
+            ({"rockets", "houston"}, {"spurs", "san antonio"}, "MEDIUM"),
+            ({"rockets", "houston"}, {"mavericks", "dallas"}, "MEDIUM"),
+            ({"grizzlies", "memphis"}, {"spurs", "san antonio"}, "MEDIUM"),
+            ({"pelicans", "new orleans"}, {"grizzlies", "memphis"}, "MEDIUM"),
         ],
         "NFL": [
-            # Historic rivalries
-            ({"packers", "green bay"}, {"bears", "chicago"}, "HIGH"),
-            ({"cowboys", "dallas"}, {"eagles", "philadelphia"}, "HIGH"),
-            ({"cowboys", "dallas"}, {"commanders", "washington"}, "HIGH"),
-            ({"cowboys", "dallas"}, {"49ers", "san francisco"}, "HIGH"),  # 9 playoff matchups
+            # === AFC EAST ===
+            ({"bills", "buffalo"}, {"dolphins", "miami"}, "HIGH"),
+            ({"bills", "buffalo"}, {"patriots", "new england"}, "HIGH"),
+            ({"bills", "buffalo"}, {"jets", "new york jets"}, "MEDIUM"),
+            ({"dolphins", "miami"}, {"patriots", "new england"}, "HIGH"),
+            ({"dolphins", "miami"}, {"jets", "new york jets"}, "MEDIUM"),
+            ({"patriots", "new england"}, {"jets", "new york jets"}, "HIGH"),
+            # === AFC NORTH ===
             ({"ravens", "baltimore"}, {"steelers", "pittsburgh"}, "HIGH"),
-            # Modern/AFC rivalries
-            ({"bills", "buffalo"}, {"chiefs", "kansas city"}, "HIGH"),  # Modern playoff rivalry
-            ({"bills", "buffalo"}, {"dolphins", "miami"}, "MEDIUM"),  # AFC East
-            ({"patriots", "new england"}, {"jets", "new york jets"}, "MEDIUM"),
-            ({"49ers", "san francisco"}, {"seahawks", "seattle"}, "MEDIUM"),
-            ({"chiefs", "kansas city"}, {"raiders", "las vegas"}, "MEDIUM"),
-            ({"giants", "new york giants"}, {"eagles", "philadelphia"}, "MEDIUM"),
-            ({"broncos", "denver"}, {"raiders", "las vegas"}, "MEDIUM"),
+            ({"bengals", "cincinnati"}, {"steelers", "pittsburgh"}, "HIGH"),
+            ({"bengals", "cincinnati"}, {"ravens", "baltimore"}, "MEDIUM"),
+            ({"browns", "cleveland"}, {"steelers", "pittsburgh"}, "HIGH"),
+            ({"browns", "cleveland"}, {"ravens", "baltimore"}, "HIGH"),
+            ({"browns", "cleveland"}, {"bengals", "cincinnati"}, "MEDIUM"),
+            # === AFC SOUTH ===
+            ({"colts", "indianapolis"}, {"texans", "houston"}, "MEDIUM"),
+            ({"colts", "indianapolis"}, {"titans", "tennessee"}, "HIGH"),
+            ({"jaguars", "jacksonville"}, {"titans", "tennessee"}, "MEDIUM"),
+            ({"texans", "houston"}, {"titans", "tennessee"}, "MEDIUM"),
+            # === AFC WEST ===
+            ({"broncos", "denver"}, {"raiders", "las vegas"}, "HIGH"),
+            ({"broncos", "denver"}, {"chiefs", "kansas city"}, "HIGH"),
+            ({"broncos", "denver"}, {"chargers", "los angeles chargers", "la chargers"}, "MEDIUM"),
+            ({"chiefs", "kansas city"}, {"raiders", "las vegas"}, "HIGH"),
+            ({"chiefs", "kansas city"}, {"chargers", "los angeles chargers", "la chargers"}, "MEDIUM"),
+            ({"raiders", "las vegas"}, {"chargers", "los angeles chargers", "la chargers"}, "MEDIUM"),
+            # === NFC EAST ===
+            ({"cowboys", "dallas"}, {"eagles", "philadelphia"}, "HIGH"),
+            ({"cowboys", "dallas"}, {"giants", "new york giants"}, "HIGH"),
+            ({"cowboys", "dallas"}, {"commanders", "washington"}, "HIGH"),
+            ({"eagles", "philadelphia"}, {"giants", "new york giants"}, "HIGH"),
+            ({"eagles", "philadelphia"}, {"commanders", "washington"}, "MEDIUM"),
+            ({"giants", "new york giants"}, {"commanders", "washington"}, "MEDIUM"),
+            # === NFC NORTH ===
+            ({"packers", "green bay"}, {"bears", "chicago"}, "HIGH"),
+            ({"packers", "green bay"}, {"vikings", "minnesota"}, "HIGH"),
+            ({"packers", "green bay"}, {"lions", "detroit"}, "MEDIUM"),
+            ({"bears", "chicago"}, {"vikings", "minnesota"}, "MEDIUM"),
+            ({"bears", "chicago"}, {"lions", "detroit"}, "MEDIUM"),
+            ({"vikings", "minnesota"}, {"lions", "detroit"}, "MEDIUM"),
+            # === NFC SOUTH ===
+            ({"falcons", "atlanta"}, {"saints", "new orleans"}, "HIGH"),
+            ({"buccaneers", "tampa bay", "bucs"}, {"saints", "new orleans"}, "MEDIUM"),
+            ({"panthers", "carolina"}, {"falcons", "atlanta"}, "MEDIUM"),
+            ({"panthers", "carolina"}, {"saints", "new orleans"}, "MEDIUM"),
+            # === NFC WEST ===
+            ({"49ers", "san francisco"}, {"seahawks", "seattle"}, "HIGH"),
+            ({"49ers", "san francisco"}, {"rams", "los angeles rams", "la rams"}, "HIGH"),
+            ({"49ers", "san francisco"}, {"cardinals", "arizona"}, "MEDIUM"),
+            ({"seahawks", "seattle"}, {"rams", "los angeles rams", "la rams"}, "MEDIUM"),
+            ({"cardinals", "arizona"}, {"rams", "los angeles rams", "la rams"}, "MEDIUM"),
+            # === HISTORIC CROSS-DIVISION ===
+            ({"cowboys", "dallas"}, {"49ers", "san francisco"}, "HIGH"),
+            ({"bills", "buffalo"}, {"chiefs", "kansas city"}, "HIGH"),
+            ({"steelers", "pittsburgh"}, {"cowboys", "dallas"}, "MEDIUM"),
         ],
         "NHL": [
-            # Original Six + Historic rivalries
-            ({"bruins", "boston"}, {"canadiens", "montreal"}, "HIGH"),  # Greatest NHL rivalry
-            ({"maple leafs", "toronto"}, {"canadiens", "montreal"}, "HIGH"),  # Canadian pride
-            ({"penguins", "pittsburgh"}, {"flyers", "philadelphia"}, "HIGH"),  # Battle of PA
+            # === ORIGINAL SIX RIVALRIES ===
+            ({"bruins", "boston"}, {"canadiens", "montreal"}, "HIGH"),
+            ({"maple leafs", "toronto"}, {"canadiens", "montreal"}, "HIGH"),
+            ({"blackhawks", "chicago"}, {"red wings", "detroit"}, "HIGH"),
+            ({"bruins", "boston"}, {"rangers", "new york rangers"}, "MEDIUM"),
+            ({"canadiens", "montreal"}, {"rangers", "new york rangers"}, "MEDIUM"),
+            ({"maple leafs", "toronto"}, {"red wings", "detroit"}, "MEDIUM"),
+            # === ATLANTIC DIVISION ===
+            ({"bruins", "boston"}, {"maple leafs", "toronto"}, "MEDIUM"),
+            ({"sabres", "buffalo"}, {"maple leafs", "toronto"}, "MEDIUM"),
+            ({"sabres", "buffalo"}, {"senators", "ottawa"}, "MEDIUM"),
+            ({"senators", "ottawa"}, {"maple leafs", "toronto"}, "MEDIUM"),
+            ({"red wings", "detroit"}, {"maple leafs", "toronto"}, "MEDIUM"),
+            ({"panthers", "florida"}, {"lightning", "tampa bay"}, "HIGH"),
+            # === METROPOLITAN DIVISION ===
+            ({"penguins", "pittsburgh"}, {"flyers", "philadelphia"}, "HIGH"),
             ({"rangers", "new york rangers"}, {"islanders", "new york islanders"}, "HIGH"),
-            ({"oilers", "edmonton"}, {"flames", "calgary"}, "HIGH"),  # Battle of Alberta
-            ({"blackhawks", "chicago"}, {"red wings", "detroit"}, "HIGH"),  # Original Six
-            # Regional rivalries
-            ({"avalanche", "colorado"}, {"red wings", "detroit"}, "MEDIUM"),
-            ({"kings", "los angeles"}, {"sharks", "san jose"}, "MEDIUM"),
-            ({"rangers", "new york rangers"}, {"devils", "new jersey"}, "MEDIUM"),  # Hudson River
+            ({"rangers", "new york rangers"}, {"devils", "new jersey"}, "HIGH"),
             ({"flyers", "philadelphia"}, {"rangers", "new york rangers"}, "MEDIUM"),
+            ({"capitals", "washington"}, {"penguins", "pittsburgh"}, "HIGH"),
+            ({"blue jackets", "columbus"}, {"penguins", "pittsburgh"}, "MEDIUM"),
+            ({"hurricanes", "carolina"}, {"capitals", "washington"}, "MEDIUM"),
+            # === CENTRAL DIVISION ===
+            ({"avalanche", "colorado"}, {"red wings", "detroit"}, "HIGH"),
+            ({"blackhawks", "chicago"}, {"blues", "st. louis"}, "HIGH"),
+            ({"wild", "minnesota"}, {"avalanche", "colorado"}, "MEDIUM"),
+            ({"wild", "minnesota"}, {"jets", "winnipeg"}, "MEDIUM"),
+            ({"predators", "nashville"}, {"blues", "st. louis"}, "MEDIUM"),
+            ({"stars", "dallas"}, {"blues", "st. louis"}, "MEDIUM"),
+            ({"coyotes", "arizona", "utah hockey club"}, {"avalanche", "colorado"}, "MEDIUM"),
+            # === PACIFIC DIVISION ===
+            ({"oilers", "edmonton"}, {"flames", "calgary"}, "HIGH"),
+            ({"canucks", "vancouver"}, {"flames", "calgary"}, "MEDIUM"),
+            ({"canucks", "vancouver"}, {"oilers", "edmonton"}, "MEDIUM"),
+            ({"kings", "los angeles"}, {"sharks", "san jose"}, "HIGH"),
+            ({"ducks", "anaheim"}, {"kings", "los angeles"}, "HIGH"),
+            ({"ducks", "anaheim"}, {"sharks", "san jose"}, "MEDIUM"),
+            ({"golden knights", "vegas"}, {"sharks", "san jose"}, "HIGH"),
+            ({"golden knights", "vegas"}, {"kings", "los angeles"}, "MEDIUM"),
+            ({"kraken", "seattle"}, {"canucks", "vancouver"}, "MEDIUM"),
+            ({"kraken", "seattle"}, {"golden knights", "vegas"}, "MEDIUM"),
         ],
         "MLB": [
-            # Historic rivalries
-            ({"yankees", "new york yankees"}, {"red sox", "boston"}, "HIGH"),  # 2300+ games
-            ({"dodgers", "los angeles dodgers"}, {"giants", "san francisco"}, "HIGH"),  # Oldest
-            ({"cubs", "chicago cubs"}, {"cardinals", "st. louis"}, "HIGH"),  # Since 1892
-            # NL/AL East rivalries
-            ({"mets", "new york mets"}, {"phillies", "philadelphia"}, "MEDIUM"),
-            ({"braves", "atlanta"}, {"phillies", "philadelphia"}, "MEDIUM"),  # NL East
+            # === AL EAST ===
+            ({"yankees", "new york yankees"}, {"red sox", "boston"}, "HIGH"),
+            ({"yankees", "new york yankees"}, {"orioles", "baltimore"}, "MEDIUM"),
+            ({"yankees", "new york yankees"}, {"blue jays", "toronto"}, "MEDIUM"),
+            ({"red sox", "boston"}, {"rays", "tampa bay"}, "MEDIUM"),
+            ({"orioles", "baltimore"}, {"red sox", "boston"}, "MEDIUM"),
+            # === AL CENTRAL ===
+            ({"white sox", "chicago white sox"}, {"twins", "minnesota"}, "MEDIUM"),
+            ({"guardians", "cleveland"}, {"twins", "minnesota"}, "MEDIUM"),
+            ({"guardians", "cleveland"}, {"tigers", "detroit"}, "MEDIUM"),
+            ({"tigers", "detroit"}, {"twins", "minnesota"}, "MEDIUM"),
+            ({"royals", "kansas city"}, {"white sox", "chicago white sox"}, "MEDIUM"),
+            # === AL WEST ===
+            ({"astros", "houston"}, {"rangers", "texas"}, "HIGH"),
+            ({"angels", "los angeles angels", "la angels"}, {"athletics", "oakland"}, "MEDIUM"),
+            ({"mariners", "seattle"}, {"athletics", "oakland"}, "MEDIUM"),
+            ({"astros", "houston"}, {"athletics", "oakland"}, "MEDIUM"),
+            ({"angels", "los angeles angels", "la angels"}, {"mariners", "seattle"}, "MEDIUM"),
+            # === NL EAST ===
+            ({"mets", "new york mets"}, {"phillies", "philadelphia"}, "HIGH"),
+            ({"braves", "atlanta"}, {"phillies", "philadelphia"}, "HIGH"),
             ({"braves", "atlanta"}, {"mets", "new york mets"}, "MEDIUM"),
-            # Regional rivalries
-            ({"white sox", "chicago white sox"}, {"cubs", "chicago cubs"}, "MEDIUM"),
-            ({"dodgers", "los angeles dodgers"}, {"padres", "san diego"}, "MEDIUM"),  # Modern NL West
-            ({"astros", "houston"}, {"rangers", "texas"}, "MEDIUM"),  # Lone Star Series
-            ({"brewers", "milwaukee"}, {"cubs", "chicago cubs"}, "MEDIUM"),  # NL Central
+            ({"nationals", "washington"}, {"phillies", "philadelphia"}, "MEDIUM"),
+            ({"marlins", "miami"}, {"braves", "atlanta"}, "MEDIUM"),
+            # === NL CENTRAL ===
+            ({"cubs", "chicago cubs"}, {"cardinals", "st. louis"}, "HIGH"),
+            ({"reds", "cincinnati"}, {"cardinals", "st. louis"}, "MEDIUM"),
+            ({"brewers", "milwaukee"}, {"cubs", "chicago cubs"}, "HIGH"),
+            ({"brewers", "milwaukee"}, {"cardinals", "st. louis"}, "MEDIUM"),
+            ({"pirates", "pittsburgh"}, {"cardinals", "st. louis"}, "MEDIUM"),
+            ({"reds", "cincinnati"}, {"pirates", "pittsburgh"}, "MEDIUM"),
+            # === NL WEST ===
+            ({"dodgers", "los angeles dodgers"}, {"giants", "san francisco"}, "HIGH"),
+            ({"dodgers", "los angeles dodgers"}, {"padres", "san diego"}, "HIGH"),
+            ({"giants", "san francisco"}, {"padres", "san diego"}, "MEDIUM"),
+            ({"diamondbacks", "arizona"}, {"dodgers", "los angeles dodgers"}, "MEDIUM"),
+            ({"rockies", "colorado"}, {"diamondbacks", "arizona"}, "MEDIUM"),
+            # === INTERLEAGUE/CROSSTOWN ===
+            ({"white sox", "chicago white sox"}, {"cubs", "chicago cubs"}, "HIGH"),
+            ({"yankees", "new york yankees"}, {"mets", "new york mets"}, "HIGH"),
+            ({"dodgers", "los angeles dodgers"}, {"angels", "los angeles angels", "la angels"}, "MEDIUM"),
+            ({"giants", "san francisco"}, {"athletics", "oakland"}, "MEDIUM"),
+            ({"orioles", "baltimore"}, {"nationals", "washington"}, "MEDIUM"),
         ],
         "NCAAB": [
+            # === TOBACCO ROAD (ACC) ===
             ({"duke", "blue devils"}, {"north carolina", "tar heels", "unc"}, "HIGH"),
-            ({"kentucky", "wildcats"}, {"louisville", "cardinals"}, "HIGH"),
-            ({"kansas", "jayhawks"}, {"missouri", "tigers"}, "MEDIUM"),
+            ({"duke", "blue devils"}, {"nc state", "north carolina state", "wolfpack"}, "MEDIUM"),
+            ({"north carolina", "tar heels", "unc"}, {"nc state", "north carolina state", "wolfpack"}, "MEDIUM"),
+            ({"duke", "blue devils"}, {"wake forest", "demon deacons"}, "MEDIUM"),
+            # === BIG TEN ===
             ({"michigan", "wolverines"}, {"michigan state", "spartans", "msu"}, "HIGH"),
-            ({"indiana", "hoosiers"}, {"purdue", "boilermakers"}, "MEDIUM"),
-            ({"ucla", "bruins"}, {"usc", "trojans"}, "HIGH"),  # LA rivalry
-            ({"arizona", "wildcats"}, {"arizona state", "sun devils", "asu"}, "MEDIUM"),
-            ({"georgetown", "hoyas"}, {"syracuse", "orange"}, "MEDIUM"),
+            ({"michigan", "wolverines"}, {"ohio state", "buckeyes"}, "HIGH"),
+            ({"indiana", "hoosiers"}, {"purdue", "boilermakers"}, "HIGH"),
+            ({"illinois", "fighting illini"}, {"indiana", "hoosiers"}, "MEDIUM"),
+            ({"iowa", "hawkeyes"}, {"iowa state", "cyclones"}, "HIGH"),
+            ({"wisconsin", "badgers"}, {"minnesota", "golden gophers"}, "MEDIUM"),
+            ({"penn state", "nittany lions"}, {"ohio state", "buckeyes"}, "MEDIUM"),
+            ({"maryland", "terrapins"}, {"virginia", "cavaliers"}, "MEDIUM"),
+            # === SEC ===
+            ({"kentucky", "wildcats"}, {"louisville", "cardinals"}, "HIGH"),
+            ({"kentucky", "wildcats"}, {"tennessee", "volunteers", "vols"}, "MEDIUM"),
+            ({"auburn", "tigers"}, {"alabama", "crimson tide"}, "HIGH"),
+            ({"florida", "gators"}, {"florida state", "seminoles"}, "HIGH"),
+            ({"georgia", "bulldogs"}, {"georgia tech", "yellow jackets"}, "MEDIUM"),
+            ({"arkansas", "razorbacks"}, {"missouri", "tigers"}, "MEDIUM"),
+            ({"ole miss", "mississippi"}, {"mississippi state", "bulldogs"}, "MEDIUM"),
+            ({"lsu", "tigers"}, {"ole miss", "mississippi"}, "MEDIUM"),
+            ({"south carolina", "gamecocks"}, {"clemson", "tigers"}, "MEDIUM"),
+            # === BIG 12 ===
+            ({"kansas", "jayhawks"}, {"kansas state", "wildcats", "k-state"}, "HIGH"),
+            ({"kansas", "jayhawks"}, {"missouri", "tigers"}, "HIGH"),
+            ({"texas", "longhorns"}, {"texas a&m", "aggies"}, "HIGH"),
+            ({"texas", "longhorns"}, {"oklahoma", "sooners"}, "MEDIUM"),
+            ({"oklahoma", "sooners"}, {"oklahoma state", "cowboys"}, "HIGH"),
+            ({"baylor", "bears"}, {"texas", "longhorns"}, "MEDIUM"),
+            ({"tcu", "horned frogs"}, {"smu", "mustangs"}, "MEDIUM"),
+            ({"west virginia", "mountaineers"}, {"pittsburgh", "panthers"}, "HIGH"),
+            ({"cincinnati", "bearcats"}, {"xavier", "musketeers"}, "HIGH"),
+            # === PAC-12/WEST COAST ===
+            ({"ucla", "bruins"}, {"usc", "trojans"}, "HIGH"),
+            ({"arizona", "wildcats"}, {"arizona state", "sun devils", "asu"}, "HIGH"),
+            ({"oregon", "ducks"}, {"oregon state", "beavers"}, "HIGH"),
+            ({"washington", "huskies"}, {"washington state", "cougars", "wsu"}, "MEDIUM"),
+            ({"stanford", "cardinal"}, {"california", "cal", "bears"}, "MEDIUM"),
+            ({"colorado", "buffaloes"}, {"utah", "utes"}, "MEDIUM"),
+            # === BIG EAST ===
+            ({"villanova", "wildcats"}, {"georgetown", "hoyas"}, "HIGH"),
+            ({"georgetown", "hoyas"}, {"syracuse", "orange"}, "HIGH"),
+            ({"uconn", "huskies"}, {"syracuse", "orange"}, "MEDIUM"),
+            ({"marquette", "golden eagles"}, {"georgetown", "hoyas"}, "MEDIUM"),
+            ({"st. john's", "red storm"}, {"seton hall", "pirates"}, "MEDIUM"),
+            ({"creighton", "bluejays"}, {"marquette", "golden eagles"}, "MEDIUM"),
+            # === MID-MAJOR RIVALRIES ===
+            ({"gonzaga", "bulldogs"}, {"saint mary's", "gaels"}, "HIGH"),
+            ({"dayton", "flyers"}, {"xavier", "musketeers"}, "MEDIUM"),
+            ({"memphis", "tigers"}, {"cincinnati", "bearcats"}, "MEDIUM"),
+            ({"vcu", "rams"}, {"richmond", "spiders"}, "MEDIUM"),
+            ({"unlv", "rebels"}, {"nevada", "wolf pack"}, "MEDIUM"),
+            ({"wichita state", "shockers"}, {"creighton", "bluejays"}, "MEDIUM"),
+            ({"san diego state", "aztecs"}, {"unlv", "rebels"}, "MEDIUM"),
+            ({"boise state", "broncos"}, {"nevada", "wolf pack"}, "MEDIUM"),
+            ({"new mexico", "lobos"}, {"new mexico state", "aggies"}, "HIGH"),
         ],
     }
 
