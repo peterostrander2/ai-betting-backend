@@ -1582,20 +1582,29 @@ def calculate_rivalry_intensity(
     # Each entry: ({team1_keywords}, {team2_keywords}, intensity_level)
     MAJOR_RIVALRIES = {
         "NBA": [
+            # Historic rivalries
             ({"celtics", "boston"}, {"lakers", "los angeles lakers", "la lakers"}, "HIGH"),
             ({"celtics", "boston"}, {"knicks", "new york"}, "HIGH"),
             ({"bulls", "chicago"}, {"pistons", "detroit"}, "HIGH"),
+            ({"bulls", "chicago"}, {"knicks", "new york"}, "HIGH"),  # 90s playoff battles
+            ({"sixers", "76ers", "philadelphia"}, {"celtics", "boston"}, "HIGH"),  # 21 playoff series
+            # Modern/Regional rivalries
             ({"heat", "miami"}, {"knicks", "new york"}, "MEDIUM"),
             ({"warriors", "golden state"}, {"cavaliers", "cleveland"}, "MEDIUM"),
             ({"lakers", "los angeles lakers"}, {"clippers", "los angeles clippers"}, "MEDIUM"),
             ({"mavericks", "dallas"}, {"spurs", "san antonio"}, "MEDIUM"),
-            ({"sixers", "76ers", "philadelphia"}, {"celtics", "boston"}, "MEDIUM"),
+            ({"lakers", "los angeles lakers"}, {"spurs", "san antonio"}, "MEDIUM"),  # 2000s era
         ],
         "NFL": [
+            # Historic rivalries
             ({"packers", "green bay"}, {"bears", "chicago"}, "HIGH"),
             ({"cowboys", "dallas"}, {"eagles", "philadelphia"}, "HIGH"),
             ({"cowboys", "dallas"}, {"commanders", "washington"}, "HIGH"),
+            ({"cowboys", "dallas"}, {"49ers", "san francisco"}, "HIGH"),  # 9 playoff matchups
             ({"ravens", "baltimore"}, {"steelers", "pittsburgh"}, "HIGH"),
+            # Modern/AFC rivalries
+            ({"bills", "buffalo"}, {"chiefs", "kansas city"}, "HIGH"),  # Modern playoff rivalry
+            ({"bills", "buffalo"}, {"dolphins", "miami"}, "MEDIUM"),  # AFC East
             ({"patriots", "new england"}, {"jets", "new york jets"}, "MEDIUM"),
             ({"49ers", "san francisco"}, {"seahawks", "seattle"}, "MEDIUM"),
             ({"chiefs", "kansas city"}, {"raiders", "las vegas"}, "MEDIUM"),
@@ -1603,22 +1612,33 @@ def calculate_rivalry_intensity(
             ({"broncos", "denver"}, {"raiders", "las vegas"}, "MEDIUM"),
         ],
         "NHL": [
-            ({"bruins", "boston"}, {"canadiens", "montreal"}, "HIGH"),
-            ({"penguins", "pittsburgh"}, {"flyers", "philadelphia"}, "HIGH"),
+            # Original Six + Historic rivalries
+            ({"bruins", "boston"}, {"canadiens", "montreal"}, "HIGH"),  # Greatest NHL rivalry
+            ({"maple leafs", "toronto"}, {"canadiens", "montreal"}, "HIGH"),  # Canadian pride
+            ({"penguins", "pittsburgh"}, {"flyers", "philadelphia"}, "HIGH"),  # Battle of PA
             ({"rangers", "new york rangers"}, {"islanders", "new york islanders"}, "HIGH"),
-            ({"blackhawks", "chicago"}, {"red wings", "detroit"}, "MEDIUM"),
+            ({"oilers", "edmonton"}, {"flames", "calgary"}, "HIGH"),  # Battle of Alberta
+            ({"blackhawks", "chicago"}, {"red wings", "detroit"}, "HIGH"),  # Original Six
+            # Regional rivalries
             ({"avalanche", "colorado"}, {"red wings", "detroit"}, "MEDIUM"),
-            ({"maple leafs", "toronto"}, {"canadiens", "montreal"}, "HIGH"),
             ({"kings", "los angeles"}, {"sharks", "san jose"}, "MEDIUM"),
-            ({"oilers", "edmonton"}, {"flames", "calgary"}, "HIGH"),
+            ({"rangers", "new york rangers"}, {"devils", "new jersey"}, "MEDIUM"),  # Hudson River
+            ({"flyers", "philadelphia"}, {"rangers", "new york rangers"}, "MEDIUM"),
         ],
         "MLB": [
-            ({"yankees", "new york yankees"}, {"red sox", "boston"}, "HIGH"),
-            ({"dodgers", "los angeles dodgers"}, {"giants", "san francisco"}, "HIGH"),
-            ({"cubs", "chicago cubs"}, {"cardinals", "st. louis"}, "HIGH"),
+            # Historic rivalries
+            ({"yankees", "new york yankees"}, {"red sox", "boston"}, "HIGH"),  # 2300+ games
+            ({"dodgers", "los angeles dodgers"}, {"giants", "san francisco"}, "HIGH"),  # Oldest
+            ({"cubs", "chicago cubs"}, {"cardinals", "st. louis"}, "HIGH"),  # Since 1892
+            # NL/AL East rivalries
             ({"mets", "new york mets"}, {"phillies", "philadelphia"}, "MEDIUM"),
-            ({"white sox", "chicago white sox"}, {"cubs", "chicago cubs"}, "MEDIUM"),
+            ({"braves", "atlanta"}, {"phillies", "philadelphia"}, "MEDIUM"),  # NL East
             ({"braves", "atlanta"}, {"mets", "new york mets"}, "MEDIUM"),
+            # Regional rivalries
+            ({"white sox", "chicago white sox"}, {"cubs", "chicago cubs"}, "MEDIUM"),
+            ({"dodgers", "los angeles dodgers"}, {"padres", "san diego"}, "MEDIUM"),  # Modern NL West
+            ({"astros", "houston"}, {"rangers", "texas"}, "MEDIUM"),  # Lone Star Series
+            ({"brewers", "milwaukee"}, {"cubs", "chicago cubs"}, "MEDIUM"),  # NL Central
         ],
         "NCAAB": [
             ({"duke", "blue devils"}, {"north carolina", "tar heels", "unc"}, "HIGH"),
@@ -1626,6 +1646,9 @@ def calculate_rivalry_intensity(
             ({"kansas", "jayhawks"}, {"missouri", "tigers"}, "MEDIUM"),
             ({"michigan", "wolverines"}, {"michigan state", "spartans", "msu"}, "HIGH"),
             ({"indiana", "hoosiers"}, {"purdue", "boilermakers"}, "MEDIUM"),
+            ({"ucla", "bruins"}, {"usc", "trojans"}, "HIGH"),  # LA rivalry
+            ({"arizona", "wildcats"}, {"arizona state", "sun devils", "asu"}, "MEDIUM"),
+            ({"georgetown", "hoyas"}, {"syracuse", "orange"}, "MEDIUM"),
         ],
     }
 
