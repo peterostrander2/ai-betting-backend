@@ -810,6 +810,144 @@ class JarvisSavantEngine:
     # FIBONACCI LINE ALIGNMENT (Fix #7)
     # ========================================================================
 
+    # ========================================================================
+    # PUBLIC FADE SIGNAL
+    # ========================================================================
+
+    def calculate_public_fade_signal(self, public_pct: float) -> Dict[str, Any]:
+        """
+        Calculate public fade signal based on public betting percentage.
+
+        Public Fade Logic:
+        - Crush Zone (>=70%): Strong fade signal (-13% adjustment)
+        - Heavy Public (65-69%): Moderate fade
+        - Neutral (35-64%): No signal
+        - Contrarian (<35%): Public already fading, no additional signal
+
+        Returns signal info for confluence calculation.
+        """
+        signal = "NEUTRAL"
+        adjustment = 0.0
+        is_crush_zone = False
+
+        if public_pct >= 70:
+            signal = "FADE_PUBLIC"
+            adjustment = -0.13  # Strong fade in crush zone
+            is_crush_zone = True
+        elif public_pct >= 65:
+            signal = "FADE_LEAN"
+            adjustment = -0.08  # Moderate fade
+        elif public_pct <= 35:
+            signal = "CONTRARIAN"
+            adjustment = 0.0  # Already contrarian, no additional signal
+
+        return {
+            "public_pct": public_pct,
+            "signal": signal,
+            "adjustment": adjustment,
+            "is_crush_zone": is_crush_zone,
+            "fade_strength": min(1.0, max(0.0, (public_pct - 50) / 30)) if public_pct > 50 else 0.0
+        }
+
+    # ========================================================================
+    # MID SPREAD SIGNAL (GOLDILOCKS ZONE)
+    # ========================================================================
+
+    def calculate_mid_spread_signal(self, spread: float) -> Dict[str, Any]:
+        """
+        Calculate mid-spread "Goldilocks zone" signal.
+
+        Goldilocks Zone (spreads 4.0 to 9.0):
+        - Sweet spot where sharp bettors find value
+        - Lines too small (<3) are coin flips
+        - Lines too large (>10) have high variance
+
+        Returns signal for Jarvis scoring (+20% adjustment when in zone).
+        """
+        abs_spread = abs(spread) if spread else 0
+
+        in_goldilocks = 4.0 <= abs_spread <= 9.0
+        signal = "GOLDILOCKS" if in_goldilocks else "OUTSIDE_ZONE"
+        adjustment = 0.20 if in_goldilocks else 0.0
+
+        # Calculate zone position (0 at edges, 1 at center 6.5)
+        if in_goldilocks:
+            center = 6.5
+            zone_position = 1 - abs(abs_spread - center) / 2.5
+        else:
+            zone_position = 0.0
+
+        return {
+            "spread": spread,
+            "abs_spread": abs_spread,
+            "signal": signal,
+            "adjustment": adjustment,
+            "in_goldilocks": in_goldilocks,
+            "zone_position": round(zone_position, 3),
+            "zone_range": {"min": 4.0, "max": 9.0, "center": 6.5}
+        }
+
+    # ========================================================================
+    # LARGE SPREAD TRAP DETECTION
+    # ========================================================================
+
+    def calculate_large_spread_trap(self, spread: float, total: float) -> Dict[str, Any]:
+        """
+        Detect large spread trap scenarios.
+
+        Trap Indicators:
+        - Very large spreads (>=10) combined with unusual totals
+        - Indicates possible blowout or trap game
+        - -20% adjustment to reduce exposure
+
+        Trap Conditions:
+        1. Spread >= 10 (large favorite)
+        2. Spread >= 14 (massive favorite - automatic trap)
+        3. Spread/Total ratio anomaly (suggests unusual game)
+        """
+        abs_spread = abs(spread) if spread else 0
+        is_trap = False
+        trap_reason = None
+        adjustment = 0.0
+
+        # Massive spread trap (14+)
+        if abs_spread >= 14:
+            is_trap = True
+            trap_reason = "MASSIVE_SPREAD"
+            adjustment = -0.20
+
+        # Large spread trap (10-13.5)
+        elif abs_spread >= 10:
+            # Check spread/total ratio for anomaly
+            if total and total > 0:
+                ratio = abs_spread / total
+                if ratio > 0.05:  # Spread is >5% of total - unusual
+                    is_trap = True
+                    trap_reason = "SPREAD_RATIO_ANOMALY"
+                    adjustment = -0.15
+            else:
+                # Large spread without total context
+                is_trap = True
+                trap_reason = "LARGE_SPREAD_NO_CONTEXT"
+                adjustment = -0.10
+
+        signal = "TRAP" if is_trap else "CLEAR"
+
+        return {
+            "spread": spread,
+            "total": total,
+            "abs_spread": abs_spread,
+            "signal": signal,
+            "is_trap": is_trap,
+            "trap_reason": trap_reason,
+            "adjustment": adjustment,
+            "spread_total_ratio": round(abs_spread / total, 4) if total and total > 0 else None
+        }
+
+    # ========================================================================
+    # FIBONACCI LINE ALIGNMENT (Fix #7)
+    # ========================================================================
+
     def calculate_fibonacci_alignment(self, line: float) -> Dict[str, Any]:
         """
         Check if a betting line aligns with Fibonacci numbers.
