@@ -21,6 +21,12 @@ CONTEXT_MODIFIER_CAP = 0.35
 # v20.12: Raised from 6.5 to 7.0 to reduce pick volume and increase quality
 MIN_FINAL_SCORE = 7.0
 
+# v20.13: Props-specific threshold (lower than games because SERP disabled for props)
+# Props cannot get SERP boosts (+4.3 max) that game picks receive, so they need
+# a lower threshold to surface. This maintains quality while accounting for
+# the structural scoring disadvantage of props without SERP.
+MIN_PROPS_SCORE = 6.5
+
 # Tier thresholds
 GOLD_STAR_THRESHOLD = 7.5
 
@@ -144,6 +150,7 @@ WEATHER_STATUS = ["APPLIED", "NOT_RELEVANT", "UNAVAILABLE", "ERROR"]
 SCORING_CONTRACT = {
     "engine_weights": ENGINE_WEIGHTS,
     "min_final_score": MIN_FINAL_SCORE,
+    "min_props_score": MIN_PROPS_SCORE,  # v20.13: Lower threshold for props (no SERP)
     "gold_star_threshold": GOLD_STAR_THRESHOLD,
     "titanium_rule": TITANIUM_RULE,
     "gold_star_gates": GOLD_STAR_GATES,

@@ -138,7 +138,7 @@ except ImportError:
     logger.warning("tiering module not available - using legacy tier logic")
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
-from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, SPORT_TOTALS_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS, CONFLUENCE_LEVELS, PERSIST_TIERS
+from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, MIN_PROPS_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, SPORT_TOTALS_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS, CONFLUENCE_LEVELS, PERSIST_TIERS
 from core.scoring_pipeline import compute_final_score_option_a, compute_harmonic_boost
 from core.telemetry import apply_used_integrations_debug, attach_integration_telemetry_debug, record_daily_integration_rollup
 
@@ -6767,8 +6767,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # Capture ALL candidates for debug/distribution before filtering
     _all_prop_candidates = deduplicated_props  # Keep ref for debug output
 
-    # v15.0: Filter to community minimum score (6.5)
-    filtered_props = [p for p in deduplicated_props if p["total_score"] >= COMMUNITY_MIN_SCORE]
+    # v20.13: Props use lower threshold (6.5) because SERP disabled for props (saves API quota)
+    # Props cannot get SERP boosts (+4.3 max) that game picks receive
+    filtered_props = [p for p in deduplicated_props if p["total_score"] >= MIN_PROPS_SCORE]
     filtered_below_6_5_props = len(deduplicated_props) - len(filtered_props)
 
     # v15.3: Deduplicate game picks too
