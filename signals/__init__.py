@@ -83,6 +83,18 @@ from .msrf_resonance import (
     MSRF_VORTEX,
 )
 
+# Hook Discipline - Key Number Management (Post-Scoring Filter)
+from .hook_discipline import (
+    analyze_hook_discipline,
+    get_hook_adjustment,
+    HookAnalysis,
+    NFL_KEY_NUMBER_FREQUENCY,
+    NFL_BAD_HOOKS,
+    NFL_KEY_NUMBER_BONUS,
+    HOOK_PENALTY_CAP,
+    HOOK_BONUS_CAP,
+)
+
 __all__ = [
     # Public Fade
     "calculate_public_fade",
@@ -134,4 +146,14 @@ __all__ = [
     "MSRF_NORMAL",
     "MSRF_IMPORTANT",
     "MSRF_VORTEX",
+
+    # Hook Discipline
+    "analyze_hook_discipline",
+    "get_hook_adjustment",
+    "HookAnalysis",
+    "NFL_KEY_NUMBER_FREQUENCY",
+    "NFL_BAD_HOOKS",
+    "NFL_KEY_NUMBER_BONUS",
+    "HOOK_PENALTY_CAP",
+    "HOOK_BONUS_CAP",
 ]

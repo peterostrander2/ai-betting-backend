@@ -250,6 +250,19 @@ except ImportError:
     SIGNALS_AVAILABLE = False
     logger.warning("signals module not available - using inline calculations")
 
+# Import Hook Discipline for key number management (v20.3)
+try:
+    from signals.hook_discipline import (
+        get_hook_adjustment,
+        analyze_hook_discipline,
+        HOOK_PENALTY_CAP,
+        HOOK_BONUS_CAP,
+    )
+    HOOK_DISCIPLINE_AVAILABLE = True
+except ImportError:
+    HOOK_DISCIPLINE_AVAILABLE = False
+    logger.warning("hook_discipline module not available - key number adjustments disabled")
+
 # Import Weather Module for outdoor sports scoring (v16.0)
 # Weather is now a REQUIRED integration - no WEATHER_ENABLED flag needed
 try:
@@ -5064,6 +5077,43 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             except Exception as e:
                 logger.debug(f"Park factor adjustment failed: {e}")
 
+        # ===== v20.3 HOOK DISCIPLINE: KEY NUMBER MANAGEMENT =====
+        # NFL/NBA spreads: penalize bad hooks (-3.5, -7.5), bonus for key numbers (3, 7)
+        hook_adjustment = 0.0
+        hook_reasons: List[str] = []
+        hook_warnings: List[str] = []
+        is_bad_hook = False
+        is_key_number = False
+
+        if HOOK_DISCIPLINE_AVAILABLE and pick_type == "SPREAD" and spread is not None:
+            try:
+                # Determine bet side: favorite vs underdog
+                # Negative spread = favorite, positive = underdog
+                bet_side = "favorite" if spread < 0 else "underdog"
+
+                hook_analysis = analyze_hook_discipline(
+                    line=spread,
+                    sport=sport_upper,
+                    bet_side=bet_side,
+                    bet_type="spread"
+                )
+
+                hook_adjustment = hook_analysis.adjustment
+                hook_reasons = hook_analysis.reasons
+                hook_warnings = hook_analysis.warnings
+                is_bad_hook = hook_analysis.is_bad_hook
+                is_key_number = hook_analysis.is_key_number
+
+                if hook_adjustment != 0.0:
+                    # Apply to research_score (line quality = market intelligence)
+                    research_score = max(0.0, min(10.0, research_score + hook_adjustment))
+                    for reason in hook_reasons:
+                        research_reasons.append(f"Hook: {reason}")
+                    logger.debug("HOOK v20.3: spread=%.1f adj=%+.2f bad_hook=%s key_number=%s",
+                                spread, hook_adjustment, is_bad_hook, is_key_number)
+            except Exception as e:
+                logger.debug(f"Hook discipline adjustment failed: {e}")
+
         # Check if Jason blocked this pick
         jason_blocked = jason_output.get("jason_blocked", False)
 
@@ -5423,6 +5473,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "park_adjustment": park_adjustment,
                 "park_reason": park_reason,
             },
+            # v20.3 Hook Discipline (spreads only - key number management)
+            "hook_adjustment": round(hook_adjustment, 3),
+            "hook_reasons": hook_reasons,
+            "hook_warnings": hook_warnings,
+            "is_bad_hook": is_bad_hook,
+            "is_key_number": is_key_number,
             # v17.0 Harmonic Convergence
             "harmonic_boost": harmonic_boost,
             # v17.2 MSRF Resonance
