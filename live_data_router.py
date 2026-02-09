@@ -5528,6 +5528,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 elif gate == "esoteric_gte_4.0":
                     tier_reason.append(f"  - Esoteric {esoteric_score:.1f} < 4.0")
 
+        # v20.15 Pre-extract GLITCH/Kp-Index data for debug fields (Python scope fix)
+        # The pattern 'glitch_result' in dir() doesn't work inside dict literals/lambdas
+        # because dir() checks the wrong scope. Extract data BEFORE the dict literal.
+        _glitch_signals = glitch_result.get("breakdown", {}) if glitch_result else {}
+        _kp_data = _glitch_signals.get("kp_index", {}) if _glitch_signals else {}
+
         return {
             "total_score": round(final_score, 2),
             "final_score": round(final_score, 2),  # Alias for frontend
@@ -5720,33 +5726,29 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # v17.5 GLITCH Protocol adjustment
             "glitch_adjustment": glitch_adjustment,
             # v19.1 GLITCH signal breakdown (for learning loop)
-            "glitch_signals": glitch_result.get("breakdown", {}) if 'glitch_result' in dir() and glitch_result else {},
+            # v20.15 Uses pre-extracted _glitch_signals (Python scope fix)
+            "glitch_signals": _glitch_signals,
             # v20.15 Explicit Kp-Index debug fields (Engine 3 audit requirement)
-            "kp_index_value": (lambda kp: kp.get("kp_value") if kp else None)(
-                glitch_result.get("breakdown", {}).get("kp_index", {}) if 'glitch_result' in dir() and glitch_result else {}
-            ),
-            "kp_index_status": (lambda kp: (
-                "OK" if kp.get("source") in ("noaa_live", "cache") else
-                "NOT_RELEVANT" if kp.get("source") == "disabled" else
-                "UNAVAILABLE" if kp.get("source") == "fallback" else
+            # Uses pre-extracted _kp_data (Python scope fix - dir() doesn't work in lambdas)
+            "kp_index_value": _kp_data.get("kp_value") if _kp_data else None,
+            "kp_index_status": (
+                "OK" if _kp_data and _kp_data.get("source") in ("noaa_live", "cache") else
+                "NOT_RELEVANT" if _kp_data and _kp_data.get("source") == "disabled" else
+                "UNAVAILABLE" if _kp_data and _kp_data.get("source") == "fallback" else
+                "UNAVAILABLE" if not _kp_data or not _kp_data.get("source") else
                 "ERROR"
-            ) if kp and kp.get("source") else "UNAVAILABLE")(
-                glitch_result.get("breakdown", {}).get("kp_index", {}) if 'glitch_result' in dir() and glitch_result else {}
             ),
-            "kp_index_source": (lambda kp: (
-                "NOAA" if kp.get("source") == "noaa_live" else
-                "cache" if kp.get("source") == "cache" else
+            "kp_index_source": (
+                "NOAA" if _kp_data and _kp_data.get("source") == "noaa_live" else
+                "cache" if _kp_data and _kp_data.get("source") == "cache" else
                 "stub"
-            ) if kp and kp.get("source") else "stub")(
-                glitch_result.get("breakdown", {}).get("kp_index", {}) if 'glitch_result' in dir() and glitch_result else {}
             ),
-            "kp_index_reason": (lambda kp: (
-                None if kp.get("source") in ("noaa_live", "cache") else
-                "Kp-Index disabled" if kp.get("source") == "disabled" else
-                "NOAA API unavailable, using fallback" if kp.get("source") == "fallback" else
+            "kp_index_reason": (
+                None if _kp_data and _kp_data.get("source") in ("noaa_live", "cache") else
+                "Kp-Index disabled" if _kp_data and _kp_data.get("source") == "disabled" else
+                "NOAA API unavailable, using fallback" if _kp_data and _kp_data.get("source") == "fallback" else
+                "GLITCH result not available" if not _kp_data else
                 "No Kp-Index data available"
-            ) if kp else "GLITCH result not available")(
-                glitch_result.get("breakdown", {}).get("kp_index", {}) if 'glitch_result' in dir() and glitch_result else {}
             ),
             # v19.1 Esoteric contributions (for learning loop - track individual signal boosts)
             "esoteric_contributions": {
