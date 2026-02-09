@@ -5430,9 +5430,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # GOLD_STAR requires ALL engine minimums. If any gate fails, downgrade to EDGE_LEAN.
         _gold_gates = {
             "ai_gte_6.8": ai_scaled >= GOLD_STAR_GATES["ai_score"],
-            "research_gte_5.5": research_score >= GOLD_STAR_GATES["research_score"],
+            "research_gte_6.5": research_score >= GOLD_STAR_GATES["research_score"],
             "jarvis_gte_6.5": (jarvis_rs >= GOLD_STAR_GATES["jarvis_score"]) if jarvis_rs is not None else False,
-            "esoteric_gte_4.0": esoteric_score >= GOLD_STAR_GATES["esoteric_score"],
+            "esoteric_gte_5.5": esoteric_score >= GOLD_STAR_GATES["esoteric_score"],
         }
         _gold_gates_passed = all(_gold_gates.values())
         _gold_gates_failed = [k for k, v in _gold_gates.items() if not v]
