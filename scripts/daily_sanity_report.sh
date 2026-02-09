@@ -77,6 +77,55 @@ for sport in $SPORTS; do
     echo "ET-only payload: OK"
   fi
 
+  # v20.12: ENGINE STARVATION SENTINEL
+  # Detects when engines may be starved (low scores + missing data vs no edge found)
+  printf "\n[ENGINE STARVATION CHECK %s]\n" "$sport"
+  echo "$resp" | jq -r '
+    def score_health(name; score; min_healthy):
+      if score == null then "\(name): MISSING ⚠️"
+      elif score < min_healthy then "\(name): LOW (\(score)) ⚠️"
+      else "\(name): OK (\(score))"
+      end;
+
+    def glitch_health:
+      if .glitch_signals == null then "GLITCH: MISSING ⚠️"
+      elif .glitch_signals.status == "FAILED" then "GLITCH: FAILED ⚠️"
+      elif .glitch_signals.status == "PARTIAL" then "GLITCH: PARTIAL (check components)"
+      elif .glitch_signals.status == "SUCCESS" then "GLITCH: OK"
+      else "GLITCH: UNKNOWN (\(.glitch_signals.status // "no_status"))"
+      end;
+
+    def check_starvation(picks):
+      if (picks | length) == 0 then
+        {status: "NO_PICKS", message: "No picks to analyze"}
+      else
+        (picks | map(.ai_score // 0) | add / length) as $avg_ai |
+        (picks | map(.research_score // 0) | add / length) as $avg_research |
+        (picks | map(.esoteric_score // 0) | add / length) as $avg_esoteric |
+        (picks | map(.jarvis_score // 0) | add / length) as $avg_jarvis |
+        (picks | map(.final_score // 0) | add / length) as $avg_final |
+        (picks | map(select(.final_score >= 7.0)) | length) as $pass_count |
+        ([$avg_ai < 4.0, $avg_research < 4.0, $avg_esoteric < 3.0, $avg_jarvis < 4.0] | map(select(. == true)) | length) as $low_engines |
+        {
+          avg_ai: ($avg_ai | . * 100 | round / 100),
+          avg_research: ($avg_research | . * 100 | round / 100),
+          avg_esoteric: ($avg_esoteric | . * 100 | round / 100),
+          avg_jarvis: ($avg_jarvis | . * 100 | round / 100),
+          avg_final: ($avg_final | . * 100 | round / 100),
+          picks_analyzed: (picks | length),
+          passed_threshold: $pass_count,
+          low_engine_count: $low_engines,
+          status: (if $low_engines >= 3 then "STARVED ⚠️" elif $low_engines >= 2 then "DEGRADED" else "HEALTHY" end)
+        }
+      end;
+
+    {
+      game_picks: check_starvation(.game_picks.picks // []),
+      props: check_starvation(.props.picks // []),
+      glitch_sample: ((.game_picks.picks // [])[0] | glitch_health)
+    }
+  '
+
   printf "\n"
 
 done
