@@ -2630,8 +2630,14 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 - Officials adjustment (Pillar 16): OfficialsAnalyzer adjusts based on referee tendencies
 
 ### Engine 3: Esoteric Score (20%)
-- **See CRITICAL section below for rules**
+- 29 signals across GLITCH Protocol, Phase 8, Physics, Math Glitch, Phase 1, and Context
+- **Active signals: 23** | Dormant: 4 | Disabled: 1 (noosphere - SERP cancelled)
+- **GLITCH Protocol (5 active)**: chrome_resonance, void_moon, hurst, kp_index, benford
+- **Phase 8 (5 active)**: lunar_phase, mercury_retrograde, rivalry_intensity, streak_momentum, solar_flare
+- External dependency: NOAA Space Weather API (3-hour cache, fail-soft)
+- Output: `esoteric_score` [0.0-10.0], `esoteric_reasons[]`, `esoteric_contributions{}`
 - Park Factors (Pillar 17, MLB only): Venue-based adjustments
+- **Audit doc**: `docs/AUDIT_ENGINE3_ESOTERIC.md` — canonical boundary map with all 29 signals
 
 ### Engine 4: Jarvis Score (20%)
 - Gematria triggers: 2178, 201, 33, 93, 322
@@ -7331,6 +7337,15 @@ curl /live/best-bets/NBA -H "X-API-Key: KEY" | \
 57. **NEVER** re-enable SERP for props (`SERP_PROPS_ENABLED=true`) without first increasing `SERP_DAILY_QUOTA` — props consume ~220 calls/day with near-zero cache hit rate
 
 ## 🚫 NEVER DO THESE (Esoteric/Phase 1 Signals)
+
+**Engine 3 Contract Rules:**
+- **NEVER** change esoteric weight from 0.20 without updating `core/scoring_contract.py`
+- **NEVER** add new esoteric signals without documenting in `docs/AUDIT_ENGINE3_ESOTERIC.md`
+- **NEVER** remove NOAA fallback logic (Kp-Index must work when API is down)
+- **NEVER** mutate `esoteric_score` after BASE_4 calculation
+- **NEVER** bypass GLITCH aggregate when computing esoteric_score
+- **NEVER** enable noosphere without re-enabling SERP (currently cancelled)
+- **NEVER** claim 17 signals — actual count is 29 (23 active, 4 dormant, 1 disabled)
 
 57. **NEVER** assume `pick_type == "GAME"` for game picks - actual values are "SPREAD", "MONEYLINE", "TOTAL", "SHARP"
 58. **NEVER** check `pick_type == "GAME"` directly - use pattern: `_is_game_pick = pick_type in ("GAME", "SPREAD", "MONEYLINE", "TOTAL", "SHARP")`
