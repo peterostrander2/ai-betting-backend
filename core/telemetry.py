@@ -59,6 +59,20 @@ def attach_integration_telemetry_debug(
         "cache_hit_rate": cache_hit_rate,
     }
 
+    # usage_counters: Real network calls only (called - cache_hits)
+    # Format: {odds_api_calls, playbook_calls, serp_calls}
+    def _real_calls(name: str) -> int:
+        entry = integration_calls.get(name, {})
+        called = int(entry.get("called", 0))
+        cache_hits = int(entry.get("cache_hits", 0))
+        return max(0, called - cache_hits)
+
+    result["debug"]["usage_counters"] = {
+        "odds_api_calls": _real_calls("odds_api"),
+        "playbook_calls": _real_calls("playbook_api"),
+        "serp_calls": _real_calls("serpapi"),
+    }
+
 
 def record_daily_integration_rollup(
     date_et: str,
