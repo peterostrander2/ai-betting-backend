@@ -134,7 +134,7 @@ For overnight jobs to run:
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (65 Total) - Key Categories
+### Lessons Learned (67 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -160,6 +160,7 @@ For overnight jobs to run:
 | 63 | **v20.12 Dormant Features** | Stadium altitude, travel fatigue fix, gematria twitter, officials tendency fallback |
 | 64 | **v20.12 CI Partial-Success** | Spot checks must distinguish fatal errors from partial-success (timeouts with valid picks) |
 | 65 | **v20.12 SERP Quota** | SERP burned 5000 searches/month — disabled by default, per-call APIs need explicit opt-in |
+| 66-67 | **v20.13 Learning Loop Coverage** | SPORT_STATS only had 3 props per sport — expanded to all 7 for complete learning coverage |
 
 ### NEVER DO Sections (29 Categories)
 - ML & GLITCH (rules 1-10)
@@ -192,6 +193,7 @@ For overnight jobs to run:
 - v20.11 Post-Base Signals Architecture (rules 198-202)
 - v20.12 Dormant Features & API Timing Fallbacks (rules 203-207)
 - v20.12 CI Spot Checks & Error Handling (rules 208-212)
+- v20.13 Learning Loop Coverage (rules 213-215)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -275,8 +277,11 @@ For overnight jobs to run:
 | `scripts/ci_sanity_check.sh` | Full CI sanity check — runs all 10 session spot checks |
 | `scripts/prod_go_nogo.sh` | Production go/no-go validation before deploy |
 
-### Current Version: v20.12 (Feb 8, 2026)
-**Latest Enhancements (v20.12) — 5 Updates:**
+### Current Version: v20.13 (Feb 8, 2026)
+**Latest Enhancement (v20.13) — 1 Update:**
+- **Fix: Learning Loop Coverage (Lessons 66-67)** — `SchedulerConfig.SPORT_STATS` expanded NBA from 3 to 7 prop types (added threes, steals, blocks, pra). Auto grader now tracks and adjusts weights for ALL prop types, not just the "big 3" (points, rebounds, assists).
+
+**Previous Enhancements (v20.12) — 5 Updates:**
 - **Enhancement 1: Stadium Altitude Impact (Lesson 63)** — `live_data_router.py` now calls `alt_data_sources/stadium.py` for NFL/MLB high-altitude venues (Denver 5280ft, Utah 4226ft). Adds esoteric scoring boost when altitude >1000ft.
 - **Enhancement 2: Travel Fatigue Fix (Lesson 63)** — Fixed bug where `rest_days` variable was undefined. Now uses `_rest_days_for_team(away_team)` closure.
 - **Enhancement 3: Gematria Twitter Intel** — Already wired at `live_data_router.py:4800-4842`, just needed `SERPAPI_KEY` env var. No code changes required.
@@ -8815,7 +8820,109 @@ SERP_INTEL_ENABLED=true
 **Environment Variables for Paid APIs:**
 ```bash
 PLAYBOOK_API_KEY=xxx      # Required
-THE_ODDS_API_KEY=xxx      # Required  
+THE_ODDS_API_KEY=xxx      # Required
 BALLDONTLIE_API_KEY=xxx   # Required
 SERPAPI_KEY=              # Leave empty (canceled)
 ```
+
+### Lesson 66: SPORT_STATS Incomplete Coverage (v20.13)
+**Problem:** `SchedulerConfig.SPORT_STATS` in `daily_scheduler.py` only defined 3 stat types per sport (e.g., NBA = points, rebounds, assists), but the system supports 7 NBA prop types. The auto grader learning loop was only tracking and adjusting weights for 3 of 7 prop types.
+
+**Root Cause:** When `audit_sport()` iterates over `SchedulerConfig.SPORT_STATS[sport]`, it only audits the stat types listed. Missing stat types (threes, steals, blocks, pra) were never analyzed for bias or weight adjustment.
+
+```python
+# BUG — Only 3 stat types audited
+SPORT_STATS = {
+    "NBA": ["points", "rebounds", "assists"],  # Missing 4 prop types!
+    ...
+}
+
+# audit_sport() only processes what's listed:
+for stat_type in SchedulerConfig.SPORT_STATS.get(sport, ["points"]):
+    self._audit_stat_type(sport, stat_type, ...)  # threes, steals, blocks, pra NEVER audited
+```
+
+**Impact:**
+- Learning loop blind to 4/7 NBA prop types
+- No weight adjustments for threes, steals, blocks, pra
+- Performance drift on smaller prop markets went undetected
+
+**The Fix (v20.13):**
+```python
+# FIXED — All 7 NBA prop types now audited
+SPORT_STATS = {
+    "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "pra"],
+    "NFL": ["passing_yards", "rushing_yards", "receiving_yards"],
+    "MLB": ["hits", "total_bases", "strikeouts"],
+    "NHL": ["points", "shots"],
+    "NCAAB": ["points", "rebounds"]
+}
+```
+
+**Prevention:**
+1. **NEVER add prop types to `_initialize_weights()` without adding to `SPORT_STATS`** — they must stay in sync
+2. **Verify audit coverage** — run `/live/grader/bias/{sport}?stat_type=X` for ALL prop types after changes
+3. **Cross-reference** — `auto_grader.py:prop_stat_types` and `daily_scheduler.py:SPORT_STATS` must match
+
+**Files Modified:**
+- `daily_scheduler.py` — Expanded `SPORT_STATS["NBA"]` from 3 to 7 stat types
+
+**Fixed in:** v20.13 (Feb 8, 2026) — Commit `32446c0`
+
+### Lesson 67: Learning Loop Stat Type Sync Invariant (v20.13)
+**Problem:** Three separate locations define prop stat types, and they can drift out of sync:
+1. `auto_grader.py:_initialize_weights()` — Creates weight entries
+2. `auto_grader.py:run_daily_audit()` — Which types get audited (prop_stat_types)
+3. `daily_scheduler.py:SchedulerConfig.SPORT_STATS` — Which types the scheduler audits
+
+**Root Cause:** No single source of truth for "which prop stat types exist per sport." Each location was updated independently, leading to gaps.
+
+**The Sync Invariant:**
+```
+For each sport, these three lists MUST be identical:
+
+1. auto_grader._initialize_weights() prop_stat_types[sport]
+2. auto_grader.run_daily_audit() prop_stat_types[sport]
+3. daily_scheduler.SchedulerConfig.SPORT_STATS[sport]
+
+If ANY differ, some prop types won't have weights OR won't be audited.
+```
+
+**Complete Prop Stat Types (Authoritative):**
+| Sport | Stat Types | Count |
+|-------|-----------|-------|
+| NBA | points, rebounds, assists, threes, steals, blocks, pra | 7 |
+| NFL | passing_yards, rushing_yards, receiving_yards, receptions, touchdowns | 5 |
+| MLB | hits, runs, rbis, strikeouts, total_bases, walks | 6 |
+| NHL | goals, assists, points, shots, saves, blocks | 6 |
+| NCAAB | points, rebounds, assists, threes | 4 |
+
+**Verification Command:**
+```bash
+# Check all three locations are in sync
+python3 -c "
+from auto_grader import AutoGrader
+from daily_scheduler import SchedulerConfig
+
+grader = AutoGrader()
+for sport in ['NBA', 'NFL', 'MLB', 'NHL', 'NCAAB']:
+    scheduler_stats = set(SchedulerConfig.SPORT_STATS.get(sport, []))
+    weight_stats = set(grader.weights.get(sport, {}).keys()) - {'spread', 'total', 'moneyline', 'sharp'}
+    if scheduler_stats != weight_stats:
+        print(f'MISMATCH {sport}: scheduler={scheduler_stats}, weights={weight_stats}')
+    else:
+        print(f'OK {sport}: {len(scheduler_stats)} prop types')
+"
+```
+
+**Prevention:**
+1. **ALWAYS update all 3 locations** when adding a new prop stat type
+2. **Add sync check to CI** — verify all three lists match before deploy
+3. **Consider refactoring** — extract to single `PROP_STAT_TYPES` constant imported by both modules
+
+**NEVER DO (Learning Loop Coverage - rules 213-215):**
+- 213: NEVER add a prop type to `_initialize_weights()` without adding to `SPORT_STATS` — creates weights that are never audited
+- 214: NEVER add a prop type to `SPORT_STATS` without adding to `_initialize_weights()` — audit fails with missing weights
+- 215: NEVER assume "big 3" props (points, rebounds, assists) are sufficient — smaller prop markets (threes, steals, blocks) need learning too
+
+**Fixed in:** v20.13 (Feb 8, 2026)
