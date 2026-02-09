@@ -1,7 +1,109 @@
 # Backend Audit Report — Option A / Integrations / Persistence / Live Betting
 
-Date: 2026-02-04
-Git SHA: 123ff416f26c09594f0bd49d5d14a16ae28eb5ed
+Date: 2026-02-09
+Git SHA: (pending commit)
+
+---
+
+## Engine 4 Jarvis Overhaul (v20.1) — February 9, 2026
+
+### Summary
+
+Engine 4 (Jarvis) has been overhauled to integrate MSRF as an internal component rather than a post-base boost. SERP has been deterministically disabled (no paid API).
+
+### Changes
+
+| Component | Before | After | Reason |
+|-----------|--------|-------|--------|
+| MSRF post-base boost | 0..1.0 | **forced 0.0** | Now inside Jarvis engine (no double-count) |
+| SERP boost | 0..4.3 | **forced 0.0** | No paid SERP API |
+| Jason Sim cap | ±1.5 | **±2.0** | Monte Carlo earned more budget |
+| JARVIS_MSRF_COMPONENT_CAP | n/a | **2.0** | New: bounds MSRF inside Jarvis |
+| SERP_ENABLED | n/a | **False** | New: deterministic status flag |
+| MSRF_ENABLED | n/a | **False** | New: deterministic status flag |
+
+### Scoring Formula (v20.1)
+
+```
+final_score = clamp(
+    base_4
+  + context_modifier           (cap: ±0.35)
+  + confluence_boost            (cap: 0..10)
+  + jason_sim_boost             (cap: ±2.0)
+  + ensemble_boost              (cap: 0..1.0)
+  + hook_penalty                (cap: -0.5..0)
+  + expert_consensus_boost      (cap: 0..0.75)
+  + prop_correlation_adjustment (cap: ±0.5)
+  + totals_calibration_adj      (cap: ±0.5)
+  , 0.0, 10.0
+)
+
+base_4 = ai_score       × 0.25   (FROZEN)
+       + research_score  × 0.35   (FROZEN)
+       + esoteric_score  × 0.20   (FROZEN)
+       + jarvis_score    × 0.20   (FROZEN)
+```
+
+### Jarvis-Ophis Hybrid (Engine 4)
+
+**Blend:** 53% Ophis / 47% Jarvis ("TITAN BLEND")
+
+**MSRF Integration:**
+- Ophis Z-scan produces Z-values from win-date temporal analysis
+- Jarvis scores those Z-values against MSRF sacred number sets
+- MSRF contribution is clamped to `JARVIS_MSRF_COMPONENT_CAP` (2.0)
+- Jarvis returns `jarvis_msrf_component` and `jarvis_msrf_component_raw` in payload
+- `msrf_status` is always `"IN_JARVIS"` in normal operation
+
+### Payload Fields (Engine 4)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `jarvis_rs` | float | Jarvis score (0-10) |
+| `jarvis_msrf_component` | float | MSRF contribution (clamped) |
+| `jarvis_msrf_component_raw` | float | MSRF contribution (raw) |
+| `msrf_status` | string | Always "IN_JARVIS" |
+| `jarvis_triggers_hit` | list | Sacred number triggers hit |
+| `jarvis_reasons` | list | Scoring reasons |
+
+### Files Added/Modified
+
+| File | Purpose |
+|------|---------|
+| `core/compute_final_score.py` | **NEW** - Single source of truth for final_score |
+| `core/jarvis_ophis_hybrid.py` | **NEW** - Engine 4 implementation with MSRF |
+| `tests/test_reconciliation.py` | **NEW** - 35 unit tests for v20.1 |
+| `scripts/engine4_jarvis_audit.py` | **NEW** - Runtime audit script |
+| `scripts/engine4_jarvis_audit.sh` | **NEW** - Shell wrapper |
+| `docs/AUDIT_REPORT.md` | Updated with v20.1 changes |
+
+### Verification Commands
+
+```bash
+# Unit tests (35 tests)
+cd /Users/apple/ai-betting-backend && python -m pytest tests/test_reconciliation.py -v
+
+# Runtime audit (local)
+python scripts/engine4_jarvis_audit.py --local
+
+# Runtime audit (production)
+API_KEY=xxx python scripts/engine4_jarvis_audit.py --url https://web-production-7b2a.up.railway.app --sport nba
+
+# Full test suite
+python -m pytest -q
+```
+
+### Non-Negotiable Invariants
+
+1. **BASE_4 uses exactly 4 engines** with frozen weights (25/35/20/20)
+2. **msrf_boost is forced to 0.0** everywhere (router, scoring pipeline, payload, tests)
+3. **serp_boost is forced to 0.0** with `serp_status="DISABLED"`
+4. **Final score reconciles** within `abs(delta) <= 0.02`
+5. **Engine scores are NEVER mutated** after base_score is computed
+
+---
+
+## Previous Audit (2026-02-04)
 
 ## 1) Executive Summary (PASS/FAIL Matrix)
 

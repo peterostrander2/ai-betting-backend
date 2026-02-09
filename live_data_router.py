@@ -1978,8 +1978,10 @@ async def get_sharp_money(sport: str):
                             "money_pct": money_pct,
                             "ticket_pct": ticket_pct,
                             "public_pct": public_pct,
-                            "signal_strength": strength,
-                            "line_variance": 0
+                            "signal_strength": strength,  # Legacy field (kept for compat)
+                            "sharp_strength": strength,   # v20.16: TRUE sharp strength from Playbook only
+                            "line_variance": 0,
+                            "lv_strength": "NONE",        # v20.16: Computed from line_variance only
                         })
 
                     if data:
@@ -2026,11 +2028,17 @@ async def get_sharp_money(sport: str):
                                     if lv > 0 or _sig_norm in _lv_variance:
                                         _lv_matched += 1
                                     signal["line_variance"] = lv
-                                    # Upgrade signal_strength if line variance is strong
-                                    if lv >= 2.0 and signal["signal_strength"] in ("NONE", "MILD"):
-                                        signal["signal_strength"] = "STRONG"
-                                    elif lv >= 1.5 and signal["signal_strength"] in ("NONE", "MILD"):
-                                        signal["signal_strength"] = "MODERATE"
+                                    # v20.16: Compute lv_strength INDEPENDENTLY (no longer escalates sharp_strength)
+                                    # This fixes the bug where line variance was contaminating sharp money analytics
+                                    if lv >= 2.0:
+                                        signal["lv_strength"] = "STRONG"
+                                    elif lv >= 1.5:
+                                        signal["lv_strength"] = "MODERATE"
+                                    elif lv >= 0.5:
+                                        signal["lv_strength"] = "MILD"
+                                    else:
+                                        signal["lv_strength"] = "NONE"
+                                    # NOTE: signal_strength and sharp_strength are NOT modified by lv
                                 logger.info("Merged Odds API line variance for %s: %d/%d matched, %d with variance>0, playbook_keys=%s",
                                            sport, _lv_matched, len(data),
                                            sum(1 for v in _lv_variance.values() if v > 0),
@@ -3798,38 +3806,41 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         # --- RESEARCH SCORE (Market Intelligence - 0-10 scale) ---
         # Pillar 1: Sharp Money Detection (0-3 pts)
+        # v20.16: Use sharp_strength (Playbook splits ONLY) - NOT signal_strength (was contaminated by lv)
         sharp_boost = 0.0
-        sig_strength = sharp_signal.get("signal_strength", "NONE")
-        if sig_strength == "STRONG":
+        sharp_strength = sharp_signal.get("sharp_strength", sharp_signal.get("signal_strength", "NONE"))
+        lv_strength = sharp_signal.get("lv_strength", "NONE")
+        if sharp_strength == "STRONG":
             sharp_boost = 3.0
-            research_reasons.append("Sharp signal STRONG (+3.0)")
+            research_reasons.append("Sharp money STRONG (+3.0)")
             pillars_passed.append("Sharp Money Detection")
-        elif sig_strength == "MODERATE":
+        elif sharp_strength == "MODERATE":
             sharp_boost = 1.5
-            research_reasons.append("Sharp signal MODERATE (+1.5)")
+            research_reasons.append("Sharp money MODERATE (+1.5)")
             pillars_passed.append("Sharp Money Detection")
-        elif sig_strength == "MILD":
+        elif sharp_strength == "MILD":
             sharp_boost = 0.5
-            research_reasons.append("Sharp signal MILD (+0.5)")
+            research_reasons.append("Sharp money MILD (+0.5)")
             pillars_passed.append("Sharp Money Detection")
         else:
-            research_reasons.append("No sharp signal detected")
+            research_reasons.append("No sharp money signal")
             pillars_failed.append("Sharp Money Detection")
 
         # Pillar 2: Line Movement/Value (0-3 pts)
+        # v20.16: Line variance boost is INDEPENDENT from sharp money (separate signal)
         line_variance = sharp_signal.get("line_variance", 0)
         line_boost = 0.0
         if line_variance > 1.5:
             line_boost = 3.0
-            research_reasons.append(f"Line variance {line_variance:.1f}pts (strong RLM)")
+            research_reasons.append(f"Line variance {line_variance:.1f}pts [lv:{lv_strength}] (strong RLM)")
             pillars_passed.append("Reverse Line Movement")
             pillars_passed.append("Line Value Detection")
         elif line_variance > 0.5:
             line_boost = 1.5
-            research_reasons.append(f"Line variance {line_variance:.1f}pts (moderate)")
+            research_reasons.append(f"Line variance {line_variance:.1f}pts [lv:{lv_strength}] (moderate)")
             pillars_passed.append("Line Value Detection")
         else:
-            research_reasons.append(f"Line variance {line_variance:.1f}pts (minimal)")
+            research_reasons.append(f"Line variance {line_variance:.1f}pts [lv:{lv_strength}] (minimal)")
             pillars_failed.append("Reverse Line Movement")
 
         # v17.3: ESPN Odds Cross-Validation (adds confidence when ESPN confirms)
@@ -5597,15 +5608,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "modifier": round(context_modifier, 3)
             },
             # v14.9 Research breakdown (clean engine separation)
+            # v20.16: Added sharp_strength/lv_strength separation (sharp_boost from Playbook only)
             "research_breakdown": {
                 "sharp_boost": round(sharp_boost, 2),
+                "sharp_strength": sharp_strength,         # v20.16: From Playbook splits only
+                "sharp_status": "PLAYBOOK" if sharp_signal.get("money_pct") is not None else "NO_DATA",
                 "line_boost": round(line_boost, 2),
+                "lv": round(line_variance, 2),            # v20.16: Raw line variance value
+                "lv_strength": lv_strength,               # v20.16: From book dispersion only
                 "public_boost": round(public_boost, 2),
                 "liquidity_boost": round(liquidity_boost, 2),
                 "book_count": int(book_count or 0),
                 "market_book_count": int(market_book_count or 0),
                 "base_research": round(base_research, 2),
-                "signal_strength": sig_strength,
+                "signal_strength": sharp_strength,        # v20.16: Now equals sharp_strength (legacy compat)
                 "total": round(research_score, 2)
             },
             # v15.0 Esoteric breakdown (NO gematria, NO jarvis, NO public_fade - clean separation)
@@ -8241,27 +8257,34 @@ async def debug_pick_breakdown(sport: str):
         research_reasons = []
 
         # Pillar 1: Sharp Money Detection (0-3 pts)
+        # v20.16: Use sharp_strength (Playbook splits ONLY) - NOT signal_strength
         sharp_boost = 0.0
-        if sharp_signal.get("signal_strength") == "STRONG":
+        sharp_strength = sharp_signal.get("sharp_strength", sharp_signal.get("signal_strength", "NONE"))
+        lv_strength = sharp_signal.get("lv_strength", "NONE")
+        if sharp_strength == "STRONG":
             sharp_boost = 3.0
-            research_reasons.append("Sharp signal STRONG (+3.0)")
-        elif sharp_signal.get("signal_strength") == "MODERATE":
+            research_reasons.append("Sharp money STRONG (+3.0)")
+        elif sharp_strength == "MODERATE":
             sharp_boost = 1.5
-            research_reasons.append("Sharp signal MODERATE (+1.5)")
+            research_reasons.append("Sharp money MODERATE (+1.5)")
+        elif sharp_strength == "MILD":
+            sharp_boost = 0.5
+            research_reasons.append("Sharp money MILD (+0.5)")
         else:
-            research_reasons.append("No sharp signal detected")
+            research_reasons.append("No sharp money signal")
 
         # Pillar 2: Line Movement/Value (0-3 pts)
+        # v20.16: Line variance is INDEPENDENT from sharp money
         line_variance = sharp_signal.get("line_variance", 0)
         line_boost = 0.0
         if line_variance > 1.5:
             line_boost = 3.0
-            research_reasons.append(f"Line variance {line_variance:.1f}pts (strong RLM)")
+            research_reasons.append(f"Line variance {line_variance:.1f}pts [lv:{lv_strength}] (strong RLM)")
         elif line_variance > 0.5:
             line_boost = 1.5
-            research_reasons.append(f"Line variance {line_variance:.1f}pts (moderate)")
+            research_reasons.append(f"Line variance {line_variance:.1f}pts [lv:{lv_strength}] (moderate)")
         else:
-            research_reasons.append(f"Line variance {line_variance:.1f}pts (minimal)")
+            research_reasons.append(f"Line variance {line_variance:.1f}pts [lv:{lv_strength}] (minimal)")
 
         # Pillar 3: Public Betting Fade (0-2 pts)
         # v14.11: Use centralized public fade calculator (single-calculation policy)

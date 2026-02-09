@@ -262,12 +262,14 @@ def score_candidate(
         ai_boost += 0.5
 
     # Signal strength: +1.0 / +0.5 / +0.25
-    sig_strength = sharp_signal.get("signal_strength", "NONE")
-    if sig_strength == "STRONG":
+    # v20.16: Use sharp_strength (Playbook splits) for AI boost, not contaminated signal_strength
+    sharp_strength = sharp_signal.get("sharp_strength", sharp_signal.get("signal_strength", "NONE"))
+    lv_strength = sharp_signal.get("lv_strength", "NONE")
+    if sharp_strength == "STRONG":
         ai_boost += 1.0
-    elif sig_strength == "MODERATE":
+    elif sharp_strength == "MODERATE":
         ai_boost += 0.5
-    elif sig_strength == "MILD":
+    elif sharp_strength == "MILD":
         ai_boost += 0.25
 
     # Favorable spread: +0.5
@@ -288,26 +290,27 @@ def score_candidate(
     research_reasons = []
 
     # Sharp money (0-3 pts)
+    # v20.16: Use sharp_strength from Playbook splits ONLY (not lv-contaminated signal_strength)
     sharp_boost = 0.0
-    if sig_strength == "STRONG":
+    if sharp_strength == "STRONG":
         sharp_boost = 3.0
-        research_reasons.append("Sharp signal STRONG (+3.0)")
-    elif sig_strength == "MODERATE":
+        research_reasons.append("Sharp money STRONG (+3.0)")
+    elif sharp_strength == "MODERATE":
         sharp_boost = 1.5
-        research_reasons.append("Sharp signal MODERATE (+1.5)")
-    elif sig_strength == "MILD":
+        research_reasons.append("Sharp money MODERATE (+1.5)")
+    elif sharp_strength == "MILD":
         sharp_boost = 0.5
-        research_reasons.append("Sharp signal MILD (+0.5)")
+        research_reasons.append("Sharp money MILD (+0.5)")
 
-    # Line variance (0-3 pts)
+    # Line variance (0-3 pts) - INDEPENDENT from sharp money
     line_variance = sharp_signal.get("line_variance", 0)
     line_boost = 0.0
     if line_variance > 1.5:
         line_boost = 3.0
-        research_reasons.append(f"Line variance {line_variance:.1f}pts (strong)")
+        research_reasons.append(f"Line variance {line_variance:.1f}pts [lv:{lv_strength}] (strong)")
     elif line_variance > 0.5:
         line_boost = 1.5
-        research_reasons.append(f"Line variance {line_variance:.1f}pts (moderate)")
+        research_reasons.append(f"Line variance {line_variance:.1f}pts [lv:{lv_strength}] (moderate)")
 
     # Public fade (0-2 pts)
     public_boost = 0.0
