@@ -109,8 +109,10 @@
 | 69 | **v20.13 Auto-Grader Field Mismatch** | `_convert_pick_to_record()` read `sharp_money` but picks store `sharp_boost` — learning loop got 0.0 for all research signals |
 | 70 | **v20.13 GOLD_STAR Gate Labels** | Gate labels said `research_gte_5.5`/`esoteric_gte_4.0` but actual thresholds are 6.5/5.5 — misleading downgrade messages |
 | 71 | **v20.14 Grader Routes & Authentication** | Grader endpoints need `/live` prefix + API key — routes mounted at `/live/*`, public URLs require auth |
+| 72 | **v20.15 Prop Detection Bug** | Props stored as `market="player_points"` without `pick_type`, auto-grader check `in ("PROP", "PLAYER_PROP")` missed them — learning loop got 0 prop samples |
+| 73 | **v20.15 Incomplete Prop Markets** | Only 4 NBA props fetched (points/rebounds/assists/threes), missing steals/blocks/turnovers — "if we bet on it, we track it" |
 
-### NEVER DO Sections (33 Categories)
+### NEVER DO Sections (34 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -145,6 +147,7 @@
 - v20.13 Shell Script Error Handling (rules 216-219)
 - v20.13 Field Name Mapping & Gate Label Drift (rules 220-226)
 - v20.14 Grader Routes & Authentication (rules 227-229)
+- v20.15 Learning Loop & Prop Detection (rules 230-236)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -206,6 +209,9 @@
 - [ ] **Comprehensive data coverage** — Cover ALL teams/types, not just popular ones
 - [ ] **Field names match write↔read** — `_convert_pick_to_record()` must use same keys as `persist_pick()` (e.g., `sharp_boost` not `sharp_money`)
 - [ ] **Gate labels match contract** — Threshold labels in `live_data_router.py` must match `scoring_contract.py` values (grep after any threshold change)
+- [ ] **Prop detection is robust** — Check `pick_type`, `market` prefix (PLAYER_), AND `player_name` presence (not just one field)
+- [ ] **Prop configs in sync** — `prop_markets`, `prop_stat_types` (2x), `SPORT_STATS`, `STAT_TYPE_MAP` must ALL match
+- [ ] **Verify learning sees data** — `/grader/bias/{sport}?stat_type={stat}` must show `sample_size > 0`
 
 #### CI & Testing Scripts
 - [ ] **Distinguish fatal vs partial errors** — Timeout with picks = partial success, not failure
@@ -220,8 +226,9 @@
 | `core/scoring_pipeline.py` | Score calculation (single source of truth) |
 | `live_data_router.py` | Main API endpoints, pick scoring, ESPN live scores extraction (v20.11) |
 | `utils/pick_normalizer.py` | Pick contract normalization (single source for all pick fields) |
-| `auto_grader.py` | Learning loop, bias calculation, weight updates |
-| `result_fetcher.py` | Game result fetching, pick grading |
+| `auto_grader.py` | Learning loop, bias calculation, weight updates. **prop_stat_types** at lines 176 & 1109 |
+| `daily_scheduler.py` | Cron jobs, **SPORT_STATS** config at line 174 — must match auto_grader |
+| `result_fetcher.py` | Game result fetching, pick grading. **STAT_TYPE_MAP** at line 80 |
 | `grader_store.py` | Pick persistence (predictions.jsonl) |
 | `utils/contradiction_gate.py` | Prevents opposite side picks |
 | `integration_registry.py` | Env var registry, integration config |
@@ -234,8 +241,12 @@
 | `scripts/prod_go_nogo.sh` | Production go/no-go validation before deploy |
 | `scripts/verify_grader_routes.sh` | Grader routes verification — tests all `/live/grader/*` endpoints (v20.14) |
 
-### Current Version: v20.14 (Feb 9, 2026)
-**Latest Enhancement (v20.14) — 1 Update:**
+### Current Version: v20.15 (Feb 9, 2026)
+**Latest Enhancement (v20.15) — 2 Updates:**
+- **Fix 1: Auto-Grader Prop Detection (Lesson 72)** — Props stored with `market="player_points"` but no `pick_type` field. The check `in ("PROP", "PLAYER_PROP")` missed them. Fixed with expanded detection: `pick_type.startswith("PLAYER_")` or `player_name` presence. Learning loop now sees 63+ prop samples.
+- **Fix 2: Expanded Prop Market Coverage (Lesson 73)** — Only 4 NBA props were fetched. Added: steals, blocks, turnovers. Also expanded NFL (anytime_td), MLB (runs, home_runs, outs), NHL (goals, saves). Updated all 4 config locations: `prop_markets`, `prop_stat_types` (2x), `SPORT_STATS`, `STAT_TYPE_MAP`.
+
+**Previous Fixes (v20.14) — 1 Update:**
 - **Fix: Grader Routes Documentation (Lesson 71)** — All grader endpoints require `/live` prefix (routes are mounted at `/live/*` in main.py). Public URLs also require `X-API-Key` header. Added comprehensive verification script `scripts/verify_grader_routes.sh` with 6 test suites.
 
 **Previous Fixes (v20.13) — 4 Updates:**

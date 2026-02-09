@@ -649,3 +649,32 @@ grep -n "gte_5.5\|gte_4.0\|gte_6.5\|gte_5.5" live_data_router.py CLAUDE.md docs/
 
 ---
 
+
+
+---
+
+## 🚫 NEVER DO THESE (v20.15 Learning Loop & Prop Detection)
+
+230. **NEVER rely on a single field for prop detection** — check `pick_type`, `market` prefix, AND `player_name` presence
+231. **NEVER assume pick_type is set** — props may only have `market` field; fallback detection is required
+232. **NEVER hardcode partial prop market lists** — fetch ALL available markets from Odds API
+233. **NEVER forget to sync prop configs** — `prop_markets`, `prop_stat_types`, `SPORT_STATS`, `STAT_TYPE_MAP` must ALL match
+234. **NEVER add a new prop market without updating all 4 config locations**:
+     - `live_data_router.py:2496` (prop_markets fetch list)
+     - `auto_grader.py:176` (prop_stat_types for weight init)
+     - `auto_grader.py:1109` (prop_stat_types for audit)
+     - `daily_scheduler.py:174` (SPORT_STATS)
+     - `result_fetcher.py:80` (STAT_TYPE_MAP for grading)
+235. **NEVER assume the learning loop sees data** — verify with `/grader/bias/{sport}?stat_type={stat}` showing `sample_size > 0`
+236. **NEVER skip testing bias endpoint per stat_type after changes** — silent failures lose learning data
+
+**Testing the learning loop after changes:**
+```bash
+# Verify all stat types are tracked:
+curl /live/grader/weights/NBA -H "X-API-Key: KEY" | jq '.weights | keys'
+
+# Verify data flows through for each stat type:
+for stat in points rebounds assists threes steals blocks turnovers; do
+  curl -s "/live/grader/bias/NBA?stat_type=$stat&days_back=30" -H "X-API-Key: KEY" | jq "{stat: \"$stat\", samples: .bias.sample_size}"
+done
+```

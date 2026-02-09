@@ -2292,3 +2292,126 @@ for sport, t1, t2, expected in tests:
 
 ---
 
+
+### Lesson 72: Auto-Grader Prop Detection via pick_type Pattern (v20.15)
+**Problem:** Learning loop showed 0 samples for prop stats (points, rebounds, assists) even though 63+ prop picks existed. Props stored as `player_points` but learning loop looked for `points`.
+
+**Root Cause:** Props are stored with `market="player_points"` but NO explicit `pick_type` field. The auto_grader at line 308 fell back to `market.upper()` → `"PLAYER_POINTS"`. The check `if pick_type in ("PROP", "PLAYER_PROP")` didn't match, so props were treated as game picks and `stat_type` kept the `player_` prefix instead of being stripped.
+
+**The Data Flow Bug:**
+```python
+# How props were stored (live_data_router.py line 7218-7220):
+{
+    "market": "player_points",  # From Odds API
+    "stat_type": "player_points",  # Same as market
+    "prop_type": "player_points",  # Same as market
+    # NO "pick_type" field!
+}
+
+# Auto-grader detection logic (auto_grader.py line 308-310):
+pick_type = pick.get("pick_type", pick.get("market", "")).upper()
+# → pick_type = "PLAYER_POINTS" (not "PROP" or "PLAYER_PROP")
+
+if pick_type in ("PROP", "PLAYER_PROP"):  # FALSE!
+    stat_type = raw_stat.replace("player_", "")  # Never executed
+else:
+    stat_type = pick_type.lower()  # → "player_points" (with prefix!)
+```
+
+**The Fix:**
+```python
+# auto_grader.py lines 310-316 — Expanded prop detection
+is_prop = (
+    pick_type in ("PROP", "PLAYER_PROP") or
+    pick_type.startswith("PLAYER_") or  # NEW: catches PLAYER_POINTS
+    pick.get("player_name") or           # NEW: has player = is prop
+    pick.get("player")
+)
+
+if is_prop:
+    stat_type = raw_stat.replace("player_", "")  # "points"
+```
+
+**Prevention:**
+1. **NEVER rely on a single field for type detection** — check multiple signals (pick_type, market prefix, player_name presence)
+2. **Always trace data from storage → read** — verify field values match at both ends
+3. **Test with real stored data** — bias endpoint with specific stat_type reveals mismatches
+
+**Files Modified:**
+- `auto_grader.py` — Expanded `_convert_pick_to_record()` prop detection (lines 310-321)
+
+**Verification:**
+```bash
+# Before fix: 0 samples for "points"
+curl /live/grader/bias/NBA?stat_type=points&days_back=30 -H "X-API-Key: KEY" | jq '.bias.sample_size'
+# 0
+
+# After fix: 63+ samples
+curl /live/grader/bias/NBA?stat_type=points&days_back=30 -H "X-API-Key: KEY" | jq '.bias.sample_size'
+# 63
+
+# Stat types now stripped correctly:
+curl /live/grader/performance/NBA -H "X-API-Key: KEY" | jq '.by_stat_type | keys'
+# ["assists", "moneyline", "points", "rebounds", "sharp", "spread", "threes", "total"]
+```
+
+**Fixed in:** v20.15 (Feb 9, 2026) — Commit `f56b1ce`
+
+---
+
+### Lesson 73: Incomplete Prop Market Coverage (v20.15)
+**Problem:** Only 4 NBA prop markets were being fetched (points, rebounds, assists, threes). Missing: steals, blocks, turnovers. "If we bet on them, everything should be tracked and learning loop. It's common sense."
+
+**Root Cause:** `live_data_router.py` line 2496 hardcoded a limited prop market list:
+```python
+prop_markets = "player_points,player_rebounds,player_assists,player_threes"
+# Missing: player_blocks, player_steals, player_turnovers
+```
+
+**The Fix — Expanded All Sports:**
+```python
+# live_data_router.py line 2496 — v20.15: All available prop markets
+prop_markets = "player_points,player_rebounds,player_assists,player_threes,player_blocks,player_steals,player_turnovers"
+if sport_lower == "nfl":
+    prop_markets = "player_pass_tds,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions,player_anytime_td"
+elif sport_lower == "mlb":
+    prop_markets = "batter_total_bases,batter_hits,batter_rbis,batter_runs,batter_home_runs,pitcher_strikeouts,pitcher_outs"
+elif sport_lower == "nhl":
+    prop_markets = "player_points,player_shots_on_goal,player_assists,player_goals,player_saves"
+```
+
+**Also Updated Learning Loop Configs:**
+- `auto_grader.py` — `prop_stat_types` expanded for all sports (2 locations)
+- `daily_scheduler.py` — `SchedulerConfig.SPORT_STATS` expanded
+- `result_fetcher.py` — `STAT_TYPE_MAP` expanded with all mappings
+
+**Coverage After Fix:**
+| Sport | Prop Stats Tracked |
+|-------|-------------------|
+| NBA | points, rebounds, assists, threes, steals, blocks, turnovers, pra |
+| NFL | pass_tds, pass_yds, rush_yds, reception_yds, receptions, anytime_td |
+| MLB | hits, runs, rbis, home_runs, total_bases, strikeouts, outs |
+| NHL | goals, assists, points, shots, saves |
+| NCAAB | points, rebounds, assists, threes, steals, blocks, turnovers |
+
+**Prevention:**
+1. **NEVER hardcode partial market lists** — fetch ALL available markets from the API
+2. **Keep configs in sync** — prop_markets, prop_stat_types, SPORT_STATS, STAT_TYPE_MAP must all match
+3. **Common sense rule: If we bet on it, we track it** — no exceptions
+
+**Files Modified:**
+- `live_data_router.py` — Expanded `prop_markets` for all sports (line 2496)
+- `auto_grader.py` — Expanded `prop_stat_types` (2 locations: line 176, line 1109)
+- `daily_scheduler.py` — Expanded `SchedulerConfig.SPORT_STATS` (line 174)
+- `result_fetcher.py` — Expanded `STAT_TYPE_MAP` with all mappings (line 80)
+
+**Verification:**
+```bash
+# Weights now include all stat types:
+curl /live/grader/weights/NBA -H "X-API-Key: KEY" | jq '.weights | keys'
+# ["assists", "blocks", "moneyline", "points", "pra", "rebounds", "sharp", "spread", "steals", "threes", "total", "turnovers"]
+```
+
+**Fixed in:** v20.15 (Feb 9, 2026) — Commit `e8f0954`
+
+---
