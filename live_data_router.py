@@ -9766,15 +9766,30 @@ async def debug_slate_summary(
         props_picks = result.get("props", {}).get("picks", [])
         all_picks = game_picks + props_picks
 
+        # Check debug info for ET window status
+        debug_info = result.get("debug", {})
+        date_window = debug_info.get("date_window_et", {})
+        events_after_games = date_window.get("events_after_games", 0)
+        events_after_props = date_window.get("events_after_props", 0)
+
         if not all_picks:
+            # Distinguish NO_SLATE (no games in ET window) from NO_PICKS (filtered out)
+            if events_after_games == 0 and events_after_props == 0:
+                status = "NO_SLATE"
+                message = "No games scheduled in today's ET window"
+            else:
+                status = "NO_PICKS"
+                message = "Games exist but no picks passed quality filters"
+
             return {
                 "sport": sport_upper,
-                "status": "NO_PICKS",
-                "message": "No picks available for analysis",
+                "status": status,
+                "message": message,
                 "slate_stats": {
                     "total_picks": 0,
                     "game_picks": len(game_picks),
-                    "prop_picks": len(props_picks)
+                    "prop_picks": len(props_picks),
+                    "events_in_et_window": events_after_games + events_after_props
                 },
                 "timestamp": now_et().isoformat()
             }
@@ -9927,9 +9942,25 @@ async def debug_slate_summary(
         passed_threshold = len([p for p in all_picks if p.get("final_score", 0) >= 7.0])
         pass_rate = (passed_threshold / len(all_picks) * 100) if all_picks else 0
 
+        # Calculate boost fire rate to distinguish LOW_EDGE from STARVED
+        boosts_fired_count = sum([
+            boost_counts["confluence_fired"],
+            boost_counts["msrf_fired"],
+            boost_counts["jason_sim_fired"],
+            boost_counts["serp_fired"]
+        ])
+        boost_fire_rate = (boosts_fired_count / len(all_picks)) if all_picks else 0
+
+        # Status determination with LOW_EDGE distinction
+        # LOW_EDGE: Engines low but boosts are firing (system working, just no edge today)
+        # STARVED: Engines low AND no boosts firing (system may be broken)
         if len(low_engines) >= 3:
-            overall_status = "STARVED"
-            status_reason = f"{len(low_engines)} engines below threshold: {', '.join(low_engines)}"
+            if boost_fire_rate >= 0.3:  # 30%+ picks have at least one boost
+                overall_status = "LOW_EDGE"
+                status_reason = f"{len(low_engines)} engines below threshold ({', '.join(low_engines)}), but boosts firing at {boost_fire_rate:.0%} - system working, just low edge today"
+            else:
+                overall_status = "STARVED"
+                status_reason = f"{len(low_engines)} engines below threshold: {', '.join(low_engines)}. Boost fire rate only {boost_fire_rate:.0%}."
         elif len(low_engines) >= 2:
             overall_status = "DEGRADED"
             status_reason = f"{len(low_engines)} engines below threshold: {', '.join(low_engines)}"
@@ -9949,7 +9980,8 @@ async def debug_slate_summary(
                 "game_picks": len(game_picks),
                 "prop_picks": len(props_picks),
                 "passed_7_0_threshold": passed_threshold,
-                "pass_rate_pct": round(pass_rate, 1)
+                "pass_rate_pct": round(pass_rate, 1),
+                "boost_fire_rate_pct": round(boost_fire_rate * 100, 1)
             },
             "score_distribution": score_buckets,
             "boost_counts": boost_counts,
