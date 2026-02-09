@@ -33,6 +33,74 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 
 ---
 
+## 🤖 Automation & Cron Jobs
+
+### Overview
+33 automated jobs run via cron across both repositories. No manual intervention needed as long as Mac is awake.
+
+### Cron Schedule (Backend - ai-betting-backend)
+
+| Schedule | Script | Purpose |
+|----------|--------|---------|
+| Every 30 min | `response_time_check.sh` | Monitor API latency |
+| Every 4 hours | `memory_profiler.sh` | Track memory, detect leaks |
+| Hourly | `error_rate_monitor.sh` | Track 4xx/5xx rates |
+| Daily 3 AM | `backup_data.sh` | Backup /data persistent storage |
+| Daily 4 AM | `db_integrity_check.sh` | Verify JSON/SQLite/pickle integrity |
+| Daily 6 AM | `access_log_audit.sh` | Detect unusual API access |
+| Daily 9 AM | `daily_health_check.sh` | Full system health check |
+| Sunday 5 AM | `prune_old_data.sh` | Clean old logs/cache |
+| Sunday 7 AM | `dead_code_scan.sh` | Find unused functions |
+| Sunday 10 AM | `dependency_vuln_scan.sh` | pip-audit + npm audit |
+| Monday 7 AM | `complexity_report.sh` | Flag complex code |
+| Monday 8 AM | `test_coverage_report.sh` | Coverage % report |
+| Monday 9:15 AM | `secret_rotation_check.sh` | Check for old secrets |
+| Monday 9:30 AM | `feature_flag_audit.sh` | Audit feature flags |
+
+### Log Locations
+```bash
+# Backend
+~/ai-betting-backend/logs/health_check.log  # Daily health
+~/ai-betting-backend/logs/cron.log          # All cron output
+
+# Frontend
+~/bookie-member-app/logs/cron.log           # All cron output
+```
+
+### Verify Cron is Running
+```bash
+crontab -l | wc -l        # Should show 33+ lines
+tail -20 ~/ai-betting-backend/logs/cron.log  # Recent activity
+```
+
+### Manual Script Runs
+```bash
+# Morning check-in
+./scripts/session_start.sh
+
+# Before deploys
+./scripts/contract_sync_check.sh
+./scripts/prod_go_nogo.sh
+
+# Anytime health check
+./scripts/daily_health_check.sh
+```
+
+### CRITICAL: Path Validation
+Cron jobs silently fail if paths are wrong. After any path changes:
+```bash
+# Verify paths in crontab match reality
+crontab -l | grep "cd ~/"
+ls -d ~/ai-betting-backend ~/bookie-member-app  # Both must exist
+```
+
+### Keep Mac Awake (Optional)
+For overnight jobs to run:
+- **System Settings → Energy → Prevent automatic sleeping**
+- Or run `caffeinate -s` in Terminal
+
+---
+
 ## 📚 MASTER INDEX (Quick Reference)
 
 ### Critical Invariants (26 Total)

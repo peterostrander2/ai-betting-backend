@@ -636,6 +636,57 @@ Never skip. Catches runtime/env drift that CI cannot detect.
 
 ---
 
+### L) Automation / Cron Jobs / Scheduled Health Checks
+
+**Examples:** "health check didn't run", "cron path wrong", "logs not generated".
+
+**Canonical sources:**
+- `crontab -l` (view current schedule)
+- `scripts/*.sh` (individual scripts)
+
+**33 Automated Jobs (Backend + Frontend):**
+
+| Frequency | Backend Scripts | Frontend Scripts |
+|-----------|-----------------|------------------|
+| Every 30 min | `response_time_check.sh` | `response_time_check.sh` |
+| Every 4 hours | `memory_profiler.sh` | `memory_leak_check.sh` |
+| Hourly | `error_rate_monitor.sh` | - |
+| Daily | `backup_data.sh`, `db_integrity_check.sh`, `access_log_audit.sh`, `daily_health_check.sh` | `console_log_scan.sh`, `daily_health_check.sh` |
+| Weekly (Sun) | `prune_old_data.sh`, `dead_code_scan.sh`, `dependency_vuln_scan.sh`, `auto_cleanup.sh` | `prune_build_artifacts.sh`, `dead_code_scan.sh`, `accessibility_check.sh`, `dependency_vuln_scan.sh`, `auto_cleanup.sh` |
+| Weekly (Mon) | `complexity_report.sh`, `test_coverage_report.sh`, `secret_rotation_check.sh`, `feature_flag_audit.sh` | `broken_import_check.sh`, `complexity_report.sh`, `test_coverage_report.sh`, `bundle_size_check.sh`, `secret_exposure_check.sh`, `feature_flag_audit.sh` |
+
+**Log Locations:**
+```bash
+~/ai-betting-backend/logs/health_check.log  # Daily health
+~/ai-betting-backend/logs/cron.log          # All cron output
+~/bookie-member-app/logs/cron.log           # Frontend cron output
+```
+
+**Verification (after path changes or fresh setup):**
+```bash
+# Count jobs (should be 33+)
+crontab -l | grep -c "^\*\|^[0-9]"
+
+# Verify paths exist
+ls -d ~/ai-betting-backend ~/bookie-member-app
+
+# Check recent cron activity
+tail -20 ~/ai-betting-backend/logs/cron.log
+```
+
+**Hard invariants:**
+- Cron paths MUST match actual repo locations (Lesson 66)
+- Logs go to `~/repo/logs/`, not Desktop or /tmp
+- Mac must be awake for scheduled jobs to run
+
+**Never do:**
+- Use `~/Desktop/` paths in crontab (repos may be in home dir)
+- Assume cron is working without checking logs
+- Add manual health check steps when automation exists
+- Skip path validation when setting up on new machine
+
+---
+
 ## v20.11 Updates (Feb 8, 2026)
 
 **Latest Enhancements — 4 Real Data Source Integrations + Rivalry Database:**

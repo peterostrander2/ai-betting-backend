@@ -906,6 +906,41 @@ Cover ALL teams in each sport (204 rivalries across 5 sports).
 
 ---
 
+## 66-67. Cron Automation Lessons (Feb 2026)
+
+### 66. Cron Path Validation
+
+**The Mistake:** Crontab entries pointed to `~/Desktop/ai-betting-backend-main` but the actual repo was at `~/ai-betting-backend`. All cron jobs silently failed for months.
+
+**The Fix:**
+```bash
+# Verify cron paths match actual repo locations
+crontab -l | grep -E "cd ~/|cd \$HOME"
+ls -d ~/ai-betting-backend  # Verify path exists
+```
+
+**Rule:**
+> **INVARIANT**: After setting up cron jobs, ALWAYS verify paths exist with `ls -d`. Cron failures are silent — jobs won't report errors.
+
+### 67. Automation Script Coverage
+
+**The Mistake:** Manual health checks were forgotten. Scripts existed but weren't scheduled.
+
+**The Fix:** Created 26 automated scripts across both repos with cron scheduling:
+- **High frequency** (30min-hourly): Response time, error rates
+- **Daily**: Health checks, backups, access logs
+- **Weekly**: Vuln scans, dead code, complexity reports
+
+**Rule:**
+> **INVARIANT**: Any repeatable check should be automated via cron. Store logs in `~/repo/logs/` and verify cron paths on session start.
+
+**Verification command:**
+```bash
+crontab -l | wc -l   # Should show 33+ scheduled jobs
+```
+
+---
+
 ## Adding New Lessons
 
 When you encounter a bug or issue, add it here:
