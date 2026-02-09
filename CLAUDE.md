@@ -66,7 +66,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (65 Total) - Key Categories
+### Lessons Learned (67 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -92,8 +92,10 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 63 | **v20.12 Dormant Features** | Stadium altitude, travel fatigue fix, gematria twitter, officials tendency fallback |
 | 64 | **v20.12 CI Partial-Success** | Spot checks must distinguish fatal errors from partial-success (timeouts with valid picks) |
 | 65 | **v20.12 SERP Quota** | SERP burned 5000 searches/month — disabled by default, per-call APIs need explicit opt-in |
+| 66 | **v20.13 Auto-Grader Field Mismatch** | `_convert_pick_to_record()` read `sharp_money` but picks store `sharp_boost` — learning loop got 0.0 for all research signals |
+| 67 | **v20.13 GOLD_STAR Gate Labels** | Gate labels said `research_gte_5.5`/`esoteric_gte_4.0` but actual thresholds are 6.5/5.5 — misleading downgrade messages |
 
-### NEVER DO Sections (29 Categories)
+### NEVER DO Sections (31 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -124,6 +126,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.11 Post-Base Signals Architecture (rules 198-202)
 - v20.12 Dormant Features & API Timing Fallbacks (rules 203-207)
 - v20.12 CI Spot Checks & Error Handling (rules 208-212)
+- v20.13 Field Name Mapping & Gate Label Drift (rules 213-219)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -180,6 +183,8 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - [ ] **SHARP graded as moneyline** — Did the team win? (not line_variance)
 - [ ] **All stat types in weights** — Auto grader needs complete structure
 - [ ] **Comprehensive data coverage** — Cover ALL teams/types, not just popular ones
+- [ ] **Field names match write↔read** — `_convert_pick_to_record()` must use same keys as `persist_pick()` (e.g., `sharp_boost` not `sharp_money`)
+- [ ] **Gate labels match contract** — Threshold labels in `live_data_router.py` must match `scoring_contract.py` values (grep after any threshold change)
 
 #### CI & Testing Scripts
 - [ ] **Distinguish fatal vs partial errors** — Timeout with picks = partial success, not failure
@@ -207,8 +212,12 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | `scripts/ci_sanity_check.sh` | Full CI sanity check — runs all 10 session spot checks |
 | `scripts/prod_go_nogo.sh` | Production go/no-go validation before deploy |
 
-### Current Version: v20.12 (Feb 8, 2026)
-**Latest Enhancements (v20.12) — 5 Updates:**
+### Current Version: v20.13 (Feb 9, 2026)
+**Latest Fixes (v20.13) — Engine 2 (Research) Audit:**
+- **Fix 1: Auto-Grader Field Name Mismatch (Lesson 66)** — `auto_grader.py:_convert_pick_to_record()` read `sharp_money`/`public_fade`/`line_variance` from `research_breakdown`, but picks store as `sharp_boost`/`public_boost`/`line_boost`. Daily learning loop always saw 0.0 for research signals. Fixed with fallback pattern.
+- **Fix 2: GOLD_STAR Gate Labels (Lesson 67)** — Gate labels said `research_gte_5.5`/`esoteric_gte_4.0` but actual thresholds in `scoring_contract.py` are 6.5/5.5. Labels in `live_data_router.py` and docs now match contract.
+
+**Previous Enhancements (v20.12) — 5 Updates:**
 - **Enhancement 1: Stadium Altitude Impact (Lesson 63)** — `live_data_router.py` now calls `alt_data_sources/stadium.py` for NFL/MLB high-altitude venues (Denver 5280ft, Utah 4226ft). Adds esoteric scoring boost when altitude >1000ft.
 - **Enhancement 2: Travel Fatigue Fix (Lesson 63)** — Fixed bug where `rest_days` variable was undefined. Now uses `_rest_days_for_team(away_team)` closure.
 - **Enhancement 3: Gematria Twitter Intel** — Already wired at `live_data_router.py:4800-4842`, just needed `SERPAPI_KEY` env var. No code changes required.
@@ -2555,9 +2564,9 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 | Gate | Threshold | Why |
 |------|-----------|-----|
 | `ai_gte_6.8` | AI ≥ 6.8 | AI models must show conviction |
-| `research_gte_5.5` | Research ≥ 5.5 | Must have real market signals (sharp/splits/variance) |
+| `research_gte_6.5` | Research ≥ 6.5 | Must have real market signals (sharp/splits/variance) |
 | `jarvis_gte_6.5` | Jarvis ≥ 6.5 | Jarvis triggers must fire |
-| `esoteric_gte_4.0` | Esoteric ≥ 4.0 | Esoteric components must contribute |
+| `esoteric_gte_5.5` | Esoteric ≥ 5.5 | Esoteric components must contribute |
 | `context_gte_4.0` | **REMOVED** | Context is a modifier, not a hard gate |
 
 **Output includes**: `scoring_breakdown.gold_star_gates` (dict of gate→bool), `gold_star_eligible` (bool), `gold_star_failed` (list of failed gate names).
@@ -7663,6 +7672,65 @@ if not lead_official and sport_upper in ["NBA", "NFL", "NHL"]:
                          "confidence": "LOW", **fallback_officials}
 ```
 
+## 🚫 NEVER DO THESE (v20.12 - CI Spot Checks & Error Handling)
+
+208. **NEVER** fail CI on `has("errors")` alone — check error codes for severity (timeout codes are not fatal)
+209. **NEVER** ignore pick counts when evaluating errors — partial success (timeout with valid picks) is valid
+210. **NEVER** assume all sports have games — off-season returns 0 picks legitimately
+211. **NEVER** skip error code filtering — `PROPS_TIMED_OUT` and `GAME_PICKS_TIMED_OUT` are soft errors, not fatal
+212. **NEVER** treat HTTP 502 as permanent failure — transient server restarts are normal; retry with backoff
+
+---
+
+## 🚫 NEVER DO THESE (v20.13 - Field Name Mapping & Gate Label Drift)
+
+213. **NEVER** assume field names match between write path and read path — always trace from `persist_pick()` through to `_convert_pick_to_record()` and verify exact key names match
+214. **NEVER** read `dict.get("sharp_money")` when the pick payload stores `sharp_boost` — use the fallback pattern: `breakdown.get("sharp_boost", breakdown.get("sharp_money", 0.0))`
+215. **NEVER** hardcode threshold values in label strings — always read from `scoring_contract.py` constants (e.g., `GOLD_STAR_GATES["research_score"]` not literal `"5.5"`)
+216. **NEVER** update `scoring_contract.py` thresholds without grepping ALL files for the old values — gate labels in `live_data_router.py`, docs in `CLAUDE.md`, and `docs/MASTER_INDEX.md` must all match
+217. **NEVER** trust label strings for debugging — if a gate says `research_gte_5.5` but the actual threshold is 6.5, the label misleads debugging and the learning loop
+218. **NEVER** add a new field to `research_breakdown` (or any engine breakdown) without updating `_convert_pick_to_record()` in `auto_grader.py` to read it — unread fields are invisible to the learning loop
+219. **NEVER** rename a field in the pick payload without adding a fallback read in all consumers — use `dict.get("new_name", dict.get("old_name", default))` pattern for backward compatibility
+
+**Field Name Mapping Quick Reference (v20.13):**
+```python
+# ❌ WRONG — Reading old field names that don't exist in pick payload
+sharp = breakdown.get("sharp_money", 0.0)      # Pick stores "sharp_boost"
+public = breakdown.get("public_fade", 0.0)     # Pick stores "public_boost"
+line = breakdown.get("line_variance", 0.0)      # Pick stores "line_boost"
+
+# ✅ CORRECT — Fallback pattern reads new name first, old name as fallback
+sharp = breakdown.get("sharp_boost", breakdown.get("sharp_money", 0.0))
+public = breakdown.get("public_boost", breakdown.get("public_fade", 0.0))
+line = breakdown.get("line_boost", breakdown.get("line_variance", 0.0))
+```
+
+**Gate Label Drift Quick Reference (v20.13):**
+```python
+# ❌ WRONG — Hardcoded threshold in label string (drifts from contract)
+gate_label = "research_gte_5.5"  # But GOLD_STAR_GATES["research_score"] = 6.5!
+
+# ✅ CORRECT — Read from scoring_contract.py constants
+from core.scoring_contract import GOLD_STAR_GATES
+threshold = GOLD_STAR_GATES["research_score"]  # 6.5
+gate_label = f"research_gte_{threshold}"       # "research_gte_6.5" — always matches
+```
+
+**Verification (run after any auto_grader.py or scoring_contract.py change):**
+```bash
+# 1. Check field names match between write and read paths
+grep -n "sharp_boost\|sharp_money" auto_grader.py live_data_router.py
+# Both should use consistent names (or fallback pattern)
+
+# 2. Check gate labels match scoring_contract.py
+python3 -c "
+from core.scoring_contract import GOLD_STAR_GATES
+print('Contract thresholds:', GOLD_STAR_GATES)
+"
+grep -n "gte_5.5\|gte_4.0\|gte_6.5\|gte_5.5" live_data_router.py CLAUDE.md docs/MASTER_INDEX.md
+# Labels must match contract values
+```
+
 ---
 
 ## ✅ VERIFICATION CHECKLIST (Go/No-Go - REQUIRED BEFORE DEPLOY)
@@ -8729,6 +8797,102 @@ SERP_INTEL_ENABLED=true
 3. **Monitor quota via debug endpoint** — `/live/debug/integrations` shows quota usage
 
 **Fixed in:** v20.12 (Feb 8, 2026)
+
+### Lesson 66: Auto-Grader Field Name Mismatch — Learning Loop Blind to Research Signals (v20.13)
+**Problem:** The daily learning loop (auto_grader) always saw 0.0 for all three research engine signals (sharp money, public fade, line variance). The learning loop could never learn from or adjust research signal weights because it was reading the wrong field names.
+
+**Root Cause:** Two different code paths write and read research signal data with **different field names**:
+
+| Path | When | Field Names Used |
+|------|------|-----------------|
+| **Live path** (`log_prediction()` line 7464-7466) | Every best-bets call | Correctly maps `sharp_boost` → `sharp_money_adjustment` |
+| **JSONL read path** (`_convert_pick_to_record()` line 368-370) | Daily 6AM audit | Reads `research_breakdown.sharp_money` — **WRONG** |
+
+The pick payload stores fields as `sharp_boost`, `public_boost`, `line_boost` in `research_breakdown`, but `_convert_pick_to_record()` looked for `sharp_money`, `public_fade`, `line_variance`.
+
+```python
+# BUG — auto_grader.py line 368-370
+sharp_money_adjustment=pick.get("research_breakdown", {}).get("sharp_money", 0.0),  # Always 0.0!
+public_fade_adjustment=pick.get("research_breakdown", {}).get("public_fade", 0.0),  # Always 0.0!
+line_variance_adjustment=pick.get("research_breakdown", {}).get("line_variance", 0.0),  # Always 0.0!
+
+# FIX — Try correct field name first, fall back to old name for backward compat
+sharp_money_adjustment=pick.get("research_breakdown", {}).get("sharp_boost", pick.get("research_breakdown", {}).get("sharp_money", 0.0)),
+public_fade_adjustment=pick.get("research_breakdown", {}).get("public_boost", pick.get("research_breakdown", {}).get("public_fade", 0.0)),
+line_variance_adjustment=pick.get("research_breakdown", {}).get("line_boost", pick.get("research_breakdown", {}).get("line_variance", 0.0)),
+```
+
+**Impact:** The daily audit's `calculate_bias()` for research signals (sharp_money, public_fade, line_variance) always computed correlations against 0.0, making the learning loop completely blind to research engine performance. Weight adjustments for research signals were always zero.
+
+**Prevention:**
+1. **NEVER assume field names match across read/write paths** — trace the full data flow from creation → storage → retrieval
+2. **When reading stored data, verify against the WRITE path** — grep for where `research_breakdown` is populated, not just where it's read
+3. **Add fallback patterns for field name changes** — `dict.get("new_name", dict.get("old_name", default))` handles both old and new data
+4. **Add integration tests for the learning loop** — verify `_convert_pick_to_record()` produces non-zero values for all signal categories
+
+**Files Modified:**
+- `auto_grader.py` — Lines 368-370: Updated field name reads with fallback pattern
+
+**Verification:**
+```bash
+# After next daily audit, verify research signals are non-zero
+curl -s "/live/grader/bias/NBA?stat_type=spread&days_back=1" -H "X-API-Key: KEY" | \
+  jq '.bias.factor_bias | {sharp_money, public_fade, line_variance}'
+# Values should be non-zero when picks have research signals
+```
+
+**Fixed in:** v20.13 (Feb 9, 2026) — Commit `33a4a02`
+
+### Lesson 67: GOLD_STAR Gate Labels Drifted from Contract Thresholds (v20.13)
+**Problem:** GOLD_STAR downgrade messages showed wrong gate names (`research_gte_5.5`, `esoteric_gte_4.0`) that didn't match the actual thresholds in `scoring_contract.py` (`research_score: 6.5`, `esoteric_score: 5.5`). This made debugging tier downgrades misleading — operators would think a pick failed at 5.5 when the real gate is 6.5.
+
+**Root Cause:** When `scoring_contract.py` was updated with correct thresholds, the gate label strings in `live_data_router.py` were never updated to match. The labels are just cosmetic strings, so no tests caught the drift:
+
+```python
+# live_data_router.py line 5433 — BEFORE (WRONG)
+"research_gte_5.5": research_score >= GOLD_STAR_GATES["research_score"],  # Label says 5.5, actual gate is 6.5
+"esoteric_gte_4.0": esoteric_score >= GOLD_STAR_GATES["esoteric_score"],  # Label says 4.0, actual gate is 5.5
+
+# AFTER (CORRECT)
+"research_gte_6.5": research_score >= GOLD_STAR_GATES["research_score"],  # Label matches threshold
+"esoteric_gte_5.5": esoteric_score >= GOLD_STAR_GATES["esoteric_score"],  # Label matches threshold
+```
+
+**Additional Drift Found:** Documentation in CLAUDE.md and `docs/MASTER_INDEX.md` also showed old values:
+- CLAUDE.md GOLD_STAR table: `research ≥ 5.5` → fixed to `≥ 6.5`
+- CLAUDE.md GOLD_STAR table: `esoteric ≥ 4.0` → fixed to `≥ 5.5`
+- MASTER_INDEX.md: `research>=5.5, esoteric>=4.0` → fixed to match contract
+
+**Impact:** Misleading debug output. When a pick was downgraded from GOLD_STAR to EDGE_LEAN, the `gold_star_failed_gates` field showed labels like `research_gte_5.5` even though the actual threshold is 6.5. Operators debugging score issues would look at the wrong threshold.
+
+**Prevention:**
+1. **NEVER hardcode threshold values in label strings** — derive labels from the contract constants or use generic names like `"research_gate"`
+2. **When updating `scoring_contract.py`, grep ALL files for old values** — `grep -rn "5\.5\|4\.0" CLAUDE.md docs/ live_data_router.py | grep -i "gate\|gold_star\|esoteric\|research"`
+3. **Add a drift scan for gate labels vs contract** — gate label strings should be validated against `GOLD_STAR_GATES` values
+4. **Single source of truth** — `core/scoring_contract.py:GOLD_STAR_GATES` is authoritative; everything else must match
+
+**Files Modified:**
+- `live_data_router.py` — Lines 5433, 5435: Fixed gate label strings
+- `CLAUDE.md` — GOLD_STAR gate table: Fixed threshold values
+- `docs/MASTER_INDEX.md` — Fixed GOLD_STAR gate summary
+
+**Verification:**
+```bash
+# Verify labels match contract
+python3 -c "
+from core.scoring_contract import GOLD_STAR_GATES
+print('Contract thresholds:')
+for k, v in GOLD_STAR_GATES.items():
+    print(f'  {k}: {v}')
+"
+# Should show: research_score: 6.5, esoteric_score: 5.5
+
+# Check live_data_router labels match
+grep -n "research_gte\|esoteric_gte" live_data_router.py
+# Should show research_gte_6.5 and esoteric_gte_5.5
+```
+
+**Fixed in:** v20.13 (Feb 9, 2026) — Commit `33a4a02`
 
 ### Active Paid Integrations (v20.12)
 
