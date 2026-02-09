@@ -137,7 +137,7 @@ For overnight jobs to run:
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (70 Total) - Key Categories
+### Lessons Learned (71 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
