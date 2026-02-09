@@ -307,7 +307,7 @@ class AutoGrader:
             # Determine player_name/stat_type based on pick type
             pick_type = pick.get("pick_type", pick.get("market", "")).upper()
 
-            if pick_type == "PROP":
+            if pick_type in ("PROP", "PLAYER_PROP"):
                 player_name = pick.get("player_name", pick.get("description", "Unknown"))
                 stat_type = pick.get("stat_type", pick.get("prop_type", "unknown"))
             else:
