@@ -80,8 +80,33 @@
 ### Dormant Features (55) — v20.12
 55. [Officials Fallback to Tendency Database](#55-officials-fallback-to-tendency-database-pillar-16)
 
+### Real Data Sources & Signals (56-62) — v20.10-v20.11
+56. [SHARP Signal Field Name Mismatch](#56-sharp-signal-field-name-mismatch)
+57. [NOAA Space Weather — Replace Simulation with Real API](#57-noaa-space-weather--replace-simulation-with-real-api)
+58. [Live Game Signals — ESPN Scoreboard Integration](#58-live-game-signals--espn-scoreboard-integration)
+59. [Void Moon — Improved Lunar Calculation](#59-void-moon--improved-lunar-calculation)
+60. [LSTM Real Training Data — Playbook API Integration](#60-lstm-real-training-data--playbook-api-integration)
+61. [Comprehensive Rivalry Database Expansion](#61-comprehensive-rivalry-database-expansion)
+62. [Post-Base Signals — Hidden Adjustments](#62-post-base-signals--hidden-adjustments)
+
+### Dormant Features & CI Fixes (63-65) — v20.12
+63. [Stadium Altitude & Travel Fatigue](#63-stadium-altitude--travel-fatigue)
+64. [CI Spot Check Partial-Success Error Handling](#64-ci-spot-check-partial-success-error-handling)
+65. [SERP Quota Cost vs Value Analysis](#65-serp-quota-cost-vs-value-analysis)
+
+### Learning Loop Coverage (66-67) — v20.13
+66. [SPORT_STATS Incomplete Coverage](#66-sport_stats-incomplete-coverage)
+67. [Learning Loop Stat Type Sync Invariant](#67-learning-loop-stat-type-sync-invariant)
+
 ### Shell Script Error Handling (68) — v20.13
 68. [Robust Shell Script Error Handling for Sanity Reports](#68-robust-shell-script-error-handling-for-sanity-reports)
+
+### Field Name & Gate Drift (69-70) — v20.13
+69. [Auto-Grader Field Name Mismatch](#69-auto-grader-field-name-mismatch)
+70. [GOLD_STAR Gate Labels Drifted from Contract](#70-gold_star-gate-labels-drifted-from-contract)
+
+### Grader Routes & Authentication (71) — v20.14
+71. [Grader Routes Require /live Prefix and API Key](#71-grader-routes-require-live-prefix-and-api-key)
 
 ---
 
@@ -1100,6 +1125,397 @@ def get_likely_officials_for_game(sport: str, home_team: str, game_time: datetim
 
 ---
 
+## 56. SHARP Signal Field Name Mismatch
+
+### The Mistake
+SHARP picks showed 18% hit rate (2W-9L) with all picks showing `actual: 0.0`. Sharp money signals were always being graded as HOME team wins regardless of the actual sharp side.
+
+### The Fix
+The SHARP signal dictionary uses `sharp_side` field with lowercase values ("home" or "away"), but the pick creation code used `signal.get("side", "HOME")` which always returned the default "HOME" since the `side` field doesn't exist in the signal.
+
+```python
+# BUG — signal has "sharp_side", not "side"
+sharp_side = "home" if money_pct > ticket_pct else "away"  # Line 1924
+data.append({
+    "sharp_side": sharp_side,  # The actual field name
+    ...
+})
+
+# Pick creation used wrong field:
+side = signal.get("side", "HOME")  # ALWAYS returns "HOME"!
+
+# FIX — Use correct field name with case conversion
+sharp_side = signal.get("sharp_side", "home").upper()  # "home" → "HOME"
+```
+
+### Rule
+> **INVARIANT**: NEVER assume field names — always trace back to where the data dictionary is created. Field name consistency matters: if source uses `sharp_side`, consuming code must also use `sharp_side`.
+
+---
+
+## 57. NOAA Space Weather — Replace Simulation with Real API
+
+### The Mistake
+`signals/physics.py:get_kp_index()` used time-based simulation instead of real Kp-Index data from NOAA Space Weather API.
+
+### The Fix
+The function was a placeholder simulation (time-modulated fake values 0-9) even though `alt_data_sources/noaa.py` had a fully working `fetch_kp_index_live()` implementation that was never called.
+
+```python
+# signals/physics.py - Now calls real NOAA API
+from alt_data_sources.noaa import get_kp_betting_signal, NOAA_ENABLED
+
+def get_kp_index(game_time: datetime = None) -> Dict[str, Any]:
+    if NOAA_ENABLED:
+        try:
+            signal = get_kp_betting_signal(game_time)
+            return {
+                "kp_value": signal.get("kp_index", 3.0),
+                "storm_level": signal.get("storm_level", "QUIET"),
+                "source": "noaa_live",
+                ...
+            }
+        except Exception:
+            pass
+    # Fallback to time-based estimation
+    return {"kp_value": 3.0, "source": "fallback", ...}
+```
+
+### Rule
+> **INVARIANT**: When a data fetching implementation exists in `alt_data_sources/`, wire it into the consuming module. NEVER leave working fetch methods uncalled.
+
+---
+
+## 58. Live Game Signals — ESPN Scoreboard Integration
+
+### The Mistake
+`live_data_router.py` hardcoded `home_score=0, away_score=0, period=1` for in-game adjustments instead of using actual live scores from ESPN.
+
+### The Fix
+ESPN scoreboard was being fetched but never parsed to extract live game data. Added parsing to build a live scores lookup:
+
+```python
+# live_data_router.py - Build live scores lookup from ESPN scoreboard
+_live_scores_by_teams = {}
+if espn_scoreboard and isinstance(espn_scoreboard, dict):
+    for event in espn_scoreboard.get("events", []):
+        competitions = event.get("competitions", [{}])
+        if competitions:
+            competitors = competitions[0].get("competitors", [])
+            home_comp = next((c for c in competitors if c.get("homeAway") == "home"), {})
+            away_comp = next((c for c in competitors if c.get("homeAway") == "away"), {})
+            _live_scores_by_teams[(home_comp.get("team", {}).get("displayName", ""),
+                                   away_comp.get("team", {}).get("displayName", ""))] = {
+                "home_score": int(home_comp.get("score", 0)),
+                "away_score": int(away_comp.get("score", 0)),
+                "period": event.get("status", {}).get("period", 1),
+            }
+```
+
+### Rule
+> **INVARIANT**: When fetching external data (ESPN scoreboard), extract and wire ALL useful fields into the scoring pipeline. Don't leave hardcoded placeholder values.
+
+---
+
+## 59. Void Moon — Improved Lunar Calculation
+
+### The Mistake
+`signals/hive_mind.py:get_void_moon()` used a simplified 27.3-day cycle approximation that was inaccurate for precise void-of-course detection.
+
+### The Fix
+The original calculation used a simple linear formula based on sidereal month (27.3 days), ignoring synodic month (29.53 days) and lunar orbit perturbations (~6.3° variation).
+
+```python
+# signals/hive_mind.py - Meeus-based lunar ephemeris
+SYNODIC_MONTH = 29.53059  # More accurate than 27.3 sidereal
+MEEUS_EPOCH = datetime(2000, 1, 6, 18, 14, 0, tzinfo=timezone.utc)
+PERTURBATION_AMPLITUDE = 6.289  # Main lunar perturbation (degrees)
+
+def _calculate_moon_longitude(dt: datetime) -> float:
+    """Calculate ecliptic longitude using Meeus method with perturbation."""
+    days_since_epoch = (dt - MEEUS_EPOCH).total_seconds() / 86400.0
+    mean_longitude = (218.3165 + 13.176396 * days_since_epoch) % 360
+    M = (134.963 + 13.064993 * days_since_epoch) % 360
+    correction = PERTURBATION_AMPLITUDE * math.sin(math.radians(M))
+    return (mean_longitude + correction) % 360
+
+def _is_void_of_course(longitude: float) -> Tuple[bool, float]:
+    """VOC when moon in last 3 degrees of sign (more conservative)."""
+    sign_position = longitude % 30
+    if sign_position >= 27:  # Last 3 degrees = VOC
+        return True, (30 - sign_position) / 30
+    return False, 0.0
+```
+
+### Rule
+> **INVARIANT**: Use proper astronomical formulas for celestial calculations (Meeus algorithm). Include perturbation terms for lunar calculations. Be conservative with esoteric signals.
+
+---
+
+## 60. LSTM Real Training Data — Playbook API Integration
+
+### The Mistake
+`lstm_training_pipeline.py` had a TODO at line 478 and always used synthetic data, even though `fetch_player_games()` was fully implemented at lines 141-179.
+
+### The Fix
+The `build_training_data_real()` method that should call `fetch_player_games()` was never implemented.
+
+```python
+# lstm_training_pipeline.py - New build_training_data_real() method
+@classmethod
+def build_training_data_real(
+    cls, sport: str, stat_type: str, max_players: int = 100, min_games: int = 20
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Build training data from real Playbook API game logs."""
+    STAT_FIELD_MAP = {
+        "points": "points", "rebounds": "rebounds", "assists": "assists",
+        "threes": "threePointersMade", "passing_yards": "passingYards", ...
+    }
+    X_sequences, y_targets = [], []
+    for player in fetch_players(sport, limit=max_players):
+        games = fetch_player_games(player_id, sport, limit=50)
+        # Build sliding window sequences...
+    return np.array(X_sequences), np.array(y_targets)
+
+# train_sport() - Try real data first, fallback to synthetic
+if not use_synthetic:
+    X, y = HistoricalDataFetcher.build_training_data_real(sport, stat_type, ...)
+    if len(X) >= TrainingConfig.MIN_SAMPLES_PER_SPORT:  # 500
+        data_source = "real_playbook"
+if len(X) < TrainingConfig.MIN_SAMPLES_PER_SPORT:
+    X, y = SyntheticDataGenerator.generate_training_data(sport, stat_type)
+    data_source = "synthetic"
+```
+
+### Rule
+> **INVARIANT**: NEVER leave working fetch methods uncalled. If data fetching is implemented, wire it into the pipeline. Always add fallback for external data sources.
+
+---
+
+## 61. Comprehensive Rivalry Database Expansion
+
+### The Mistake
+`MAJOR_RIVALRIES` in `esoteric_engine.py` only covered ~50 popular matchups. Mid-market and newer teams (Kraken, Golden Knights, Utah Jazz) had no entries.
+
+### The Fix
+Expanded from ~50 to 204 rivalries covering all teams in 5 sports:
+
+```python
+# esoteric_engine.py — Comprehensive coverage
+MAJOR_RIVALRIES = {
+    "NBA": [  # 35 rivalries covering all 30 teams
+        ({"celtics", "boston"}, {"lakers", "los angeles lakers"}, "HIGH"),
+        ({"celtics", "boston"}, {"sixers", "76ers", "philadelphia"}, "HIGH"),
+        ...
+    ],
+    "NFL": [  # 46 rivalries covering all 32 teams
+        ({"bills", "buffalo"}, {"dolphins", "miami"}, "HIGH"),
+        ...
+    ],
+    "NHL": [  # 36 rivalries including newest teams
+        ({"kraken", "seattle"}, {"canucks", "vancouver"}, "MEDIUM"),
+        ({"golden knights", "vegas"}, {"sharks", "san jose"}, "HIGH"),
+        ...
+    ],
+    "MLB": [  # 36 rivalries + interleague
+        ...
+    ],
+    "NCAAB": [  # 51 rivalries for major programs
+        ...
+    ],
+}
+# Total: 204 rivalries across 5 sports
+```
+
+### Rule
+> **INVARIANT**: NEVER add partial data for a sport — cover ALL teams, not just "popular" ones. Include newest teams (Kraken 2021, Golden Knights 2017, Utah 2024).
+
+---
+
+## 62. Post-Base Signals — Hidden Adjustments
+
+### The Mistake
+Hook Discipline, Expert Consensus, and Prop Correlation signals were incorrectly mutating `research_score` AFTER `base_score` was computed. This meant the adjustments had NO EFFECT on `final_score`.
+
+### The Fix
+Wire signals as explicit parameters to `compute_final_score_option_a()`:
+
+```python
+# BUG — Mutating research_score AFTER base_score is computed
+research_score = 7.5  # Already used to compute base_score
+hook_penalty = -0.25
+research_score += hook_penalty  # TOO LATE! base_score already locked
+
+# CORRECT — Post-base additive fields passed explicitly
+final_score = compute_final_score_option_a(
+    ai_score=ai_score,
+    research_score=research_score,
+    esoteric_score=esoteric_score,
+    jarvis_score=jarvis_score,
+    context_modifier=context_modifier,
+    hook_penalty=hook_penalty,              # NEW: post-base
+    expert_consensus_boost=expert_boost,    # NEW: post-base
+    prop_correlation_adjustment=prop_corr,  # NEW: post-base
+)
+```
+
+### Rule
+> **INVARIANT**: NEVER mutate engine scores for post-base signals. Engine scores (ai, research, esoteric, jarvis) are LOCKED once BASE_4 is computed. Post-base signals MUST be explicit parameters to `compute_final_score_option_a()`.
+
+---
+
+## 63. Stadium Altitude & Travel Fatigue
+
+### The Mistake
+Three implemented features were dormant:
+1. Stadium altitude impact — code existed but wasn't wired into scoring
+2. Travel fatigue — code existed but `rest_days` variable was undefined
+3. Gematria Twitter — fully wired but needed `SERPAPI_KEY` env var
+
+### The Fix
+```python
+# 1. Stadium Altitude — Added in live_data_router.py
+if _is_game_pick and sport_upper in ("NFL", "MLB"):
+    from alt_data_sources.stadium import calculate_altitude_impact, lookup_altitude, STADIUM_ENABLED
+    if STADIUM_ENABLED:
+        _altitude = lookup_altitude(home_team)
+        if _altitude and _altitude > 1000:
+            _alt_impact = calculate_altitude_impact(sport_upper, _altitude)
+            if _alt_impact.get("overall_impact") != "NONE":
+                altitude_adj = _alt_impact.get("scoring_impact", 0.0)
+                if altitude_adj > 0:
+                    esoteric_reasons.append(f"Altitude: {_alt_impact.get('reasons', ['High altitude'])[0]}")
+
+# 2. Travel Fatigue Fix
+# BEFORE (BUG):
+_rest_days = rest_days if 'rest_days' in dir() else 1
+# AFTER (FIXED):
+_rest_days = _rest_days_for_team(away_team) or 1
+```
+
+### Rule
+> **INVARIANT**: ALWAYS check env var requirements — dormant code often just needs feature flags enabled. Use existing closures (`_rest_days_for_team()`) rather than undefined variables.
+
+---
+
+## 64. CI Spot Check Partial-Success Error Handling
+
+### The Mistake
+Session 8 spot check script failed when NFL endpoint returned valid picks alongside timeout errors (`PROPS_TIMED_OUT`, `GAME_PICKS_TIMED_OUT`). The script treated ANY error as fatal.
+
+### The Fix
+```bash
+# Count picks returned (including partial results)
+picks_count="$(echo "$body" | jq -r '([.props.picks[]?] + [.game_picks.picks[]?]) | length')"
+
+# Check for FATAL errors only (not timeout codes)
+has_fatal_err="$(echo "$body" | jq -r '
+  (has("error") and .error != null and .error != "") or
+  (has("errors") and (.errors | map(select(
+    .code != "PROPS_TIMED_OUT" and .code != "GAME_PICKS_TIMED_OUT"
+  )) | length) > 0)
+' 2>/dev/null || echo "false")"
+
+# Logic:
+# - Fatal error → FAIL
+# - Partial success (timeout + picks) → PASS
+# - Zero picks with timeout → WARNING (off-season)
+```
+
+### Rule
+> **INVARIANT**: NEVER fail CI on ANY error — check error codes and actual data presence. Allow partial success: timeout errors with valid data = working endpoint.
+
+---
+
+## 65. SERP Quota Cost vs Value Analysis
+
+### The Mistake
+SERP API burned 5000+ searches/month with 1000+ searches in a single day. Quota exhausted mid-month causing 429 rate limits.
+
+### The Fix
+SERP was enabled by default for both props AND game picks. Each best-bets request triggered ~70+ Google searches.
+
+| Signal | Max Boost | Source |
+|--------|-----------|--------|
+| Sharp Chatter | +1.3 | SERP |
+| Narrative Momentum | +0.7 | SERP |
+| Noosphere Buzz | +0.6 | SERP |
+| **Total SERP Impact** | **+2.6 max** | 5000 searches/month |
+
+**Decision:** Disabled SERP by default (`SERP_INTEL_ENABLED=false`).
+
+### Rule
+> **INVARIANT**: NEVER enable expensive per-call APIs by default — require explicit opt-in. Calculate cost/benefit before enabling.
+
+---
+
+## 66. SPORT_STATS Incomplete Coverage
+
+### The Mistake
+`SchedulerConfig.SPORT_STATS` in `daily_scheduler.py` only defined 3 stat types per sport (e.g., NBA = points, rebounds, assists), but the system supports 7 NBA prop types. The auto grader was only tracking weights for 3 of 7 prop types.
+
+### The Fix
+```python
+# BUG — Only 3 stat types audited
+SPORT_STATS = {
+    "NBA": ["points", "rebounds", "assists"],  # Missing 4 prop types!
+}
+
+# FIXED — All 7 NBA prop types now audited
+SPORT_STATS = {
+    "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "pra"],
+    "NFL": ["passing_yards", "rushing_yards", "receiving_yards"],
+    "MLB": ["hits", "total_bases", "strikeouts"],
+    "NHL": ["points", "shots"],
+    "NCAAB": ["points", "rebounds"]
+}
+```
+
+### Rule
+> **INVARIANT**: NEVER add prop types to `_initialize_weights()` without adding to `SPORT_STATS` — they must stay in sync.
+
+---
+
+## 67. Learning Loop Stat Type Sync Invariant
+
+### The Mistake
+Three separate locations define prop stat types, and they can drift out of sync:
+1. `auto_grader.py:_initialize_weights()` — Creates weight entries
+2. `auto_grader.py:run_daily_audit()` — Which types get audited
+3. `daily_scheduler.py:SchedulerConfig.SPORT_STATS` — Which types the scheduler audits
+
+### The Fix
+For each sport, these three lists MUST be identical:
+```
+1. auto_grader._initialize_weights() prop_stat_types[sport]
+2. auto_grader.run_daily_audit() prop_stat_types[sport]
+3. daily_scheduler.SchedulerConfig.SPORT_STATS[sport]
+
+If ANY differ, some prop types won't have weights OR won't be audited.
+```
+
+**Verification Command:**
+```bash
+python3 -c "
+from auto_grader import AutoGrader
+from daily_scheduler import SchedulerConfig
+
+grader = AutoGrader()
+for sport in ['NBA', 'NFL', 'MLB', 'NHL', 'NCAAB']:
+    scheduler_stats = set(SchedulerConfig.SPORT_STATS.get(sport, []))
+    weight_stats = set(grader.weights.get(sport, {}).keys()) - {'spread', 'total', 'moneyline', 'sharp'}
+    if scheduler_stats != weight_stats:
+        print(f'MISMATCH {sport}: scheduler={scheduler_stats}, weights={weight_stats}')
+    else:
+        print(f'OK {sport}: {len(scheduler_stats)} prop types')
+"
+```
+
+### Rule
+> **INVARIANT**: ALWAYS update all 3 locations when adding a new prop stat type. Consider refactoring to single `PROP_STAT_TYPES` constant.
+
+---
+
 ## 68. Robust Shell Script Error Handling for Sanity Reports
 
 ### The Mistake
@@ -1152,6 +1568,97 @@ echo "$resp" | jq -r '{ ... }'
 
 ---
 
+## 69. Auto-Grader Field Name Mismatch
+
+### The Mistake
+The daily learning loop (auto_grader) always saw 0.0 for all three research engine signals (sharp money, public fade, line variance). The learning loop could never learn from or adjust research signal weights because it was reading the wrong field names.
+
+### The Fix
+Two different code paths write and read research signal data with **different field names**:
+
+| Path | When | Field Names Used |
+|------|------|-----------------|
+| **Live path** (`log_prediction()`) | Every best-bets call | Correctly maps `sharp_boost` → `sharp_money_adjustment` |
+| **JSONL read path** (`_convert_pick_to_record()`) | Daily 6AM audit | Read `research_breakdown.sharp_money` — **WRONG** |
+
+The pick payload stores fields as `sharp_boost`, `public_boost`, `line_boost` in `research_breakdown`, but `_convert_pick_to_record()` looked for `sharp_money`, `public_fade`, `line_variance`.
+
+```python
+# BUG — auto_grader.py line 368-370
+sharp_money_adjustment=pick.get("research_breakdown", {}).get("sharp_money", 0.0),  # Always 0.0!
+public_fade_adjustment=pick.get("research_breakdown", {}).get("public_fade", 0.0),  # Always 0.0!
+line_variance_adjustment=pick.get("research_breakdown", {}).get("line_variance", 0.0),  # Always 0.0!
+
+# FIX — Try correct field name first, fall back to old name for backward compat
+sharp_money_adjustment=pick.get("research_breakdown", {}).get("sharp_boost",
+    pick.get("research_breakdown", {}).get("sharp_money", 0.0)),
+```
+
+### Rule
+> **INVARIANT**: NEVER assume field names match across read/write paths — trace the full data flow from creation → storage → retrieval. Add fallback patterns for field name changes: `dict.get("new_name", dict.get("old_name", default))`.
+
+---
+
+## 70. GOLD_STAR Gate Labels Drifted from Contract
+
+### The Mistake
+GOLD_STAR downgrade messages showed wrong gate names (`research_gte_5.5`, `esoteric_gte_4.0`) that didn't match the actual thresholds in `scoring_contract.py` (`research_score: 6.5`, `esoteric_score: 5.5`). This made debugging tier downgrades misleading.
+
+### The Fix
+When `scoring_contract.py` was updated with correct thresholds, the gate label strings in `live_data_router.py` were never updated to match:
+
+```python
+# live_data_router.py line 5433 — BEFORE (WRONG)
+"research_gte_5.5": research_score >= GOLD_STAR_GATES["research_score"],  # Label says 5.5, actual gate is 6.5
+"esoteric_gte_4.0": esoteric_score >= GOLD_STAR_GATES["esoteric_score"],  # Label says 4.0, actual gate is 5.5
+
+# AFTER (CORRECT)
+"research_gte_6.5": research_score >= GOLD_STAR_GATES["research_score"],  # Label matches threshold
+"esoteric_gte_5.5": esoteric_score >= GOLD_STAR_GATES["esoteric_score"],  # Label matches threshold
+```
+
+**Additional Drift Found:** Documentation in CLAUDE.md and `docs/MASTER_INDEX.md` also showed old values.
+
+### Rule
+> **INVARIANT**: NEVER hardcode threshold values in label strings — derive labels from the contract constants or use generic names. When updating `scoring_contract.py`, grep ALL files for old values.
+
+---
+
+## 71. Grader Routes Require /live Prefix and API Key
+
+### The Mistake
+All 5 grader endpoints returned 404 errors when accessed at paths like `/grader/status`, `/grader/weights/NBA`, etc. After fixing paths, public URL access returned 401 Unauthorized.
+
+### The Fix
+1. **Router prefix forgotten**: `live_data_router.py` is mounted with prefix `/live` in `main.py`, so all routes defined as `/grader/...` are actually served at `/live/grader/...`
+2. **Auth requirement not documented**: All `/live/*` endpoints require `X-API-Key` header for authentication
+
+**Correct Grader Endpoints (all require `/live` prefix):**
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/live/grader/status` | GET | Grader health check |
+| `/live/grader/weights/{sport}` | GET | Current learned weights |
+| `/live/grader/bias/{sport}` | GET | Model bias analysis |
+| `/live/grader/run-audit` | POST | Trigger learning audit |
+| `/live/grader/performance/{sport}` | GET | Historical performance |
+
+**Verification Commands:**
+```bash
+# Localhost (inside container):
+curl http://localhost:8000/live/grader/status
+
+# Public URL (with auth):
+curl -H "X-API-Key: $API_KEY" https://web-production-7b2a.up.railway.app/live/grader/status
+
+# Full verification:
+./scripts/verify_grader_routes.sh
+```
+
+### Rule
+> **INVARIANT**: NEVER test routes without checking how the router is mounted in `main.py`. Routes in `live_data_router.py` are mounted at `/live/*`. All public `/live/*` URLs require `X-API-Key` header.
+
+---
+
 ## Quick Reference: The Golden Rules
 
 1. **Database**: Always use `with get_db() as db:` context manager
@@ -1179,6 +1686,9 @@ echo "$resp" | jq -r '{ ... }'
 23. **Grep After Fix**: When fixing a bug, grep the codebase for the same pattern and fix ALL instances
 24. **API Timing Fallbacks**: When external APIs have timing gaps (data assigned late), provide fallbacks using existing tendency/lookup databases with confidence markers
 25. **Shell Script Curl**: Never pipe curl directly to jq — capture HTTP code, curl exit code, validate JSON first, show response head on error
+26. **Field Name Consistency**: Trace full data flow from creation → storage → retrieval; add fallback patterns for field name changes
+27. **Gate Label Sync**: Never hardcode threshold values in label strings; grep all files after updating scoring_contract.py
+28. **Route Mounting**: Check how routers are mounted in main.py; `/live/*` routes require X-API-Key header
 
 ---
 
