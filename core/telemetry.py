@@ -71,6 +71,8 @@ def attach_integration_telemetry_debug(
         "odds_api_calls": _real_calls("odds_api"),
         "playbook_calls": _real_calls("playbook_api"),
         "serp_calls": _real_calls("serpapi"),
+        "noaa_kp_calls": _real_calls("noaa_kp"),
+        "noaa_solar_calls": _real_calls("noaa_solar"),
     }
 
 
