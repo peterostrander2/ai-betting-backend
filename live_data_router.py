@@ -3430,6 +3430,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             if ai_score_raw < 0 or ai_score_raw > 10:
                 raise ValueError(f"ai_score out of range [0,10]: {ai_score_raw}")
 
+            # v20.13: MPS returns 0.0 when predicted_value equals line (semantic mismatch)
+            # MPS formula: abs(predicted_value - line) / std_dev * 5
+            # For game picks, predictions often equal the line, yielding 0.0
+            # Use heuristic fallback instead, which produces meaningful 5.0-8.0 scores
+            if ai_score_raw < 1.0:
+                raise ValueError(f"ai_score too low for game pick ({ai_score_raw:.2f}), using heuristic")
+
             # ===== EXTRACT DIAGNOSTICS =====
             ai_score = float(ai_score_raw)
             confidence = result.get("confidence", "unknown")
