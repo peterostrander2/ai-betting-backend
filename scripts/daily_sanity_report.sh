@@ -31,9 +31,26 @@ printf "\n"
 # Live endpoints per sport
 for sport in $SPORTS; do
   printf "[BEST-BETS %s]\n" "$sport"
-  resp=$(curl -sS "$API_BASE/live/best-bets/$sport" -H "X-API-Key: $API_KEY" || true)
-  if [[ -z "$resp" ]]; then
-    echo "ERROR: empty response" >&2
+  resp_file=$(mktemp)
+  http_code=$(curl -sS -o "$resp_file" -w "%{http_code}" \
+    "$API_BASE/live/best-bets/$sport?debug=1" \
+    -H "X-API-Key: $API_KEY" 2>&1)
+  curl_rc=$?
+
+  resp=$(cat "$resp_file" 2>/dev/null || true)
+  rm -f "$resp_file"
+
+  if [ $curl_rc -ne 0 ] || [ -z "$resp" ]; then
+    echo "$sport: ERROR curl_rc=$curl_rc http_code=$http_code"
+    echo "resp_head: $(echo "$resp" | head -c 200)"
+    printf "\n"
+    continue
+  fi
+
+  # verify JSON before parsing
+  if ! echo "$resp" | jq -e . >/dev/null 2>&1; then
+    echo "$sport: ERROR non_json http_code=$http_code"
+    echo "resp_head: $(echo "$resp" | head -c 200)"
     printf "\n"
     continue
   fi

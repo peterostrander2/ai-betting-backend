@@ -510,7 +510,7 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 
 - `docs/MASTER_INDEX.md` — this file (routing + policy)
 - `CLAUDE.md` — invariants + operational rules
-- `docs/LESSONS.md` — mistakes made and how to avoid repeating them (61 lessons as of v20.11)
+- `docs/LESSONS.md` — mistakes made and how to avoid repeating them (68 lessons as of v20.13)
 - `SCORING_LOGIC.md` — scoring details + contract representation
 - `PROJECT_MAP.md` — file/module responsibilities
 - `COMMIT_CHECKLIST.md` — code+docs commit discipline
@@ -708,8 +708,8 @@ tail -20 ~/ai-betting-backend/logs/cron.log
 
 **Invariant Updates:**
 - TOTAL_BOOST_CAP = 1.5 (fixed from incorrect 3.5 in sanity scripts and docs)
-- 61 total lessons documented
-- 27 NEVER DO categories
+- 68 total lessons documented
+- 28 NEVER DO categories (Shell Script Error Handling added)
 
 **Prevention Checklist Added to CLAUDE.md:**
 A new "🛡️ Prevention Checklist" section consolidates key prevention rules from all lessons for quick reference before writing code.

@@ -8926,3 +8926,80 @@ for sport in ['NBA', 'NFL', 'MLB', 'NHL', 'NCAAB']:
 - 215: NEVER assume "big 3" props (points, rebounds, assists) are sufficient — smaller prop markets (threes, steals, blocks) need learning too
 
 **Fixed in:** v20.13 (Feb 8, 2026)
+
+### Lesson 68: Robust Shell Script Error Handling for Sanity Reports (v20.13)
+**Problem:** The daily sanity report script (`scripts/daily_sanity_report.sh`) would fail silently or with cryptic jq parsing errors when an API endpoint returned null, empty, or non-JSON responses. This made it impossible to distinguish between:
+1. **Transient API errors** (network issues, backend timeouts, empty data)
+2. **Code parsing bugs** (jq syntax errors, missing fields)
+3. **Actual data problems** (malformed JSON from backend)
+
+**Root Cause:** The original curl pattern piped output directly to jq without:
+- Capturing the HTTP status code
+- Capturing the curl exit code
+- Validating JSON before parsing
+- Preserving raw response for debugging
+
+**The Fix (v20.13):**
+```bash
+# ROBUST PATTERN — Use temp file to capture response + codes
+resp_file=$(mktemp)
+http_code=$(curl -sS -o "$resp_file" -w "%{http_code}" \
+  "$API_BASE/live/best-bets/$sport?debug=1" \
+  -H "X-API-Key: $API_KEY" 2>&1)
+curl_rc=$?
+
+resp=$(cat "$resp_file" 2>/dev/null || true)
+rm -f "$resp_file"
+
+# Check curl exit code and empty response
+if [ $curl_rc -ne 0 ] || [ -z "$resp" ]; then
+  echo "$sport: ERROR curl_rc=$curl_rc http_code=$http_code"
+  echo "resp_head: $(echo "$resp" | head -c 200)"
+  printf "\n"
+  continue
+fi
+
+# Validate JSON before parsing
+if ! echo "$resp" | jq -e . >/dev/null 2>&1; then
+  echo "$sport: ERROR non_json http_code=$http_code"
+  echo "resp_head: $(echo "$resp" | head -c 200)"
+  printf "\n"
+  continue
+fi
+
+# Now safe to parse with jq
+echo "$resp" | jq -r '{ ... }'
+```
+
+**Why This Pattern Works:**
+1. **Temp file** — Separates response capture from status code extraction (can't do both with pipes)
+2. **`-w "%{http_code}"`** — Captures HTTP status even on non-2xx responses
+3. **`$?` capture** — Detects network failures, DNS errors, connection refused
+4. **`jq -e .`** — Validates JSON without producing output (exit 1 if invalid)
+5. **`head -c 200`** — Shows response prefix for debugging without flooding logs
+
+**Diagnosis Flowchart:**
+```
+curl_rc != 0  → Network/connection error (check DNS, firewall, SSL)
+http_code 4xx → Auth failure (check API_KEY) or endpoint not found
+http_code 5xx → Backend error (check Railway logs)
+non_json      → Backend returned HTML error page or partial response
+Empty resp    → Backend returned 204/empty body or connection dropped
+```
+
+**Prevention:**
+1. **NEVER pipe curl directly to jq** without validating JSON first — `curl ... | jq` hides the real error
+2. **ALWAYS capture HTTP code** — A 200 with empty body is different from a 500 with error JSON
+3. **ALWAYS capture curl exit code** — Network errors return exit code != 0 but no HTTP code
+4. **ALWAYS show response head on error** — First 200 chars reveal HTML error pages, auth failures, etc.
+
+**NEVER DO (Shell Script Error Handling - rules 216-219):**
+- 216: NEVER use `curl ... | jq` without JSON validation — jq parse errors hide the real problem
+- 217: NEVER assume HTTP 200 means valid data — backend might return `null` or `{}` with 200
+- 218: NEVER discard curl exit code — network failures need different diagnosis than API errors
+- 219: NEVER log full response on error — use `head -c 200` to avoid flooding logs with huge HTML pages
+
+**Files Modified:**
+- `scripts/daily_sanity_report.sh` — Added robust error handling pattern
+
+**Fixed in:** v20.13 (Feb 8, 2026)

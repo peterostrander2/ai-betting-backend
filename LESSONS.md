@@ -80,6 +80,9 @@
 ### Dormant Features (55) — v20.12
 55. [Officials Fallback to Tendency Database](#55-officials-fallback-to-tendency-database-pillar-16)
 
+### Shell Script Error Handling (68) — v20.13
+68. [Robust Shell Script Error Handling for Sanity Reports](#68-robust-shell-script-error-handling-for-sanity-reports)
+
 ---
 
 ## 1. Database Session Handling
@@ -1097,6 +1100,58 @@ def get_likely_officials_for_game(sport: str, home_team: str, game_time: datetim
 
 ---
 
+## 68. Robust Shell Script Error Handling for Sanity Reports
+
+### The Mistake
+The daily sanity report script (`scripts/daily_sanity_report.sh`) piped curl output directly to jq without validating HTTP status, curl exit code, or JSON validity. When an API endpoint returned null, empty, or non-JSON responses, the script failed with cryptic jq parse errors, making it impossible to distinguish:
+- Transient API errors (network issues, backend timeouts, empty data)
+- Code parsing bugs (jq syntax errors, missing fields)
+- Actual data problems (malformed JSON from backend)
+
+### The Fix
+Use a temp file pattern to capture response body separately from HTTP code and curl exit code:
+
+```bash
+# ROBUST PATTERN — Use temp file to capture response + codes
+resp_file=$(mktemp)
+http_code=$(curl -sS -o "$resp_file" -w "%{http_code}" \
+  "$API_BASE/live/best-bets/$sport?debug=1" \
+  -H "X-API-Key: $API_KEY" 2>&1)
+curl_rc=$?
+
+resp=$(cat "$resp_file" 2>/dev/null || true)
+rm -f "$resp_file"
+
+# Check curl exit code and empty response
+if [ $curl_rc -ne 0 ] || [ -z "$resp" ]; then
+  echo "$sport: ERROR curl_rc=$curl_rc http_code=$http_code"
+  echo "resp_head: $(echo "$resp" | head -c 200)"
+  continue
+fi
+
+# Validate JSON before parsing
+if ! echo "$resp" | jq -e . >/dev/null 2>&1; then
+  echo "$sport: ERROR non_json http_code=$http_code"
+  echo "resp_head: $(echo "$resp" | head -c 200)"
+  continue
+fi
+
+# Now safe to parse with jq
+echo "$resp" | jq -r '{ ... }'
+```
+
+**Diagnosis Flowchart:**
+- `curl_rc != 0` → Network/connection error (check DNS, firewall, SSL)
+- `http_code 4xx` → Auth failure (check API_KEY) or endpoint not found
+- `http_code 5xx` → Backend error (check Railway logs)
+- `non_json` → Backend returned HTML error page or partial response
+- Empty `resp` → Backend returned 204/empty body or connection dropped
+
+### Rule
+> **INVARIANT**: NEVER pipe curl directly to jq. Always (1) capture HTTP code with `-w "%{http_code}"`, (2) capture curl exit code with `$?`, (3) validate JSON with `jq -e .` before parsing, and (4) show response head on error for debugging.
+
+---
+
 ## Quick Reference: The Golden Rules
 
 1. **Database**: Always use `with get_db() as db:` context manager
@@ -1123,6 +1178,7 @@ def get_likely_officials_for_game(sport: str, home_team: str, game_time: datetim
 22. **Control Flow**: Never place break/return between a call and the code using its result
 23. **Grep After Fix**: When fixing a bug, grep the codebase for the same pattern and fix ALL instances
 24. **API Timing Fallbacks**: When external APIs have timing gaps (data assigned late), provide fallbacks using existing tendency/lookup databases with confidence markers
+25. **Shell Script Curl**: Never pipe curl directly to jq — capture HTTP code, curl exit code, validate JSON first, show response head on error
 
 ---
 
