@@ -2073,7 +2073,6 @@ If you add ANY new endpoint or function that processes Odds API events, you MUST
 ### Scoring Formula
 ```
 FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment
-       + msrf_boost + serp_boost (if enabled)
 ```
 
 All engines score 0-10. Min output threshold: **6.5** (picks below this are filtered out).
