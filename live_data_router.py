@@ -5721,6 +5721,33 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "glitch_adjustment": glitch_adjustment,
             # v19.1 GLITCH signal breakdown (for learning loop)
             "glitch_signals": glitch_result.get("breakdown", {}) if 'glitch_result' in dir() and glitch_result else {},
+            # v20.15 Explicit Kp-Index debug fields (Engine 3 audit requirement)
+            "kp_index_value": (lambda kp: kp.get("kp_value") if kp else None)(
+                glitch_result.get("breakdown", {}).get("kp_index", {}) if 'glitch_result' in dir() and glitch_result else {}
+            ),
+            "kp_index_status": (lambda kp: (
+                "OK" if kp.get("source") in ("noaa_live", "cache") else
+                "NOT_RELEVANT" if kp.get("source") == "disabled" else
+                "UNAVAILABLE" if kp.get("source") == "fallback" else
+                "ERROR"
+            ) if kp and kp.get("source") else "UNAVAILABLE")(
+                glitch_result.get("breakdown", {}).get("kp_index", {}) if 'glitch_result' in dir() and glitch_result else {}
+            ),
+            "kp_index_source": (lambda kp: (
+                "NOAA" if kp.get("source") == "noaa_live" else
+                "cache" if kp.get("source") == "cache" else
+                "stub"
+            ) if kp and kp.get("source") else "stub")(
+                glitch_result.get("breakdown", {}).get("kp_index", {}) if 'glitch_result' in dir() and glitch_result else {}
+            ),
+            "kp_index_reason": (lambda kp: (
+                None if kp.get("source") in ("noaa_live", "cache") else
+                "Kp-Index disabled" if kp.get("source") == "disabled" else
+                "NOAA API unavailable, using fallback" if kp.get("source") == "fallback" else
+                "No Kp-Index data available"
+            ) if kp else "GLITCH result not available")(
+                glitch_result.get("breakdown", {}).get("kp_index", {}) if 'glitch_result' in dir() and glitch_result else {}
+            ),
             # v19.1 Esoteric contributions (for learning loop - track individual signal boosts)
             "esoteric_contributions": {
                 "numerology": numerology_score if 'numerology_score' in dir() else 0.0,
