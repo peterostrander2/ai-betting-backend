@@ -958,9 +958,50 @@ Disabled SERP by default (`SERP_INTEL_ENABLED=false`). Per-call APIs require exp
 
 ---
 
-## 66-67. v20.13 Engine 2 (Research) Audit
+## 66-67. Cron Automation Lessons (Feb 2026)
 
-### 66. Auto-Grader Field Name Mismatch
+### 66. Cron Path Validation
+
+**The Mistake:** Crontab entries pointed to `~/Desktop/ai-betting-backend-main` but the actual repo was at `~/ai-betting-backend`. All cron jobs silently failed for months.
+
+**The Fix:**
+```bash
+# Verify cron paths match actual repo locations
+crontab -l | grep -E "cd ~/|cd \$HOME"
+ls -d ~/ai-betting-backend  # Verify path exists
+```
+
+**Rule:**
+> **INVARIANT**: After setting up cron jobs, ALWAYS verify paths exist with `ls -d`. Cron failures are silent — jobs won't report errors.
+
+### 67. Automation Script Coverage
+
+**The Mistake:** Manual health checks were forgotten. Scripts existed but weren't scheduled.
+
+**The Fix:** Created 26 automated scripts across both repos with cron scheduling:
+- **High frequency** (30min-hourly): Response time, error rates
+- **Daily**: Health checks, backups, access logs
+- **Weekly**: Vuln scans, dead code, complexity reports
+
+**Rule:**
+> **INVARIANT**: Any repeatable check should be automated via cron. Store logs in `~/repo/logs/` and verify cron paths on session start.
+
+**Verification command:**
+```bash
+crontab -l | wc -l   # Should show 33+ scheduled jobs
+```
+
+---
+
+## 68. Robust Shell Script Error Handling (v20.13)
+
+*(Documented in CLAUDE.md lesson table — see CLAUDE.md for details.)*
+
+---
+
+## 69-70. v20.13 Engine 2 (Research) Audit
+
+### 69. Auto-Grader Field Name Mismatch
 
 **The Mistake:**
 `auto_grader.py:_convert_pick_to_record()` read `sharp_money`/`public_fade`/`line_variance` from `research_breakdown`, but picks store as `sharp_boost`/`public_boost`/`line_boost`. Daily learning loop always saw 0.0 for research signals.
@@ -971,7 +1012,7 @@ Use fallback pattern: `breakdown.get("sharp_boost", breakdown.get("sharp_money",
 **Rule:**
 > **INVARIANT**: Field names in `_convert_pick_to_record()` MUST match field names in `persist_pick()`. When renaming fields, use fallback pattern for backward compatibility.
 
-### 67. GOLD_STAR Gate Labels
+### 70. GOLD_STAR Gate Labels
 
 **The Mistake:**
 Gate labels said `research_gte_5.5`/`esoteric_gte_4.0` but actual thresholds in `scoring_contract.py` are 6.5/5.5. Labels misled debugging and downgrade messages.

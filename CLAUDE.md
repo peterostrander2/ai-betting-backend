@@ -33,6 +33,74 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 
 ---
 
+## 🤖 Automation & Cron Jobs
+
+### Overview
+33 automated jobs run via cron across both repositories. No manual intervention needed as long as Mac is awake.
+
+### Cron Schedule (Backend - ai-betting-backend)
+
+| Schedule | Script | Purpose |
+|----------|--------|---------|
+| Every 30 min | `response_time_check.sh` | Monitor API latency |
+| Every 4 hours | `memory_profiler.sh` | Track memory, detect leaks |
+| Hourly | `error_rate_monitor.sh` | Track 4xx/5xx rates |
+| Daily 3 AM | `backup_data.sh` | Backup /data persistent storage |
+| Daily 4 AM | `db_integrity_check.sh` | Verify JSON/SQLite/pickle integrity |
+| Daily 6 AM | `access_log_audit.sh` | Detect unusual API access |
+| Daily 9 AM | `daily_health_check.sh` | Full system health check |
+| Sunday 5 AM | `prune_old_data.sh` | Clean old logs/cache |
+| Sunday 7 AM | `dead_code_scan.sh` | Find unused functions |
+| Sunday 10 AM | `dependency_vuln_scan.sh` | pip-audit + npm audit |
+| Monday 7 AM | `complexity_report.sh` | Flag complex code |
+| Monday 8 AM | `test_coverage_report.sh` | Coverage % report |
+| Monday 9:15 AM | `secret_rotation_check.sh` | Check for old secrets |
+| Monday 9:30 AM | `feature_flag_audit.sh` | Audit feature flags |
+
+### Log Locations
+```bash
+# Backend
+~/ai-betting-backend/logs/health_check.log  # Daily health
+~/ai-betting-backend/logs/cron.log          # All cron output
+
+# Frontend
+~/bookie-member-app/logs/cron.log           # All cron output
+```
+
+### Verify Cron is Running
+```bash
+crontab -l | wc -l        # Should show 33+ lines
+tail -20 ~/ai-betting-backend/logs/cron.log  # Recent activity
+```
+
+### Manual Script Runs
+```bash
+# Morning check-in
+./scripts/session_start.sh
+
+# Before deploys
+./scripts/contract_sync_check.sh
+./scripts/prod_go_nogo.sh
+
+# Anytime health check
+./scripts/daily_health_check.sh
+```
+
+### CRITICAL: Path Validation
+Cron jobs silently fail if paths are wrong. After any path changes:
+```bash
+# Verify paths in crontab match reality
+crontab -l | grep "cd ~/"
+ls -d ~/ai-betting-backend ~/bookie-member-app  # Both must exist
+```
+
+### Keep Mac Awake (Optional)
+For overnight jobs to run:
+- **System Settings → Energy → Prevent automatic sleeping**
+- Or run `caffeinate -s` in Terminal
+
+---
+
 ## 📚 MASTER INDEX (Quick Reference)
 
 ### Critical Invariants (26 Total)
@@ -66,7 +134,7 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (67 Total) - Key Categories
+### Lessons Learned (70 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -92,10 +160,12 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | 63 | **v20.12 Dormant Features** | Stadium altitude, travel fatigue fix, gematria twitter, officials tendency fallback |
 | 64 | **v20.12 CI Partial-Success** | Spot checks must distinguish fatal errors from partial-success (timeouts with valid picks) |
 | 65 | **v20.12 SERP Quota** | SERP burned 5000 searches/month — disabled by default, per-call APIs need explicit opt-in |
-| 66 | **v20.13 Auto-Grader Field Mismatch** | `_convert_pick_to_record()` read `sharp_money` but picks store `sharp_boost` — learning loop got 0.0 for all research signals |
-| 67 | **v20.13 GOLD_STAR Gate Labels** | Gate labels said `research_gte_5.5`/`esoteric_gte_4.0` but actual thresholds are 6.5/5.5 — misleading downgrade messages |
+| 66-67 | **v20.13 Learning Loop Coverage** | SPORT_STATS only had 3 props per sport — expanded to all 7 for complete learning coverage |
+| 68 | **v20.13 Robust Shell Script Error Handling** | Daily sanity report failed silently on non-JSON responses — added HTTP status capture and JSON validation |
+| 69 | **v20.13 Auto-Grader Field Mismatch** | `_convert_pick_to_record()` read `sharp_money` but picks store `sharp_boost` — learning loop got 0.0 for all research signals |
+| 70 | **v20.13 GOLD_STAR Gate Labels** | Gate labels said `research_gte_5.5`/`esoteric_gte_4.0` but actual thresholds are 6.5/5.5 — misleading downgrade messages |
 
-### NEVER DO Sections (31 Categories)
+### NEVER DO Sections (32 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -126,7 +196,8 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 - v20.11 Post-Base Signals Architecture (rules 198-202)
 - v20.12 Dormant Features & API Timing Fallbacks (rules 203-207)
 - v20.12 CI Spot Checks & Error Handling (rules 208-212)
-- v20.13 Field Name Mapping & Gate Label Drift (rules 213-219)
+- v20.13 Learning Loop Coverage (rules 213-215)
+- v20.13 Field Name Mapping & Gate Label Drift (rules 216-222)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -213,9 +284,11 @@ See `docs/SESSION_HYGIENE.md` for complete guide.
 | `scripts/prod_go_nogo.sh` | Production go/no-go validation before deploy |
 
 ### Current Version: v20.13 (Feb 9, 2026)
-**Latest Fixes (v20.13) — Engine 2 (Research) Audit:**
-- **Fix 1: Auto-Grader Field Name Mismatch (Lesson 66)** — `auto_grader.py:_convert_pick_to_record()` read `sharp_money`/`public_fade`/`line_variance` from `research_breakdown`, but picks store as `sharp_boost`/`public_boost`/`line_boost`. Daily learning loop always saw 0.0 for research signals. Fixed with fallback pattern.
-- **Fix 2: GOLD_STAR Gate Labels (Lesson 67)** — Gate labels said `research_gte_5.5`/`esoteric_gte_4.0` but actual thresholds in `scoring_contract.py` are 6.5/5.5. Labels in `live_data_router.py` and docs now match contract.
+**Latest Fixes (v20.13) — 4 Updates:**
+- **Fix 1: Learning Loop Coverage (Lessons 66-67)** — `SchedulerConfig.SPORT_STATS` expanded NBA from 3 to 7 prop types (added threes, steals, blocks, pra). Auto grader now tracks and adjusts weights for ALL prop types, not just the "big 3" (points, rebounds, assists).
+- **Fix 2: Robust Shell Script Error Handling (Lesson 68)** — Daily sanity report script improved with HTTP status capture, JSON validation, and proper error handling for non-JSON responses.
+- **Fix 3: Auto-Grader Field Name Mismatch (Lesson 69)** — `auto_grader.py:_convert_pick_to_record()` read `sharp_money`/`public_fade`/`line_variance` from `research_breakdown`, but picks store as `sharp_boost`/`public_boost`/`line_boost`. Daily learning loop always saw 0.0 for research signals. Fixed with fallback pattern.
+- **Fix 4: GOLD_STAR Gate Labels (Lesson 70)** — Gate labels said `research_gte_5.5`/`esoteric_gte_4.0` but actual thresholds in `scoring_contract.py` are 6.5/5.5. Labels in `live_data_router.py` and docs now match contract.
 
 **Previous Enhancements (v20.12) — 5 Updates:**
 - **Enhancement 1: Stadium Altitude Impact (Lesson 63)** — `live_data_router.py` now calls `alt_data_sources/stadium.py` for NFL/MLB high-altitude venues (Denver 5280ft, Utah 4226ft). Adds esoteric scoring boost when altitude >1000ft.
@@ -7684,13 +7757,13 @@ if not lead_official and sport_upper in ["NBA", "NFL", "NHL"]:
 
 ## 🚫 NEVER DO THESE (v20.13 - Field Name Mapping & Gate Label Drift)
 
-213. **NEVER** assume field names match between write path and read path — always trace from `persist_pick()` through to `_convert_pick_to_record()` and verify exact key names match
-214. **NEVER** read `dict.get("sharp_money")` when the pick payload stores `sharp_boost` — use the fallback pattern: `breakdown.get("sharp_boost", breakdown.get("sharp_money", 0.0))`
-215. **NEVER** hardcode threshold values in label strings — always read from `scoring_contract.py` constants (e.g., `GOLD_STAR_GATES["research_score"]` not literal `"5.5"`)
-216. **NEVER** update `scoring_contract.py` thresholds without grepping ALL files for the old values — gate labels in `live_data_router.py`, docs in `CLAUDE.md`, and `docs/MASTER_INDEX.md` must all match
-217. **NEVER** trust label strings for debugging — if a gate says `research_gte_5.5` but the actual threshold is 6.5, the label misleads debugging and the learning loop
-218. **NEVER** add a new field to `research_breakdown` (or any engine breakdown) without updating `_convert_pick_to_record()` in `auto_grader.py` to read it — unread fields are invisible to the learning loop
-219. **NEVER** rename a field in the pick payload without adding a fallback read in all consumers — use `dict.get("new_name", dict.get("old_name", default))` pattern for backward compatibility
+216. **NEVER** assume field names match between write path and read path — always trace from `persist_pick()` through to `_convert_pick_to_record()` and verify exact key names match
+217. **NEVER** read `dict.get("sharp_money")` when the pick payload stores `sharp_boost` — use the fallback pattern: `breakdown.get("sharp_boost", breakdown.get("sharp_money", 0.0))`
+218. **NEVER** hardcode threshold values in label strings — always read from `scoring_contract.py` constants (e.g., `GOLD_STAR_GATES["research_score"]` not literal `"5.5"`)
+219. **NEVER** update `scoring_contract.py` thresholds without grepping ALL files for the old values — gate labels in `live_data_router.py`, docs in `CLAUDE.md`, and `docs/MASTER_INDEX.md` must all match
+220. **NEVER** trust label strings for debugging — if a gate says `research_gte_5.5` but the actual threshold is 6.5, the label misleads debugging and the learning loop
+221. **NEVER** add a new field to `research_breakdown` (or any engine breakdown) without updating `_convert_pick_to_record()` in `auto_grader.py` to read it — unread fields are invisible to the learning loop
+222. **NEVER** rename a field in the pick payload without adding a fallback read in all consumers — use `dict.get("new_name", dict.get("old_name", default))` pattern for backward compatibility
 
 **Field Name Mapping Quick Reference (v20.13):**
 ```python
@@ -8798,7 +8871,7 @@ SERP_INTEL_ENABLED=true
 
 **Fixed in:** v20.12 (Feb 8, 2026)
 
-### Lesson 66: Auto-Grader Field Name Mismatch — Learning Loop Blind to Research Signals (v20.13)
+### Lesson 69: Auto-Grader Field Name Mismatch — Learning Loop Blind to Research Signals (v20.13)
 **Problem:** The daily learning loop (auto_grader) always saw 0.0 for all three research engine signals (sharp money, public fade, line variance). The learning loop could never learn from or adjust research signal weights because it was reading the wrong field names.
 
 **Root Cause:** Two different code paths write and read research signal data with **different field names**:
@@ -8843,7 +8916,7 @@ curl -s "/live/grader/bias/NBA?stat_type=spread&days_back=1" -H "X-API-Key: KEY"
 
 **Fixed in:** v20.13 (Feb 9, 2026) — Commit `33a4a02`
 
-### Lesson 67: GOLD_STAR Gate Labels Drifted from Contract Thresholds (v20.13)
+### Lesson 70: GOLD_STAR Gate Labels Drifted from Contract Thresholds (v20.13)
 **Problem:** GOLD_STAR downgrade messages showed wrong gate names (`research_gte_5.5`, `esoteric_gte_4.0`) that didn't match the actual thresholds in `scoring_contract.py` (`research_score: 6.5`, `esoteric_score: 5.5`). This made debugging tier downgrades misleading — operators would think a pick failed at 5.5 when the real gate is 6.5.
 
 **Root Cause:** When `scoring_contract.py` was updated with correct thresholds, the gate label strings in `live_data_router.py` were never updated to match. The labels are just cosmetic strings, so no tests caught the drift:
@@ -8911,7 +8984,186 @@ grep -n "research_gte\|esoteric_gte" live_data_router.py
 **Environment Variables for Paid APIs:**
 ```bash
 PLAYBOOK_API_KEY=xxx      # Required
-THE_ODDS_API_KEY=xxx      # Required  
+THE_ODDS_API_KEY=xxx      # Required
 BALLDONTLIE_API_KEY=xxx   # Required
 SERPAPI_KEY=              # Leave empty (canceled)
 ```
+
+### Lesson 66: SPORT_STATS Incomplete Coverage (v20.13)
+**Problem:** `SchedulerConfig.SPORT_STATS` in `daily_scheduler.py` only defined 3 stat types per sport (e.g., NBA = points, rebounds, assists), but the system supports 7 NBA prop types. The auto grader learning loop was only tracking and adjusting weights for 3 of 7 prop types.
+
+**Root Cause:** When `audit_sport()` iterates over `SchedulerConfig.SPORT_STATS[sport]`, it only audits the stat types listed. Missing stat types (threes, steals, blocks, pra) were never analyzed for bias or weight adjustment.
+
+```python
+# BUG — Only 3 stat types audited
+SPORT_STATS = {
+    "NBA": ["points", "rebounds", "assists"],  # Missing 4 prop types!
+    ...
+}
+
+# audit_sport() only processes what's listed:
+for stat_type in SchedulerConfig.SPORT_STATS.get(sport, ["points"]):
+    self._audit_stat_type(sport, stat_type, ...)  # threes, steals, blocks, pra NEVER audited
+```
+
+**Impact:**
+- Learning loop blind to 4/7 NBA prop types
+- No weight adjustments for threes, steals, blocks, pra
+- Performance drift on smaller prop markets went undetected
+
+**The Fix (v20.13):**
+```python
+# FIXED — All 7 NBA prop types now audited
+SPORT_STATS = {
+    "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "pra"],
+    "NFL": ["passing_yards", "rushing_yards", "receiving_yards"],
+    "MLB": ["hits", "total_bases", "strikeouts"],
+    "NHL": ["points", "shots"],
+    "NCAAB": ["points", "rebounds"]
+}
+```
+
+**Prevention:**
+1. **NEVER add prop types to `_initialize_weights()` without adding to `SPORT_STATS`** — they must stay in sync
+2. **Verify audit coverage** — run `/live/grader/bias/{sport}?stat_type=X` for ALL prop types after changes
+3. **Cross-reference** — `auto_grader.py:prop_stat_types` and `daily_scheduler.py:SPORT_STATS` must match
+
+**Files Modified:**
+- `daily_scheduler.py` — Expanded `SPORT_STATS["NBA"]` from 3 to 7 stat types
+
+**Fixed in:** v20.13 (Feb 8, 2026) — Commit `32446c0`
+
+### Lesson 67: Learning Loop Stat Type Sync Invariant (v20.13)
+**Problem:** Three separate locations define prop stat types, and they can drift out of sync:
+1. `auto_grader.py:_initialize_weights()` — Creates weight entries
+2. `auto_grader.py:run_daily_audit()` — Which types get audited (prop_stat_types)
+3. `daily_scheduler.py:SchedulerConfig.SPORT_STATS` — Which types the scheduler audits
+
+**Root Cause:** No single source of truth for "which prop stat types exist per sport." Each location was updated independently, leading to gaps.
+
+**The Sync Invariant:**
+```
+For each sport, these three lists MUST be identical:
+
+1. auto_grader._initialize_weights() prop_stat_types[sport]
+2. auto_grader.run_daily_audit() prop_stat_types[sport]
+3. daily_scheduler.SchedulerConfig.SPORT_STATS[sport]
+
+If ANY differ, some prop types won't have weights OR won't be audited.
+```
+
+**Complete Prop Stat Types (Authoritative):**
+| Sport | Stat Types | Count |
+|-------|-----------|-------|
+| NBA | points, rebounds, assists, threes, steals, blocks, pra | 7 |
+| NFL | passing_yards, rushing_yards, receiving_yards, receptions, touchdowns | 5 |
+| MLB | hits, runs, rbis, strikeouts, total_bases, walks | 6 |
+| NHL | goals, assists, points, shots, saves, blocks | 6 |
+| NCAAB | points, rebounds, assists, threes | 4 |
+
+**Verification Command:**
+```bash
+# Check all three locations are in sync
+python3 -c "
+from auto_grader import AutoGrader
+from daily_scheduler import SchedulerConfig
+
+grader = AutoGrader()
+for sport in ['NBA', 'NFL', 'MLB', 'NHL', 'NCAAB']:
+    scheduler_stats = set(SchedulerConfig.SPORT_STATS.get(sport, []))
+    weight_stats = set(grader.weights.get(sport, {}).keys()) - {'spread', 'total', 'moneyline', 'sharp'}
+    if scheduler_stats != weight_stats:
+        print(f'MISMATCH {sport}: scheduler={scheduler_stats}, weights={weight_stats}')
+    else:
+        print(f'OK {sport}: {len(scheduler_stats)} prop types')
+"
+```
+
+**Prevention:**
+1. **ALWAYS update all 3 locations** when adding a new prop stat type
+2. **Add sync check to CI** — verify all three lists match before deploy
+3. **Consider refactoring** — extract to single `PROP_STAT_TYPES` constant imported by both modules
+
+**NEVER DO (Learning Loop Coverage - rules 213-215):**
+- 213: NEVER add a prop type to `_initialize_weights()` without adding to `SPORT_STATS` — creates weights that are never audited
+- 214: NEVER add a prop type to `SPORT_STATS` without adding to `_initialize_weights()` — audit fails with missing weights
+- 215: NEVER assume "big 3" props (points, rebounds, assists) are sufficient — smaller prop markets (threes, steals, blocks) need learning too
+
+**Fixed in:** v20.13 (Feb 8, 2026)
+
+### Lesson 68: Robust Shell Script Error Handling for Sanity Reports (v20.13)
+**Problem:** The daily sanity report script (`scripts/daily_sanity_report.sh`) would fail silently or with cryptic jq parsing errors when an API endpoint returned null, empty, or non-JSON responses. This made it impossible to distinguish between:
+1. **Transient API errors** (network issues, backend timeouts, empty data)
+2. **Code parsing bugs** (jq syntax errors, missing fields)
+3. **Actual data problems** (malformed JSON from backend)
+
+**Root Cause:** The original curl pattern piped output directly to jq without:
+- Capturing the HTTP status code
+- Capturing the curl exit code
+- Validating JSON before parsing
+- Preserving raw response for debugging
+
+**The Fix (v20.13):**
+```bash
+# ROBUST PATTERN — Use temp file to capture response + codes
+resp_file=$(mktemp)
+http_code=$(curl -sS -o "$resp_file" -w "%{http_code}" \
+  "$API_BASE/live/best-bets/$sport?debug=1" \
+  -H "X-API-Key: $API_KEY" 2>&1)
+curl_rc=$?
+
+resp=$(cat "$resp_file" 2>/dev/null || true)
+rm -f "$resp_file"
+
+# Check curl exit code and empty response
+if [ $curl_rc -ne 0 ] || [ -z "$resp" ]; then
+  echo "$sport: ERROR curl_rc=$curl_rc http_code=$http_code"
+  echo "resp_head: $(echo "$resp" | head -c 200)"
+  printf "\n"
+  continue
+fi
+
+# Validate JSON before parsing
+if ! echo "$resp" | jq -e . >/dev/null 2>&1; then
+  echo "$sport: ERROR non_json http_code=$http_code"
+  echo "resp_head: $(echo "$resp" | head -c 200)"
+  printf "\n"
+  continue
+fi
+
+# Now safe to parse with jq
+echo "$resp" | jq -r '{ ... }'
+```
+
+**Why This Pattern Works:**
+1. **Temp file** — Separates response capture from status code extraction (can't do both with pipes)
+2. **`-w "%{http_code}"`** — Captures HTTP status even on non-2xx responses
+3. **`$?` capture** — Detects network failures, DNS errors, connection refused
+4. **`jq -e .`** — Validates JSON without producing output (exit 1 if invalid)
+5. **`head -c 200`** — Shows response prefix for debugging without flooding logs
+
+**Diagnosis Flowchart:**
+```
+curl_rc != 0  → Network/connection error (check DNS, firewall, SSL)
+http_code 4xx → Auth failure (check API_KEY) or endpoint not found
+http_code 5xx → Backend error (check Railway logs)
+non_json      → Backend returned HTML error page or partial response
+Empty resp    → Backend returned 204/empty body or connection dropped
+```
+
+**Prevention:**
+1. **NEVER pipe curl directly to jq** without validating JSON first — `curl ... | jq` hides the real error
+2. **ALWAYS capture HTTP code** — A 200 with empty body is different from a 500 with error JSON
+3. **ALWAYS capture curl exit code** — Network errors return exit code != 0 but no HTTP code
+4. **ALWAYS show response head on error** — First 200 chars reveal HTML error pages, auth failures, etc.
+
+**NEVER DO (Shell Script Error Handling - rules 216-219):**
+- 216: NEVER use `curl ... | jq` without JSON validation — jq parse errors hide the real problem
+- 217: NEVER assume HTTP 200 means valid data — backend might return `null` or `{}` with 200
+- 218: NEVER discard curl exit code — network failures need different diagnosis than API errors
+- 219: NEVER log full response on error — use `head -c 200` to avoid flooding logs with huge HTML pages
+
+**Files Modified:**
+- `scripts/daily_sanity_report.sh` — Added robust error handling pattern
+
+**Fixed in:** v20.13 (Feb 8, 2026)
