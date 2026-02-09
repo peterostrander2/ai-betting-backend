@@ -307,9 +307,17 @@ class AutoGrader:
             # Determine player_name/stat_type based on pick type
             pick_type = pick.get("pick_type", pick.get("market", "")).upper()
 
-            if pick_type in ("PROP", "PLAYER_PROP"):
-                player_name = pick.get("player_name", pick.get("description", "Unknown"))
-                raw_stat = pick.get("stat_type", pick.get("prop_type", "unknown"))
+            # Detect props: explicit PROP/PLAYER_PROP, or player_* pattern in market/pick_type
+            is_prop = (
+                pick_type in ("PROP", "PLAYER_PROP") or
+                pick_type.startswith("PLAYER_") or
+                pick.get("player_name") or
+                pick.get("player")
+            )
+
+            if is_prop:
+                player_name = pick.get("player_name", pick.get("player", pick.get("description", "Unknown")))
+                raw_stat = pick.get("stat_type", pick.get("prop_type", pick.get("market", "unknown")))
                 stat_type = raw_stat.replace("player_", "") if raw_stat else "unknown"
             else:
                 # For game picks (spread, total, moneyline), use matchup
