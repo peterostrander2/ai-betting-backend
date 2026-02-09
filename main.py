@@ -596,7 +596,7 @@ async def grader_bias(sport: str, stat_type: str = "all", days_back: int = 1):
         sport_upper = sport.upper()
         if sport_upper not in grader.weights:
             return {"error": f"Unsupported sport: {sport}", "supported": list(grader.weights.keys())}
-        bias = grader.calculate_bias(sport_upper, stat_type if stat_type != "all" else None, days_back)
+        bias = grader.calculate_bias(sport_upper, stat_type, days_back)
         return {
             "sport": sport_upper,
             "stat_type": stat_type,
