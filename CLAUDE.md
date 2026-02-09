@@ -161,8 +161,10 @@ For overnight jobs to run:
 | 64 | **v20.12 CI Partial-Success** | Spot checks must distinguish fatal errors from partial-success (timeouts with valid picks) |
 | 65 | **v20.12 SERP Quota** | SERP burned 5000 searches/month — disabled by default, per-call APIs need explicit opt-in |
 | 66-67 | **v20.13 Learning Loop Coverage** | SPORT_STATS only had 3 props per sport — expanded to all 7 for complete learning coverage |
+| 68 | **v20.13 Shell Script Error Handling** | daily_sanity_report.sh failed silently on malformed JSON — added validation, status checks, exit code capture |
+| 69 | **v20.14 Grader Routes & Authentication** | Grader endpoints need `/live` prefix + API key — routes mounted at `/live/*`, public URLs require auth |
 
-### NEVER DO Sections (29 Categories)
+### NEVER DO Sections (31 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -194,6 +196,8 @@ For overnight jobs to run:
 - v20.12 Dormant Features & API Timing Fallbacks (rules 203-207)
 - v20.12 CI Spot Checks & Error Handling (rules 208-212)
 - v20.13 Learning Loop Coverage (rules 213-215)
+- v20.13 Shell Script Error Handling (rules 216-219)
+- v20.14 Grader Routes & Authentication (rules 220-222)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -208,6 +212,9 @@ For overnight jobs to run:
 
 # 4. Production Go/No-Go
 ./scripts/prod_go_nogo.sh
+
+# 5. Post-deploy: Verify grader routes (run from Railway shell)
+./scripts/verify_grader_routes.sh
 ```
 
 ### 🛡️ Prevention Checklist (BEFORE WRITING CODE)
@@ -276,10 +283,15 @@ For overnight jobs to run:
 | `scripts/spot_check_session8.sh` | Grading & persistence + multi-sport smoke tests (partial-success handling v20.12) |
 | `scripts/ci_sanity_check.sh` | Full CI sanity check — runs all 10 session spot checks |
 | `scripts/prod_go_nogo.sh` | Production go/no-go validation before deploy |
+| `scripts/verify_grader_routes.sh` | Grader routes verification — tests all `/live/grader/*` endpoints (v20.14) |
 
-### Current Version: v20.13 (Feb 8, 2026)
-**Latest Enhancement (v20.13) — 1 Update:**
+### Current Version: v20.14 (Feb 8, 2026)
+**Latest Enhancement (v20.14) — 1 Update:**
+- **Fix: Grader Routes Documentation (Lesson 69)** — All grader endpoints require `/live` prefix (routes are mounted at `/live/*` in main.py). Public URLs also require `X-API-Key` header. Added comprehensive verification script `scripts/verify_grader_routes.sh` with 6 test suites.
+
+**Previous Enhancements (v20.13) — 2 Updates:**
 - **Fix: Learning Loop Coverage (Lessons 66-67)** — `SchedulerConfig.SPORT_STATS` expanded NBA from 3 to 7 prop types (added threes, steals, blocks, pra). Auto grader now tracks and adjusts weights for ALL prop types, not just the "big 3" (points, rebounds, assists).
+- **Fix: Shell Script Error Handling (Lesson 68)** — `daily_sanity_report.sh` now validates JSON before parsing, checks HTTP status codes, and captures curl exit codes separately from API errors.
 
 **Previous Enhancements (v20.12) — 5 Updates:**
 - **Enhancement 1: Stadium Altitude Impact (Lesson 63)** — `live_data_router.py` now calls `alt_data_sources/stadium.py` for NFL/MLB high-altitude venues (Denver 5280ft, Utah 4226ft). Adds esoteric scoring boost when altitude >1000ft.
@@ -328,16 +340,31 @@ For overnight jobs to run:
 - Lesson 44: Date window math error (2-day instead of 1-day)
 - Lesson 45: Same datetime bug in `/grader/performance`
 
-**All Grader Endpoints Verified Working:**
-- `/grader/status` ✅
-- `/grader/queue` ✅
-- `/grader/daily-report` ✅
-- `/grader/performance/{sport}` ✅
-- `/grader/bias/{sport}` ✅
-- `/grader/weights/{sport}` ✅
-- `/picks/graded` ✅ (v20.9 — frontend Grading page)
-- `/picks/grade` ✅ (POST — grade a single pick)
-- `/picks/grading-summary` ✅ (stats by tier)
+**All Grader Endpoints Verified Working (Feb 8, 2026):**
+
+**IMPORTANT:** All grader endpoints require the `/live` prefix and `X-API-Key` header for authentication.
+
+| Endpoint | Method | Purpose | Status |
+|----------|--------|---------|--------|
+| `/live/grader/status` | GET | Grader availability, storage health, predictions count | ✅ |
+| `/live/grader/weights/{sport}` | GET | Learned weights per stat type | ✅ |
+| `/live/grader/bias/{sport}` | GET | Bias analysis with factor correlations | ✅ |
+| `/live/grader/run-audit` | POST | Trigger manual audit | ✅ |
+| `/live/grader/performance/{sport}` | GET | Performance metrics by stat type | ✅ |
+| `/live/grader/queue` | GET | Pending picks for grading | ✅ |
+| `/live/grader/daily-report` | GET | Daily grading summary | ✅ |
+| `/live/picks/graded` | GET | Graded picks for frontend | ✅ (v20.9) |
+| `/live/picks/grade` | POST | Grade a single pick | ✅ |
+| `/live/picks/grading-summary` | GET | Stats by tier | ✅ |
+
+**Verification Script:** `scripts/verify_grader_routes.sh` — Tests all grader endpoints in Railway shell.
+
+**Production Test Results (Feb 8, 2026):**
+- `/live/grader/status` — available: true, 1310+ predictions logged
+- `/live/grader/weights/NBA` — All stat types with weights (defense, pace, vacuum, lstm)
+- `/live/grader/bias/NBA` — 566 samples, 58% hit rate
+- `/live/grader/performance/NBA` — 137 graded, 53.3% hit rate
+- `/live/grader/run-audit` — audit_complete with NBA/NHL results
 
 **Frontend Integration (Priority 1-5 COMPLETE):**
 - Context score displayed with correct tooltip (modifier ±0.35)
@@ -9003,3 +9030,51 @@ Empty resp    → Backend returned 204/empty body or connection dropped
 - `scripts/daily_sanity_report.sh` — Added robust error handling pattern
 
 **Fixed in:** v20.13 (Feb 8, 2026)
+
+### Lesson 69: Grader Routes Require /live Prefix and API Key (v20.14)
+
+**Date:** Feb 8, 2026
+
+**What Happened:**
+All 5 grader endpoints returned 404 errors when accessed at paths like `/grader/status`, `/grader/weights/NBA`, etc. After fixing paths, public URL access returned 401 Unauthorized.
+
+**Root Causes:**
+1. **Router prefix forgotten**: `live_data_router.py` is mounted with prefix `/live` in `main.py`, so all routes defined as `/grader/...` are actually served at `/live/grader/...`
+2. **Auth requirement not documented**: All `/live/*` endpoints require `X-API-Key` header for authentication
+
+**The Fix:**
+1. Changed all grader endpoint paths from `/grader/...` to `/live/grader/...`
+2. Added `-H "X-API-Key: $API_KEY"` to all curl commands for public URL tests
+3. Created comprehensive verification script: `scripts/verify_grader_routes.sh`
+
+**NEVER DO (Grader Routes & Authentication - rules 220-222):**
+- 220: NEVER test grader routes without `/live` prefix — routes in `live_data_router.py` are mounted at `/live/*`
+- 221: NEVER hit public `/live/*` URLs without `X-API-Key` header — all live endpoints require authentication
+- 222: NEVER assume endpoint path matches route decorator — always check how router is mounted in `main.py`
+
+**Correct Grader Endpoints (all require `/live` prefix):**
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/live/grader/status` | GET | Grader health check |
+| `/live/grader/weights/{sport}` | GET | Current learned weights |
+| `/live/grader/bias/{sport}` | GET | Model bias analysis |
+| `/live/grader/run-audit` | POST | Trigger learning audit |
+| `/live/grader/performance/{sport}` | GET | Historical performance |
+
+**Verification Commands:**
+```bash
+# Localhost (inside container):
+curl http://localhost:8000/live/grader/status
+
+# Public URL (with auth):
+curl -H "X-API-Key: $API_KEY" https://web-production-7b2a.up.railway.app/live/grader/status
+
+# Full verification:
+./scripts/verify_grader_routes.sh
+```
+
+**Files Modified:**
+- `scripts/verify_grader_routes.sh` — Comprehensive 6-test verification suite
+- `CLAUDE.md` — Added grader endpoints documentation with correct paths
+
+**Fixed in:** v20.14 (Feb 8, 2026)

@@ -5,6 +5,7 @@
 # ============================================================
 
 BACKEND="https://web-production-7b2a.up.railway.app"
+API_KEY="bookie-prod-2026-xK9mP2nQ7vR4"
 
 echo ""
 echo "========================================================"
@@ -14,34 +15,34 @@ echo "========================================================"
 echo ""
 
 # ----------------------------------------------------------
-# TEST 1: Confirm new endpoints exist in main.py
+# TEST 1: Confirm new endpoints exist in live_data_router.py
 # ----------------------------------------------------------
 echo "TEST 1: CODE DEPLOYED"
 echo "------------------------------"
 
-echo -n "  [1a] /grader/weights/{sport} in main.py: "
-if grep -q 'grader/weights/{sport}' main.py 2>/dev/null; then
+echo -n "  [1a] /grader/weights/{sport} in live_data_router.py: "
+if grep -q 'grader/weights/{sport}' live_data_router.py 2>/dev/null; then
   echo "PASS ✅"
 else
   echo "FAIL ❌"
 fi
 
-echo -n "  [1b] /grader/bias/{sport} in main.py: "
-if grep -q 'grader/bias/{sport}' main.py 2>/dev/null; then
+echo -n "  [1b] /grader/bias/{sport} in live_data_router.py: "
+if grep -q 'grader/bias/{sport}' live_data_router.py 2>/dev/null; then
   echo "PASS ✅"
 else
   echo "FAIL ❌"
 fi
 
-echo -n "  [1c] /grader/run-audit in main.py: "
-if grep -q 'grader/run-audit' main.py 2>/dev/null; then
+echo -n "  [1c] /grader/run-audit in live_data_router.py: "
+if grep -q 'grader/run-audit' live_data_router.py 2>/dev/null; then
   echo "PASS ✅"
 else
   echo "FAIL ❌"
 fi
 
-echo -n "  [1d] /grader/performance/{sport} in main.py: "
-if grep -q 'grader/performance/{sport}' main.py 2>/dev/null; then
+echo -n "  [1d] /grader/performance/{sport} in live_data_router.py: "
+if grep -q 'grader/performance/{sport}' live_data_router.py 2>/dev/null; then
   echo "PASS ✅"
 else
   echo "FAIL ❌"
@@ -55,52 +56,52 @@ echo ""
 echo "TEST 2: ENDPOINTS RESPOND (localhost)"
 echo "------------------------------"
 
-echo -n "  [2a] /grader/status: "
-CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/grader/status)
+echo -n "  [2a] /live/grader/status: "
+CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/live/grader/status)
 echo "$CODE $([ "$CODE" = "200" ] && echo "✅" || echo "❌")"
 
-echo -n "  [2b] /grader/weights/NBA: "
-CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/grader/weights/NBA)
+echo -n "  [2b] /live/grader/weights/NBA: "
+CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/live/grader/weights/NBA)
 echo "$CODE $([ "$CODE" = "200" ] && echo "✅" || echo "❌")"
 
-echo -n "  [2c] /grader/bias/NBA: "
-CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/grader/bias/NBA)
+echo -n "  [2c] /live/grader/bias/NBA: "
+CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/live/grader/bias/NBA)
 echo "$CODE $([ "$CODE" = "200" ] && echo "✅" || echo "❌")"
 
-echo -n "  [2d] /grader/run-audit (POST): "
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/grader/run-audit)
+echo -n "  [2d] /live/grader/run-audit (POST): "
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/live/grader/run-audit)
 echo "$CODE $([ "$CODE" = "200" ] && echo "✅" || echo "❌")"
 
-echo -n "  [2e] /grader/performance/NBA: "
-CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/grader/performance/NBA)
+echo -n "  [2e] /live/grader/performance/NBA: "
+CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/live/grader/performance/NBA)
 echo "$CODE $([ "$CODE" = "200" ] && echo "✅" || echo "❌")"
 
 echo ""
 
 # ----------------------------------------------------------
-# TEST 3: Hit endpoints from outside (public URL, no auth)
+# TEST 3: Hit endpoints from outside (public URL, with auth)
 # ----------------------------------------------------------
-echo "TEST 3: ENDPOINTS RESPOND (public URL, no auth)"
+echo "TEST 3: ENDPOINTS RESPOND (public URL, with auth)"
 echo "------------------------------"
 
-echo -n "  [3a] /grader/status: "
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND/grader/status")
+echo -n "  [3a] /live/grader/status: "
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $API_KEY" "$BACKEND/live/grader/status")
 echo "$CODE $([ "$CODE" = "200" ] && echo "✅" || echo "❌")"
 
-echo -n "  [3b] /grader/weights/NBA: "
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND/grader/weights/NBA")
+echo -n "  [3b] /live/grader/weights/NBA: "
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $API_KEY" "$BACKEND/live/grader/weights/NBA")
 echo "$CODE $([ "$CODE" = "200" ] && echo "✅" || echo "❌")"
 
-echo -n "  [3c] /grader/bias/NBA: "
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND/grader/bias/NBA")
+echo -n "  [3c] /live/grader/bias/NBA: "
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $API_KEY" "$BACKEND/live/grader/bias/NBA")
 echo "$CODE $([ "$CODE" = "200" ] && echo "✅" || echo "❌")"
 
-echo -n "  [3d] /grader/run-audit (POST): "
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BACKEND/grader/run-audit")
+echo -n "  [3d] /live/grader/run-audit (POST): "
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-API-Key: $API_KEY" "$BACKEND/live/grader/run-audit")
 echo "$CODE $([ "$CODE" = "200" ] && echo "✅" || echo "❌")"
 
-echo -n "  [3e] /grader/performance/NBA: "
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND/grader/performance/NBA")
+echo -n "  [3e] /live/grader/performance/NBA: "
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $API_KEY" "$BACKEND/live/grader/performance/NBA")
 echo "$CODE $([ "$CODE" = "200" ] && echo "✅" || echo "❌")"
 
 echo ""
@@ -111,8 +112,8 @@ echo ""
 echo "TEST 4: RESPONSE CONTENT"
 echo "------------------------------"
 
-echo "  [4a] /grader/weights/NBA:"
-curl -s http://localhost:8000/grader/weights/NBA | python3 -c "
+echo "  [4a] /live/grader/weights/NBA:"
+curl -s http://localhost:8000/live/grader/weights/NBA | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 if 'error' in data:
@@ -133,8 +134,8 @@ else:
 " 2>/dev/null || echo "    FAIL ❌ — endpoint returned invalid JSON"
 
 echo ""
-echo "  [4b] /grader/bias/NBA?days_back=7:"
-curl -s "http://localhost:8000/grader/bias/NBA?days_back=7" | python3 -c "
+echo "  [4b] /live/grader/bias/NBA?days_back=7:"
+curl -s "http://localhost:8000/live/grader/bias/NBA?days_back=7" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 if 'error' in data:
@@ -156,8 +157,8 @@ print('    PASS ✅')
 " 2>/dev/null || echo "    FAIL ❌ — endpoint returned invalid JSON"
 
 echo ""
-echo "  [4c] /grader/performance/NBA?days_back=3:"
-curl -s "http://localhost:8000/grader/performance/NBA?days_back=3" | python3 -c "
+echo "  [4c] /live/grader/performance/NBA?days_back=3:"
+curl -s "http://localhost:8000/live/grader/performance/NBA?days_back=3" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 if 'error' in data:
@@ -181,8 +182,8 @@ echo ""
 echo "TEST 5: LIVE AUDIT TRIGGER"
 echo "------------------------------"
 
-echo "  Triggering /grader/run-audit..."
-curl -s -X POST http://localhost:8000/grader/run-audit | python3 -c "
+echo "  Triggering /live/grader/run-audit..."
+curl -s -X POST http://localhost:8000/live/grader/run-audit | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 if 'error' in data:
@@ -210,13 +211,13 @@ echo "------------------------------"
 
 for SPORT in NBA NHL NFL MLB NCAAB; do
   echo -n "  [$SPORT] weights: "
-  CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/grader/weights/$SPORT")
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/live/grader/weights/$SPORT")
   echo -n "$CODE "
   echo -n "| bias: "
-  CODE2=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/grader/bias/$SPORT")
+  CODE2=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/live/grader/bias/$SPORT")
   echo -n "$CODE2 "
   echo -n "| performance: "
-  CODE3=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/grader/performance/$SPORT")
+  CODE3=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/live/grader/performance/$SPORT")
   echo "$CODE3 $([ "$CODE" = "200" ] && [ "$CODE2" = "200" ] && [ "$CODE3" = "200" ] && echo "✅" || echo "❌")"
 done
 
@@ -229,11 +230,11 @@ echo "========================================================"
 echo "  ALL DONE — BOOKMARK THESE URLS"
 echo "========================================================"
 echo ""
-echo "  Status:        $BACKEND/grader/status"
-echo "  NBA Weights:   $BACKEND/grader/weights/NBA"
-echo "  NBA Bias:      $BACKEND/grader/bias/NBA?days_back=3"
-echo "  NBA Perf:      $BACKEND/grader/performance/NBA?days_back=7"
-echo "  Run Audit:     curl -X POST $BACKEND/grader/run-audit"
+echo "  Status:        $BACKEND/live/grader/status"
+echo "  NBA Weights:   $BACKEND/live/grader/weights/NBA"
+echo "  NBA Bias:      $BACKEND/live/grader/bias/NBA?days_back=3"
+echo "  NBA Perf:      $BACKEND/live/grader/performance/NBA?days_back=7"
+echo "  Run Audit:     curl -X POST -H 'X-API-Key: $API_KEY' $BACKEND/live/grader/run-audit"
 echo ""
 echo "  Replace NBA with NFL, MLB, NHL, or NCAAB for other sports."
 echo "========================================================"
