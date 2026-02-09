@@ -170,13 +170,13 @@ class SchedulerConfig:
     # Cleanup
     KEEP_PREDICTIONS_DAYS = 30  # Keep 30 days of prediction history
     
-    # Sports and default stats (all prop types for complete learning)
+    # v20.15: Sports and default stats - all prop types for complete learning
     SPORT_STATS = {
-        "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "pra"],
-        "NFL": ["passing_yards", "rushing_yards", "receiving_yards"],
-        "MLB": ["hits", "total_bases", "strikeouts"],
-        "NHL": ["points", "shots"],
-        "NCAAB": ["points", "rebounds"]
+        "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "turnovers", "pra"],
+        "NFL": ["pass_tds", "pass_yds", "rush_yds", "reception_yds", "receptions", "anytime_td"],
+        "MLB": ["hits", "runs", "rbis", "home_runs", "total_bases", "strikeouts", "outs"],
+        "NHL": ["goals", "assists", "points", "shots", "saves"],
+        "NCAAB": ["points", "rebounds", "assists", "threes", "steals", "blocks", "turnovers"]
     }
 
 

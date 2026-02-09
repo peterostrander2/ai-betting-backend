@@ -113,15 +113,41 @@ STAT_TYPE_MAP = {
     "player_pass_yds": "passing_yards",
     "player_rush_yds": "rushing_yards",
     "player_rec_yds": "receiving_yards",
+    "player_reception_yds": "receiving_yards",
     "player_pass_tds": "passing_touchdowns",
     "player_rush_tds": "rushing_touchdowns",
     "player_receptions": "receptions",
-    # NFL - Direct format
+    "player_anytime_td": "anytime_td",
+    # NFL - Direct format (long names)
     "passing_yards": "passing_yards",
     "rushing_yards": "rushing_yards",
     "receiving_yards": "receiving_yards",
     "receptions": "receptions",
     "touchdowns": "touchdowns",
+    # NFL - Short format (stripped player_ prefix)
+    "pass_yds": "passing_yards",
+    "rush_yds": "rushing_yards",
+    "rec_yds": "receiving_yards",
+    "reception_yds": "receiving_yards",
+    "pass_tds": "passing_touchdowns",
+    "rush_tds": "rushing_touchdowns",
+    "anytime_td": "anytime_td",
+    # MLB - Odds API format
+    "batter_total_bases": "total_bases",
+    "batter_hits": "hits",
+    "batter_rbis": "rbis",
+    "batter_runs": "runs",
+    "batter_home_runs": "home_runs",
+    "pitcher_strikeouts": "strikeouts",
+    "pitcher_outs": "outs",
+    # MLB - Direct format
+    "hits": "hits",
+    "runs": "runs",
+    "rbis": "rbis",
+    "home_runs": "home_runs",
+    "total_bases": "total_bases",
+    "strikeouts": "strikeouts",
+    "outs": "outs",
 }
 
 

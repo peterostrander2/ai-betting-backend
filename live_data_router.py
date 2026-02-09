@@ -2493,13 +2493,14 @@ async def get_props(sport: str):
             logger.info("Found %d events for %s props", len(events), sport)
 
             # Step 2: Fetch props for each event (limit to first 5 to avoid rate limits)
-            prop_markets = "player_points,player_rebounds,player_assists,player_threes"
+            # v20.15: Expanded prop markets - bet on all available prop types for complete learning
+            prop_markets = "player_points,player_rebounds,player_assists,player_threes,player_blocks,player_steals,player_turnovers"
             if sport_lower == "nfl":
-                prop_markets = "player_pass_tds,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions"
+                prop_markets = "player_pass_tds,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions,player_anytime_td"
             elif sport_lower == "mlb":
-                prop_markets = "batter_total_bases,batter_hits,batter_rbis,pitcher_strikeouts"
+                prop_markets = "batter_total_bases,batter_hits,batter_rbis,batter_runs,batter_home_runs,pitcher_strikeouts,pitcher_outs"
             elif sport_lower == "nhl":
-                prop_markets = "player_points,player_shots_on_goal,player_assists"
+                prop_markets = "player_points,player_shots_on_goal,player_assists,player_goals,player_saves"
 
             for event in events[:5]:
                 event_id = event.get("id")

@@ -172,13 +172,13 @@ class AutoGrader:
     
     def _initialize_weights(self):
         """Initialize default weights for all sports and stat types."""
-        # v20.2: PROP stat types (player-level predictions)
+        # v20.15: PROP stat types (player-level predictions) - all available markets
         prop_stat_types = {
-            "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "pra"],
-            "NFL": ["passing_yards", "rushing_yards", "receiving_yards", "receptions", "touchdowns"],
-            "MLB": ["hits", "runs", "rbis", "strikeouts", "total_bases", "walks"],
-            "NHL": ["goals", "assists", "points", "shots", "saves", "blocks"],
-            "NCAAB": ["points", "rebounds", "assists", "threes"]
+            "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "turnovers", "pra"],
+            "NFL": ["pass_tds", "pass_yds", "rush_yds", "reception_yds", "receptions", "anytime_td"],
+            "MLB": ["hits", "runs", "rbis", "home_runs", "total_bases", "strikeouts", "outs"],
+            "NHL": ["goals", "assists", "points", "shots", "saves"],
+            "NCAAB": ["points", "rebounds", "assists", "threes", "steals", "blocks", "turnovers"]
         }
 
         # v20.2: GAME stat types (game-level predictions: spread, total, moneyline, sharp)
@@ -1104,14 +1104,14 @@ class AutoGrader:
 
         results = {}
 
-        # v20.3: Separate stat types for PROP picks vs GAME picks
+        # v20.15: Separate stat types for PROP picks vs GAME picks
         # PROP stat types - MUST MATCH _initialize_weights() to audit all prop types
         prop_stat_types = {
-            "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "pra"],
-            "NFL": ["passing_yards", "rushing_yards", "receiving_yards", "receptions", "touchdowns"],
-            "MLB": ["hits", "runs", "rbis", "strikeouts", "total_bases", "walks"],
-            "NHL": ["goals", "assists", "points", "shots", "saves", "blocks"],
-            "NCAAB": ["points", "rebounds", "assists", "threes"]
+            "NBA": ["points", "rebounds", "assists", "threes", "steals", "blocks", "turnovers", "pra"],
+            "NFL": ["pass_tds", "pass_yds", "rush_yds", "reception_yds", "receptions", "anytime_td"],
+            "MLB": ["hits", "runs", "rbis", "home_runs", "total_bases", "strikeouts", "outs"],
+            "NHL": ["goals", "assists", "points", "shots", "saves"],
+            "NCAAB": ["points", "rebounds", "assists", "threes", "steals", "blocks", "turnovers"]
         }
 
         # GAME stat types (game-level predictions - spread, total, moneyline)
