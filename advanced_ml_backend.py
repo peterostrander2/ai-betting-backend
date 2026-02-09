@@ -765,7 +765,36 @@ class MasterPredictionSystem:
         })
         
         # Calculate AI Score (0-10) incorporating pillars
-        base_score = min(10, abs(predicted_value - line) / player_stats.get('std_dev', 6.5) * 5)
+        # v20.16: For game picks, deviation-based scoring gives 0 when prediction ≈ line
+        # Use model agreement + edge + factors instead for meaningful scores
+        std_dev = player_stats.get('std_dev', 6.5)
+        deviation = abs(predicted_value - line)
+        deviation_score = min(10, deviation / std_dev * 5)
+
+        # Model agreement score (0-3): how well do models agree?
+        model_values = [model_predictions['ensemble'], model_predictions['lstm'],
+                       model_predictions['matchup'], model_predictions['monte_carlo']]
+        model_std = np.std(model_values) if len(model_values) > 1 else 0
+        agreement_score = max(0, 3 - model_std / 2)  # Lower std = higher agreement
+
+        # Edge-based score (0-3): edge_percent indicates value
+        edge_pct = abs(edge_analysis.get('edge_percent', 0))
+        edge_score = min(3, edge_pct / 5)  # 15%+ edge = max 3 points
+
+        # Factor-based score (0-2): rest + injury signals
+        factor_score = 0
+        if rest_factor >= 0.95:  # Well-rested
+            factor_score += 1.0
+        if abs(injury_impact) < 1:  # Minimal injury impact
+            factor_score += 0.5
+        if abs(model_predictions.get('line_movement', 0)) > 0.5:  # Sharp line movement
+            factor_score += 0.5
+
+        # Base score: max of deviation OR (agreement + edge + factors)
+        # This ensures game picks get meaningful scores even when prediction ≈ line
+        alternative_base = min(10, 2.0 + agreement_score + edge_score + factor_score)
+        base_score = max(deviation_score, alternative_base)
+
         pillar_boost = pillar_analysis['overall_pillar_score']
         ai_score = min(10, max(0, base_score + pillar_boost))
         
