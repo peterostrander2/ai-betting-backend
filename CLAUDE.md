@@ -1,3 +1,21 @@
+# CLAUDE CODE SESSION BEHAVIOR
+
+**Context Management (READ FIRST):**
+- Do NOT auto-summarize or compact conversation history unless explicitly requested
+- Prefer retaining full context over aggressive summarization
+- When approaching context limits, ASK the user before compacting
+- Prioritize: (1) current task, (2) recent changes, (3) active file contents
+- Do NOT re-read files already in context - reference what you have
+- If you need to compact, preserve: invariants, current task state, recent code changes
+
+**Session Efficiency:**
+- Skip re-reading CLAUDE.md sections already loaded
+- Use grep/search instead of reading entire files when looking for specific content
+- Batch related changes together rather than one file at a time
+- Checkpoint understanding verbally rather than re-parsing docs
+
+---
+
 # CLAUDE.md - Project Instructions for AI Assistants
 
 ## Sister Repositories
