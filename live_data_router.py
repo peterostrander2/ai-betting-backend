@@ -9724,6 +9724,251 @@ async def debug_time(api_key: str = Depends(verify_api_key)):
         }
 
 
+@router.get("/debug/slate-summary/{sport}")
+async def debug_slate_summary(
+    sport: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    v20.12: SLATE SUMMARY ENDPOINT - Distributions and boost fire counts.
+
+    Provides comprehensive health metrics for the current slate:
+    - Score distributions (histogram buckets)
+    - Boost fire counts (confluence, msrf, jason_sim, serp, ensemble)
+    - Engine health metrics (averages, low counts, starvation detection)
+    - GLITCH component status summary
+    - Overall slate health: HEALTHY / DEGRADED / STARVED
+
+    Use this to distinguish "no edge found" (healthy) from "engine starved" (broken).
+
+    Query params:
+    - sport: NBA, NHL, NFL, MLB, NCAAB
+
+    Returns:
+    - status: HEALTHY / DEGRADED / STARVED
+    - score_distribution: histogram buckets
+    - boost_counts: how many picks had each boost type fire
+    - engine_health: averages and status per engine
+    - glitch_summary: component status counts
+    - slate_stats: overall slate statistics
+    """
+    sport_upper = sport.upper()
+    if sport_upper not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    try:
+        # Get best-bets for the sport (internal call)
+        from core.time_et import now_et
+        result = await get_best_bets(sport_upper, debug=True, max_games=50, max_props=100)
+
+        # Extract picks
+        game_picks = result.get("game_picks", {}).get("picks", [])
+        props_picks = result.get("props", {}).get("picks", [])
+        all_picks = game_picks + props_picks
+
+        if not all_picks:
+            return {
+                "sport": sport_upper,
+                "status": "NO_PICKS",
+                "message": "No picks available for analysis",
+                "slate_stats": {
+                    "total_picks": 0,
+                    "game_picks": len(game_picks),
+                    "prop_picks": len(props_picks)
+                },
+                "timestamp": now_et().isoformat()
+            }
+
+        # === 1. SCORE DISTRIBUTION (histogram buckets) ===
+        score_buckets = {
+            "0-4.9": 0,
+            "5.0-5.9": 0,
+            "6.0-6.4": 0,
+            "6.5-6.9": 0,
+            "7.0-7.4": 0,
+            "7.5-7.9": 0,
+            "8.0-8.4": 0,
+            "8.5-8.9": 0,
+            "9.0-10.0": 0
+        }
+        for pick in all_picks:
+            score = pick.get("final_score", 0)
+            if score < 5.0:
+                score_buckets["0-4.9"] += 1
+            elif score < 6.0:
+                score_buckets["5.0-5.9"] += 1
+            elif score < 6.5:
+                score_buckets["6.0-6.4"] += 1
+            elif score < 7.0:
+                score_buckets["6.5-6.9"] += 1
+            elif score < 7.5:
+                score_buckets["7.0-7.4"] += 1
+            elif score < 8.0:
+                score_buckets["7.5-7.9"] += 1
+            elif score < 8.5:
+                score_buckets["8.0-8.4"] += 1
+            elif score < 9.0:
+                score_buckets["8.5-8.9"] += 1
+            else:
+                score_buckets["9.0-10.0"] += 1
+
+        # === 2. BOOST FIRE COUNTS ===
+        boost_counts = {
+            "confluence_fired": 0,
+            "msrf_fired": 0,
+            "jason_sim_fired": 0,
+            "serp_fired": 0,
+            "ensemble_fired": 0,
+            "harmonic_convergence": 0,
+            "totals_calibration": 0,
+            "hook_penalty_applied": 0,
+            "expert_consensus_fired": 0,
+            "prop_correlation_fired": 0
+        }
+        for pick in all_picks:
+            if pick.get("confluence_boost", 0) != 0:
+                boost_counts["confluence_fired"] += 1
+            if pick.get("msrf_boost", 0) != 0:
+                boost_counts["msrf_fired"] += 1
+            if pick.get("jason_sim_boost", 0) != 0:
+                boost_counts["jason_sim_fired"] += 1
+            if pick.get("serp_boost", 0) != 0:
+                boost_counts["serp_fired"] += 1
+            if pick.get("ensemble_adjustment", 0) != 0:
+                boost_counts["ensemble_fired"] += 1
+            if pick.get("confluence_level") == "HARMONIC_CONVERGENCE":
+                boost_counts["harmonic_convergence"] += 1
+            if pick.get("totals_calibration_adj", 0) != 0:
+                boost_counts["totals_calibration"] += 1
+            if pick.get("hook_penalty", 0) != 0:
+                boost_counts["hook_penalty_applied"] += 1
+            if pick.get("expert_consensus_boost", 0) != 0:
+                boost_counts["expert_consensus_fired"] += 1
+            if pick.get("prop_correlation_adjustment", 0) != 0:
+                boost_counts["prop_correlation_fired"] += 1
+
+        # === 3. ENGINE HEALTH METRICS ===
+        def calc_engine_stats(picks, field):
+            values = [p.get(field, 0) for p in picks if p.get(field) is not None]
+            if not values:
+                return {"avg": None, "min": None, "max": None, "count": 0, "status": "NO_DATA"}
+            avg = sum(values) / len(values)
+            return {
+                "avg": round(avg, 2),
+                "min": round(min(values), 2),
+                "max": round(max(values), 2),
+                "count": len(values),
+                "status": "OK"
+            }
+
+        engine_health = {
+            "ai": calc_engine_stats(all_picks, "ai_score"),
+            "research": calc_engine_stats(all_picks, "research_score"),
+            "esoteric": calc_engine_stats(all_picks, "esoteric_score"),
+            "jarvis": calc_engine_stats(all_picks, "jarvis_score"),
+            "context": calc_engine_stats(all_picks, "context_modifier"),
+            "final": calc_engine_stats(all_picks, "final_score")
+        }
+
+        # Engine starvation thresholds
+        THRESHOLDS = {
+            "ai": 4.0,
+            "research": 4.0,
+            "esoteric": 3.0,
+            "jarvis": 4.0
+        }
+        low_engines = []
+        for engine, threshold in THRESHOLDS.items():
+            avg = engine_health[engine].get("avg")
+            if avg is not None and avg < threshold:
+                low_engines.append(engine)
+                engine_health[engine]["status"] = "LOW"
+            elif avg is None:
+                low_engines.append(engine)
+                engine_health[engine]["status"] = "MISSING"
+
+        # === 4. GLITCH COMPONENT STATUS SUMMARY ===
+        glitch_summary = {
+            "total_picks_with_glitch": 0,
+            "component_status_counts": {
+                "chrome_resonance": {"SUCCESS": 0, "ERROR": 0, "SKIPPED": 0, "OTHER": 0},
+                "void_moon": {"SUCCESS": 0, "ERROR": 0, "SKIPPED": 0, "OTHER": 0},
+                "noosphere": {"SUCCESS": 0, "ERROR": 0, "SKIPPED": 0, "OTHER": 0},
+                "hurst": {"SUCCESS": 0, "ERROR": 0, "SKIPPED": 0, "OTHER": 0},
+                "kp_index": {"SUCCESS": 0, "ERROR": 0, "SKIPPED": 0, "OTHER": 0},
+                "benford": {"SUCCESS": 0, "ERROR": 0, "SKIPPED": 0, "OTHER": 0}
+            },
+            "overall_status_counts": {"SUCCESS": 0, "PARTIAL": 0, "FAILED": 0, "NO_COMPONENTS": 0, "MISSING": 0}
+        }
+
+        for pick in all_picks:
+            glitch = pick.get("glitch_signals") or pick.get("glitch_breakdown")
+            if glitch:
+                glitch_summary["total_picks_with_glitch"] += 1
+
+                # Overall status
+                overall_status = glitch.get("status", "MISSING")
+                if overall_status in glitch_summary["overall_status_counts"]:
+                    glitch_summary["overall_status_counts"][overall_status] += 1
+                else:
+                    glitch_summary["overall_status_counts"]["MISSING"] += 1
+
+                # Component statuses
+                breakdown = glitch.get("breakdown", {})
+                for comp_name, comp_data in breakdown.items():
+                    if comp_name in glitch_summary["component_status_counts"]:
+                        comp_status = comp_data.get("status", "OTHER") if isinstance(comp_data, dict) else "OTHER"
+                        if comp_status in ["SUCCESS", "ERROR", "SKIPPED"]:
+                            glitch_summary["component_status_counts"][comp_name][comp_status] += 1
+                        else:
+                            glitch_summary["component_status_counts"][comp_name]["OTHER"] += 1
+
+        # === 5. OVERALL SLATE HEALTH STATUS ===
+        passed_threshold = len([p for p in all_picks if p.get("final_score", 0) >= 7.0])
+        pass_rate = (passed_threshold / len(all_picks) * 100) if all_picks else 0
+
+        if len(low_engines) >= 3:
+            overall_status = "STARVED"
+            status_reason = f"{len(low_engines)} engines below threshold: {', '.join(low_engines)}"
+        elif len(low_engines) >= 2:
+            overall_status = "DEGRADED"
+            status_reason = f"{len(low_engines)} engines below threshold: {', '.join(low_engines)}"
+        elif pass_rate < 5 and len(all_picks) >= 10:
+            overall_status = "DEGRADED"
+            status_reason = f"Only {pass_rate:.1f}% of picks passed 7.0 threshold"
+        else:
+            overall_status = "HEALTHY"
+            status_reason = "All engines within normal range"
+
+        return {
+            "sport": sport_upper,
+            "status": overall_status,
+            "status_reason": status_reason,
+            "slate_stats": {
+                "total_picks": len(all_picks),
+                "game_picks": len(game_picks),
+                "prop_picks": len(props_picks),
+                "passed_7_0_threshold": passed_threshold,
+                "pass_rate_pct": round(pass_rate, 1)
+            },
+            "score_distribution": score_buckets,
+            "boost_counts": boost_counts,
+            "engine_health": engine_health,
+            "low_engines": low_engines,
+            "glitch_summary": glitch_summary,
+            "timestamp": now_et().isoformat()
+        }
+
+    except Exception as e:
+        logger.exception("Slate summary failed: %s", e)
+        return {
+            "sport": sport_upper,
+            "status": "ERROR",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 @router.get("/debug/integrations")
 async def debug_integrations(
     api_key: str = Depends(verify_api_key),

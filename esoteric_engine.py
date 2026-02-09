@@ -1251,49 +1251,106 @@ def get_glitch_aggregate(
     - Benford Anomaly (if value_for_benford provided) - weight 0.10
 
     Returns aggregated score and breakdown for esoteric engine integration.
+
+    v20.12 HARDENING: All 6 components always present in breakdown with status fields.
+    Top-level status indicates overall health (SUCCESS/PARTIAL/FAILED).
     """
-    results = {}
+    # Initialize default structures for ALL 6 components (always present)
+    results = {
+        "chrome_resonance": {
+            "status": "SKIPPED", "reason": "no_birth_date",
+            "score": 0.5, "triggered": False, "interval": None
+        },
+        "void_moon": {
+            "status": "PENDING", "is_void": False, "moon_sign": None,
+            "void_end": None, "confidence": 0.0
+        },
+        "noosphere": {
+            "status": "SKIPPED", "reason": "serpapi_disabled",
+            "velocity": 0.0, "direction": "NEUTRAL", "triggered": False, "source": "none"
+        },
+        "hurst": {
+            "status": "SKIPPED", "reason": "insufficient_line_history",
+            "h_value": 0.5, "regime": "UNKNOWN", "data_points": 0
+        },
+        "kp_index": {
+            "status": "PENDING", "kp_value": None, "storm_level": "UNKNOWN",
+            "score": 0.5, "triggered": False, "source": "none"
+        },
+        "benford": {
+            "status": "SKIPPED", "reason": "insufficient_values",
+            "score": 0.5, "triggered": False, "deviation": 0.0, "values_count": 0
+        }
+    }
+
     total_weight = 0
     weighted_score = 0
     triggered_signals = []
     reasons = []
+    components_attempted = 0
+    components_succeeded = 0
+    component_errors = []
 
     # 1. Chrome Resonance (weight: 0.25)
     if birth_date_str:
-        chrome = calculate_chrome_resonance(birth_date_str, game_date)
-        results["chrome_resonance"] = chrome
-        weight = 0.25
-        weighted_score += chrome["score"] * weight
-        total_weight += weight
-        if chrome["triggered"]:
-            triggered_signals.append("chrome_resonance")
-        reasons.append(f"CHROME: {chrome['reason']}")
+        components_attempted += 1
+        try:
+            chrome = calculate_chrome_resonance(birth_date_str, game_date)
+            chrome["status"] = "SUCCESS"
+            results["chrome_resonance"] = chrome
+            weight = 0.25
+            weighted_score += chrome["score"] * weight
+            total_weight += weight
+            components_succeeded += 1
+            if chrome["triggered"]:
+                triggered_signals.append("chrome_resonance")
+            reasons.append(f"CHROME: {chrome['reason']}")
+        except Exception as e:
+            results["chrome_resonance"]["status"] = "ERROR"
+            results["chrome_resonance"]["error"] = str(e)[:100]
+            component_errors.append(f"chrome_resonance: {str(e)[:50]}")
 
     # 2. Void Moon (weight: 0.20)
-    void_moon = calculate_void_moon(game_date)
-    results["void_moon"] = void_moon
-    weight = 0.20
-    # Void moon: is_void = bad (lower score)
-    void_score = 0.3 if void_moon["is_void"] else 0.7
-    weighted_score += void_score * weight
-    total_weight += weight
-    if void_moon["is_void"]:
-        triggered_signals.append("void_moon_warning")
-        reasons.append(f"VOID_MOON: Active until {void_moon.get('void_end', 'unknown')}")
-    else:
-        reasons.append(f"VOID_MOON: Clear - {void_moon.get('moon_sign', 'unknown')}")
+    components_attempted += 1
+    try:
+        void_moon = calculate_void_moon(game_date)
+        void_moon["status"] = "SUCCESS"
+        results["void_moon"] = void_moon
+        weight = 0.20
+        # Void moon: is_void = bad (lower score)
+        void_score = 0.3 if void_moon["is_void"] else 0.7
+        weighted_score += void_score * weight
+        total_weight += weight
+        components_succeeded += 1
+        if void_moon["is_void"]:
+            triggered_signals.append("void_moon_warning")
+            reasons.append(f"VOID_MOON: Active until {void_moon.get('void_end', 'unknown')}")
+        else:
+            reasons.append(f"VOID_MOON: Clear - {void_moon.get('moon_sign', 'unknown')}")
+    except Exception as e:
+        results["void_moon"]["status"] = "ERROR"
+        results["void_moon"]["error"] = str(e)[:100]
+        component_errors.append(f"void_moon: {str(e)[:50]}")
 
     # 2b. Noosphere Velocity from SerpAPI (weight: 0.15) - real search trends
     noosphere_data = None
+    serpapi_available = False
     try:
         from alt_data_sources.serpapi import get_noosphere_data, SERPAPI_ENABLED
+        serpapi_available = SERPAPI_ENABLED
         if SERPAPI_ENABLED:
+            components_attempted += 1
             # Extract team names if available (would need to be passed in)
             noosphere_data = get_noosphere_data(teams=None, player=None)
     except ImportError:
-        pass
+        results["noosphere"]["reason"] = "serpapi_module_not_available"
+    except Exception as e:
+        results["noosphere"]["status"] = "ERROR"
+        results["noosphere"]["error"] = str(e)[:100]
+        component_errors.append(f"noosphere: {str(e)[:50]}")
 
     if noosphere_data and noosphere_data.get("source") == "serpapi_live":
+        noosphere_data["status"] = "SUCCESS"
         results["noosphere"] = noosphere_data
         weight = 0.15
         # Convert velocity to score (0-1)
@@ -1301,74 +1358,122 @@ def get_glitch_aggregate(
         noosphere_score = 0.5 + (velocity * 0.3)  # -1 to 1 -> 0.2 to 0.8
         weighted_score += noosphere_score * weight
         total_weight += weight
+        components_succeeded += 1
         if noosphere_data.get("triggered"):
             triggered_signals.append(f"noosphere_{noosphere_data.get('direction', 'unknown').lower()}")
         reasons.append(f"NOOSPHERE: {noosphere_data.get('direction', 'NEUTRAL')} (v={velocity:.2f})")
+    elif serpapi_available:
+        results["noosphere"]["status"] = "NO_DATA"
+        results["noosphere"]["reason"] = "serpapi_returned_no_live_data"
 
     # 3. Hurst Exponent (weight: 0.25)
     if line_history and len(line_history) >= 10:
-        hurst = calculate_hurst_exponent(line_history)
-        results["hurst"] = hurst
-        weight = 0.25
-        # Hurst away from 0.5 = stronger signal
-        hurst_score = 0.5 + abs(hurst["h_value"] - 0.5)
-        weighted_score += hurst_score * weight
-        total_weight += weight
-        if hurst["regime"] != "RANDOM_WALK":
-            triggered_signals.append(f"hurst_{hurst['regime'].lower()}")
-        reasons.append(f"HURST: {hurst['regime']} (H={hurst['h_value']:.2f})")
+        components_attempted += 1
+        try:
+            hurst = calculate_hurst_exponent(line_history)
+            hurst["status"] = "SUCCESS"
+            hurst["data_points"] = len(line_history)
+            results["hurst"] = hurst
+            weight = 0.25
+            # Hurst away from 0.5 = stronger signal
+            hurst_score = 0.5 + abs(hurst["h_value"] - 0.5)
+            weighted_score += hurst_score * weight
+            total_weight += weight
+            components_succeeded += 1
+            if hurst["regime"] != "RANDOM_WALK":
+                triggered_signals.append(f"hurst_{hurst['regime'].lower()}")
+            reasons.append(f"HURST: {hurst['regime']} (H={hurst['h_value']:.2f})")
+        except Exception as e:
+            results["hurst"]["status"] = "ERROR"
+            results["hurst"]["error"] = str(e)[:100]
+            results["hurst"]["data_points"] = len(line_history) if line_history else 0
+            component_errors.append(f"hurst: {str(e)[:50]}")
+    else:
+        results["hurst"]["data_points"] = len(line_history) if line_history else 0
 
     # 4. Kp-Index from NOAA (weight: 0.25) - Falls back to Schumann if unavailable
     kp_data = None
+    noaa_available = False
+    components_attempted += 1
     try:
         from alt_data_sources.noaa import get_kp_betting_signal, NOAA_ENABLED
+        noaa_available = NOAA_ENABLED
         if NOAA_ENABLED:
             kp_data = get_kp_betting_signal(game_time)
     except ImportError:
-        pass  # NOAA module not available, use Schumann fallback
+        results["kp_index"]["status"] = "FALLBACK"
+        results["kp_index"]["reason"] = "noaa_module_not_available"
+    except Exception as e:
+        results["kp_index"]["status"] = "ERROR"
+        results["kp_index"]["error"] = str(e)[:100]
+        component_errors.append(f"kp_index: {str(e)[:50]}")
 
     if kp_data and kp_data.get("source") != "fallback":
         # Use real NOAA Kp-Index data
+        kp_data["status"] = "SUCCESS"
         results["kp_index"] = kp_data
         weight = 0.25
         kp_score = kp_data["score"]
         weighted_score += kp_score * weight
         total_weight += weight
+        components_succeeded += 1
         if kp_data["triggered"]:
             triggered_signals.append(f"kp_{kp_data['storm_level'].lower()}")
         reasons.append(f"KP: {kp_data['storm_level']} (Kp={kp_data['kp_value']})")
     else:
         # Fallback to Schumann simulation
-        schumann = get_schumann_frequency(game_date)
-        results["schumann"] = schumann
-        weight = 0.25
-        # Normal conditions = good, elevated = potentially volatile
-        if schumann["status"] == "NORMAL":
-            schumann_score = 0.7
-        elif "ELEVATED" in schumann["status"]:
-            schumann_score = 0.5
-            triggered_signals.append("schumann_elevated")
-        else:
-            schumann_score = 0.6
-        weighted_score += schumann_score * weight
-        total_weight += weight
-        reasons.append(f"SCHUMANN: {schumann['status']} ({schumann['current_hz']}Hz)")
+        try:
+            schumann = get_schumann_frequency(game_date)
+            schumann["status"] = "FALLBACK_SUCCESS"
+            results["schumann"] = schumann
+            results["kp_index"]["status"] = "FALLBACK"
+            results["kp_index"]["reason"] = "using_schumann_simulation"
+            weight = 0.25
+            # Normal conditions = good, elevated = potentially volatile
+            if schumann["status"] == "NORMAL":
+                schumann_score = 0.7
+            elif "ELEVATED" in schumann["status"]:
+                schumann_score = 0.5
+                triggered_signals.append("schumann_elevated")
+            else:
+                schumann_score = 0.6
+            weighted_score += schumann_score * weight
+            total_weight += weight
+            components_succeeded += 1  # Fallback counts as success
+            reasons.append(f"SCHUMANN: {schumann['status']} ({schumann['current_hz']}Hz)")
+        except Exception as e:
+            results["kp_index"]["status"] = "ERROR"
+            results["kp_index"]["error"] = f"both_noaa_and_schumann_failed: {str(e)[:50]}"
+            component_errors.append(f"kp_index_schumann: {str(e)[:50]}")
 
     # 5. Benford Anomaly (weight: 0.10) - detect statistical manipulation in lines
     if value_for_benford and len(value_for_benford) >= 10:
+        components_attempted += 1
+        results["benford"]["values_count"] = len(value_for_benford)
         try:
             from signals.math_glitch import check_benford_anomaly
             benford = check_benford_anomaly(value_for_benford)
+            benford["status"] = "SUCCESS"
+            benford["values_count"] = len(value_for_benford)
             results["benford"] = benford
             weight = 0.10
             benford_score = benford.get("score", 0.5)
             weighted_score += benford_score * weight
             total_weight += weight
+            components_succeeded += 1
             if benford.get("triggered"):
                 triggered_signals.append(f"benford_anomaly_{benford.get('deviation', 0):.2f}")
             reasons.append(f"BENFORD: {benford.get('reason', 'UNKNOWN')}")
         except ImportError:
-            pass  # signals module not available
+            results["benford"]["status"] = "ERROR"
+            results["benford"]["reason"] = "signals_module_not_available"
+            component_errors.append("benford: signals.math_glitch module not available")
+        except Exception as e:
+            results["benford"]["status"] = "ERROR"
+            results["benford"]["error"] = str(e)[:100]
+            component_errors.append(f"benford: {str(e)[:50]}")
+    else:
+        results["benford"]["values_count"] = len(value_for_benford) if value_for_benford else 0
 
     # Normalize score if we have weights
     if total_weight > 0:
@@ -1376,14 +1481,30 @@ def get_glitch_aggregate(
     else:
         final_score = 0.5
 
+    # Determine overall status
+    if components_succeeded == components_attempted and components_attempted > 0:
+        overall_status = "SUCCESS"
+    elif components_succeeded > 0:
+        overall_status = "PARTIAL"
+    elif components_attempted > 0:
+        overall_status = "FAILED"
+    else:
+        overall_status = "NO_COMPONENTS"  # All components were skipped
+
     return {
+        "status": overall_status,
         "glitch_score": round(final_score, 3),
         "glitch_score_10": round(final_score * 10, 2),  # 0-10 scale for engine
         "triggered_count": len(triggered_signals),
         "triggered_signals": triggered_signals,
         "reasons": reasons,
         "breakdown": results,
-        "weights_used": round(total_weight, 2)
+        "weights_used": round(total_weight, 2),
+        # v20.12 Hardening: Component health tracking
+        "components_attempted": components_attempted,
+        "components_succeeded": components_succeeded,
+        "components_skipped": 6 - components_attempted,  # 6 total components
+        "component_errors": component_errors if component_errors else None
     }
 
 
