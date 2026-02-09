@@ -906,6 +906,58 @@ Cover ALL teams in each sport (204 rivalries across 5 sports).
 
 ---
 
+## 62. Post-Base Signals Architecture (v20.11)
+
+### The Mistake
+Hook/Expert/Prop signals mutated `research_score` AFTER `base_score` was computed — the mutations had NO EFFECT on `final_score`.
+
+### The Fix
+Wire signals as explicit parameters to `compute_final_score_option_a()`, not as engine score mutations. Post-base signals are additive AFTER BASE_4.
+
+### Rule
+> **INVARIANT**: Engine scores are LOCKED once BASE_4 is computed. Post-base signals must be explicit parameters, not mutations.
+
+---
+
+## 63. Dormant Features — Stadium Altitude & Travel Fatigue (v20.12)
+
+### The Mistake
+Stadium altitude module existed but wasn't called. Travel fatigue had undefined `rest_days` variable.
+
+### The Fix
+Wire `alt_data_sources/stadium.py` into scoring. Use `_rest_days_for_team()` closure instead of undefined `rest_days`.
+
+### Rule
+> **INVARIANT**: Never use `var if 'var' in dir()` pattern — use the proper function/closure that's already implemented.
+
+---
+
+## 64. CI Partial-Success Error Handling (v20.12)
+
+### The Mistake
+Session 8 spot check treated ANY error as fatal. Timeout with valid picks = partial success, not failure.
+
+### The Fix
+Check error codes for severity AND count actual picks returned. Timeout codes (`PROPS_TIMED_OUT`, `GAME_PICKS_TIMED_OUT`) are soft errors.
+
+### Rule
+> **INVARIANT**: CI scripts must distinguish fatal errors from partial-success. Count picks before deciding error severity.
+
+---
+
+## 65. SERP Quota Cost vs Value (v20.12)
+
+### The Mistake
+SERP burned 5000 searches/month. Per-call APIs enabled by default exhausted quota mid-month.
+
+### The Fix
+Disabled SERP by default (`SERP_INTEL_ENABLED=false`). Per-call APIs require explicit opt-in.
+
+### Rule
+> **INVARIANT**: Never enable expensive per-call APIs by default. Require explicit opt-in and calculate cost/benefit first.
+
+---
+
 ## 66-67. Cron Automation Lessons (Feb 2026)
 
 ### 66. Cron Path Validation
@@ -941,7 +993,39 @@ crontab -l | wc -l   # Should show 33+ scheduled jobs
 
 ---
 
-## 68. Session 7 SHARP Fallback Detection Bug (Feb 8, 2026)
+## 68. Robust Shell Script Error Handling (v20.13)
+
+*(Documented in CLAUDE.md lesson table — see CLAUDE.md for details.)*
+
+---
+
+## 69-70. v20.13 Engine 2 (Research) Audit
+
+### 69. Auto-Grader Field Name Mismatch
+
+**The Mistake:**
+`auto_grader.py:_convert_pick_to_record()` read `sharp_money`/`public_fade`/`line_variance` from `research_breakdown`, but picks store as `sharp_boost`/`public_boost`/`line_boost`. Daily learning loop always saw 0.0 for research signals.
+
+**The Fix:**
+Use fallback pattern: `breakdown.get("sharp_boost", breakdown.get("sharp_money", 0.0))` — reads new name first, old name as fallback.
+
+**Rule:**
+> **INVARIANT**: Field names in `_convert_pick_to_record()` MUST match field names in `persist_pick()`. When renaming fields, use fallback pattern for backward compatibility.
+
+### 70. GOLD_STAR Gate Labels
+
+**The Mistake:**
+Gate labels said `research_gte_5.5`/`esoteric_gte_4.0` but actual thresholds in `scoring_contract.py` are 6.5/5.5. Labels misled debugging and downgrade messages.
+
+**The Fix:**
+Updated labels in `live_data_router.py` to match `scoring_contract.py` values. Fixed docs in `CLAUDE.md` and `docs/MASTER_INDEX.md`.
+
+**Rule:**
+> **INVARIANT**: Never hardcode threshold values in label strings. Read from `scoring_contract.py` constants. After any threshold change, grep ALL files for old values.
+
+---
+
+## 71. Session 7 SHARP Fallback Detection Bug (Feb 8, 2026)
 
 ### The Mistake
 CI spot check Session 7 (`scripts/spot_check_session7.sh`) used `pick_type == "SHARP"` to detect SHARP fallback picks when `events_after_games=0`. The script failed because SHARP fallback picks do NOT have `pick_type: "SHARP"` — they have `pick_type` set to the bet type ("spread", "moneyline", "total").

@@ -51,7 +51,7 @@ This is also wired into `scripts/ci_sanity_check.sh` as a **non-blocking** step.
 - 4 base engines (weighted): AI (25%), Research (35%), Esoteric (20%), Jarvis (20%)
 - Context is a bounded modifier (cap ±0.35), not a weighted engine
 - Titanium: 3/4 engines >= 8.0 (AI/Research/Esoteric/Jarvis only)
-- GOLD_STAR gates: ai>=6.8, research>=5.5, jarvis>=6.5, esoteric>=4.0 (context gate removed)
+- GOLD_STAR gates: ai>=6.8, research>=6.5, jarvis>=6.5, esoteric>=5.5 (context gate removed)
 - Harmonic Convergence: +1.5 when Research >= 8.0 AND Esoteric >= 8.0
 
 **Canonical source (edit here only):**

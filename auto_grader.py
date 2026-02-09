@@ -364,10 +364,10 @@ class AutoGrader:
                 vacuum_adjustment=context_layer.get("vacuum_adjustment", context_layer.get("vacuum", 0.0)),
                 lstm_adjustment=context_layer.get("lstm_adjustment", 0.0),
                 officials_adjustment=context_layer.get("officials_adjustment", 0.0),
-                # Research signals
-                sharp_money_adjustment=pick.get("research_breakdown", {}).get("sharp_money", 0.0),
-                public_fade_adjustment=pick.get("research_breakdown", {}).get("public_fade", 0.0),
-                line_variance_adjustment=pick.get("research_breakdown", {}).get("line_variance", 0.0),
+                # Research signals (pick payload uses sharp_boost/public_boost/line_boost)
+                sharp_money_adjustment=pick.get("research_breakdown", {}).get("sharp_boost", pick.get("research_breakdown", {}).get("sharp_money", 0.0)),
+                public_fade_adjustment=pick.get("research_breakdown", {}).get("public_boost", pick.get("research_breakdown", {}).get("public_fade", 0.0)),
+                line_variance_adjustment=pick.get("research_breakdown", {}).get("line_boost", pick.get("research_breakdown", {}).get("line_variance", 0.0)),
                 # GLITCH signals
                 glitch_signals=flat_glitch,
                 # Esoteric contributions
