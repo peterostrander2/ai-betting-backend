@@ -50,15 +50,25 @@ if [ "$GAMES_RETURNED" -gt "$MAX_GAMES" ]; then
   exit 1
 fi
 
-# If picks returned, events must exist
+# If picks returned, events must exist (EXCEPT for SHARP fallback picks)
 if [ "$PROPS_RETURNED" -gt 0 ] && [ "$PROPS_EVENTS" -eq 0 ]; then
   echo "❌ FAIL: props returned but no prop events analyzed"
   exit 1
 fi
 
+# Game picks can come from SHARP fallback when events_after_games=0
+# SHARP fallback picks have market="sharp_money" (pick_type is the bet type: spread/moneyline)
+SHARP_MARKET_PICKS="$(echo "$RAW" | jq -r '[.game_picks.picks[] | select(.market == "sharp_money")] | length')"
+
 if [ "$GAMES_RETURNED" -gt 0 ] && [ "$GAMES_EVENTS" -eq 0 ]; then
-  echo "❌ FAIL: games returned but no game events analyzed"
-  exit 1
+  # Check if ALL returned game picks are from SHARP fallback (market=sharp_money)
+  if [ "$SHARP_MARKET_PICKS" -eq "$GAMES_RETURNED" ]; then
+    echo "✅ SHARP fallback: $SHARP_MARKET_PICKS picks from sharp_money market with 0 Odds API events (valid)"
+  else
+    echo "❌ FAIL: games returned but no game events analyzed (and not all from SHARP fallback)"
+    echo "   events_after_games=$GAMES_EVENTS, games_returned=$GAMES_RETURNED, sharp_market_picks=$SHARP_MARKET_PICKS"
+    exit 1
+  fi
 fi
 echo "✅ Top-N cap: props=$PROPS_RETURNED/<=$MAX_PROPS, games=$GAMES_RETURNED/<=$MAX_GAMES"
 
