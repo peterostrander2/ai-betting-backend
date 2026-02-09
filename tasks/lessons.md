@@ -483,6 +483,41 @@ Daily 6 AM audit → auto_grader.grade_prediction() → /data/grader_data/weight
 
 ---
 
+### 16. Session 7 SHARP Fallback Detection Bug (Feb 8, 2026)
+
+**What happened:**
+- CI spot check Session 7 (`scripts/spot_check_session7.sh`) failed with: `❌ FAIL: games returned but no game events analyzed (and not all SHARP)`
+- Debug output showed: `events_after_games=0, games_returned=1, sharp_picks=0`
+- Script was checking `pick_type == "SHARP"` to detect SHARP fallback picks
+- But SHARP fallback picks have `pick_type` set to the bet type ("spread", "moneyline"), not "SHARP"
+
+**Impact:** Session 7 CI check falsely failed when SHARP fallback picks were returned (valid scenario when Odds API has no events but Playbook API has sharp signals)
+
+**Root cause:**
+- SHARP fallback picks are created when `raw_games` is empty after ET filtering but Playbook API has sharp money signals
+- These picks have `market: "sharp_money"` as the identifier
+- The `pick_type` field is set to the bet type (e.g., "spread" for spread bets)
+- Script incorrectly looked for `pick_type == "SHARP"` which never exists
+
+**Fix:**
+Changed detection from `pick_type` to `market` field:
+```bash
+# Before (WRONG):
+SHARP_PICKS="$(echo "$RAW" | jq -r '[.game_picks.picks[] | select(.pick_type == "SHARP")] | length')"
+
+# After (CORRECT):
+SHARP_MARKET_PICKS="$(echo "$RAW" | jq -r '[.game_picks.picks[] | select(.market == "sharp_money")] | length')"
+```
+
+**Lesson:**
+- SHARP fallback picks are identified by `market == "sharp_money"`, NOT by `pick_type`
+- `pick_type` always contains the bet type (spread/moneyline/total), not the signal source
+- When validating pick types, always trace back to where the field is set in `live_data_router.py`
+
+**Commit:** `f2dc80b`
+
+---
+
 ### 15. Technical Debt Cleanup: 5-Item Audit Resolution (Feb 4, 2026)
 
 **What happened:**

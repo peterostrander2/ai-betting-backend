@@ -7327,120 +7327,121 @@ curl /live/best-bets/NBA -H "X-API-Key: KEY" | \
 
 57. **NEVER** assume `pick_type == "GAME"` for game picks - actual values are "SPREAD", "MONEYLINE", "TOTAL", "SHARP"
 58. **NEVER** check `pick_type == "GAME"` directly - use pattern: `_is_game_pick = pick_type in ("GAME", "SPREAD", "MONEYLINE", "TOTAL", "SHARP")`
-59. **NEVER** add esoteric signals directly to `esoteric_score` - add to `esoteric_raw` before the clamp
-60. **NEVER** wire signals without adding to `esoteric_reasons` for debug visibility
-61. **NEVER** add GAME-only signals without the `_is_game_pick` guard
-62. **NEVER** add PROP-only signals without checking `pick_type == "PROP"` AND `player_name`
-63. **NEVER** assume all teams will trigger Founder's Echo - only ~7/119 teams resonate on any given day
-64. **NEVER** activate dormant signals without testing on production data via curl verification commands
-65. **NEVER** modify esoteric scoring without running the verification checklist (checks 9-13 in ML & GLITCH section)
+59. **NEVER** check `pick_type == "SHARP"` for SHARP fallback detection — SHARP fallback picks have `market == "sharp_money"`, while `pick_type` contains the bet type (spread/moneyline/total). Session 7 CI fix: commit f2dc80b
+60. **NEVER** add esoteric signals directly to `esoteric_score` - add to `esoteric_raw` before the clamp
+61. **NEVER** wire signals without adding to `esoteric_reasons` for debug visibility
+62. **NEVER** add GAME-only signals without the `_is_game_pick` guard
+63. **NEVER** add PROP-only signals without checking `pick_type == "PROP"` AND `player_name`
+64. **NEVER** assume all teams will trigger Founder's Echo - only ~7/119 teams resonate on any given day
+65. **NEVER** activate dormant signals without testing on production data via curl verification commands
+66. **NEVER** modify esoteric scoring without running the verification checklist (checks 9-13 in ML & GLITCH section)
 
 ## 🚫 NEVER DO THESE (v17.6 - Vortex & Benford)
 
-66. **NEVER** add parameters to `calculate_pick_score()` without updating ALL 3 call sites (game_picks, props, sharp_money)
-67. **NEVER** assume Benford will run with <10 values - it requires 10+ for statistical significance
-68. **NEVER** pass only direct values (prop_line, spread, total) to Benford - use multi-book aggregation
-69. **NEVER** forget to extract from `game.bookmakers[]` when multi-book data is needed
-70. **NEVER** add Vortex/Tesla signals without checking for 0/None values first (division by zero risk)
-71. **NEVER** modify line history tables without considering the scheduler job dependencies
-72. **NEVER** run `_run_line_snapshot_capture()` without checking Odds API quota first
-73. **NEVER** assume line history exists for new events - check for NULL/empty returns
+67. **NEVER** add parameters to `calculate_pick_score()` without updating ALL 3 call sites (game_picks, props, sharp_money)
+68. **NEVER** assume Benford will run with <10 values - it requires 10+ for statistical significance
+69. **NEVER** pass only direct values (prop_line, spread, total) to Benford - use multi-book aggregation
+70. **NEVER** forget to extract from `game.bookmakers[]` when multi-book data is needed
+71. **NEVER** add Vortex/Tesla signals without checking for 0/None values first (division by zero risk)
+72. **NEVER** modify line history tables without considering the scheduler job dependencies
+73. **NEVER** run `_run_line_snapshot_capture()` without checking Odds API quota first
+74. **NEVER** assume line history exists for new events - check for NULL/empty returns
 
 ## 🚫 NEVER DO THESE (v19.0 - Trap Learning Loop)
 
-74. **NEVER** exceed `MAX_SINGLE_ADJUSTMENT` (5%) per trap trigger - safety guard is code-enforced
-75. **NEVER** bypass the cooldown period (24h default) - prevents runaway adjustments
-76. **NEVER** create traps targeting invalid engine/parameter combinations - validate against `SUPPORTED_ENGINES`
-77. **NEVER** skip `_validate_adjustment_safety()` before applying adjustments
-78. **NEVER** apply adjustments without logging to `adjustments.jsonl` - audit trail is mandatory
-79. **NEVER** modify `SUPPORTED_ENGINES` dict without updating trap_router validation logic
-80. **NEVER** create traps with `adjustment_cap > 0.05` - exceeds max single adjustment
-81. **NEVER** run trap evaluation before grading completes (6:15 AM runs after 6:00 AM grading)
-82. **NEVER** skip `enrich_game_result()` before evaluating conditions - numerology/gematria fields required
-83. **NEVER** delete trap files manually - use `update_trap_status(trap_id, "RETIRED")` instead
-84. **NEVER** allow cumulative adjustments to exceed 15% per trap - `MAX_CUMULATIVE_ADJUSTMENT` enforced
-85. **NEVER** create traps without specifying `target_engine` AND `target_parameter` - both required
-86. **NEVER** assume game results exist for all sports on all days - handle empty results gracefully
-87. **NEVER** modify trap condition evaluation logic without updating dry-run endpoint to match
+75. **NEVER** exceed `MAX_SINGLE_ADJUSTMENT` (5%) per trap trigger - safety guard is code-enforced
+76. **NEVER** bypass the cooldown period (24h default) - prevents runaway adjustments
+77. **NEVER** create traps targeting invalid engine/parameter combinations - validate against `SUPPORTED_ENGINES`
+78. **NEVER** skip `_validate_adjustment_safety()` before applying adjustments
+79. **NEVER** apply adjustments without logging to `adjustments.jsonl` - audit trail is mandatory
+80. **NEVER** modify `SUPPORTED_ENGINES` dict without updating trap_router validation logic
+81. **NEVER** create traps with `adjustment_cap > 0.05` - exceeds max single adjustment
+82. **NEVER** run trap evaluation before grading completes (6:15 AM runs after 6:00 AM grading)
+83. **NEVER** skip `enrich_game_result()` before evaluating conditions - numerology/gematria fields required
+84. **NEVER** delete trap files manually - use `update_trap_status(trap_id, "RETIRED")` instead
+85. **NEVER** allow cumulative adjustments to exceed 15% per trap - `MAX_CUMULATIVE_ADJUSTMENT` enforced
+86. **NEVER** create traps without specifying `target_engine` AND `target_parameter` - both required
+87. **NEVER** assume game results exist for all sports on all days - handle empty results gracefully
+88. **NEVER** modify trap condition evaluation logic without updating dry-run endpoint to match
 
 ## 🚫 NEVER DO THESE (v18.2 - Phase 8 Esoteric Signals)
 
-88. **NEVER** compare timezone-naive datetime to timezone-aware datetime - causes `TypeError: can't subtract offset-naive and offset-aware datetimes`
-89. **NEVER** use `datetime(2000, 1, 1)` without timezone for astronomical calculations - add `tzinfo=ZoneInfo("UTC")`
-90. **NEVER** forget to initialize `weather_data = None` before conditional blocks that may reference it
-91. **NEVER** skip `get_phase8_esoteric_signals()` in the scoring pipeline - all 5 signals must run
-92. **NEVER** hardcode Mercury retrograde dates without updating for the current year
-93. **NEVER** assume Phase 8 signals will always trigger - some dates have no lunar/retrograde/rivalry activity
-94. **NEVER** add Phase 8 boosts directly to `esoteric_score` - add to `esoteric_raw` before the clamp
-95. **NEVER** skip adding Phase 8 reasons to `esoteric_reasons` for debug visibility
-96. **NEVER** use AND logic for env var alternatives when OR is needed - check if ANY alternative is set, not ALL
-97. **NEVER** forget that everything is in ET only - don't assume UTC for game times
+89. **NEVER** compare timezone-naive datetime to timezone-aware datetime - causes `TypeError: can't subtract offset-naive and offset-aware datetimes`
+90. **NEVER** use `datetime(2000, 1, 1)` without timezone for astronomical calculations - add `tzinfo=ZoneInfo("UTC")`
+91. **NEVER** forget to initialize `weather_data = None` before conditional blocks that may reference it
+92. **NEVER** skip `get_phase8_esoteric_signals()` in the scoring pipeline - all 5 signals must run
+93. **NEVER** hardcode Mercury retrograde dates without updating for the current year
+94. **NEVER** assume Phase 8 signals will always trigger - some dates have no lunar/retrograde/rivalry activity
+95. **NEVER** add Phase 8 boosts directly to `esoteric_score` - add to `esoteric_raw` before the clamp
+96. **NEVER** skip adding Phase 8 reasons to `esoteric_reasons` for debug visibility
+97. **NEVER** use AND logic for env var alternatives when OR is needed - check if ANY alternative is set, not ALL
+98. **NEVER** forget that everything is in ET only - don't assume UTC for game times
 
 ## 🚫 NEVER DO THESE (v20.x - Two Storage Systems)
 
-98. **NEVER** write picks from `auto_grader.py` - only `grader_store.py` writes picks
-99. **NEVER** write weights from `grader_store.py` - only `auto_grader.py` writes weights
-100. **NEVER** merge the two storage systems - they're separate by design for good reasons
-101. **NEVER** add a new `_save_predictions()` method to auto_grader - it was removed intentionally
-102. **NEVER** assume picks and weights should be in the same file - different access patterns require separation
-103. **NEVER** bypass `grader_store.persist_pick()` when saving picks - it's the single source of truth
-104. **NEVER** call `auto_grader._save_state()` expecting it to save picks - it only saves weights now
+99. **NEVER** write picks from `auto_grader.py` - only `grader_store.py` writes picks
+100. **NEVER** write weights from `grader_store.py` - only `auto_grader.py` writes weights
+101. **NEVER** merge the two storage systems - they're separate by design for good reasons
+102. **NEVER** add a new `_save_predictions()` method to auto_grader - it was removed intentionally
+103. **NEVER** assume picks and weights should be in the same file - different access patterns require separation
+104. **NEVER** bypass `grader_store.persist_pick()` when saving picks - it's the single source of truth
+105. **NEVER** call `auto_grader._save_state()` expecting it to save picks - it only saves weights now
 
 ## 🚫 NEVER DO THESE (Boost Field Contract)
 
-105. **NEVER** return a pick without all required boost fields (value + status + reasons)
-106. **NEVER** omit `msrf_boost`, `jason_sim_boost`, or `serp_boost` from pick payloads - even if 0.0
-107. **NEVER** skip tracking integration usage on cache hits - call `mark_integration_used()` for both cache and live
+106. **NEVER** return a pick without all required boost fields (value + status + reasons)
+107. **NEVER** omit `msrf_boost`, `jason_sim_boost`, or `serp_boost` from pick payloads - even if 0.0
+108. **NEVER** skip tracking integration usage on cache hits - call `mark_integration_used()` for both cache and live
 
 ## 🚫 NEVER DO THESE (v20.3 - Post-Base Signals / 8 Pillars)
 
-107a. **NEVER** mutate `research_score` (or any engine score) for Hook Discipline, Expert Consensus, or Prop Correlation signals — they are POST-BASE additive, not engine mutations
-107b. **NEVER** apply v20.3 post-base adjustments before `base_score` is computed — they must be passed as explicit parameters to `compute_final_score_option_a()`
-107c. **NEVER** omit the v20.3 output fields from pick payloads: `hook_penalty`, `hook_flagged`, `hook_reasons`, `expert_consensus_boost`, `expert_status`, `prop_correlation_adjustment`, `prop_corr_status`
-107d. **NEVER** apply caps at the call site — caps are enforced inside `compute_final_score_option_a()`: `HOOK_PENALTY_CAP=0.25`, `EXPERT_CONSENSUS_CAP=0.35`, `PROP_CORRELATION_CAP=0.20`
-107e. **NEVER** enable Expert Consensus boost in production until validated — currently SHADOW MODE (boost computed but forced to 0.0)
+108a. **NEVER** mutate `research_score` (or any engine score) for Hook Discipline, Expert Consensus, or Prop Correlation signals — they are POST-BASE additive, not engine mutations
+108b. **NEVER** apply v20.3 post-base adjustments before `base_score` is computed — they must be passed as explicit parameters to `compute_final_score_option_a()`
+108c. **NEVER** omit the v20.3 output fields from pick payloads: `hook_penalty`, `hook_flagged`, `hook_reasons`, `expert_consensus_boost`, `expert_status`, `prop_correlation_adjustment`, `prop_corr_status`
+108d. **NEVER** apply caps at the call site — caps are enforced inside `compute_final_score_option_a()`: `HOOK_PENALTY_CAP=0.25`, `EXPERT_CONSENSUS_CAP=0.35`, `PROP_CORRELATION_CAP=0.20`
+108e. **NEVER** enable Expert Consensus boost in production until validated — currently SHADOW MODE (boost computed but forced to 0.0)
 
 ## 🚫 NEVER DO THESE (v20.2 - Auto Grader Weights)
 
-108. **NEVER** add a new pick type (market type) without initializing weights for it in `_initialize_weights()`
-109. **NEVER** assume `adjust_weights()` fallback to "points" is correct - it masks missing stat_type configurations
-110. **NEVER** forget that game picks use `stat_type = pick_type.lower()` (spread, total, moneyline, sharp)
-111. **NEVER** skip verifying `calculate_bias()` returns sample_size > 0 for new stat types
-112. **NEVER** assume the auto grader "just works" - test with `/live/grader/bias/{sport}?stat_type=X` for all types
-113. **NEVER** add new market types to `run_daily_audit()` without adding corresponding weights
-114. **NEVER** assume weight adjustments are applied just because sample_size > 0 - check `applied: true` explicitly
-115. **NEVER** skip checking `factor_bias` in bias response - it shows what signals are being tracked for learning
-116. **NEVER** assume the daily lesson generated correctly - verify with `/live/grader/daily-lesson/latest`
-117. **NEVER** forget to verify correlation tracking for all 28 signals (pace, vacuum, officials, glitch, esoteric)
+109. **NEVER** add a new pick type (market type) without initializing weights for it in `_initialize_weights()`
+110. **NEVER** assume `adjust_weights()` fallback to "points" is correct - it masks missing stat_type configurations
+111. **NEVER** forget that game picks use `stat_type = pick_type.lower()` (spread, total, moneyline, sharp)
+112. **NEVER** skip verifying `calculate_bias()` returns sample_size > 0 for new stat types
+113. **NEVER** assume the auto grader "just works" - test with `/live/grader/bias/{sport}?stat_type=X` for all types
+114. **NEVER** add new market types to `run_daily_audit()` without adding corresponding weights
+115. **NEVER** assume weight adjustments are applied just because sample_size > 0 - check `applied: true` explicitly
+116. **NEVER** skip checking `factor_bias` in bias response - it shows what signals are being tracked for learning
+117. **NEVER** assume the daily lesson generated correctly - verify with `/live/grader/daily-lesson/latest`
+118. **NEVER** forget to verify correlation tracking for all 28 signals (pace, vacuum, officials, glitch, esoteric)
 
 ## 🚫 NEVER DO THESE (v20.3 - Grading Pipeline)
 
-118. **NEVER** add a new pick_type without adding handling in `grade_game_pick()` - it will grade as PUSH
-119. **NEVER** forget to pass `picked_team` to `grade_game_pick()` for spread/moneyline grading accuracy
-120. **NEVER** have mismatched stat type lists between `_initialize_weights()` and `run_daily_audit()` - both must match
-121. **NEVER** assume STAT_TYPE_MAP covers all formats - check for direct formats ("points") AND Odds API formats ("player_points")
-122. **NEVER** forget to strip market suffixes like "_over_under", "_alternate" from stat types before lookup
-123. **NEVER** skip testing grading for ALL pick types after changes (SPREAD, TOTAL, MONEYLINE, SHARP, PROP)
-124. **NEVER** assume 0% hit rate means bad predictions - it might mean grading is broken (all PUSH)
+119. **NEVER** add a new pick_type without adding handling in `grade_game_pick()` - it will grade as PUSH
+120. **NEVER** forget to pass `picked_team` to `grade_game_pick()` for spread/moneyline grading accuracy
+121. **NEVER** have mismatched stat type lists between `_initialize_weights()` and `run_daily_audit()` - both must match
+122. **NEVER** assume STAT_TYPE_MAP covers all formats - check for direct formats ("points") AND Odds API formats ("player_points")
+123. **NEVER** forget to strip market suffixes like "_over_under", "_alternate" from stat types before lookup
+124. **NEVER** skip testing grading for ALL pick types after changes (SPREAD, TOTAL, MONEYLINE, SHARP, PROP)
+125. **NEVER** assume 0% hit rate means bad predictions - it might mean grading is broken (all PUSH)
 
 ## 🚫 NEVER DO THESE (v20.4 - Go/No-Go & Sanity Scripts)
 
-125. **NEVER** use hardcoded line numbers in sanity script filters without documenting what they filter
-126. **NEVER** modify `live_data_router.py` without re-running `audit_drift_scan.sh` locally
-127. **NEVER** add a new boost to the scoring formula without updating `endpoint_matrix_sanity.sh` math check
-128. **NEVER** assume `ensemble_adjustment` is 0 - it can be `null`, `0.0`, `+0.5`, or `-0.5`
-129. **NEVER** skip the go/no-go check after changes to scoring, boosts, or sanity scripts
-130. **NEVER** commit code that fails `prod_go_nogo.sh` - all 12 checks must pass
-131. **NEVER** forget that `glitch_adjustment` is ALREADY in `esoteric_score` (not a separate additive)
+126. **NEVER** use hardcoded line numbers in sanity script filters without documenting what they filter
+127. **NEVER** modify `live_data_router.py` without re-running `audit_drift_scan.sh` locally
+128. **NEVER** add a new boost to the scoring formula without updating `endpoint_matrix_sanity.sh` math check
+129. **NEVER** assume `ensemble_adjustment` is 0 - it can be `null`, `0.0`, `+0.5`, or `-0.5`
+130. **NEVER** skip the go/no-go check after changes to scoring, boosts, or sanity scripts
+131. **NEVER** commit code that fails `prod_go_nogo.sh` - all 12 checks must pass
+132. **NEVER** forget that `glitch_adjustment` is ALREADY in `esoteric_score` (not a separate additive)
 
 ## 🚫 NEVER DO THESE (v20.4 - Frontend/Backend Synchronization)
 
-132. **NEVER** change engine weights in `scoring_contract.py` without updating frontend tooltips
-133. **NEVER** assume frontend documentation matches backend - verify against `scoring_contract.py`
-134. **NEVER** describe context_score as a "weighted engine" - it's a bounded modifier (±0.35)
-135. **NEVER** use old weight percentages (AI 15%, Research 20%, Esoteric 15%, Jarvis 10%, Context 30%)
-136. **NEVER** skip updating `docs/FRONTEND_INTEGRATION.md` when backend scoring changes
-137. **ALWAYS** verify frontend tooltips show: AI 25%, Research 35%, Esoteric 20%, Jarvis 20%, Context ±0.35
+133. **NEVER** change engine weights in `scoring_contract.py` without updating frontend tooltips
+134. **NEVER** assume frontend documentation matches backend - verify against `scoring_contract.py`
+135. **NEVER** describe context_score as a "weighted engine" - it's a bounded modifier (±0.35)
+136. **NEVER** use old weight percentages (AI 15%, Research 20%, Esoteric 15%, Jarvis 10%, Context 30%)
+137. **NEVER** skip updating `docs/FRONTEND_INTEGRATION.md` when backend scoring changes
+138. **ALWAYS** verify frontend tooltips show: AI 25%, Research 35%, Esoteric 20%, Jarvis 20%, Context ±0.35
 
 **Correct Option A Weights (authoritative source: `core/scoring_contract.py`):**
 ```python
@@ -7455,10 +7456,10 @@ CONTEXT_MODIFIER_CAP = 0.35  # ±0.35 (NOT a weighted engine!)
 
 ## 🚫 NEVER DO THESE (Shell Scripts with Python Subprocesses)
 
-138. **NEVER** use `VAR=value` when Python subprocesses need the variable - use `export VAR=value`
-139. **NEVER** assume shell variables are inherited by child processes - they must be explicitly exported
-140. **NEVER** debug "Could not resolve host: None" without checking if env vars are exported
-141. **NEVER** write shell scripts that call Python without verifying variable visibility with `os.environ.get()`
+139. **NEVER** use `VAR=value` when Python subprocesses need the variable - use `export VAR=value`
+140. **NEVER** assume shell variables are inherited by child processes - they must be explicitly exported
+141. **NEVER** debug "Could not resolve host: None" without checking if env vars are exported
+142. **NEVER** write shell scripts that call Python without verifying variable visibility with `os.environ.get()`
 
 **Shell Variable Scope Quick Reference:**
 ```bash
@@ -7475,23 +7476,23 @@ python3 -c "import os; print(os.environ.get('BASE_URL'))"  # https://example.com
 
 ## 🚫 NEVER DO THESE (Datetime/Timezone - v20.5)
 
-142. **NEVER** compare `datetime.now()` with `datetime.fromisoformat(timestamp)` - one may be naive, other aware
-143. **NEVER** use undefined variables like `PYTZ_AVAILABLE` - use `core.time_et.now_et()` instead
-144. **NEVER** use `pytz` for new code - use `core.time_et` (single source of truth) or `zoneinfo`
-145. **NEVER** calculate date windows with wrong math like `days_back + 1` for start (creates 2-day window)
-146. **NEVER** assume stored timestamps have the same timezone awareness as runtime datetime
-147. **NEVER** store `line_variance` in a field named `line` - they have different meanings
-148. **NEVER** grade SHARP picks using `line` field - it contains variance, not actual spread
-149. **NEVER** add new datetime handling code without testing timezone-aware vs naive comparison
-150. **NEVER** use `datetime.now()` in grader code - always use `now_et()` from `core.time_et`
+143. **NEVER** compare `datetime.now()` with `datetime.fromisoformat(timestamp)` - one may be naive, other aware
+144. **NEVER** use undefined variables like `PYTZ_AVAILABLE` - use `core.time_et.now_et()` instead
+145. **NEVER** use `pytz` for new code - use `core.time_et` (single source of truth) or `zoneinfo`
+146. **NEVER** calculate date windows with wrong math like `days_back + 1` for start (creates 2-day window)
+147. **NEVER** assume stored timestamps have the same timezone awareness as runtime datetime
+148. **NEVER** store `line_variance` in a field named `line` - they have different meanings
+149. **NEVER** grade SHARP picks using `line` field - it contains variance, not actual spread
+150. **NEVER** add new datetime handling code without testing timezone-aware vs naive comparison
+151. **NEVER** use `datetime.now()` in grader code - always use `now_et()` from `core.time_et`
 
 ## 🚫 NEVER DO THESE (v20.5 - Go/No-Go & Scoring Adjustments)
 
-151. **NEVER** apply a scoring adjustment to `final_score` without surfacing it as its own field in the pick payload - unsurfaced adjustments break sanity math checks
-152. **NEVER** use `os.path.dirname(__file__)` inside Python heredocs (`python3 - <<'PY'`) - `__file__` resolves to `<stdin>` and `dirname()` returns empty string; use project-relative paths instead
-153. **NEVER** run `prod_go_nogo.sh` locally without `ALLOW_EMPTY=1` - local dev doesn't have production prediction/weight files
-154. **NEVER** add script-only env vars (like `MAX_GAMES`, `MAX_PROPS`, `RUNS`) without registering them in `RUNTIME_ENV_VARS` in `integration_registry.py`
-155. **NEVER** expect sanity scripts that test production API to pass pre-deploy when the change adds new fields - deploy first, then verify (chicken-and-egg pattern)
+152. **NEVER** apply a scoring adjustment to `final_score` without surfacing it as its own field in the pick payload - unsurfaced adjustments break sanity math checks
+153. **NEVER** use `os.path.dirname(__file__)` inside Python heredocs (`python3 - <<'PY'`) - `__file__` resolves to `<stdin>` and `dirname()` returns empty string; use project-relative paths instead
+154. **NEVER** run `prod_go_nogo.sh` locally without `ALLOW_EMPTY=1` - local dev doesn't have production prediction/weight files
+155. **NEVER** add script-only env vars (like `MAX_GAMES`, `MAX_PROPS`, `RUNS`) without registering them in `RUNTIME_ENV_VARS` in `integration_registry.py`
+156. **NEVER** expect sanity scripts that test production API to pass pre-deploy when the change adds new fields - deploy first, then verify (chicken-and-egg pattern)
 
 **Datetime Comparison Quick Reference:**
 ```python
@@ -7525,26 +7526,26 @@ if day_start <= ts < day_end:  # Exclusive end
 
 ## 🚫 NEVER DO THESE (v20.6 - Boost Caps & Production)
 
-156. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (1.5) — this causes score inflation and clustering at 10.0
-157. **NEVER** add a new additive boost without updating `TOTAL_BOOST_CAP` logic in `compute_final_score_option_a()` — uncapped boosts compound silently
-158. **NEVER** hardcode timeout values in API endpoints — always use `os.getenv()` with a sensible default and register in `integration_registry.py`
-159. **NEVER** assume `TIME_BUDGET_S` only needs to cover game scoring — props scoring shares the same budget and needs time too
-160. **NEVER** set pick contract fields (description, side_label, etc.) outside `normalize_pick()` — it is the single source of truth for the pick payload
-161. **NEVER** use `models/pick_converter.py:compute_description()` for dict-based picks — it uses object attributes (`.player_name`) not dict keys (`["player_name"]`)
-162. **NEVER** assume a consistently low engine score (like jarvis_rs=4.5) means the engine is dead code — check the production call path and whether triggers are designed to be rare
-163. **NEVER** report a function as "dead code" without tracing which modules actually import it — `score_candidate()` in scoring_pipeline.py is dormant but `compute_final_score_option_a()` is active
+157. **NEVER** allow the sum of confluence+msrf+jason_sim+serp boosts to exceed `TOTAL_BOOST_CAP` (1.5) — this causes score inflation and clustering at 10.0
+158. **NEVER** add a new additive boost without updating `TOTAL_BOOST_CAP` logic in `compute_final_score_option_a()` — uncapped boosts compound silently
+159. **NEVER** hardcode timeout values in API endpoints — always use `os.getenv()` with a sensible default and register in `integration_registry.py`
+160. **NEVER** assume `TIME_BUDGET_S` only needs to cover game scoring — props scoring shares the same budget and needs time too
+161. **NEVER** set pick contract fields (description, side_label, etc.) outside `normalize_pick()` — it is the single source of truth for the pick payload
+162. **NEVER** use `models/pick_converter.py:compute_description()` for dict-based picks — it uses object attributes (`.player_name`) not dict keys (`["player_name"]`)
+163. **NEVER** assume a consistently low engine score (like jarvis_rs=4.5) means the engine is dead code — check the production call path and whether triggers are designed to be rare
+164. **NEVER** report a function as "dead code" without tracing which modules actually import it — `score_candidate()` in scoring_pipeline.py is dormant but `compute_final_score_option_a()` is active
 
 ## 🚫 NEVER DO THESE (v20.7 - Parallel Pre-Fetch & Performance)
 
-164. **NEVER** make sequential external API calls inside a scoring loop when the same data can be pre-fetched in parallel — 107 sequential calls at ~157ms each = ~17s wasted; parallel = ~2-3s
-165. **NEVER** assume "the cache handles it" for sequential API call performance — `serpapi.py` has a 90-min cache, but all ~107 queries were unique (different teams/targets); cache only helps on repeated calls within TTL
-166. **NEVER** use `threading.Thread` directly for parallel API calls in an async context — use `concurrent.futures.ThreadPoolExecutor` + `asyncio.run_in_executor()` to avoid blocking the event loop
-167. **NEVER** pre-fetch without a hard timeout — always wrap parallel batches in `asyncio.wait_for(gather(*futs), timeout=N)` to prevent runaway threads from consuming the entire time budget
-168. **NEVER** change the SERP pre-fetch cache key format without updating BOTH the pre-fetch block (line ~5893) AND the cache lookup in `calculate_pick_score()` (line ~4434) — mismatched keys = cache misses = fallback to sequential calls
-169. **NEVER** assume props can be pre-fetched like game SERP data — prop SERP calls are per-player with unique parameters that can't be batched ahead of time
-170. **NEVER** add a new parallel pre-fetch phase without adding it to `_record()` timing AND checking `_past_deadline()` before starting — untracked phases break performance telemetry and can exceed the time budget
-171. **NEVER** diagnose "0 props returned" without checking `_timed_out_components` in debug output — timeout starvation from upstream phases (SERP, game scoring) is the most common cause
-172. **NEVER** assume a performance fix is working without verifying `debug.serp.prefetch_cached > 0` in production — a prefetch count of 0 means the pre-fetch failed silently and scoring is still sequential
+165. **NEVER** make sequential external API calls inside a scoring loop when the same data can be pre-fetched in parallel — 107 sequential calls at ~157ms each = ~17s wasted; parallel = ~2-3s
+166. **NEVER** assume "the cache handles it" for sequential API call performance — `serpapi.py` has a 90-min cache, but all ~107 queries were unique (different teams/targets); cache only helps on repeated calls within TTL
+167. **NEVER** use `threading.Thread` directly for parallel API calls in an async context — use `concurrent.futures.ThreadPoolExecutor` + `asyncio.run_in_executor()` to avoid blocking the event loop
+168. **NEVER** pre-fetch without a hard timeout — always wrap parallel batches in `asyncio.wait_for(gather(*futs), timeout=N)` to prevent runaway threads from consuming the entire time budget
+169. **NEVER** change the SERP pre-fetch cache key format without updating BOTH the pre-fetch block (line ~5893) AND the cache lookup in `calculate_pick_score()` (line ~4434) — mismatched keys = cache misses = fallback to sequential calls
+170. **NEVER** assume props can be pre-fetched like game SERP data — prop SERP calls are per-player with unique parameters that can't be batched ahead of time
+171. **NEVER** add a new parallel pre-fetch phase without adding it to `_record()` timing AND checking `_past_deadline()` before starting — untracked phases break performance telemetry and can exceed the time budget
+172. **NEVER** diagnose "0 props returned" without checking `_timed_out_components` in debug output — timeout starvation from upstream phases (SERP, game scoring) is the most common cause
+173. **NEVER** assume a performance fix is working without verifying `debug.serp.prefetch_cached > 0` in production — a prefetch count of 0 means the pre-fetch failed silently and scoring is still sequential
 
 **SERP Pre-Fetch Quick Reference:**
 ```python
@@ -7562,18 +7563,18 @@ for pick in candidates:
 
 ## 🚫 NEVER DO THESE (v20.8 - Props Indentation & Code Placement)
 
-173. **NEVER** place `if/break/continue/return` between a function call and the code that processes its result — in Python, indentation determines scope, and a misplaced break can make 160+ lines of code unreachable
-174. **NEVER** insert loop control flow (`break`, `continue`) without verifying the indentation level matches the intended loop — a 4-space difference can silently change which loop you're breaking from
-175. **NEVER** assume "0 props returned" is a timeout or data issue without checking the props scoring loop's control flow first — structural dead code is invisible (no errors, no crashes, no stack traces)
-176. **NEVER** edit code near deeply nested loops without reading the surrounding 50+ lines to verify scope isn't broken — Python's indentation scoping means a single edit can silently disable entire code blocks
-177. **NEVER** leave `props_picks.append()` unreachable after refactoring the props scoring loop — always verify the append executes by checking `props.count > 0` in production output
+174. **NEVER** place `if/break/continue/return` between a function call and the code that processes its result — in Python, indentation determines scope, and a misplaced break can make 160+ lines of code unreachable
+175. **NEVER** insert loop control flow (`break`, `continue`) without verifying the indentation level matches the intended loop — a 4-space difference can silently change which loop you're breaking from
+176. **NEVER** assume "0 props returned" is a timeout or data issue without checking the props scoring loop's control flow first — structural dead code is invisible (no errors, no crashes, no stack traces)
+177. **NEVER** edit code near deeply nested loops without reading the surrounding 50+ lines to verify scope isn't broken — Python's indentation scoping means a single edit can silently disable entire code blocks
+178. **NEVER** leave `props_picks.append()` unreachable after refactoring the props scoring loop — always verify the append executes by checking `props.count > 0` in production output
 
 ## 🚫 NEVER DO THESE (v20.9 - Frontend/Backend Endpoint Contract)
 
-178. **NEVER** add an `api.js` method calling a backend endpoint without first verifying that endpoint exists in `live_data_router.py` — a missing endpoint returns 404, and if the frontend has fallback data, the broken connection is completely invisible
-179. **NEVER** use realistic mock/fallback data (MOCK_PICKS, sample arrays) that silently activates on API failure — fallbacks must show empty state or error banners so broken connections are immediately visible
-180. **NEVER** assume similar endpoint names mean the endpoint exists — `POST /picks/grade` and `GET /picks/graded` are completely different routes; always verify the HTTP method AND path
-181. **NEVER** add a frontend page that depends on a backend endpoint without adding the endpoint to the "Key Endpoints" section in CLAUDE.md — undocumented endpoints get lost and forgotten
+179. **NEVER** add an `api.js` method calling a backend endpoint without first verifying that endpoint exists in `live_data_router.py` — a missing endpoint returns 404, and if the frontend has fallback data, the broken connection is completely invisible
+180. **NEVER** use realistic mock/fallback data (MOCK_PICKS, sample arrays) that silently activates on API failure — fallbacks must show empty state or error banners so broken connections are immediately visible
+181. **NEVER** assume similar endpoint names mean the endpoint exists — `POST /picks/grade` and `GET /picks/graded` are completely different routes; always verify the HTTP method AND path
+182. **NEVER** add a frontend page that depends on a backend endpoint without adding the endpoint to the "Key Endpoints" section in CLAUDE.md — undocumented endpoints get lost and forgotten
 
 **Indentation Bug Quick Reference:**
 ```python
@@ -7595,16 +7596,16 @@ for pick in candidates:
 
 ## 🚫 NEVER DO THESE (v20.11 - Real Data Sources)
 
-182. **NEVER** leave working API modules uncalled — if `alt_data_sources/noaa.py` has `fetch_kp_index_live()` working, it must be wired into the scoring pipeline via `signals/physics.py`
-183. **NEVER** hardcode live game scores (0-0, period=1) when ESPN scoreboard data is already being fetched — extract and use real scores for in-game adjustments
-184. **NEVER** use simplified 27.3-day lunar cycle for void moon — use Meeus-based calculation with synodic month (29.53d) and perturbation terms for accuracy
-185. **NEVER** leave `fetch_player_games()` uncalled in LSTM training — if real data fetching is implemented, use it before falling back to synthetic data
-186. **NEVER** skip feature flags for new external API integrations — use `USE_REAL_NOAA`, `LSTM_USE_REAL_DATA` etc. for gradual rollout
-187. **NEVER** assume API data is always available — always add fallback to simulation/synthetic when external APIs fail or return insufficient data
-188. **NEVER** add a new data source without tracking its usage in debug output — `source: "noaa_live"` vs `source: "fallback"` must be visible
-189. **NEVER** modify lunar ephemeris calculations without understanding perturbation terms — moon orbit has ~6.3° variation that affects VOC detection
-190. **NEVER** use real training data if sample count < `MIN_SAMPLES_PER_SPORT` (500) — insufficient data produces worse models than synthetic
-191. **NEVER** hardcode team names for ESPN live score lookups — always normalize (lowercase, strip accents) for reliable matching
+183. **NEVER** leave working API modules uncalled — if `alt_data_sources/noaa.py` has `fetch_kp_index_live()` working, it must be wired into the scoring pipeline via `signals/physics.py`
+184. **NEVER** hardcode live game scores (0-0, period=1) when ESPN scoreboard data is already being fetched — extract and use real scores for in-game adjustments
+185. **NEVER** use simplified 27.3-day lunar cycle for void moon — use Meeus-based calculation with synodic month (29.53d) and perturbation terms for accuracy
+186. **NEVER** leave `fetch_player_games()` uncalled in LSTM training — if real data fetching is implemented, use it before falling back to synthetic data
+187. **NEVER** skip feature flags for new external API integrations — use `USE_REAL_NOAA`, `LSTM_USE_REAL_DATA` etc. for gradual rollout
+188. **NEVER** assume API data is always available — always add fallback to simulation/synthetic when external APIs fail or return insufficient data
+189. **NEVER** add a new data source without tracking its usage in debug output — `source: "noaa_live"` vs `source: "fallback"` must be visible
+190. **NEVER** modify lunar ephemeris calculations without understanding perturbation terms — moon orbit has ~6.3° variation that affects VOC detection
+191. **NEVER** use real training data if sample count < `MIN_SAMPLES_PER_SPORT` (500) — insufficient data produces worse models than synthetic
+192. **NEVER** hardcode team names for ESPN live score lookups — always normalize (lowercase, strip accents) for reliable matching
 
 **Real Data Fallback Pattern:**
 ```python
@@ -7626,12 +7627,12 @@ return result  # No source tracking
 
 ## 🚫 NEVER DO THESE (v20.11 - Rivalry Database)
 
-192. **NEVER** add partial rivalry data for a sport — if adding rivalries, cover ALL teams (30 NBA, 32 NFL, 32 NHL, 30 MLB), not just popular matchups
-193. **NEVER** use exact string matching for team names in rivalry detection — use keyword sets for flexible matching (`{"celtics", "boston"}` matches "Boston Celtics", "Celtics", etc.)
-194. **NEVER** forget to include newest expansion teams in rivalry data — Kraken (2021), Golden Knights (2017), Utah Jazz rename (2024) must have entries
-195. **NEVER** organize rivalries randomly — use division/conference structure for maintainability and completeness verification
-196. **NEVER** mix up intensity levels — "HIGH" for historic/divisional rivalries, "MEDIUM" for regional/newer rivalries
-197. **NEVER** assume a team has no rivalries — every professional team has at least one divisional rival; research before claiming "no rivalry"
+193. **NEVER** add partial rivalry data for a sport — if adding rivalries, cover ALL teams (30 NBA, 32 NFL, 32 NHL, 30 MLB), not just popular matchups
+194. **NEVER** use exact string matching for team names in rivalry detection — use keyword sets for flexible matching (`{"celtics", "boston"}` matches "Boston Celtics", "Celtics", etc.)
+195. **NEVER** forget to include newest expansion teams in rivalry data — Kraken (2021), Golden Knights (2017), Utah Jazz rename (2024) must have entries
+196. **NEVER** organize rivalries randomly — use division/conference structure for maintainability and completeness verification
+197. **NEVER** mix up intensity levels — "HIGH" for historic/divisional rivalries, "MEDIUM" for regional/newer rivalries
+198. **NEVER** assume a team has no rivalries — every professional team has at least one divisional rival; research before claiming "no rivalry"
 
 **Rivalry Database Quick Reference:**
 ```python

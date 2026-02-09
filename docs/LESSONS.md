@@ -941,6 +941,54 @@ crontab -l | wc -l   # Should show 33+ scheduled jobs
 
 ---
 
+## 68. Session 7 SHARP Fallback Detection Bug (Feb 8, 2026)
+
+### The Mistake
+CI spot check Session 7 (`scripts/spot_check_session7.sh`) used `pick_type == "SHARP"` to detect SHARP fallback picks when `events_after_games=0`. The script failed because SHARP fallback picks do NOT have `pick_type: "SHARP"` — they have `pick_type` set to the bet type ("spread", "moneyline", "total").
+
+**The Bug:**
+```bash
+# WRONG - pick_type is the bet type, not "SHARP"
+SHARP_PICKS="$(echo "$RAW" | jq -r '[.game_picks.picks[] | select(.pick_type == "SHARP")] | length')"
+# Returns 0 because pick_type is "spread" or "moneyline"
+
+# Error output:
+# ❌ FAIL: games returned but no game events analyzed (and not all SHARP)
+# events_after_games=0, games_returned=1, sharp_picks=0
+```
+
+### The Fix
+SHARP fallback picks are identified by `market == "sharp_money"`, NOT by `pick_type`:
+
+```bash
+# CORRECT - SHARP fallback picks have market="sharp_money"
+SHARP_MARKET_PICKS="$(echo "$RAW" | jq -r '[.game_picks.picks[] | select(.market == "sharp_money")] | length')"
+
+if [ "$GAMES_RETURNED" -gt 0 ] && [ "$GAMES_EVENTS" -eq 0 ]; then
+  if [ "$SHARP_MARKET_PICKS" -eq "$GAMES_RETURNED" ]; then
+    echo "✅ SHARP fallback: $SHARP_MARKET_PICKS picks from sharp_money market with 0 Odds API events (valid)"
+  else
+    echo "❌ FAIL: games returned but no game events analyzed (and not all from SHARP fallback)"
+    exit 1
+  fi
+fi
+```
+
+**Field Semantics:**
+| Field | Value for SHARP Fallback | Value for Regular Picks |
+|-------|--------------------------|-------------------------|
+| `pick_type` | "spread", "moneyline", "total" (the bet type) | "SPREAD", "MONEYLINE", "TOTAL" |
+| `market` | `"sharp_money"` | The specific market key |
+
+### Rule
+> **INVARIANT**: SHARP fallback picks are identified by `market == "sharp_money"`, NOT by `pick_type`. The `pick_type` field always contains the bet type (spread/moneyline/total), never "SHARP".
+
+### Related Files
+- `scripts/spot_check_session7.sh` — Session 7 Output Filtering Pipeline check
+- `live_data_router.py` — Where SHARP fallback picks are created with `market: "sharp_money"`
+
+---
+
 ## Adding New Lessons
 
 When you encounter a bug or issue, add it here:
