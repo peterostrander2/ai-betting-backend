@@ -11,6 +11,9 @@
 
 **Frontend Integration Guide:** See `docs/FRONTEND_INTEGRATION.md` for backend→frontend field mapping and pending frontend work.
 
+## Code Standards
+See `CODE_STANDARDS.md` for all coding conventions. Follow these for every change.
+
 ---
 
 ## Session Management
