@@ -1911,32 +1911,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        print("\
-ERROR:", str(e))
-        pause("\
-Press ENTER to close (error)...")
+        print("\nERROR:", str(e))
+        pause("\nPress ENTER to close (error)...")
         raise
-{"parentUuid":"0764238f-16c6-4733-b16c-bd6744b2746c","isSidechain":false,"userType":"external","cwd":"/Users/apple/ai-betting-backend","sessionId":"ae7f3802-fece-4122-bdec-44c87bda3e15","version":"2.1.20","gitBranch":"","slug":"effervescent-questing-catmull","type":"user","message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
-
-Summary:
-1. Primary Request and Intent:
-   The user wants to replace the existing `jason_sim_confluence.py` file with a new updated version. They stated "lets replace jason sim with the new updated jason sime" (typo for "jason sim"). The user then provided the complete new code - a script called "PROTOCOL 33 / SIM J420N — NBA (Ball Don't Lie) — VALUE + PROPS EDITION" which is substantially different from the original jason_sim_confluence.py module.
-
-2. Key Technical Concepts:
-   - **Current jason_sim_confluence.py (v11.08)**: Win probability simulation engine that runs after base score computation, adjusts scores based on win probability alignment, returns jason_* fields for every pick
-   - **New PROTOCOL 33 / SIM J420N**: Standalone NBA betting value scanner using BallDontLie API
-   - BallDontLie API integration (games, odds, player props, stats, injuries, lineups)
-   - Elo-based team win probability modeling
-   - Player prop modeling using normal distribution (mu/sigma from game logs)
-   - Live refresh functionality for odds and props
-   - American-to-decimal odds conversion
-   - De-vig probability calculation
-   - Back-to-back game fatigue adjustments
-   - Vendor filtering (DraftKings, FanDuel, bet365, BetMGM)
-
-3. Files and Code Sections:
-   - **`/Users/apple/ai-betting-backend/jason_sim_confluence.py`** (CURRENT - to be replaced)
-      - 537 lines, v11.08
-      - Internal scoring module for the betting backend
-      - Key classes: `JasonSimConfluence`
-      - Key functions: `run_confluence()`, `simulate_game()`, `evaluate_spread_ml()`, `evaluate_total()`, `evaluate_prop()`, `run_jason_confluence()`, `get_
