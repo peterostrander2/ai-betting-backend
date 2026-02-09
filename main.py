@@ -565,6 +565,126 @@ async def grader_selfcheck():
         }
 
 
+# Public grader weights endpoint (no auth required)
+@app.get("/grader/weights/{sport}")
+async def grader_weights(sport: str):
+    """Get current prediction weights for a sport (public, no auth required)."""
+    try:
+        from dataclasses import asdict
+        grader = get_grader()
+        sport_upper = sport.upper()
+        if sport_upper not in grader.weights:
+            return {"error": f"Unsupported sport: {sport}", "supported": list(grader.weights.keys())}
+        weights = {}
+        for stat_type, config in grader.weights[sport_upper].items():
+            weights[stat_type] = asdict(config)
+        return {
+            "sport": sport_upper,
+            "weights": weights,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# Public grader bias endpoint (no auth required)
+@app.get("/grader/bias/{sport}")
+async def grader_bias(sport: str, stat_type: str = "all", days_back: int = 1):
+    """Get prediction bias analysis for a sport (public, no auth required)."""
+    try:
+        grader = get_grader()
+        sport_upper = sport.upper()
+        if sport_upper not in grader.weights:
+            return {"error": f"Unsupported sport: {sport}", "supported": list(grader.weights.keys())}
+        bias = grader.calculate_bias(sport_upper, stat_type if stat_type != "all" else None, days_back)
+        return {
+            "sport": sport_upper,
+            "stat_type": stat_type,
+            "days_back": days_back,
+            "bias": bias,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# Public run-audit endpoint (no auth required)
+@app.post("/grader/run-audit")
+async def grader_run_audit():
+    """Run the daily audit to analyze bias and adjust weights (public, no auth required)."""
+    try:
+        grader = get_grader()
+        results = grader.run_daily_audit()
+        return {
+            "audit": "complete",
+            "results": results,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# Public grader performance endpoint (no auth required)
+@app.get("/grader/performance/{sport}")
+async def grader_performance(sport: str, days_back: int = 7):
+    """Get prediction performance metrics for a sport (public, no auth required)."""
+    try:
+        grader = get_grader()
+        sport_upper = sport.upper()
+        if sport_upper not in grader.weights:
+            return {"error": f"Unsupported sport: {sport}", "supported": list(grader.weights.keys())}
+
+        # Get performance from grader_store
+        from grader_store import grader_store
+        from core.time_et import now_et
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+
+        et_tz = ZoneInfo("America/New_York")
+        now = now_et()
+
+        # Calculate performance metrics
+        total_predictions = 0
+        total_graded = 0
+        total_hits = 0
+        daily_history = {}
+
+        for day_offset in range(days_back):
+            day = (now - timedelta(days=day_offset)).strftime("%Y-%m-%d")
+            predictions = grader_store.load_predictions(date_str=day)
+            sport_preds = [p for p in predictions if p.get("sport", "").upper() == sport_upper]
+            graded = [p for p in sport_preds if p.get("graded")]
+            hits = [p for p in graded if p.get("result") == "WIN"]
+
+            total_predictions += len(sport_preds)
+            total_graded += len(graded)
+            total_hits += len(hits)
+
+            if len(graded) > 0:
+                daily_history[day] = {
+                    "predictions": len(sport_preds),
+                    "graded": len(graded),
+                    "hits": len(hits),
+                    "hit_rate": round(len(hits) / len(graded) * 100, 1)
+                }
+
+        hit_rate = round(total_hits / total_graded * 100, 1) if total_graded > 0 else 0
+
+        return {
+            "sport": sport_upper,
+            "days_back": days_back,
+            "current": {
+                "total_predictions": total_predictions,
+                "total_graded": total_graded,
+                "total_hits": total_hits,
+                "hit_rate": hit_rate,
+                "profitable": hit_rate > 52.0
+            },
+            "daily_history": daily_history,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # Database status endpoint
