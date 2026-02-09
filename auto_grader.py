@@ -309,7 +309,8 @@ class AutoGrader:
 
             if pick_type in ("PROP", "PLAYER_PROP"):
                 player_name = pick.get("player_name", pick.get("description", "Unknown"))
-                stat_type = pick.get("stat_type", pick.get("prop_type", "unknown"))
+                raw_stat = pick.get("stat_type", pick.get("prop_type", "unknown"))
+                stat_type = raw_stat.replace("player_", "") if raw_stat else "unknown"
             else:
                 # For game picks (spread, total, moneyline), use matchup
                 player_name = pick.get("matchup", f"{pick.get('away_team', '')} @ {pick.get('home_team', '')}")
