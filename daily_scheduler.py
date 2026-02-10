@@ -666,6 +666,19 @@ class DailyScheduler:
         except Exception as e:
             logger.warning("Failed to schedule team model training: %s", e)
 
+        # v20.16.4: Training verification (7:30 AM ET, verifies 7 AM training ran)
+        # Checks training_telemetry and logs WARNING if training didn't execute
+        try:
+            self.scheduler.add_job(
+                self._run_training_verification,
+                CronTrigger(hour=7, minute=30, timezone="America/New_York"),
+                id="training_verification",
+                name="Training Verification Check"
+            )
+            logger.info("Training verification enabled: runs daily at 7:30 AM ET")
+        except Exception as e:
+            logger.warning("Failed to schedule training verification: %s", e)
+
         self.scheduler.start()
         logger.info("APScheduler started with daily audit at 6 AM")
 
@@ -723,6 +736,131 @@ class DailyScheduler:
                 logger.error(f"Team model training fallback failed: {inner_e}")
         except Exception as e:
             logger.error(f"Team model training failed: {e}")
+
+    def _run_training_verification(self):
+        """
+        v20.16.4: Verify that 7 AM training job actually ran.
+
+        Checks:
+        1. last_train_run_at is from today
+        2. Artifact files have recent mtime (within last hour)
+        3. training_health is HEALTHY
+
+        Logs WARNING if training didn't execute.
+        Runs daily at 7:30 AM ET (30 min after training).
+        """
+        from zoneinfo import ZoneInfo
+        ET = ZoneInfo("America/New_York")
+        now_et_time = datetime.now(ET)
+        today_str = now_et_time.strftime("%Y-%m-%d")
+
+        logger.info("🔍 Training verification starting for %s...", today_str)
+
+        alerts = []
+        training_ran = False
+
+        try:
+            # Check training telemetry from team_ml_models
+            from team_ml_models import get_game_ensemble
+
+            ensemble = get_game_ensemble()
+            telemetry = ensemble.training_telemetry
+
+            last_train_run_at = telemetry.get("last_train_run_at")
+            graded_samples_seen = telemetry.get("graded_samples_seen", 0)
+            samples_used = telemetry.get("samples_used_for_training", 0)
+
+            if last_train_run_at:
+                # Parse and check if it's from today
+                try:
+                    if isinstance(last_train_run_at, str):
+                        last_run = datetime.fromisoformat(last_train_run_at.replace('Z', '+00:00'))
+                    else:
+                        last_run = last_train_run_at
+
+                    # Make timezone aware if needed
+                    if last_run.tzinfo is None:
+                        last_run = last_run.replace(tzinfo=ET)
+
+                    last_run_date = last_run.astimezone(ET).strftime("%Y-%m-%d")
+                    last_run_hour = last_run.astimezone(ET).hour
+
+                    if last_run_date == today_str and last_run_hour >= 7:
+                        training_ran = True
+                        logger.info("✅ Training ran today at %s", last_run.astimezone(ET).isoformat())
+                        logger.info("   Graded samples seen: %d, Used for training: %d",
+                                   graded_samples_seen, samples_used)
+                    else:
+                        alerts.append(f"last_train_run_at is {last_run_date} {last_run_hour}:00, expected {today_str} 07:00+")
+                except Exception as e:
+                    alerts.append(f"Failed to parse last_train_run_at: {e}")
+            else:
+                alerts.append("last_train_run_at is NULL - training never ran")
+
+            # Check training_health status
+            training_status = ensemble.training_status
+            if training_status != "TRAINED":
+                alerts.append(f"training_status is {training_status}, expected TRAINED")
+
+        except ImportError as e:
+            alerts.append(f"Could not import team_ml_models: {e}")
+        except Exception as e:
+            alerts.append(f"Error checking training telemetry: {e}")
+
+        # Check artifact file mtimes
+        try:
+            import os
+            from data_dir import GRADER_DATA_DIR
+
+            artifact_files = [
+                "team_data_cache.json",
+                "matchup_matrix.json",
+                "ensemble_weights.json"
+            ]
+
+            for filename in artifact_files:
+                filepath = os.path.join(GRADER_DATA_DIR, filename)
+                if os.path.exists(filepath):
+                    mtime = datetime.fromtimestamp(os.path.getmtime(filepath), tz=ET)
+                    hours_old = (now_et_time - mtime).total_seconds() / 3600
+
+                    if hours_old > 1.5:  # More than 1.5 hours old
+                        alerts.append(f"{filename} is {hours_old:.1f} hours old (expected <1.5h)")
+                    else:
+                        logger.info("   Artifact %s: %.1f hours old", filename, hours_old)
+                else:
+                    alerts.append(f"{filename} does not exist")
+
+        except Exception as e:
+            alerts.append(f"Error checking artifact files: {e}")
+
+        # Log results
+        if training_ran and not alerts:
+            logger.info("✅ Training verification PASSED - all checks OK")
+        elif training_ran and alerts:
+            logger.warning("⚠️ Training verification PARTIAL - training ran but: %s", alerts)
+        else:
+            logger.error("❌ TRAINING VERIFICATION FAILED - 7 AM training did NOT execute!")
+            for alert in alerts:
+                logger.error("   - %s", alert)
+            logger.error("   ACTION: Check scheduler logs, consider manual trigger via /live/grader/train-team-models")
+
+            # Write alert to file for external monitoring
+            try:
+                from data_dir import AUDIT_LOGS
+                alert_file = os.path.join(AUDIT_LOGS, f"training_alert_{today_str}.json")
+                alert_data = {
+                    "date_et": today_str,
+                    "check_time_et": now_et_time.isoformat(),
+                    "training_ran": False,
+                    "alerts": alerts,
+                    "action": "Check scheduler logs, trigger manual training"
+                }
+                with open(alert_file, "w") as f:
+                    json.dump(alert_data, f, indent=2)
+                logger.error("   Alert written to: %s", alert_file)
+            except Exception as e:
+                logger.error("   Failed to write alert file: %s", e)
     
     def _run_warm_cache(self):
         """Pre-warm best-bets cache in an async context."""
