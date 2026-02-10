@@ -340,9 +340,18 @@ class TestStoreAuditUtility:
                 {"grade_status": "GRADED", "result": "WIN", "pick_type": "SPREAD",
                  "home_team": "Lakers", "away_team": "Celtics", "sport": "NBA", "date_et": "2026-02-09",
                  "ai_breakdown": {"error": True}},
-                # unknown: recent game market without model_preds and no error
+                # heuristic_fallback: MPS unavailable, ai_mode set to HEURISTIC_FALLBACK
                 {"grade_status": "GRADED", "result": "WIN", "pick_type": "SPREAD",
-                 "home_team": "Lakers", "away_team": "Celtics", "sport": "NBA", "date_et": "2026-02-09"},
+                 "home_team": "Lakers", "away_team": "Celtics", "sport": "NBA", "date_et": "2026-02-09",
+                 "ai_breakdown": {"ai_mode": "HEURISTIC_FALLBACK"}},
+                # empty_raw_inputs: game market with ai_breakdown but no raw_inputs
+                {"grade_status": "GRADED", "result": "WIN", "pick_type": "SPREAD",
+                 "home_team": "Lakers", "away_team": "Celtics", "sport": "NBA", "date_et": "2026-02-09",
+                 "ai_breakdown": {"ai_mode": "ML_PRIMARY"}},
+                # unknown: recent game market with raw_inputs but no model_preds (rare edge case)
+                {"grade_status": "GRADED", "result": "WIN", "pick_type": "SPREAD",
+                 "home_team": "Lakers", "away_team": "Celtics", "sport": "NBA", "date_et": "2026-02-09",
+                 "ai_breakdown": {"ai_mode": "ML_PRIMARY", "raw_inputs": {"some_data": 123}}},
             ]
             for record in test_records:
                 f.write(json.dumps(record) + '\n')
@@ -355,6 +364,8 @@ class TestStoreAuditUtility:
             assert attr['old_schema'] == 1, "Old schema record should be attributed"
             assert attr['non_game_market'] == 1, "Prop record should be attributed to non_game_market"
             assert attr['error_path'] == 1, "Error record should be attributed"
+            assert attr['heuristic_fallback'] == 1, "Heuristic fallback record should be attributed"
+            assert attr['empty_raw_inputs'] == 1, "Empty raw_inputs record should be attributed"
             assert attr['unknown'] == 1, "Unknown record should be attributed"
 
             # Total missing should match sum

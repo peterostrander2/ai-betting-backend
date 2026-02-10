@@ -99,6 +99,8 @@ def audit_store(store_path: str = None) -> Dict[str, Any]:
             "old_schema": 0,
             "non_game_market": 0,
             "error_path": 0,
+            "heuristic_fallback": 0,
+            "empty_raw_inputs": 0,
             "unknown": 0,
         },
         "insufficient_model_preds": 0,
@@ -286,6 +288,18 @@ def _attribute_missing_model_preds(record: dict, date_et: str, pick_type: str, m
     model_status = ai_breakdown.get("model_status", "")
     if model_status in ("FALLBACK", "ERROR", "TIMEOUT"):
         return "error_path"
+
+    # Check 4: HEURISTIC_FALLBACK mode (MPS unavailable or failed)
+    # When ai_mode is HEURISTIC_FALLBACK, model_preds won't be available
+    ai_mode = ai_breakdown.get("ai_mode", record.get("ai_mode", ""))
+    if ai_mode == "HEURISTIC_FALLBACK":
+        return "heuristic_fallback"
+
+    # Check 5: Empty raw_inputs for game market after model_preds introduction
+    # This catches cases where ai_breakdown exists but raw_inputs wasn't populated
+    raw_inputs = ai_breakdown.get("raw_inputs", {})
+    if market_type == "game" and not raw_inputs:
+        return "empty_raw_inputs"
 
     # Cannot determine
     return "unknown"

@@ -265,6 +265,8 @@ audit = get_store_audit_summary()
 | `old_schema` | Record predates model_preds introduction (before 2026-02-01) | Yes |
 | `non_game_market` | Prop/other market (not scored by game ensemble) | Yes |
 | `error_path` | Error/timeout/fallback during scoring | Investigate if high |
+| `heuristic_fallback` | ai_mode == "HEURISTIC_FALLBACK" (MPS unavailable or failed) | Investigate if high |
+| `empty_raw_inputs` | Game market with ai_breakdown but no raw_inputs (MPS returned partial result) | Investigate if high |
 | `unknown` | Cannot determine reason | Investigate if high |
 
 ---
