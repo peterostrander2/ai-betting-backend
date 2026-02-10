@@ -5651,6 +5651,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "base_score_used": _ai_telemetry.get("ai_audit", {}).get("base_score_used"),
                 "pillar_boost": _ai_telemetry.get("ai_audit", {}).get("pillar_boost"),
                 "model_std": _ai_telemetry.get("ai_audit", {}).get("model_std"),
+                # v20.16: Raw inputs for debugging variance issues
+                "raw_inputs": _ai_telemetry.get("ai_audit", {}).get("raw_inputs", {}),
             },
             # v16.0 Jarvis audit fields (ADDITIVE trigger scoring for GOLD_STAR eligibility)
             "jarvis_baseline": jarvis_data.get("jarvis_baseline", 4.5),
