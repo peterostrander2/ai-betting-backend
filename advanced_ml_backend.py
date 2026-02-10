@@ -871,18 +871,33 @@ class MasterPredictionSystem:
 
     def _get_model_status(self) -> Dict:
         """
-        Get status of all 8 models.
+        Get status of all 8 models with diagnostic proof fields.
 
-        v20.16: Uses team_ml_models for actual training status.
+        v20.16.2: Added training_source and proof fields to distinguish
+        real training from flag-only "trained" status.
         """
         try:
             from team_ml_models import get_model_status as get_team_model_status
             team_status = get_team_model_status()
 
+            # Count how many sklearn base models are actually fitted
+            sklearn_fitted_count = 0
+            for name, model in self.ensemble.base_models.items():
+                if self.ensemble._is_base_model_fitted(model, name):
+                    sklearn_fitted_count += 1
+
             return {
                 'ensemble': team_status.get('ensemble', {}).get('status', 'INITIALIZING'),
+                'ensemble_training_source': team_status.get('ensemble', {}).get('training_source', 'UNKNOWN'),
+                'ensemble_samples_trained': team_status.get('ensemble', {}).get('samples_trained', 0),
+                'ensemble_sklearn_fitted_count': sklearn_fitted_count,
+                'ensemble_pipeline_trained': self.ensemble._ensemble_pipeline_trained,
                 'lstm': team_status.get('lstm', {}).get('status', 'INITIALIZING'),
+                'lstm_training_source': team_status.get('lstm', {}).get('training_source', 'UNKNOWN'),
+                'lstm_teams_cached': team_status.get('lstm', {}).get('teams_cached', 0),
                 'matchup': team_status.get('matchup', {}).get('status', 'INITIALIZING'),
+                'matchup_training_source': team_status.get('matchup', {}).get('training_source', 'UNKNOWN'),
+                'matchup_tracked': team_status.get('matchup', {}).get('matchups_tracked', 0),
                 'monte_carlo': 'WORKS',  # Always runs simulations
                 'line_movement': 'WORKS',  # Always computes
                 'rest_fatigue': 'WORKS',  # Always computes
@@ -996,7 +1011,14 @@ class MasterPredictionSystem:
         predicted_value = predicted_value * rest_factor + injury_impact
         
         # Model 8: Calculate Edge
-        probability = 0.5 + (predicted_value - line) / (2 * player_stats.get('std_dev', 6.5))
+        # WARNING: This is a LINEAR edge-to-probability mapping, NOT calibrated.
+        # Any large (predicted_value - line) saturates to 0.99 or 0.01.
+        # TODO: Replace with proper calibration (logistic/Platt/isotonic) for
+        # probabilities to be meaningful confidence estimates.
+        # Current behavior: probability reflects "direction and relative edge"
+        # not "true probability of winning the bet".
+        raw_edge = (predicted_value - line) / (2 * player_stats.get('std_dev', 6.5))
+        probability = 0.5 + raw_edge
         probability = max(0.01, min(0.99, probability))
         
         edge_analysis = self.edge_calculator.calculate_ev(
@@ -1120,6 +1142,8 @@ class MasterPredictionSystem:
                     # Edge inputs
                     'edge_percent': round(edge_pct, 3),
                     'probability': round(probability, 4),
+                    'probability_calibrated': False,  # WARNING: Linear mapping, not Platt/isotonic calibrated
+                    'raw_edge': round(raw_edge, 4),  # Edge before probability mapping
                     # Factor components
                     'rest_factor': round(rest_factor, 4),
                     'injury_impact': round(injury_impact, 3),

@@ -524,23 +524,57 @@ def get_game_ensemble() -> GameEnsembleModel:
 
 
 def get_model_status() -> Dict:
-    """Get status of all team models."""
+    """Get status of all team models with diagnostic proof fields.
+
+    v20.16.2: Added training_source and proof fields to distinguish
+    real training from flag-only "trained" status.
+    """
     lstm = get_team_lstm()
     matchup = get_team_matchup()
     ensemble = get_game_ensemble()
 
+    # Determine training source for each model
+    def get_training_source(model, model_type: str) -> str:
+        """Determine where training came from."""
+        if model_type == "lstm":
+            if model.model is not None:
+                return "LOADED_FROM_DISK"
+            elif len(model.team_cache.data.get("teams", {})) > 0:
+                return "TRAINED_RUNTIME"
+            return "FALLBACK"
+        elif model_type == "matchup":
+            if len(model.matchups) > 0:
+                return "TRAINED_RUNTIME"
+            return "FALLBACK"
+        elif model_type == "ensemble":
+            if model.model is not None:
+                return "LOADED_FROM_DISK"
+            elif model.weights.get("_trained_samples", 0) > 0:
+                return "TRAINED_RUNTIME"
+            return "FALLBACK"
+        return "UNKNOWN"
+
+    lstm_source = get_training_source(lstm, "lstm")
+    matchup_source = get_training_source(matchup, "matchup")
+    ensemble_source = get_training_source(ensemble, "ensemble")
+
     return {
         "lstm": {
             "status": "TRAINED" if lstm.is_trained else "INITIALIZING",
-            "teams_cached": len(get_team_cache().data.get("teams", {}))
+            "training_source": lstm_source,
+            "teams_cached": len(get_team_cache().data.get("teams", {})),
+            "has_loaded_model": lstm.model is not None,
         },
         "matchup": {
             "status": "TRAINED" if matchup.is_trained else "INITIALIZING",
-            "matchups_tracked": len(matchup.matchups)
+            "training_source": matchup_source,
+            "matchups_tracked": len(matchup.matchups),
         },
         "ensemble": {
             "status": "TRAINED" if ensemble.is_trained else "INITIALIZING",
+            "training_source": ensemble_source,
             "samples_trained": ensemble.weights.get("_trained_samples", 0),
+            "has_loaded_model": ensemble.model is not None,
             "weights": {k: v for k, v in ensemble.weights.items() if not k.startswith("_")}
         }
     }
