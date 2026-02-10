@@ -234,3 +234,102 @@ class TestInjuryImpactCap:
         new_depth = player.get('depth', 99)
         assert new_depth == 99, "New default is 99 (unknown)"
         assert new_depth != 1, "Unknown players are NOT starters"
+
+
+# Check if numpy/sklearn are available for ML tests
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+
+
+@pytest.mark.skipif(not NUMPY_AVAILABLE, reason="numpy not available")
+class TestEnsembleStackingModelSafety:
+    """Regression tests for EnsembleStackingModel hard safety rules.
+
+    v20.16.1: Ensures we never call .predict() on unfitted sklearn models.
+    """
+
+    def test_untrained_ensemble_predict_does_not_throw(self):
+        """
+        CRITICAL REGRESSION TEST: Simulates the bug where is_trained=True
+        but base models were never fitted.
+
+        This happened when GameEnsemble init set is_trained=True without
+        the sklearn base models (XGBoost/LightGBM/RandomForest) being fitted.
+
+        Assertions:
+        1. predict() returns a float (not None, not exception)
+        2. No exception thrown
+        3. Returns fallback value (mean of features or default)
+        """
+        # Import the actual model
+        from advanced_ml_backend import EnsembleStackingModel
+
+        # Create untrained instance
+        ensemble = EnsembleStackingModel()
+
+        # Simulate the bug: force is_trained=True without fitting base models
+        # This is what happened when GameEnsemble marked it trained
+        ensemble.is_trained = True
+        # But _ensemble_pipeline_trained should still be False (the fix)
+        assert ensemble._ensemble_pipeline_trained is False, \
+            "_ensemble_pipeline_trained should be False without train()"
+
+        # Create test features
+        features = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+
+        # Call predict - should NOT throw, should return float
+        result = ensemble.predict(features)
+
+        # Assertions
+        assert result is not None, "predict() should not return None"
+        assert isinstance(result, (int, float)), f"predict() should return number, got {type(result)}"
+        assert result == pytest.approx(3.0, rel=0.01), \
+            f"Should return mean(features)=3.0, got {result}"
+
+    def test_untrained_ensemble_with_model_predictions_fallback(self):
+        """
+        Test that even with model_predictions provided, untrained ensemble
+        falls back gracefully to GameEnsemble or feature mean.
+        """
+        from advanced_ml_backend import EnsembleStackingModel
+
+        ensemble = EnsembleStackingModel()
+        ensemble.is_trained = True  # Simulate bug
+        # _ensemble_pipeline_trained stays False
+
+        features = np.array([10.0, 20.0, 30.0])
+        model_preds = {'lstm': 50.0, 'matchup': 55.0, 'monte_carlo': 52.0}
+
+        # Should not throw
+        result = ensemble.predict(features, model_predictions=model_preds)
+
+        assert result is not None
+        assert isinstance(result, (int, float))
+
+    def test_trained_flag_only_set_after_train(self):
+        """
+        Verify that _ensemble_pipeline_trained is ONLY True after train().
+        """
+        from advanced_ml_backend import EnsembleStackingModel
+
+        ensemble = EnsembleStackingModel()
+
+        # Before training
+        assert ensemble._ensemble_pipeline_trained is False, \
+            "Flag should be False before train()"
+
+        # Simulate training with dummy data
+        X_train = np.random.rand(100, 5)
+        y_train = np.random.rand(100)
+        X_val = np.random.rand(20, 5)
+        y_val = np.random.rand(20)
+
+        ensemble.train(X_train, y_train, X_val, y_val)
+
+        # After training
+        assert ensemble._ensemble_pipeline_trained is True, \
+            "Flag should be True after train()"
+        assert ensemble.is_trained is True

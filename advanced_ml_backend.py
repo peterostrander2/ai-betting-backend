@@ -465,7 +465,7 @@ class EnsembleStackingModel:
     - Learns optimal weights from graded picks
     - Can load trained XGBoost model from disk
 
-    v20.16.1: Added _base_models_fitted flag to prevent calling
+    v20.16.1: Added _ensemble_pipeline_trained flag to prevent calling
     .predict() on unfitted sklearn models (hard safety rule).
     """
     def __init__(self):
@@ -476,7 +476,7 @@ class EnsembleStackingModel:
         }
         self.meta_model = GradientBoostingRegressor(n_estimators=50, random_state=42)
         self.is_trained = False
-        self._base_models_fitted = False  # HARD RULE: Only True after train() completes
+        self._ensemble_pipeline_trained = False  # HARD RULE: Only True after train() completes
         self._game_ensemble = None
         self._init_game_ensemble()
 
@@ -504,15 +504,19 @@ class EnsembleStackingModel:
         # Stack predictions for meta model
         stacked_features = np.column_stack(base_predictions)
         self.meta_model.fit(stacked_features, y_val)
-        self._base_models_fitted = True  # ONLY set after sklearn models are fitted
+        self._ensemble_pipeline_trained = True  # ONLY set after sklearn models are fitted
         self.is_trained = True
         logger.info("Ensemble model trained successfully")
 
     def _is_base_model_fitted(self, model, model_name: str) -> bool:
-        """Check if a sklearn model has been fitted.
+        """Best-effort check if a sklearn model has been fitted.
 
-        HARD RULE: This is an additional safety check. The primary gate is
-        _base_models_fitted which is ONLY set True after train() completes.
+        NOTE: This is a secondary safety check only. The AUTHORITATIVE gate is
+        _ensemble_pipeline_trained which is ONLY set True after train() completes
+        or after successfully loading models from disk.
+
+        This helper may not perfectly detect all fitted states across sklearn
+        wrapper variations, so treat it as best-effort defense-in-depth.
         """
         if model is None:
             return False
@@ -535,7 +539,7 @@ class EnsembleStackingModel:
         Make prediction using ensemble.
 
         HARD RULE (v20.16.1): Never call .predict() on any base model unless:
-        1. _base_models_fitted == True (set ONLY after train() completes)
+        1. _ensemble_pipeline_trained == True (set ONLY after train() completes)
         2. Model instance is not None
         3. Model advertises a fitted/loaded state
 
@@ -559,10 +563,10 @@ class EnsembleStackingModel:
                 logger.warning(f"GameEnsemble fallback failed: {e}")
 
         # HARD RULE: Never call .predict() on sklearn base models unless:
-        # 1. _base_models_fitted == True (set ONLY after train() completes)
+        # 1. _ensemble_pipeline_trained == True (set ONLY after train() completes)
         # 2. Model instances are not None
         # 3. is_trained == True
-        if not self._base_models_fitted:
+        if not self._ensemble_pipeline_trained:
             # Base models not fitted via train() - use feature mean fallback
             return float(np.mean(features)) if len(features) > 0 else 25.0
 
