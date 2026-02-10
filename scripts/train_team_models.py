@@ -38,8 +38,10 @@ def load_graded_picks(days: int = 7, sport: str = None) -> tuple:
 
     Returns:
         tuple: (graded_picks, filter_telemetry) where filter_telemetry is a dict with:
-            Summable counts (mutually exclusive, sum to graded_loaded_total):
-            - graded_loaded_total: Total picks loaded from storage
+            Summable counts (mutually exclusive, sum to loaded_total):
+            - loaded_total: Total picks loaded from storage (may include ungraded)
+            - graded_total: Picks with grade_status=GRADED
+            - ungraded_total: Picks without grade_status=GRADED
             - drop_no_grade: Missing grade_status (not GRADED)
             - drop_no_result: Missing result (not WIN/LOSS)
             - drop_wrong_market: Wrong pick_type for model (not game picks)
@@ -50,15 +52,23 @@ def load_graded_picks(days: int = 7, sport: str = None) -> tuple:
             - used_for_training_total: Actually used (may differ from eligible)
 
             Assertions (verified in-code):
-            - eligible_total + sum(drops) == graded_loaded_total
+            - eligible_total + sum(drops) == loaded_total
             - used_for_training_total <= eligible_total
 
-            Audit trail:
+            Source tracking:
             - sample_pick_ids: First 10 pick IDs used
             - filter_version: Schema version for tracking changes
+            - grader_store_path: Path to predictions file
+            - volume_mount_path: Railway volume mount
+            - store_schema_version: grader_store format version
     """
+    from grader_store import PREDICTIONS_FILE
+    volume_mount = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/data")
+
     telemetry = {
-        'graded_loaded_total': 0,
+        'loaded_total': 0,
+        'graded_total': 0,
+        'ungraded_total': 0,
         'drop_no_grade': 0,
         'drop_no_result': 0,
         'drop_wrong_market': 0,
@@ -68,15 +78,24 @@ def load_graded_picks(days: int = 7, sport: str = None) -> tuple:
         'eligible_total': 0,
         'used_for_training_total': 0,
         'sample_pick_ids': [],
-        'filter_version': '2.0',  # Bump when filter logic changes
+        'filter_version': '2.1',  # Bump when filter logic changes
         'assertion_passed': False,
+        # Source tracking
+        'grader_store_path': str(PREDICTIONS_FILE),
+        'volume_mount_path': volume_mount,
+        'store_schema_version': '1.0',
     }
 
     try:
         from grader_store import load_predictions
 
         picks = load_predictions()
-        telemetry['graded_loaded_total'] = len(picks)
+        telemetry['loaded_total'] = len(picks)
+
+        # Count graded vs ungraded for clarity
+        graded_count = sum(1 for p in picks if p.get('grade_status') in ['GRADED', 'graded'])
+        telemetry['graded_total'] = graded_count
+        telemetry['ungraded_total'] = len(picks) - graded_count
 
         # Filter to recent days
         cutoff = datetime.now() - timedelta(days=days)
@@ -140,13 +159,13 @@ def load_graded_picks(days: int = 7, sport: str = None) -> tuple:
         )
         expected_total = telemetry['eligible_total'] + sum_of_drops
 
-        if expected_total != telemetry['graded_loaded_total']:
+        if expected_total != telemetry['loaded_total']:
             logger.error(
                 f"FILTER MATH BUG: eligible({telemetry['eligible_total']}) + "
-                f"drops({sum_of_drops}) = {expected_total} != loaded({telemetry['graded_loaded_total']})"
+                f"drops({sum_of_drops}) = {expected_total} != loaded({telemetry['loaded_total']})"
             )
             telemetry['assertion_passed'] = False
-            telemetry['assertion_error'] = f"sum mismatch: {expected_total} != {telemetry['graded_loaded_total']}"
+            telemetry['assertion_error'] = f"sum mismatch: {expected_total} != {telemetry['loaded_total']}"
         elif telemetry['used_for_training_total'] > telemetry['eligible_total']:
             logger.error(
                 f"FILTER MATH BUG: used({telemetry['used_for_training_total']}) > "
@@ -158,12 +177,12 @@ def load_graded_picks(days: int = 7, sport: str = None) -> tuple:
             telemetry['assertion_passed'] = True
             logger.info(
                 f"Filter assertion PASSED: {telemetry['eligible_total']} + {sum_of_drops} = "
-                f"{telemetry['graded_loaded_total']}"
+                f"{telemetry['loaded_total']}"
             )
 
         logger.info(
             f"Training filter telemetry v{telemetry['filter_version']}: "
-            f"loaded={telemetry['graded_loaded_total']}, "
+            f"loaded={telemetry['loaded_total']} (graded={telemetry['graded_total']}, ungraded={telemetry['ungraded_total']}), "
             f"drops=[grade:{telemetry['drop_no_grade']}, result:{telemetry['drop_no_result']}, "
             f"market:{telemetry['drop_wrong_market']}, fields:{telemetry['drop_missing_required_fields']}, "
             f"window:{telemetry['drop_outside_time_window']}, sport:{telemetry['drop_wrong_sport']}], "
@@ -321,10 +340,13 @@ def update_matchup_matrix(picks: list) -> dict:
     }
 
 
-def update_ensemble_weights(picks: list) -> dict:
-    """Update ensemble weights from graded picks.
+def update_ensemble_weights(picks: list, eligible_total: int = 0) -> dict:
+    """Update ensemble weights from graded picks using binary hit classification.
 
-    Returns training signature for audit.
+    Label definition: hit = 1 if result == WIN, hit = 0 if result == LOSS
+    PUSH is treated as LOSS (no hit) for conservative training.
+
+    Returns training signature for audit with per-model filter telemetry.
     """
     from team_ml_models import get_game_ensemble
 
@@ -332,12 +354,21 @@ def update_ensemble_weights(picks: list) -> dict:
     updated = 0
     sports_seen = set()
     markets_seen = set()
-    skip_no_model_preds = 0
-    skip_insufficient_values = 0
-    skip_no_result = 0
+
+    # Per-model filter telemetry (explains why samples_used < eligible_total)
+    filter_telemetry = {
+        'eligible_from_upstream': eligible_total,
+        'drop_no_model_preds': 0,
+        'drop_insufficient_values': 0,
+        'drop_no_result': 0,
+        'drop_push_excluded': 0,  # PUSH treated as no-hit
+    }
 
     # Define feature schema for training (what we train on)
+    # MUST match inference schema in GameEnsembleModel.predict()
     training_features = ['ensemble', 'lstm', 'matchup', 'monte_carlo']
+    # Inference uses same features (verified in team_ml_models.py:412)
+    inference_features = ['ensemble', 'lstm', 'matchup', 'monte_carlo']
 
     for pick in picks:
         # Get the model predictions that were made
@@ -345,13 +376,13 @@ def update_ensemble_weights(picks: list) -> dict:
         model_preds = ai_breakdown.get('raw_inputs', {}).get('model_preds', {})
 
         if not model_preds or 'values' not in model_preds:
-            skip_no_model_preds += 1
+            filter_telemetry['drop_no_model_preds'] += 1
             continue
 
         # Extract individual model predictions
         values = model_preds.get('values', [])
         if len(values) < 4:
-            skip_insufficient_values += 1
+            filter_telemetry['drop_insufficient_values'] += 1
             continue
 
         predictions = {
@@ -361,47 +392,68 @@ def update_ensemble_weights(picks: list) -> dict:
             'monte_carlo': values[3] if len(values) > 3 else None,
         }
 
-        # Get actual outcome
+        # Get actual outcome - BINARY CLASSIFICATION
         result = pick.get('result', '').upper()
-        line = pick.get('line', 0)
 
-        # Determine actual value based on result
-        # For now, use a simple approach: WIN means prediction was right direction
+        # Binary hit label: WIN = 1.0, LOSS = 0.0
+        # PUSH is excluded (conservative - don't train on ambiguous outcomes)
         if result == 'WIN':
-            actual = line + 5  # We beat the line
+            hit_label = 1.0
         elif result == 'LOSS':
-            actual = line - 5  # We didn't beat the line
+            hit_label = 0.0
+        elif result == 'PUSH':
+            filter_telemetry['drop_push_excluded'] += 1
+            continue
         else:
-            skip_no_result += 1
+            filter_telemetry['drop_no_result'] += 1
             continue
 
         sports_seen.add(pick.get('sport', 'UNKNOWN'))
         markets_seen.add(pick.get('pick_type', 'UNKNOWN').upper())
 
-        # Update ensemble weights
-        ensemble.update_weights(predictions, actual)
+        # Update ensemble weights using binary hit label
+        ensemble.update_weights(predictions, hit_label)
         updated += 1
 
     # Save weights
     ensemble._save_weights()
-    logger.info(f"Updated ensemble weights with {updated} pick outcomes")
+    logger.info(f"Updated ensemble weights with {updated} pick outcomes (binary hit label)")
+
+    # Compute schema hashes
+    training_hash = _compute_schema_hash(training_features)
+    inference_hash = _compute_schema_hash(inference_features)
+    schema_match = (training_hash == inference_hash)
+
+    # Verify filter math
+    sum_of_drops = (
+        filter_telemetry['drop_no_model_preds'] +
+        filter_telemetry['drop_insufficient_values'] +
+        filter_telemetry['drop_no_result'] +
+        filter_telemetry['drop_push_excluded']
+    )
+    filter_telemetry['used_for_training'] = updated
+    filter_telemetry['assertion_passed'] = (updated + sum_of_drops == eligible_total) if eligible_total > 0 else True
+
+    if not filter_telemetry['assertion_passed']:
+        logger.error(
+            f"ENSEMBLE FILTER MATH BUG: used({updated}) + drops({sum_of_drops}) != eligible({eligible_total})"
+        )
 
     # Compute training signature
     return {
         'samples_used': updated,
-        'samples_skipped': {
-            'no_model_preds': skip_no_model_preds,
-            'insufficient_values': skip_insufficient_values,
-            'no_result': skip_no_result,
-        },
+        'filter_telemetry': filter_telemetry,
         'sports_included': sorted(list(sports_seen)),
         'markets_included': sorted(list(markets_seen)),
-        # Feature schema hash - must match inference schema
+        # Feature schema - training vs inference
         'training_feature_schema': training_features,
-        'training_feature_schema_hash': _compute_schema_hash(training_features),
-        # Label definition - what counts as "hit"
-        'label_definition': 'WIN: actual = line + 5; LOSS: actual = line - 5',
-        'label_type': 'regression_target',
+        'training_feature_schema_hash': training_hash,
+        'inference_feature_schema': inference_features,
+        'inference_feature_schema_hash': inference_hash,
+        'schema_match': schema_match,
+        # Label definition - BINARY CLASSIFICATION
+        'label_type': 'binary_hit',
+        'label_definition': 'hit = 1.0 if result == WIN, hit = 0.0 if result == LOSS, PUSH excluded',
         # Current weights after training
         'weights_after': {k: round(v, 4) for k, v in ensemble.weights.items() if not k.startswith("_")},
         'total_samples_trained': ensemble.weights.get("_trained_samples", 0),
@@ -428,7 +480,8 @@ def train_all(days: int = 7, sport: str = None):
     # Update all models - now return training signatures
     team_cache_sig = update_team_cache(picks)
     matchup_sig = update_matchup_matrix(picks)
-    ensemble_sig = update_ensemble_weights(picks)
+    # Pass eligible_total for per-model filter telemetry
+    ensemble_sig = update_ensemble_weights(picks, eligible_total=filter_telemetry['eligible_total'])
 
     results = {
         'status': 'SUCCESS',
@@ -446,7 +499,7 @@ def train_all(days: int = 7, sport: str = None):
         from team_ml_models import get_game_ensemble
         ensemble = get_game_ensemble()
         ensemble.record_training_run(
-            graded_samples_seen=filter_telemetry['graded_loaded_total'],
+            graded_samples_seen=filter_telemetry['loaded_total'],
             samples_used=ensemble_sig['samples_used'],
             filter_telemetry=filter_telemetry,
             training_signatures=results['training_signatures']

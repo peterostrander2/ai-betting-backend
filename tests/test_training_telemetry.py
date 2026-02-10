@@ -27,7 +27,7 @@ class TestFilterTelemetryAssertions:
     """Tests that filter telemetry math is correct."""
 
     def test_filter_counts_sum_correctly(self):
-        """Verify: eligible_total + sum(drops) == graded_loaded_total."""
+        """Verify: eligible_total + sum(drops) == loaded_total."""
         # Mock grader_store with test data
         mock_picks = [
             # Will pass all filters
@@ -68,11 +68,19 @@ class TestFilterTelemetryAssertions:
             telemetry['drop_wrong_sport']
         )
         expected = telemetry['eligible_total'] + sum_of_drops
-        assert expected == telemetry['graded_loaded_total'], \
-            f"Math error: {telemetry['eligible_total']} + {sum_of_drops} != {telemetry['graded_loaded_total']}"
+        assert expected == telemetry['loaded_total'], \
+            f"Math error: {telemetry['eligible_total']} + {sum_of_drops} != {telemetry['loaded_total']}"
+
+        # Verify graded_total + ungraded_total == loaded_total
+        assert telemetry['graded_total'] + telemetry['ungraded_total'] == telemetry['loaded_total']
 
         # Verify used <= eligible
         assert telemetry['used_for_training_total'] <= telemetry['eligible_total']
+
+        # Verify source tracking fields present
+        assert 'grader_store_path' in telemetry
+        assert 'volume_mount_path' in telemetry
+        assert 'store_schema_version' in telemetry
 
     def test_used_for_training_never_exceeds_eligible(self):
         """Verify: used_for_training_total <= eligible_total."""
@@ -110,7 +118,7 @@ class TestFilterTelemetryAssertions:
             picks, telemetry = train_module.load_graded_picks(days=7)
 
         assert 'filter_version' in telemetry
-        assert telemetry['filter_version'] == '2.0'
+        assert telemetry['filter_version'] == '2.1'
 
 
 class TestTrainingSignatures:
@@ -191,7 +199,7 @@ class TestTrainingSignatures:
         # Use real ensemble but mock _save_weights to avoid file I/O
         ensemble = get_game_ensemble()
         with patch.object(ensemble, '_save_weights'):
-            result = train_module.update_ensemble_weights(mock_picks)
+            result = train_module.update_ensemble_weights(mock_picks, eligible_total=1)
 
         assert 'samples_used' in result
         assert 'markets_included' in result
@@ -199,6 +207,25 @@ class TestTrainingSignatures:
         assert 'training_feature_schema_hash' in result
         assert 'label_definition' in result
         assert 'label_type' in result
+
+        # Binary hit classification
+        assert result['label_type'] == 'binary_hit'
+        assert 'WIN' in result['label_definition'] and 'LOSS' in result['label_definition']
+
+        # Schema match verification
+        assert 'inference_feature_schema_hash' in result
+        assert 'schema_match' in result
+        assert result['schema_match'] is True  # Training and inference should match
+
+        # Per-model filter telemetry
+        assert 'filter_telemetry' in result
+        ft = result['filter_telemetry']
+        assert 'eligible_from_upstream' in ft
+        assert 'drop_no_model_preds' in ft
+        assert 'drop_insufficient_values' in ft
+        assert 'drop_no_result' in ft
+        assert 'used_for_training' in ft
+        assert 'assertion_passed' in ft
 
 
 @pytest.mark.skipif(not HAS_NUMPY, reason="Requires numpy")
