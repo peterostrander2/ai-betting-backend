@@ -491,7 +491,13 @@ class GameEnsembleModel:
         if self.weights["_trained_samples"] % 10 == 0:
             self._save_weights()
 
-    def record_training_run(self, graded_samples_seen: int, samples_used: int, filter_counts: dict = None):
+    def record_training_run(
+        self,
+        graded_samples_seen: int,
+        samples_used: int,
+        filter_telemetry: dict = None,
+        training_signatures: dict = None
+    ):
         """Record a training run for telemetry.
 
         Called by train_team_models.py after processing graded picks.
@@ -500,23 +506,31 @@ class GameEnsembleModel:
         Args:
             graded_samples_seen: Total candidates loaded from storage
             samples_used: Samples that passed all filters and were used
-            filter_counts: Optional dict with filter telemetry (v20.16.9):
-                - candidates_loaded: Total picks loaded
-                - dropped_missing_outcome: Missing grade_status or result
-                - dropped_outside_window: Outside date range
-                - dropped_wrong_sport: Filtered by sport
-                - used_for_training: Final count used
-                - sample_pick_ids: First 10 pick IDs used
+            filter_telemetry: Dict with mechanically checkable filter telemetry (v20.17.0):
+                - graded_loaded_total: Total picks loaded
+                - drop_no_grade, drop_no_result, drop_wrong_market, etc.: Mutually exclusive drops
+                - eligible_total: Passed all filters
+                - used_for_training_total: Actually used
+                - assertion_passed: True if math checks pass
+            training_signatures: Dict with per-model training signatures (v20.17.0):
+                - team_cache: {teams_cached_total, games_per_team_avg, feature_schema_hash}
+                - matchup_matrix: {matchups_tracked_total, games_per_matchup_avg, feature_schema_hash}
+                - ensemble: {markets_included, sports_included, training_feature_schema_hash, label_definition}
         """
         from datetime import datetime
         self.weights["_last_train_run_at"] = datetime.now().isoformat()
         self.weights["_graded_samples_seen"] = graded_samples_seen
         self.weights["_samples_used_for_training"] = samples_used
         self.weights["_volume_mount_path"] = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "NOT_SET")
+        self.weights["_telemetry_version"] = "2.0"
 
-        # v20.16.9: Store filter telemetry for training transparency
-        if filter_counts:
-            self.weights["_filter_counts"] = filter_counts
+        # v20.17.0: Store mechanically checkable filter telemetry
+        if filter_telemetry:
+            self.weights["_filter_telemetry"] = filter_telemetry
+
+        # v20.17.0: Store training signatures for each model artifact
+        if training_signatures:
+            self.weights["_training_signatures"] = training_signatures
 
         self._save_weights()
         logger.info(f"Training run recorded: seen={graded_samples_seen}, used={samples_used}")
@@ -591,8 +605,7 @@ def get_game_ensemble() -> GameEnsembleModel:
 def get_model_status() -> Dict:
     """Get status of all team models with diagnostic proof fields.
 
-    v20.16.2: Added training_source and proof fields to distinguish
-    real training from flag-only "trained" status.
+    v20.17.0: Added mechanically checkable filter telemetry and training signatures.
     """
     lstm = get_team_lstm()
     matchup = get_team_matchup()
@@ -623,35 +636,52 @@ def get_model_status() -> Dict:
     matchup_source = get_training_source(matchup, "matchup")
     ensemble_source = get_training_source(ensemble, "ensemble")
 
+    # Get filter telemetry (v20.17.0 format or legacy v20.16.9 format)
+    filter_telemetry = ensemble.weights.get("_filter_telemetry", {})
+    if not filter_telemetry:
+        # Fallback to legacy format
+        filter_telemetry = ensemble.weights.get("_filter_counts", {})
+
+    # Get training signatures (v20.17.0)
+    training_signatures = ensemble.weights.get("_training_signatures", {})
+
     return {
         "lstm": {
             "status": "TRAINED" if lstm.is_trained else "INITIALIZING",
             "training_source": lstm_source,
             "teams_cached": len(get_team_cache().data.get("teams", {})),
             "has_loaded_model": lstm.model is not None,
+            # v20.17.0: Training signature for this model
+            "training_signature": training_signatures.get("team_cache", {}),
         },
         "matchup": {
             "status": "TRAINED" if matchup.is_trained else "INITIALIZING",
             "training_source": matchup_source,
             "matchups_tracked": len(matchup.matchups),
+            # v20.17.0: Training signature for this model
+            "training_signature": training_signatures.get("matchup_matrix", {}),
         },
         "ensemble": {
             # v20.16.2: Use training_status for honest reporting
-            # TRAINED = has real samples, LOADED_PLACEHOLDER = file exists but no samples
             "status": ensemble.training_status,
             "training_source": ensemble_source,
             "samples_trained": ensemble.weights.get("_trained_samples", 0),
             "has_loaded_model": ensemble.has_loaded_model,
-            "is_trained": ensemble.is_trained,  # True only with real samples
-            "weights": {k: v for k, v in ensemble.weights.items() if not k.startswith("_")},
-            # Training telemetry - proves pipeline is executing
-            "training_telemetry": {
-                "last_train_run_at": ensemble.weights.get("_last_train_run_at"),
-                "graded_samples_seen": ensemble.weights.get("_graded_samples_seen", 0),
-                "samples_used_for_training": ensemble.weights.get("_samples_used_for_training", 0),
-                "volume_mount_path": ensemble.weights.get("_volume_mount_path", "NOT_SET"),
-                # v20.16.9: Filter telemetry - proves training used correct data
-                "filter_counts": ensemble.weights.get("_filter_counts", {}),
-            }
+            "is_trained": ensemble.is_trained,
+            "weights": {k: round(v, 4) for k, v in ensemble.weights.items() if not k.startswith("_")},
+            # v20.17.0: Training signature for this model
+            "training_signature": training_signatures.get("ensemble", {}),
+        },
+        # v20.17.0: Mechanically checkable training telemetry
+        "training_telemetry": {
+            "telemetry_version": ensemble.weights.get("_telemetry_version", "1.0"),
+            "last_train_run_at": ensemble.weights.get("_last_train_run_at"),
+            "graded_samples_seen": ensemble.weights.get("_graded_samples_seen", 0),
+            "samples_used_for_training": ensemble.weights.get("_samples_used_for_training", 0),
+            "volume_mount_path": ensemble.weights.get("_volume_mount_path", "NOT_SET"),
+            # Mechanically checkable filter telemetry
+            "filter_telemetry": filter_telemetry,
+            # Training signatures for all models
+            "training_signatures": training_signatures,
         }
     }

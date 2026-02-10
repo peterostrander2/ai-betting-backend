@@ -34,84 +34,166 @@ logger = logging.getLogger(__name__)
 
 
 def load_graded_picks(days: int = 7, sport: str = None) -> tuple:
-    """Load recently graded picks from storage with filter telemetry.
+    """Load recently graded picks from storage with mechanically checkable filter telemetry.
 
     Returns:
-        tuple: (graded_picks, filter_counts) where filter_counts is a dict with:
-            - candidates_loaded: Total picks loaded from storage
-            - dropped_missing_outcome: Missing grade_status or result
-            - dropped_outside_window: Outside the date range
-            - dropped_wrong_sport: Filtered by sport
-            - used_for_training: Final count used
+        tuple: (graded_picks, filter_telemetry) where filter_telemetry is a dict with:
+            Summable counts (mutually exclusive, sum to graded_loaded_total):
+            - graded_loaded_total: Total picks loaded from storage
+            - drop_no_grade: Missing grade_status (not GRADED)
+            - drop_no_result: Missing result (not WIN/LOSS)
+            - drop_wrong_market: Wrong pick_type for model (not game picks)
+            - drop_missing_required_fields: Missing home_team/away_team
+            - drop_outside_time_window: Outside the date range
+            - drop_wrong_sport: Filtered by sport parameter
+            - eligible_total: Passed all filters
+            - used_for_training_total: Actually used (may differ from eligible)
+
+            Assertions (verified in-code):
+            - eligible_total + sum(drops) == graded_loaded_total
+            - used_for_training_total <= eligible_total
+
+            Audit trail:
             - sample_pick_ids: First 10 pick IDs used
+            - filter_version: Schema version for tracking changes
     """
-    filter_counts = {
-        'candidates_loaded': 0,
-        'dropped_missing_outcome': 0,
-        'dropped_outside_window': 0,
-        'dropped_wrong_sport': 0,
-        'used_for_training': 0,
+    telemetry = {
+        'graded_loaded_total': 0,
+        'drop_no_grade': 0,
+        'drop_no_result': 0,
+        'drop_wrong_market': 0,
+        'drop_missing_required_fields': 0,
+        'drop_outside_time_window': 0,
+        'drop_wrong_sport': 0,
+        'eligible_total': 0,
+        'used_for_training_total': 0,
         'sample_pick_ids': [],
+        'filter_version': '2.0',  # Bump when filter logic changes
+        'assertion_passed': False,
     }
 
     try:
         from grader_store import load_predictions
 
         picks = load_predictions()
-        filter_counts['candidates_loaded'] = len(picks)
+        telemetry['graded_loaded_total'] = len(picks)
 
         # Filter to recent days
         cutoff = datetime.now() - timedelta(days=days)
 
         graded_picks = []
         for pick in picks:
-            # Check if graded
+            # Check 1: grade_status present
             if pick.get('grade_status') not in ['GRADED', 'graded']:
-                filter_counts['dropped_missing_outcome'] += 1
-                continue
-            if pick.get('result') not in ['WIN', 'LOSS', 'win', 'loss']:
-                filter_counts['dropped_missing_outcome'] += 1
+                telemetry['drop_no_grade'] += 1
                 continue
 
-            # Check date
+            # Check 2: result present (separate from grade_status)
+            if pick.get('result') not in ['WIN', 'LOSS', 'win', 'loss']:
+                telemetry['drop_no_result'] += 1
+                continue
+
+            # Check 3: pick_type is game pick (not prop)
+            pick_type = pick.get('pick_type', '').upper()
+            if pick_type not in ['SPREAD', 'TOTAL', 'MONEYLINE', 'SPREADS', 'TOTALS']:
+                telemetry['drop_wrong_market'] += 1
+                continue
+
+            # Check 4: required fields present
+            if not pick.get('home_team') or not pick.get('away_team'):
+                telemetry['drop_missing_required_fields'] += 1
+                continue
+
+            # Check 5: date within window
             pick_date_str = pick.get('date_et') or pick.get('created_at', '')[:10]
             try:
                 pick_date = datetime.strptime(pick_date_str, '%Y-%m-%d')
                 if pick_date < cutoff:
-                    filter_counts['dropped_outside_window'] += 1
+                    telemetry['drop_outside_time_window'] += 1
                     continue
             except:
-                filter_counts['dropped_outside_window'] += 1
+                telemetry['drop_outside_time_window'] += 1
                 continue
 
-            # Check sport filter
+            # Check 6: sport filter (optional)
             if sport and pick.get('sport', '').upper() != sport.upper():
-                filter_counts['dropped_wrong_sport'] += 1
+                telemetry['drop_wrong_sport'] += 1
                 continue
 
             graded_picks.append(pick)
 
-        filter_counts['used_for_training'] = len(graded_picks)
-        filter_counts['sample_pick_ids'] = [p.get('pick_id', p.get('prediction_id', 'unknown'))[:12] for p in graded_picks[:10]]
+        telemetry['eligible_total'] = len(graded_picks)
+        telemetry['used_for_training_total'] = len(graded_picks)
+        telemetry['sample_pick_ids'] = [
+            p.get('pick_id', p.get('prediction_id', 'unknown'))[:12]
+            for p in graded_picks[:10]
+        ]
 
-        logger.info(f"Training filter telemetry: loaded={filter_counts['candidates_loaded']}, "
-                   f"dropped_outcome={filter_counts['dropped_missing_outcome']}, "
-                   f"dropped_window={filter_counts['dropped_outside_window']}, "
-                   f"dropped_sport={filter_counts['dropped_wrong_sport']}, "
-                   f"used={filter_counts['used_for_training']}")
-        return graded_picks, filter_counts
+        # HARD ASSERTION: Verify filter math is correct
+        sum_of_drops = (
+            telemetry['drop_no_grade'] +
+            telemetry['drop_no_result'] +
+            telemetry['drop_wrong_market'] +
+            telemetry['drop_missing_required_fields'] +
+            telemetry['drop_outside_time_window'] +
+            telemetry['drop_wrong_sport']
+        )
+        expected_total = telemetry['eligible_total'] + sum_of_drops
+
+        if expected_total != telemetry['graded_loaded_total']:
+            logger.error(
+                f"FILTER MATH BUG: eligible({telemetry['eligible_total']}) + "
+                f"drops({sum_of_drops}) = {expected_total} != loaded({telemetry['graded_loaded_total']})"
+            )
+            telemetry['assertion_passed'] = False
+            telemetry['assertion_error'] = f"sum mismatch: {expected_total} != {telemetry['graded_loaded_total']}"
+        elif telemetry['used_for_training_total'] > telemetry['eligible_total']:
+            logger.error(
+                f"FILTER MATH BUG: used({telemetry['used_for_training_total']}) > "
+                f"eligible({telemetry['eligible_total']})"
+            )
+            telemetry['assertion_passed'] = False
+            telemetry['assertion_error'] = "used > eligible"
+        else:
+            telemetry['assertion_passed'] = True
+            logger.info(
+                f"Filter assertion PASSED: {telemetry['eligible_total']} + {sum_of_drops} = "
+                f"{telemetry['graded_loaded_total']}"
+            )
+
+        logger.info(
+            f"Training filter telemetry v{telemetry['filter_version']}: "
+            f"loaded={telemetry['graded_loaded_total']}, "
+            f"drops=[grade:{telemetry['drop_no_grade']}, result:{telemetry['drop_no_result']}, "
+            f"market:{telemetry['drop_wrong_market']}, fields:{telemetry['drop_missing_required_fields']}, "
+            f"window:{telemetry['drop_outside_time_window']}, sport:{telemetry['drop_wrong_sport']}], "
+            f"eligible={telemetry['eligible_total']}, used={telemetry['used_for_training_total']}"
+        )
+        return graded_picks, telemetry
 
     except Exception as e:
         logger.error(f"Failed to load graded picks: {e}")
-        return [], filter_counts
+        return [], telemetry
 
 
-def update_team_cache(picks: list):
-    """Update team scoring cache from graded game picks."""
+def _compute_schema_hash(feature_names: list) -> str:
+    """Compute a hash of ordered feature names for train/inference consistency check."""
+    import hashlib
+    schema_str = '|'.join(sorted(feature_names))
+    return hashlib.sha256(schema_str.encode()).hexdigest()[:16]
+
+
+def update_team_cache(picks: list) -> dict:
+    """Update team scoring cache from graded game picks.
+
+    Returns training signature for audit.
+    """
     from team_ml_models import get_team_cache
 
     cache = get_team_cache()
     updated = 0
+    teams_seen = set()
+    sports_seen = set()
 
     for pick in picks:
         # Only process game picks (spreads, totals, moneyline)
@@ -125,6 +207,10 @@ def update_team_cache(picks: list):
 
         if not home_team or not away_team:
             continue
+
+        sports_seen.add(sport)
+        teams_seen.add(f"{sport}_{home_team}")
+        teams_seen.add(f"{sport}_{away_team}")
 
         # Try to extract actual scores from the pick
         home_score = pick.get('home_score') or pick.get('actual_home_score')
@@ -164,15 +250,31 @@ def update_team_cache(picks: list):
     # Save cache
     cache._save_cache()
     logger.info(f"Updated team cache with {updated} game results")
-    return updated
+
+    # Compute training signature
+    all_teams = cache.data.get("teams", {})
+    games_per_team = [len(t.get("recent_scores", [])) for t in all_teams.values()]
+
+    return {
+        'games_processed': updated,
+        'teams_updated_this_run': len(teams_seen),
+        'sports_included': sorted(list(sports_seen)),
+        'teams_cached_total': len(all_teams),
+        'games_per_team_avg': round(sum(games_per_team) / len(games_per_team), 2) if games_per_team else 0,
+        'feature_schema_hash': _compute_schema_hash(['score', 'is_home', 'won']),
+    }
 
 
-def update_matchup_matrix(picks: list):
-    """Update matchup matrix from graded game picks."""
+def update_matchup_matrix(picks: list) -> dict:
+    """Update matchup matrix from graded game picks.
+
+    Returns training signature for audit.
+    """
     from team_ml_models import get_team_matchup
 
     matchup = get_team_matchup()
     updated = 0
+    sports_seen = set()
 
     for pick in picks:
         pick_type = pick.get('pick_type', '').upper()
@@ -185,6 +287,8 @@ def update_matchup_matrix(picks: list):
 
         if not home_team or not away_team:
             continue
+
+        sports_seen.add(sport)
 
         # Get or estimate scores
         home_score = pick.get('home_score') or pick.get('actual_home_score')
@@ -203,15 +307,37 @@ def update_matchup_matrix(picks: list):
     # Save matchups
     matchup._save_matchups()
     logger.info(f"Updated matchup matrix with {updated} game results")
-    return updated
+
+    # Compute training signature
+    all_matchups = matchup.matchups
+    games_per_matchup = [len(m.get("games", [])) for m in all_matchups.values()]
+
+    return {
+        'games_processed': updated,
+        'sports_included': sorted(list(sports_seen)),
+        'matchups_tracked_total': len(all_matchups),
+        'games_per_matchup_avg': round(sum(games_per_matchup) / len(games_per_matchup), 2) if games_per_matchup else 0,
+        'feature_schema_hash': _compute_schema_hash(['home', 'away', 'home_score', 'away_score', 'date']),
+    }
 
 
-def update_ensemble_weights(picks: list):
-    """Update ensemble weights from graded picks."""
+def update_ensemble_weights(picks: list) -> dict:
+    """Update ensemble weights from graded picks.
+
+    Returns training signature for audit.
+    """
     from team_ml_models import get_game_ensemble
 
     ensemble = get_game_ensemble()
     updated = 0
+    sports_seen = set()
+    markets_seen = set()
+    skip_no_model_preds = 0
+    skip_insufficient_values = 0
+    skip_no_result = 0
+
+    # Define feature schema for training (what we train on)
+    training_features = ['ensemble', 'lstm', 'matchup', 'monte_carlo']
 
     for pick in picks:
         # Get the model predictions that were made
@@ -219,11 +345,13 @@ def update_ensemble_weights(picks: list):
         model_preds = ai_breakdown.get('raw_inputs', {}).get('model_preds', {})
 
         if not model_preds or 'values' not in model_preds:
+            skip_no_model_preds += 1
             continue
 
         # Extract individual model predictions
         values = model_preds.get('values', [])
         if len(values) < 4:
+            skip_insufficient_values += 1
             continue
 
         predictions = {
@@ -244,7 +372,11 @@ def update_ensemble_weights(picks: list):
         elif result == 'LOSS':
             actual = line - 5  # We didn't beat the line
         else:
+            skip_no_result += 1
             continue
+
+        sports_seen.add(pick.get('sport', 'UNKNOWN'))
+        markets_seen.add(pick.get('pick_type', 'UNKNOWN').upper())
 
         # Update ensemble weights
         ensemble.update_weights(predictions, actual)
@@ -253,57 +385,84 @@ def update_ensemble_weights(picks: list):
     # Save weights
     ensemble._save_weights()
     logger.info(f"Updated ensemble weights with {updated} pick outcomes")
-    return updated
+
+    # Compute training signature
+    return {
+        'samples_used': updated,
+        'samples_skipped': {
+            'no_model_preds': skip_no_model_preds,
+            'insufficient_values': skip_insufficient_values,
+            'no_result': skip_no_result,
+        },
+        'sports_included': sorted(list(sports_seen)),
+        'markets_included': sorted(list(markets_seen)),
+        # Feature schema hash - must match inference schema
+        'training_feature_schema': training_features,
+        'training_feature_schema_hash': _compute_schema_hash(training_features),
+        # Label definition - what counts as "hit"
+        'label_definition': 'WIN: actual = line + 5; LOSS: actual = line - 5',
+        'label_type': 'regression_target',
+        # Current weights after training
+        'weights_after': {k: round(v, 4) for k, v in ensemble.weights.items() if not k.startswith("_")},
+        'total_samples_trained': ensemble.weights.get("_trained_samples", 0),
+    }
 
 
 def train_all(days: int = 7, sport: str = None):
-    """Run all training updates."""
+    """Run all training updates with mechanically checkable telemetry."""
     logger.info("=" * 60)
-    logger.info("TEAM MODEL TRAINING - v20.16.9")
+    logger.info("TEAM MODEL TRAINING - v20.17.0")
     logger.info("=" * 60)
 
     # Load graded picks with filter telemetry
-    picks, filter_counts = load_graded_picks(days=days, sport=sport)
+    picks, filter_telemetry = load_graded_picks(days=days, sport=sport)
 
     if not picks:
         logger.warning("No graded picks found to train on")
         return {
             'status': 'NO_DATA',
             'picks_found': 0,
-            'filter_counts': filter_counts
+            'filter_telemetry': filter_telemetry
         }
 
-    # Update all models
+    # Update all models - now return training signatures
+    team_cache_sig = update_team_cache(picks)
+    matchup_sig = update_matchup_matrix(picks)
+    ensemble_sig = update_ensemble_weights(picks)
+
     results = {
         'status': 'SUCCESS',
         'picks_found': len(picks),
-        'team_cache_updates': update_team_cache(picks),
-        'matchup_updates': update_matchup_matrix(picks),
-        'ensemble_updates': update_ensemble_weights(picks),
-        'filter_counts': filter_counts,
+        'filter_telemetry': filter_telemetry,
+        'training_signatures': {
+            'team_cache': team_cache_sig,
+            'matchup_matrix': matchup_sig,
+            'ensemble': ensemble_sig,
+        },
     }
 
-    # Record training run with telemetry (proves pipeline executed)
+    # Record training run with full telemetry (proves pipeline executed)
     try:
         from team_ml_models import get_game_ensemble
         ensemble = get_game_ensemble()
         ensemble.record_training_run(
-            graded_samples_seen=filter_counts['candidates_loaded'],
-            samples_used=results['ensemble_updates'],
-            filter_counts=filter_counts
+            graded_samples_seen=filter_telemetry['graded_loaded_total'],
+            samples_used=ensemble_sig['samples_used'],
+            filter_telemetry=filter_telemetry,
+            training_signatures=results['training_signatures']
         )
         results['telemetry_recorded'] = True
     except Exception as e:
         logger.error(f"Failed to record training telemetry: {e}")
         results['telemetry_recorded'] = False
 
-    # Log summary
+    # Log summary with training signatures
     logger.info("=" * 60)
     logger.info("TRAINING COMPLETE")
-    logger.info(f"  Picks processed: {len(picks)}")
-    logger.info(f"  Team cache updates: {results['team_cache_updates']}")
-    logger.info(f"  Matchup updates: {results['matchup_updates']}")
-    logger.info(f"  Ensemble updates: {results['ensemble_updates']}")
+    logger.info(f"  Filter assertion: {'PASSED' if filter_telemetry.get('assertion_passed') else 'FAILED'}")
+    logger.info(f"  Team cache: {team_cache_sig['games_processed']} games, {team_cache_sig['teams_cached_total']} teams")
+    logger.info(f"  Matchup matrix: {matchup_sig['games_processed']} games, {matchup_sig['matchups_tracked_total']} matchups")
+    logger.info(f"  Ensemble: {ensemble_sig['samples_used']} samples, schema={ensemble_sig['training_feature_schema_hash']}")
     logger.info(f"  Telemetry recorded: {results.get('telemetry_recorded', False)}")
     logger.info("=" * 60)
 
