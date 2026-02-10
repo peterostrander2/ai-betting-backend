@@ -7777,6 +7777,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "base_score_used": ai_breakdown.get("base_score_used"),
                     "pillar_boost": ai_breakdown.get("pillar_boost"),
                     "model_std": ai_breakdown.get("model_std"),
+                    # v20.16: Raw inputs for debugging variance issues
+                    "raw_inputs": ai_breakdown.get("raw_inputs", {}),
                 },
                 "missing_data": {
                     "no_odds": not p.get("odds") and not p.get("best_odds"),

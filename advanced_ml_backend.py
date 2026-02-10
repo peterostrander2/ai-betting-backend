@@ -890,6 +890,24 @@ class MasterPredictionSystem:
                 'base_score_used': 'DEVIATION' if deviation_score >= alternative_base else 'ALTERNATIVE',
                 'pillar_boost': round(pillar_boost, 3),
                 'model_std': round(model_std, 3),
+                # v20.16: Raw inputs for debugging
+                'raw_inputs': {
+                    # Edge inputs
+                    'edge_percent': round(edge_pct, 3),
+                    'probability': round(probability, 4),
+                    # Factor components
+                    'rest_factor': round(rest_factor, 4),
+                    'injury_impact': round(injury_impact, 3),
+                    'line_movement': round(model_predictions.get('line_movement', 0), 3),
+                    # Model prediction stats
+                    'model_preds': {
+                        'count': len(model_values),
+                        'min': round(min(model_values), 2),
+                        'max': round(max(model_values), 2),
+                        'std': round(model_std, 3),
+                        'values': [round(v, 2) for v in model_values],
+                    },
+                },
             },
 
             # Monte Carlo Details
