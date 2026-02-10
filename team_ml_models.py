@@ -415,17 +415,25 @@ class GameEnsembleModel:
 
         Args:
             model_predictions: Dict of model_name -> prediction value
-            features: Optional feature array for XGBoost model
+            features: Optional feature array for XGBoost model (must be 12 features)
 
         Returns:
             Weighted ensemble prediction
         """
         # If we have trained XGBoost model and features, use it
+        # v20.16.6: XGBoost model expects 12 features (scoring outputs), not 6 context features
         if self.model is not None and features is not None:
-            try:
-                return float(self.model.predict(features.reshape(1, -1))[0])
-            except Exception as e:
-                logger.warning(f"XGBoost prediction failed: {e}")
+            # Validate feature count matches training (12 features expected)
+            expected_features = 12
+            if len(features) != expected_features:
+                # Feature mismatch - this happens when context features (6) are passed
+                # instead of scoring features (12). Skip XGBoost, use weighted average.
+                pass  # Fall through to weighted average
+            else:
+                try:
+                    return float(self.model.predict(features.reshape(1, -1))[0])
+                except Exception as e:
+                    logger.warning(f"XGBoost prediction failed: {e}")
 
         # Fall back to weighted average
         weighted_sum = 0.0
