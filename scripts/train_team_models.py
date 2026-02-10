@@ -249,6 +249,19 @@ def train_all(days: int = 7, sport: str = None):
         'ensemble_updates': update_ensemble_weights(picks),
     }
 
+    # Record training run with telemetry (proves pipeline executed)
+    try:
+        from team_ml_models import get_game_ensemble
+        ensemble = get_game_ensemble()
+        ensemble.record_training_run(
+            graded_samples_seen=len(picks),
+            samples_used=results['ensemble_updates']
+        )
+        results['telemetry_recorded'] = True
+    except Exception as e:
+        logger.error(f"Failed to record training telemetry: {e}")
+        results['telemetry_recorded'] = False
+
     # Log summary
     logger.info("=" * 60)
     logger.info("TRAINING COMPLETE")
@@ -256,6 +269,7 @@ def train_all(days: int = 7, sport: str = None):
     logger.info(f"  Team cache updates: {results['team_cache_updates']}")
     logger.info(f"  Matchup updates: {results['matchup_updates']}")
     logger.info(f"  Ensemble updates: {results['ensemble_updates']}")
+    logger.info(f"  Telemetry recorded: {results.get('telemetry_recorded', False)}")
     logger.info("=" * 60)
 
     return results

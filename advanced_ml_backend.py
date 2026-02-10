@@ -886,12 +886,22 @@ class MasterPredictionSystem:
                 if self.ensemble._is_base_model_fitted(model, name):
                     sklearn_fitted_count += 1
 
+            # Get training telemetry (proves pipeline is executing)
+            training_telemetry = team_status.get('ensemble', {}).get('training_telemetry', {})
+
             return {
                 'ensemble': team_status.get('ensemble', {}).get('status', 'INITIALIZING'),
                 'ensemble_training_source': team_status.get('ensemble', {}).get('training_source', 'UNKNOWN'),
                 'ensemble_samples_trained': team_status.get('ensemble', {}).get('samples_trained', 0),
                 'ensemble_sklearn_fitted_count': sklearn_fitted_count,
                 'ensemble_pipeline_trained': self.ensemble._ensemble_pipeline_trained,
+                # Training telemetry - decisive proof of pipeline execution
+                'training_telemetry': {
+                    'last_train_run_at': training_telemetry.get('last_train_run_at'),
+                    'graded_samples_seen': training_telemetry.get('graded_samples_seen', 0),
+                    'samples_used_for_training': training_telemetry.get('samples_used_for_training', 0),
+                    'volume_mount_path': training_telemetry.get('volume_mount_path', 'NOT_SET'),
+                },
                 'lstm': team_status.get('lstm', {}).get('status', 'INITIALIZING'),
                 'lstm_training_source': team_status.get('lstm', {}).get('training_source', 'UNKNOWN'),
                 'lstm_teams_cached': team_status.get('lstm', {}).get('teams_cached', 0),

@@ -377,12 +377,17 @@ class GameEnsembleModel:
         except Exception as e:
             logger.warning(f"Failed to load ensemble weights: {e}")
 
-        # Default equal weights
+        # Default equal weights with training telemetry
         return {
             "lstm": 0.25,
             "matchup": 0.25,
             "monte_carlo": 0.50,  # Monte Carlo is most reliable initially
-            "_trained_samples": 0
+            "_trained_samples": 0,
+            # Training telemetry (proves pipeline is executing)
+            "_last_train_run_at": None,
+            "_graded_samples_seen": 0,
+            "_samples_used_for_training": 0,
+            "_volume_mount_path": os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "NOT_SET"),
         }
 
     def _save_weights(self):
@@ -472,10 +477,25 @@ class GameEnsembleModel:
                 self.weights[k] /= weight_sum
 
         self.weights["_trained_samples"] = self.weights.get("_trained_samples", 0) + 1
+        self.weights["_samples_used_for_training"] = self.weights.get("_samples_used_for_training", 0) + 1
 
         # Save periodically
         if self.weights["_trained_samples"] % 10 == 0:
             self._save_weights()
+
+    def record_training_run(self, graded_samples_seen: int, samples_used: int):
+        """Record a training run for telemetry.
+
+        Called by train_team_models.py after processing graded picks.
+        This proves the training pipeline is executing and persisting.
+        """
+        from datetime import datetime
+        self.weights["_last_train_run_at"] = datetime.now().isoformat()
+        self.weights["_graded_samples_seen"] = graded_samples_seen
+        self.weights["_samples_used_for_training"] = samples_used
+        self.weights["_volume_mount_path"] = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "NOT_SET")
+        self._save_weights()
+        logger.info(f"Training run recorded: seen={graded_samples_seen}, used={samples_used}")
 
     @property
     def is_trained(self) -> bool:
@@ -599,6 +619,13 @@ def get_model_status() -> Dict:
             "samples_trained": ensemble.weights.get("_trained_samples", 0),
             "has_loaded_model": ensemble.has_loaded_model,
             "is_trained": ensemble.is_trained,  # True only with real samples
-            "weights": {k: v for k, v in ensemble.weights.items() if not k.startswith("_")}
+            "weights": {k: v for k, v in ensemble.weights.items() if not k.startswith("_")},
+            # Training telemetry - proves pipeline is executing
+            "training_telemetry": {
+                "last_train_run_at": ensemble.weights.get("_last_train_run_at"),
+                "graded_samples_seen": ensemble.weights.get("_graded_samples_seen", 0),
+                "samples_used_for_training": ensemble.weights.get("_samples_used_for_training", 0),
+                "volume_mount_path": ensemble.weights.get("_volume_mount_path", "NOT_SET"),
+            }
         }
     }
