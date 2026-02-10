@@ -464,6 +464,9 @@ class EnsembleStackingModel:
     v20.16: Now uses GameEnsembleModel which:
     - Learns optimal weights from graded picks
     - Can load trained XGBoost model from disk
+
+    v20.16.1: Added _base_models_fitted flag to prevent calling
+    .predict() on unfitted sklearn models (hard safety rule).
     """
     def __init__(self):
         self.base_models = {
@@ -473,6 +476,7 @@ class EnsembleStackingModel:
         }
         self.meta_model = GradientBoostingRegressor(n_estimators=50, random_state=42)
         self.is_trained = False
+        self._base_models_fitted = False  # HARD RULE: Only True after train() completes
         self._game_ensemble = None
         self._init_game_ensemble()
 
@@ -500,12 +504,40 @@ class EnsembleStackingModel:
         # Stack predictions for meta model
         stacked_features = np.column_stack(base_predictions)
         self.meta_model.fit(stacked_features, y_val)
+        self._base_models_fitted = True  # ONLY set after sklearn models are fitted
         self.is_trained = True
         logger.info("Ensemble model trained successfully")
+
+    def _is_base_model_fitted(self, model, model_name: str) -> bool:
+        """Check if a sklearn model has been fitted.
+
+        HARD RULE: This is an additional safety check. The primary gate is
+        _base_models_fitted which is ONLY set True after train() completes.
+        """
+        if model is None:
+            return False
+        # For sklearn estimators, check for fitted attributes
+        # XGBoost/LightGBM have get_booster(), RandomForest has estimators_
+        try:
+            if hasattr(model, 'get_booster'):
+                model.get_booster()  # Raises if not fitted
+                return True
+            if hasattr(model, 'estimators_'):
+                return len(model.estimators_) > 0
+            if hasattr(model, 'n_features_in_'):
+                return model.n_features_in_ is not None
+        except Exception:
+            return False
+        return False
 
     def predict(self, features, model_predictions: Dict = None):
         """
         Make prediction using ensemble.
+
+        HARD RULE (v20.16.1): Never call .predict() on any base model unless:
+        1. _base_models_fitted == True (set ONLY after train() completes)
+        2. Model instance is not None
+        3. Model advertises a fitted/loaded state
 
         Args:
             features: Feature array
@@ -526,16 +558,36 @@ class EnsembleStackingModel:
             except Exception as e:
                 logger.warning(f"GameEnsemble fallback failed: {e}")
 
-        # Fallback: return feature mean (don't try untrained sklearn models)
-        if not self.is_trained:
+        # HARD RULE: Never call .predict() on sklearn base models unless:
+        # 1. _base_models_fitted == True (set ONLY after train() completes)
+        # 2. Model instances are not None
+        # 3. is_trained == True
+        if not self._base_models_fitted:
+            # Base models not fitted via train() - use feature mean fallback
             return float(np.mean(features)) if len(features) > 0 else 25.0
 
-        # Use trained meta model (only if actually trained)
+        if not self.is_trained:
+            # Secondary check for general trained state
+            return float(np.mean(features)) if len(features) > 0 else 25.0
+
+        # Use trained meta model (ONLY if base models are fitted)
         try:
             base_predictions = []
-            for model in self.base_models.values():
+            for name, model in self.base_models.items():
+                # Extra safety: verify model instance exists AND is fitted
+                if model is None:
+                    logger.warning(f"Base model {name} is None, skipping")
+                    continue
+                if not self._is_base_model_fitted(model, name):
+                    logger.warning(f"Base model {name} not fitted, skipping")
+                    continue
                 pred = model.predict(features.reshape(1, -1) if features.ndim == 1 else features)
                 base_predictions.append(pred)
+
+            # Need all 3 base predictions for meta model
+            if len(base_predictions) < 3:
+                logger.warning(f"Only {len(base_predictions)}/3 base models available")
+                return float(np.mean(features)) if len(features) > 0 else 25.0
 
             stacked_features = np.column_stack(base_predictions)
             return self.meta_model.predict(stacked_features)[0]
