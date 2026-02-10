@@ -124,8 +124,10 @@ class PillarsAnalyzer:
             results['pillars_triggered'].append('Volume Discipline')
         
         # Calculate overall pillar score
+        # v20.16: Handle empty list case to avoid nan (when no pillars trigger)
         pillar_values = list(results['pillar_scores'].values())
-        results['overall_pillar_score'] = np.mean([s for s in pillar_values if s != 0])
+        non_zero_pillars = [s for s in pillar_values if s != 0]
+        results['overall_pillar_score'] = np.mean(non_zero_pillars) if non_zero_pillars else 0.0
         
         return results
     
