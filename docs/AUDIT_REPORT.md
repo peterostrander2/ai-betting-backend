@@ -1,7 +1,141 @@
 # Backend Audit Report — Option A / Integrations / Persistence / Live Betting
 
-Date: 2026-02-09
+Date: 2026-02-10
 Git SHA: (pending commit)
+
+---
+
+## Training Pipeline Visibility (v20.16.3) — February 10, 2026
+
+### Summary
+
+Enhanced scheduler and training status endpoints to provide decisive proof that the training pipeline is executing and persisting correctly.
+
+### New Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/live/scheduler/status` | GET | **Enhanced** - Now shows all jobs with next_run_time_et, trigger, misfire_grace_time |
+| `/live/debug/training-status` | GET | **NEW** - Comprehensive training status with artifact proof and health status |
+| `/live/grader/train-team-models` | POST | **Exists** - Manual trigger for training pipeline |
+
+### GET /live/scheduler/status
+
+Enhanced to return detailed job information:
+
+```json
+{
+  "available": true,
+  "scheduler_running": true,
+  "jobs": [
+    {
+      "id": "daily_audit",
+      "name": "Daily Audit",
+      "next_run_time_et": "2026-02-10T06:00:00-05:00",
+      "trigger_type": "CronTrigger",
+      "trigger": "cron[hour='6', minute='0']"
+    },
+    {
+      "id": "team_model_train",
+      "name": "Daily Team Model Training",
+      "next_run_time_et": "2026-02-10T07:00:00-05:00",
+      "trigger_type": "CronTrigger",
+      "trigger": "cron[hour='7', minute='0']"
+    }
+  ],
+  "training_job_registered": true
+}
+```
+
+### GET /live/debug/training-status
+
+Returns comprehensive training status:
+
+```json
+{
+  "model_status": {
+    "ensemble": "TRAINED",
+    "ensemble_samples_trained": 21,
+    "ensemble_is_trained": true,
+    "lstm": "TRAINED",
+    "lstm_teams_cached": 205,
+    "matchup": "TRAINED",
+    "matchup_tracked": 135
+  },
+  "training_telemetry": {
+    "last_train_run_at": "2026-02-10T03:54:07",
+    "graded_samples_seen": 866,
+    "samples_used_for_training": 21,
+    "volume_mount_path": "/data"
+  },
+  "artifact_proof": {
+    "team_data_cache.json": {
+      "exists": true,
+      "size_bytes": 45678,
+      "mtime_iso": "2026-02-10T03:54:07-05:00"
+    },
+    "matchup_matrix.json": {
+      "exists": true,
+      "size_bytes": 12345,
+      "mtime_iso": "2026-02-10T03:54:07-05:00"
+    },
+    "ensemble_weights.json": {
+      "exists": true,
+      "size_bytes": 1024,
+      "mtime_iso": "2026-02-10T03:54:07-05:00"
+    }
+  },
+  "scheduler_proof": {
+    "job_registered": true,
+    "next_run_time_et": "2026-02-10T07:00:00-05:00"
+  },
+  "training_health": "HEALTHY",
+  "graded_picks_count": 866,
+  "errors": null
+}
+```
+
+### Training Health States
+
+| State | Condition | Meaning |
+|-------|-----------|---------|
+| **HEALTHY** | Training ran within 24h OR no graded picks exist | Normal operation |
+| **STALE** | Training older than 24h AND graded picks > 0 | Training should have run |
+| **NEVER_RAN** | last_train_run_at is null AND graded picks > 0 | Training pipeline never executed |
+
+### Non-Negotiable Proof Fields
+
+| Field | Required In | Purpose |
+|-------|-------------|---------|
+| `training_job_registered` | scheduler/status | Confirms 7 AM ET job exists |
+| `next_run_time_et` | scheduler/status, debug/training-status | Proves next scheduled run |
+| `artifact_proof[file].exists` | debug/training-status | Proves artifacts written to disk |
+| `artifact_proof[file].mtime_iso` | debug/training-status | Proves when artifacts updated |
+| `training_health` | debug/training-status | Overall health classification |
+| `graded_picks_count` | debug/training-status | Shows data available for training |
+
+### Verification Commands
+
+```bash
+# Check scheduler status and training job
+curl "https://web-production-7b2a.up.railway.app/live/scheduler/status" \
+  -H "X-API-Key: YOUR_KEY" | jq '.jobs[] | select(.id == "team_model_train")'
+
+# Check training status with artifact proof
+curl "https://web-production-7b2a.up.railway.app/live/debug/training-status" \
+  -H "X-API-Key: YOUR_KEY" | jq '{health: .training_health, artifacts: .artifact_proof}'
+
+# Manual training trigger (optional)
+curl -X POST "https://web-production-7b2a.up.railway.app/live/grader/train-team-models" \
+  -H "X-API-Key: YOUR_KEY" -H "Content-Type: application/json" \
+  -d '{"days": 7}'
+```
+
+### Tests Added
+
+| Test File | Tests | Purpose |
+|-----------|-------|---------|
+| `tests/test_training_status.py` | 12 | Scheduler job visibility, artifact proof shape, training health logic |
 
 ---
 

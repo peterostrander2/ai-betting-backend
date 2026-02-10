@@ -11188,27 +11188,247 @@ async def get_player_stats(sport: str = "NBA", date: Optional[str] = None):
 
 @router.get("/scheduler/status")
 async def scheduler_status():
-    """Check daily scheduler status."""
+    """
+    Check daily scheduler status with detailed job information.
+
+    v20.16.3: Enhanced to show all registered jobs with next_run_time,
+    last_run_time, trigger, and misfire_grace_time.
+
+    Returns:
+        - available: bool
+        - jobs: list of job details (id, name, next_run_time_et, trigger, etc.)
+        - training_job_registered: bool - confirms team_model_train job exists
+    """
     try:
-        from daily_scheduler import SCHEDULER_AVAILABLE, SchedulerConfig
+        from daily_scheduler import SCHEDULER_AVAILABLE, SchedulerConfig, get_scheduler
+        import pytz
+
+        ET = pytz.timezone("America/New_York")
+        scheduler_instance = get_scheduler()
+
+        jobs_info = []
+        training_job_registered = False
+
+        if scheduler_instance and scheduler_instance.scheduler:
+            for job in scheduler_instance.scheduler.get_jobs():
+                # Convert next_run_time to ET for display
+                next_run_et = None
+                if job.next_run_time:
+                    next_run_et = job.next_run_time.astimezone(ET).isoformat()
+
+                # Get trigger type
+                trigger_type = type(job.trigger).__name__ if job.trigger else "unknown"
+                trigger_str = str(job.trigger) if job.trigger else "N/A"
+
+                # Get misfire grace time
+                misfire_grace = getattr(job, 'misfire_grace_time', None)
+
+                job_info = {
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run_time_et": next_run_et,
+                    "trigger_type": trigger_type,
+                    "trigger": trigger_str,
+                    "misfire_grace_time": misfire_grace,
+                }
+                jobs_info.append(job_info)
+
+                # Check if training job is registered
+                if job.id == "team_model_train":
+                    training_job_registered = True
+
         return {
             "available": True,
             "apscheduler_available": SCHEDULER_AVAILABLE,
+            "scheduler_running": scheduler_instance.running if scheduler_instance else False,
             "audit_time": f"{SchedulerConfig.AUDIT_HOUR:02d}:{SchedulerConfig.AUDIT_MINUTE:02d} ET",
             "supported_sports": list(SchedulerConfig.SPORT_STATS.keys()),
             "retrain_thresholds": {
                 "mae": SchedulerConfig.RETRAIN_MAE_THRESHOLD,
                 "hit_rate": SchedulerConfig.RETRAIN_HIT_RATE_THRESHOLD
             },
-            "note": "Scheduler runs daily audit at 6 AM ET",
+            "jobs": jobs_info,
+            "jobs_count": len(jobs_info),
+            "training_job_registered": training_job_registered,
+            "note": "Daily audit at 6 AM ET, team model training at 7 AM ET",
             "timestamp": datetime.now().isoformat()
         }
-    except ImportError:
+    except ImportError as e:
         return {
             "available": False,
-            "note": "Scheduler module not available",
+            "note": f"Scheduler module not available: {e}",
             "timestamp": datetime.now().isoformat()
         }
+    except Exception as e:
+        logger.warning("Scheduler status error: %s", e)
+        return {
+            "available": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/debug/training-status")
+async def get_training_status():
+    """
+    Get comprehensive training status for production monitoring.
+
+    v20.16.3: Returns all proof fields needed to verify training pipeline health.
+
+    Returns:
+        - model_status: ensemble/lstm/matchup status with proof fields
+        - training_telemetry: last_train_run_at, graded_samples_seen, etc.
+        - artifact_proof: file existence, size, mtime for each model artifact
+        - scheduler_proof: next_run_time for training job
+        - training_health: HEALTHY | STALE | NEVER_RAN
+
+    This endpoint is safe: no secrets, no heavy compute, fail-soft with errors[].
+    """
+    import pytz
+    from datetime import datetime, timedelta
+
+    ET = pytz.timezone("America/New_York")
+    errors = []
+    now_et = datetime.now(ET)
+
+    # 1. Get model status
+    model_status = {}
+    training_telemetry = {}
+    try:
+        from team_ml_models import get_model_status, get_game_ensemble
+
+        status = get_model_status()
+        model_status = {
+            "ensemble": status.get("ensemble", {}).get("status", "UNKNOWN"),
+            "ensemble_samples_trained": status.get("ensemble", {}).get("samples_trained", 0),
+            "ensemble_is_trained": status.get("ensemble", {}).get("is_trained", False),
+            "lstm": status.get("lstm", {}).get("status", "UNKNOWN"),
+            "lstm_teams_cached": status.get("lstm", {}).get("teams_cached", 0),
+            "matchup": status.get("matchup", {}).get("status", "UNKNOWN"),
+            "matchup_tracked": status.get("matchup", {}).get("matchups_tracked", 0),
+        }
+
+        training_telemetry = status.get("ensemble", {}).get("training_telemetry", {})
+    except Exception as e:
+        errors.append(f"model_status: {e}")
+
+    # 2. Get artifact proof
+    artifact_proof = {}
+    models_dir = os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data"), "models")
+    artifact_files = [
+        "team_data_cache.json",
+        "matchup_matrix.json",
+        "ensemble_weights.json",
+    ]
+
+    for filename in artifact_files:
+        filepath = os.path.join(models_dir, filename)
+        try:
+            if os.path.exists(filepath):
+                stat = os.stat(filepath)
+                mtime = datetime.fromtimestamp(stat.st_mtime, tz=ET)
+                artifact_proof[filename] = {
+                    "exists": True,
+                    "size_bytes": stat.st_size,
+                    "mtime_iso": mtime.isoformat(),
+                }
+            else:
+                artifact_proof[filename] = {
+                    "exists": False,
+                    "size_bytes": 0,
+                    "mtime_iso": None,
+                }
+        except Exception as e:
+            artifact_proof[filename] = {
+                "exists": False,
+                "error": str(e),
+            }
+            errors.append(f"artifact {filename}: {e}")
+
+    # 3. Get scheduler proof
+    scheduler_proof = {}
+    try:
+        from daily_scheduler import get_scheduler
+
+        scheduler_instance = get_scheduler()
+        if scheduler_instance and scheduler_instance.scheduler:
+            for job in scheduler_instance.scheduler.get_jobs():
+                if job.id == "team_model_train":
+                    next_run_et = None
+                    if job.next_run_time:
+                        next_run_et = job.next_run_time.astimezone(ET).isoformat()
+                    scheduler_proof = {
+                        "job_registered": True,
+                        "next_run_time_et": next_run_et,
+                    }
+                    break
+            else:
+                scheduler_proof = {"job_registered": False}
+        else:
+            scheduler_proof = {"scheduler_running": False}
+    except Exception as e:
+        scheduler_proof = {"error": str(e)}
+        errors.append(f"scheduler_proof: {e}")
+
+    # 4. Determine training health
+    # NEVER_RAN: last_train_run_at is null AND graded picks > 0
+    # STALE: last_train_run_at older than 24h AND graded picks > 0
+    # HEALTHY: otherwise
+    training_health = "HEALTHY"
+    graded_count = 0
+
+    try:
+        # Count graded picks
+        predictions_file = os.path.join(
+            os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data"),
+            "grader", "predictions.jsonl"
+        )
+        if os.path.exists(predictions_file):
+            import json
+            with open(predictions_file, 'r') as f:
+                for line in f:
+                    if line.strip():
+                        try:
+                            pick = json.loads(line)
+                            result = pick.get("result", "").upper()
+                            if result in ("WIN", "LOSS"):
+                                graded_count += 1
+                        except Exception:
+                            pass
+    except Exception as e:
+        errors.append(f"graded_count: {e}")
+
+    last_train_run_at = training_telemetry.get("last_train_run_at")
+
+    if graded_count > 0:
+        if not last_train_run_at:
+            training_health = "NEVER_RAN"
+        else:
+            try:
+                # Parse last_train_run_at
+                if isinstance(last_train_run_at, str):
+                    # Handle both formats: with and without timezone
+                    if '+' in last_train_run_at or 'Z' in last_train_run_at:
+                        last_run = datetime.fromisoformat(last_train_run_at.replace('Z', '+00:00'))
+                    else:
+                        last_run = datetime.fromisoformat(last_train_run_at).replace(tzinfo=ET)
+
+                    hours_since_train = (now_et - last_run.astimezone(ET)).total_seconds() / 3600
+                    if hours_since_train > 24:
+                        training_health = "STALE"
+            except Exception as e:
+                errors.append(f"training_health parse: {e}")
+
+    return {
+        "model_status": model_status,
+        "training_telemetry": training_telemetry,
+        "artifact_proof": artifact_proof,
+        "scheduler_proof": scheduler_proof,
+        "training_health": training_health,
+        "graded_picks_count": graded_count,
+        "timestamp_et": now_et.isoformat(),
+        "errors": errors if errors else None,
+    }
 
 
 @router.post("/ml/train-ensemble")

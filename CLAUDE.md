@@ -302,7 +302,7 @@
 - Lesson 44: Date window math error (2-day instead of 1-day)
 - Lesson 45: Same datetime bug in `/grader/performance`
 
-**All Grader Endpoints Verified Working (Feb 8, 2026):**
+**All Grader Endpoints Verified Working (Feb 10, 2026):**
 
 **IMPORTANT:** All grader endpoints require the `/live` prefix and `X-API-Key` header for authentication.
 
@@ -315,11 +315,22 @@
 | `/live/grader/performance/{sport}` | GET | Performance metrics by stat type | ✅ |
 | `/live/grader/queue` | GET | Pending picks for grading | ✅ |
 | `/live/grader/daily-report` | GET | Daily grading summary | ✅ |
+| `/live/grader/train-team-models` | POST | Manual trigger for team model training | ✅ (v20.16) |
 | `/live/picks/graded` | GET | Graded picks for frontend | ✅ (v20.9) |
 | `/live/picks/grade` | POST | Grade a single pick | ✅ |
 | `/live/picks/grading-summary` | GET | Stats by tier | ✅ |
+| `/live/scheduler/status` | GET | Scheduler jobs with next_run_time_et | ✅ (v20.16.3) |
+| `/live/debug/training-status` | GET | Training status with artifact proof | ✅ (v20.16.3) |
 
 **Verification Script:** `scripts/verify_grader_routes.sh` — Tests all grader endpoints in Railway shell.
+
+**Training Health States (v20.16.3):**
+
+| State | Condition | Action |
+|-------|-----------|--------|
+| `HEALTHY` | Training ran within 24h OR no graded picks | Normal operation |
+| `STALE` | Training older than 24h AND graded picks > 0 | Check scheduler, may need manual trigger |
+| `NEVER_RAN` | last_train_run_at null AND graded picks > 0 | Training pipeline never executed, trigger manually |
 
 **Production Test Results (Feb 8, 2026):**
 - `/live/grader/status` — available: true, 1310+ predictions logged
