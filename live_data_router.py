@@ -3389,18 +3389,30 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 1.0 if game_data.get("home_pick") else 0.0,  # Picking home?
             ])
 
-            # Recent games - use spread as proxy for performance trend
-            recent_games = [abs(spread)] * 10  # Simplified sequence
+            # v20.16: Use appropriate line value based on market type
+            # For totals: use total line (214.5); for spreads: use spread (6.5)
+            market_type = game_data.get("market", "").lower()
+            is_totals_pick = "total" in market_type
 
-            # Player stats approximation from spread
+            # Recent games - use market-appropriate value for LSTM input
+            # Previously: [abs(spread)] * 10 caused LSTM=0 for totals (spread=0)
+            lstm_input_value = total if is_totals_pick else max(abs(spread), 1.0)
+            recent_games = [lstm_input_value] * 10
+
+            # Player stats approximation
             std_dev = 10.0  # Default std dev
-            expected_value = total / 2 + (spread / 2 if game_data.get("home_pick") else -spread / 2)
+            if is_totals_pick:
+                expected_value = total  # For totals, expected is the total line itself
+            else:
+                expected_value = total / 2 + (spread / 2 if game_data.get("home_pick") else -spread / 2)
 
             # Build complete game_data dict for MPS
+            # v20.16: Use market-appropriate line value
+            mps_line = total if is_totals_pick else abs(spread)
             mps_game_data = {
                 "features": features,
                 "recent_games": recent_games,
-                "line": abs(spread),
+                "line": mps_line,
                 "player_id": game_data.get("home_team", "home"),
                 "opponent_id": game_data.get("away_team", "away"),
                 "player_stats": {
@@ -5653,6 +5665,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "model_std": _ai_telemetry.get("ai_audit", {}).get("model_std"),
                 # v20.16: Raw inputs for debugging variance issues
                 "raw_inputs": _ai_telemetry.get("ai_audit", {}).get("raw_inputs", {}),
+                # v20.16: Model status (WORKS/STUB/FALLBACK/TRAINED)
+                "model_status": _ai_telemetry.get("ai_audit", {}).get("model_status", {}),
             },
             # v16.0 Jarvis audit fields (ADDITIVE trigger scoring for GOLD_STAR eligibility)
             "jarvis_baseline": jarvis_data.get("jarvis_baseline", 4.5),
@@ -7781,6 +7795,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "model_std": ai_breakdown.get("model_std"),
                     # v20.16: Raw inputs for debugging variance issues
                     "raw_inputs": ai_breakdown.get("raw_inputs", {}),
+                    # v20.16: Model status (WORKS/STUB/FALLBACK/TRAINED)
+                    "model_status": ai_breakdown.get("model_status", {}),
                 },
                 "missing_data": {
                     "no_odds": not p.get("odds") and not p.get("best_odds"),

@@ -634,15 +634,26 @@ class RestFatigueModel:
 
 
 class InjuryImpactModel:
-    """Model 7: Injury impact calculator"""
+    """Model 7: Injury impact calculator
+
+    v20.16 fix: Added INJURY_IMPACT_CAP and fixed depth default.
+    Previously: depth defaulted to 1 (starter), causing ALL players to be counted.
+    Now: depth defaults to 99 (unknown), only explicit starters counted.
+    """
+    INJURY_IMPACT_CAP = 10.0  # Max negative impact
+
     def calculate_impact(self, injuries, depth_chart):
         total_impact = 0
         for injury in injuries:
             player = injury.get('player', {})
-            if player.get('depth', 1) == 1:
+            # v20.16: Default depth to 99 (unknown = not a starter)
+            depth = player.get('depth', 99)
+            if depth == 1:
                 total_impact += 2.0
-            elif player.get('depth', 2) == 2:
+            elif depth == 2:
                 total_impact += 0.5
+        # v20.16: Cap the impact to prevent runaway negative values
+        total_impact = min(total_impact, self.INJURY_IMPACT_CAP)
         return -total_impact
 
 
@@ -907,6 +918,17 @@ class MasterPredictionSystem:
                         'std': round(model_std, 3),
                         'values': [round(v, 2) for v in model_values],
                     },
+                },
+                # v20.16: Model status for transparency (what's actually working)
+                'model_status': {
+                    'ensemble': 'STUB' if not self.ensemble.is_trained else 'TRAINED',
+                    'lstm': 'FALLBACK' if self.lstm.model is None else 'TRAINED',
+                    'matchup': 'STUB' if not self.matchup.matchup_models else 'TRAINED',
+                    'monte_carlo': 'WORKS',  # Always runs simulations
+                    'line_movement': 'WORKS',  # Always computes
+                    'rest_fatigue': 'WORKS',  # Always computes
+                    'injury_impact': 'WORKS',  # Always computes (now capped)
+                    'edge_calculator': 'WORKS',  # Always computes
                 },
             },
 
