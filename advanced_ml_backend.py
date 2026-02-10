@@ -125,10 +125,14 @@ class PillarsAnalyzer:
         
         # Calculate overall pillar score
         # v20.16: Handle empty list case to avoid nan (when no pillars trigger)
+        # v20.16: Added defensive bounds [-5.0, +5.0] to prevent extreme values
+        PILLAR_SCORE_MIN = -5.0
+        PILLAR_SCORE_MAX = 5.0
         pillar_values = list(results['pillar_scores'].values())
         non_zero_pillars = [s for s in pillar_values if s != 0]
-        results['overall_pillar_score'] = np.mean(non_zero_pillars) if non_zero_pillars else 0.0
-        
+        raw_pillar_score = np.mean(non_zero_pillars) if non_zero_pillars else 0.0
+        results['overall_pillar_score'] = max(PILLAR_SCORE_MIN, min(PILLAR_SCORE_MAX, raw_pillar_score))
+
         return results
     
     def _pillar_1_sharp_split(self, data: Dict) -> Dict:
@@ -196,29 +200,40 @@ class PillarsAnalyzer:
         """
         Pillar 3: The "Hospital" Fade (Injury Audit)
         Never bet team missing #1 scorer or primary defender
+
+        v20.16 fix: Cap injury_impact at 5.0 to prevent unbounded negative scores.
+        Also fix depth default: unknown players should NOT be treated as starters.
         """
         injuries = data.get('injuries', [])
-        
+
         key_injuries = 0
         injury_impact = 0
-        
+        INJURY_IMPACT_CAP = 5.0  # v20.16: Prevent unbounded negative pillar scores
+
         for injury in injuries:
             player = injury.get('player', {})
             status = injury.get('status', '').lower()
-            
+
+            # v20.16: Default depth to 99 (unknown = not a starter)
+            # Previously defaulted to 1, treating ALL unknown players as starters
+            depth = player.get('depth', 99)
+
             # Check if key player
-            if player.get('depth', 1) == 1:  # Starter
+            if depth == 1:  # Starter
                 if status in ['out', 'doubtful']:
                     key_injuries += 1
                     injury_impact += 2.0
-            elif player.get('depth', 2) == 2:  # Second string
+            elif depth == 2:  # Second string
                 if status == 'out':
                     injury_impact += 0.5
-        
+
+        # v20.16: Cap injury_impact to prevent massive negative scores
+        injury_impact = min(injury_impact, INJURY_IMPACT_CAP)
+
         if key_injuries >= 1:
             return {
                 'triggered': True,
-                'score': -injury_impact,  # Negative score = fade this team
+                'score': -injury_impact,  # Negative score = fade this team (capped at -5.0)
                 'signal': 'HOSPITAL_FADE',
                 'recommendation': f'FADE this team ({key_injuries} key player(s) out)',
                 'confidence': 'high'
@@ -236,46 +251,52 @@ class PillarsAnalyzer:
         """
         Pillar 4: The Situational Spot
         Fade back-to-backs, altitude travel, lookahead spots
+
+        v20.16: Add explicit cap on fade_score for defense.
         """
         schedule = data.get('schedule', {})
         days_rest = schedule.get('days_rest', 2)
         travel_miles = schedule.get('travel_miles', 0)
         games_in_last_7 = schedule.get('games_in_last_7', 3)
         road_trip_game = schedule.get('road_trip_game_num', 0)
-        
+
         fade_score = 0
         reasons = []
-        
+        SITUATIONAL_FADE_CAP = 3.5  # v20.16: Explicit cap
+
         # Back-to-back
         if days_rest == 0:
             fade_score += 1.5
             reasons.append('Back-to-back game')
-        
+
         # Heavy travel
         if travel_miles > 1500:
             fade_score += 0.5
             reasons.append('Long distance travel')
-        
+
         # Altitude (Denver/Utah)
         # In real system, check opponent location
         if travel_miles > 1000:  # Simplified check
             fade_score += 0.3
             reasons.append('Potential altitude factor')
-        
+
         # Lookahead spot (3+ games in last 7)
         if games_in_last_7 >= 4:
             fade_score += 0.7
             reasons.append('Heavy schedule (lookahead spot)')
-        
+
         # Deep in road trip
         if road_trip_game >= 3:
             fade_score += 0.5
             reasons.append(f'Road trip game #{road_trip_game}')
-        
+
+        # v20.16: Cap fade_score
+        fade_score = min(fade_score, SITUATIONAL_FADE_CAP)
+
         if fade_score > 1.0:
             return {
                 'triggered': True,
-                'score': -fade_score,  # Negative = fade
+                'score': -fade_score,  # Negative = fade (capped at -3.5)
                 'signal': 'SITUATIONAL_FADE',
                 'recommendation': f'FADE this team: {", ".join(reasons)}',
                 'confidence': 'high'
