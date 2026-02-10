@@ -247,8 +247,11 @@
 | `tests/test_training_status.py` | Training pipeline visibility tests (13 tests) — v20.16.3 |
 | `tests/test_ai_model_usage.py` | AI model safety tests including `TestEnsembleStackingModelSafety` — v20.16.1 |
 
-### Current Version: v20.16.3 (Feb 10, 2026)
-**Latest Enhancement (v20.16.3) — Training Pipeline Visibility:**
+### Current Version: v20.16.4 (Feb 10, 2026)
+**Latest Enhancement (v20.16.4) — Automatic Training Verification:**
+- **Enhancement: Training Verification Job** — Runs at 7:30 AM ET (30 min after training) to verify training executed. Checks `last_train_run_at`, `training_status`, and artifact mtimes. On failure: logs ERROR, writes alert to `/data/audit_logs/training_alert_{date}.json`.
+
+**Previous Enhancement (v20.16.3) — Training Pipeline Visibility:**
 - **Enhancement 1: Enhanced `/live/scheduler/status`** — Now shows all jobs with next_run_time_et, trigger_type, trigger, misfire_grace_time. Includes `training_job_registered` bool.
 - **Enhancement 2: New `/live/debug/training-status`** — Returns model_status, training_telemetry, artifact_proof (file exists/size/mtime), scheduler_proof, training_health (HEALTHY/STALE/NEVER_RAN).
 - **Tests:** 13 new tests in `tests/test_training_status.py`
@@ -1453,6 +1456,8 @@ const statusColor = {
 | **6:00 AM** | JSONL Grading | Grade predictions from logs (auto-grader) |
 | **6:15 AM** | Trap Evaluation | v19.0: Evaluate pre-game traps against yesterday's results |
 | **6:30 AM** | Daily Audit | Full audit for all sports, update weights |
+| **7:00 AM** | Team Model Training | v20.16: Train LSTM, Matchup, Ensemble from graded picks |
+| **7:30 AM** | Training Verification | v20.16.4: Verify 7 AM training ran, log alert if failed |
 | **10:00 AM** | Props Fetch | Fresh morning props data for all sports |
 | **12:00 PM** | Props Fetch (Weekends Only) | Noon games (NBA/NCAAB) |
 | **2:00 PM** | Props Fetch (Weekends Only) | Afternoon games (NBA/NCAAB) |
@@ -1480,7 +1485,11 @@ Best-bets are **generated on-demand** when `/live/best-bets/{sport}` is called:
 5:00 AM  → Grade yesterday's picks, adjust weights
 5:30 AM  → Smoke test (health check)
 6:00 AM  → JSONL grading
+6:15 AM  → Trap evaluation
 6:30 AM  → Daily audit (all sports)
+         ↓
+7:00 AM  → Team model training (LSTM, Matchup, Ensemble)
+7:30 AM  → Training verification (alerts if training failed)
          ↓
 10:00 AM → Props fetch (morning)
          ↓
@@ -1493,7 +1502,9 @@ Throughout day → Best-bets served on-demand (cached 5-10 min)
 ```
 
 **Key Points:**
-- Morning grading/audit happens BEFORE 10 AM props fetch
+- Morning grading/audit happens BEFORE training
+- Team model training at 7 AM uses graded picks from 6 AM audit
+- Training verification at 7:30 AM confirms training succeeded (logs ERROR if not)
 - Weights are updated daily based on yesterday's results
 - Props fetches are scheduled to catch different game windows
 - Weekend schedule includes noon/afternoon fetches for daytime games

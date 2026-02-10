@@ -226,13 +226,30 @@ Daily 6 AM → auto_grader.grade_prediction() → /data/grader_data/weights.json
 
 ---
 
-### E.1) Training Pipeline Visibility (v20.16.3)
+### E.1) Training Pipeline Visibility (v20.16.4)
 **Examples:** "models say trained but aren't", "training never ran", "artifacts stale".
 
 **Canonical sources:**
 - `team_ml_models.py` — TeamLSTM, TeamMatchup, GameEnsemble models
 - `scripts/train_team_models.py` — Training script (called at 7 AM ET)
-- `daily_scheduler.py` — `team_model_train` job registration
+- `daily_scheduler.py` — `team_model_train` job (7 AM ET), `training_verification` job (7:30 AM ET)
+
+**Daily training schedule:**
+| Time (ET) | Job | Purpose |
+|-----------|-----|---------|
+| 7:00 AM | `team_model_train` | Train team ML models from graded picks |
+| 7:30 AM | `training_verification` | Verify 7 AM training ran successfully |
+
+**Automatic verification (v20.16.4):**
+The `training_verification` job runs at 7:30 AM ET and checks:
+1. `last_train_run_at` is from today at 7 AM+
+2. `training_status` is TRAINED (not LOADED_PLACEHOLDER)
+3. Artifact files have mtime within last 1.5 hours
+
+On failure, it:
+- Logs ERROR with specific failure reasons
+- Writes alert to `/data/audit_logs/training_alert_{date}.json`
+- Suggests manual trigger via POST /live/grader/train-team-models
 
 **Verification endpoints:**
 ```bash
@@ -241,6 +258,10 @@ curl /live/scheduler/status -H "X-API-Key: KEY" | jq '.training_job_registered, 
 
 # Check training health, telemetry, and artifact proof
 curl /live/debug/training-status -H "X-API-Key: KEY" | jq '{health:.training_health, artifacts:.artifact_proof}'
+
+# Check for training alerts (after 7:30 AM)
+curl /live/debug/training-status -H "X-API-Key: KEY" | jq '.training_health'
+# Should return "HEALTHY" if training ran successfully
 ```
 
 **Training health states:**
@@ -261,6 +282,7 @@ curl /live/debug/training-status -H "X-API-Key: KEY" | jq '{health:.training_hea
 1. `is_trained` must require actual training samples (not just file existence)
 2. `_ensemble_pipeline_trained` must ONLY be True after `train()` completes
 3. Training telemetry must be written on every training run
+4. Training verification runs automatically at 7:30 AM ET (v20.16.4)
 
 **Tests:**
 - `tests/test_training_status.py` (13 tests)
@@ -270,6 +292,7 @@ curl /live/debug/training-status -H "X-API-Key: KEY" | jq '{health:.training_hea
 - Use file existence as "trained" status (Lesson 74)
 - Allow training jobs to fail silently (Lesson 75)
 - Skip artifact proof in debug endpoints
+- Disable automatic verification job
 
 ---
 
