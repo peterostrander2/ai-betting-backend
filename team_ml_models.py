@@ -491,17 +491,33 @@ class GameEnsembleModel:
         if self.weights["_trained_samples"] % 10 == 0:
             self._save_weights()
 
-    def record_training_run(self, graded_samples_seen: int, samples_used: int):
+    def record_training_run(self, graded_samples_seen: int, samples_used: int, filter_counts: dict = None):
         """Record a training run for telemetry.
 
         Called by train_team_models.py after processing graded picks.
         This proves the training pipeline is executing and persisting.
+
+        Args:
+            graded_samples_seen: Total candidates loaded from storage
+            samples_used: Samples that passed all filters and were used
+            filter_counts: Optional dict with filter telemetry (v20.16.9):
+                - candidates_loaded: Total picks loaded
+                - dropped_missing_outcome: Missing grade_status or result
+                - dropped_outside_window: Outside date range
+                - dropped_wrong_sport: Filtered by sport
+                - used_for_training: Final count used
+                - sample_pick_ids: First 10 pick IDs used
         """
         from datetime import datetime
         self.weights["_last_train_run_at"] = datetime.now().isoformat()
         self.weights["_graded_samples_seen"] = graded_samples_seen
         self.weights["_samples_used_for_training"] = samples_used
         self.weights["_volume_mount_path"] = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "NOT_SET")
+
+        # v20.16.9: Store filter telemetry for training transparency
+        if filter_counts:
+            self.weights["_filter_counts"] = filter_counts
+
         self._save_weights()
         logger.info(f"Training run recorded: seen={graded_samples_seen}, used={samples_used}")
 
@@ -634,6 +650,8 @@ def get_model_status() -> Dict:
                 "graded_samples_seen": ensemble.weights.get("_graded_samples_seen", 0),
                 "samples_used_for_training": ensemble.weights.get("_samples_used_for_training", 0),
                 "volume_mount_path": ensemble.weights.get("_volume_mount_path", "NOT_SET"),
+                # v20.16.9: Filter telemetry - proves training used correct data
+                "filter_counts": ensemble.weights.get("_filter_counts", {}),
             }
         }
     }

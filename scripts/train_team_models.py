@@ -33,12 +33,32 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_graded_picks(days: int = 7, sport: str = None) -> list:
-    """Load recently graded picks from storage."""
+def load_graded_picks(days: int = 7, sport: str = None) -> tuple:
+    """Load recently graded picks from storage with filter telemetry.
+
+    Returns:
+        tuple: (graded_picks, filter_counts) where filter_counts is a dict with:
+            - candidates_loaded: Total picks loaded from storage
+            - dropped_missing_outcome: Missing grade_status or result
+            - dropped_outside_window: Outside the date range
+            - dropped_wrong_sport: Filtered by sport
+            - used_for_training: Final count used
+            - sample_pick_ids: First 10 pick IDs used
+    """
+    filter_counts = {
+        'candidates_loaded': 0,
+        'dropped_missing_outcome': 0,
+        'dropped_outside_window': 0,
+        'dropped_wrong_sport': 0,
+        'used_for_training': 0,
+        'sample_pick_ids': [],
+    }
+
     try:
         from grader_store import load_predictions
 
         picks = load_predictions()
+        filter_counts['candidates_loaded'] = len(picks)
 
         # Filter to recent days
         cutoff = datetime.now() - timedelta(days=days)
@@ -47,8 +67,10 @@ def load_graded_picks(days: int = 7, sport: str = None) -> list:
         for pick in picks:
             # Check if graded
             if pick.get('grade_status') not in ['GRADED', 'graded']:
+                filter_counts['dropped_missing_outcome'] += 1
                 continue
             if pick.get('result') not in ['WIN', 'LOSS', 'win', 'loss']:
+                filter_counts['dropped_missing_outcome'] += 1
                 continue
 
             # Check date
@@ -56,22 +78,32 @@ def load_graded_picks(days: int = 7, sport: str = None) -> list:
             try:
                 pick_date = datetime.strptime(pick_date_str, '%Y-%m-%d')
                 if pick_date < cutoff:
+                    filter_counts['dropped_outside_window'] += 1
                     continue
             except:
+                filter_counts['dropped_outside_window'] += 1
                 continue
 
             # Check sport filter
             if sport and pick.get('sport', '').upper() != sport.upper():
+                filter_counts['dropped_wrong_sport'] += 1
                 continue
 
             graded_picks.append(pick)
 
-        logger.info(f"Loaded {len(graded_picks)} graded picks from last {days} days")
-        return graded_picks
+        filter_counts['used_for_training'] = len(graded_picks)
+        filter_counts['sample_pick_ids'] = [p.get('pick_id', p.get('prediction_id', 'unknown'))[:12] for p in graded_picks[:10]]
+
+        logger.info(f"Training filter telemetry: loaded={filter_counts['candidates_loaded']}, "
+                   f"dropped_outcome={filter_counts['dropped_missing_outcome']}, "
+                   f"dropped_window={filter_counts['dropped_outside_window']}, "
+                   f"dropped_sport={filter_counts['dropped_wrong_sport']}, "
+                   f"used={filter_counts['used_for_training']}")
+        return graded_picks, filter_counts
 
     except Exception as e:
         logger.error(f"Failed to load graded picks: {e}")
-        return []
+        return [], filter_counts
 
 
 def update_team_cache(picks: list):
@@ -227,17 +259,18 @@ def update_ensemble_weights(picks: list):
 def train_all(days: int = 7, sport: str = None):
     """Run all training updates."""
     logger.info("=" * 60)
-    logger.info("TEAM MODEL TRAINING - v20.16")
+    logger.info("TEAM MODEL TRAINING - v20.16.9")
     logger.info("=" * 60)
 
-    # Load graded picks
-    picks = load_graded_picks(days=days, sport=sport)
+    # Load graded picks with filter telemetry
+    picks, filter_counts = load_graded_picks(days=days, sport=sport)
 
     if not picks:
         logger.warning("No graded picks found to train on")
         return {
             'status': 'NO_DATA',
-            'picks_found': 0
+            'picks_found': 0,
+            'filter_counts': filter_counts
         }
 
     # Update all models
@@ -247,6 +280,7 @@ def train_all(days: int = 7, sport: str = None):
         'team_cache_updates': update_team_cache(picks),
         'matchup_updates': update_matchup_matrix(picks),
         'ensemble_updates': update_ensemble_weights(picks),
+        'filter_counts': filter_counts,
     }
 
     # Record training run with telemetry (proves pipeline executed)
@@ -254,8 +288,9 @@ def train_all(days: int = 7, sport: str = None):
         from team_ml_models import get_game_ensemble
         ensemble = get_game_ensemble()
         ensemble.record_training_run(
-            graded_samples_seen=len(picks),
-            samples_used=results['ensemble_updates']
+            graded_samples_seen=filter_counts['candidates_loaded'],
+            samples_used=results['ensemble_updates'],
+            filter_counts=filter_counts
         )
         results['telemetry_recorded'] = True
     except Exception as e:
