@@ -11489,6 +11489,7 @@ async def get_training_status():
         store_audit = {"error": str(e), "available": False}
 
     return {
+        "build_sha": build_info["build_sha"],  # Top-level for easy jq access
         "build_info": build_info,
         "model_status": model_status,
         "training_telemetry": training_telemetry,
