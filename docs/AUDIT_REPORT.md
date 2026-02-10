@@ -5,6 +5,132 @@ Git SHA: (pending commit)
 
 ---
 
+## Engine 2 Research Semantic Audit (v20.16+) — February 10, 2026
+
+### Summary
+
+The Research Engine (Engine 2) has been audited for anti-conflation compliance. The core issue was that both `sharp_boost` (should be Playbook-only) and `line_boost` (should be Odds API-only) were reading from the same `sharp_signal` dict, allowing line variance to incorrectly upgrade sharp signal strength.
+
+### Problem Statement
+
+**The Conflation Bug (Fixed in v20.16):**
+
+```python
+# OLD CODE (lines 2030-2033) - BUG!
+if lv >= 2.0 and signal["signal_strength"] in ("NONE", "MILD"):
+    signal["signal_strength"] = "STRONG"  # Odds API data contaminating Playbook field!
+```
+
+**Symptom:** "Sharp signal STRONG" appeared when it was actually line variance triggering it.
+
+### Fix Applied
+
+1. **Separate Objects:** Created distinct `playbook_sharp` and `odds_line` objects
+2. **Exclusive Reading:** `sharp_boost` reads ONLY from `playbook_sharp`, `line_boost` reads ONLY from `odds_line`
+3. **Independent Strength Fields:** Added `sharp_strength` (Playbook) and `lv_strength` (Odds API) as separate fields
+
+### Anti-Conflation Invariants
+
+| Invariant | Description | Verification |
+|-----------|-------------|--------------|
+| Source Attribution | `sharp_boost.source_api == "playbook_api"` | `/debug/research-candidates` |
+| Source Attribution | `line_boost.source_api == "odds_api"` | `/debug/research-candidates` |
+| Sharp Reason Gate | If `playbook_sharp.status != SUCCESS`, reasons MUST NOT contain "Sharp" | `test_research_truthfulness.py` |
+| Usage Counter Proof | If `sharp_boost.status == SUCCESS`, `playbook_calls_delta >= 1` | Runtime audit |
+| Usage Counter Proof | If `line_boost.status == SUCCESS`, `odds_api_calls_delta >= 1` | Runtime audit |
+
+### New Files
+
+| File | Purpose |
+|------|---------|
+| `core/research_types.py` | ComponentStatus enum, type definitions, validation helpers |
+| `docs/RESEARCH_TRUTH_TABLE.md` | Complete Research engine contract documentation |
+| `tests/test_research_truthfulness.py` | 12 anti-conflation tests |
+| `scripts/engine2_research_audit.py` | Python runtime audit script |
+| `scripts/engine2_research_audit.sh` | Shell wrapper for full audit |
+
+### New Debug Endpoint
+
+**GET /debug/research-candidates/{sport}**
+
+Returns pre-filter candidates with full research breakdown:
+
+```json
+{
+  "candidates_pre_filter": [
+    {
+      "pick_id": "abc123",
+      "final_score": 7.5,
+      "research_breakdown": {
+        "sharp_boost": {
+          "value": 1.5,
+          "status": "SUCCESS",
+          "source_api": "playbook_api",
+          "raw_inputs_summary": {"ticket_pct": 45, "money_pct": 62}
+        },
+        "line_boost": {
+          "value": 3.0,
+          "status": "SUCCESS",
+          "source_api": "odds_api",
+          "raw_inputs_summary": {"line_variance": 2.5}
+        }
+      }
+    }
+  ],
+  "auth_context": {
+    "playbook_api": {"key_present": true},
+    "odds_api": {"key_present": true}
+  },
+  "usage_counters_delta": {"playbook_calls": 1, "odds_api_calls": 1}
+}
+```
+
+### Verification Commands
+
+```bash
+# Run unit tests
+pytest tests/test_research_truthfulness.py tests/test_sharp_lv_separation.py -v
+
+# Run static + runtime audit
+API_KEY=xxx ./scripts/engine2_research_audit.sh --sport NBA
+
+# Check debug endpoint manually
+curl "https://web-production-7b2a.up.railway.app/debug/research-candidates/NBA?limit=5" \
+  -H "X-API-Key: YOUR_KEY" | jq '.candidates_pre_filter[0].research_breakdown'
+```
+
+### Component Status Values
+
+| Status | Meaning |
+|--------|---------|
+| `SUCCESS` | API call succeeded, data present |
+| `NO_DATA` | API call succeeded but no relevant data |
+| `ERROR` | API call failed (timeout, 4xx, 5xx) |
+| `DISABLED` | Feature flag disabled |
+
+### Source Attribution Matrix
+
+| Component | Source API | Status Key | Boost Range |
+|-----------|------------|------------|-------------|
+| `sharp_boost` | `playbook_api` | `sharp_strength` | 0.0 - 3.0 |
+| `line_boost` | `odds_api` | `lv_strength` | 0.0 - 3.0 |
+| `public_boost` | `playbook_api` | `public_pct` | 0.0 - 2.0 |
+| `espn_odds_boost` | `espn_api` | n/a | 0.0 - 0.5 |
+| `liquidity_boost` | `odds_api` | n/a | 0.0 - 0.5 |
+
+### Test Coverage
+
+| Test | Purpose |
+|------|---------|
+| `test_line_variance_cannot_set_sharp_strength` | Verify lv can never escalate sharp |
+| `test_sharp_strength_only_from_playbook_sharp` | Verify sharp reads from Playbook only |
+| `test_line_boost_only_from_odds_line` | Verify line reads from Odds API only |
+| `test_source_api_tags_present` | Verify source attribution |
+| `test_no_sharp_reason_when_playbook_not_success` | Verify reason string invariant |
+| `test_network_proof_2xx_delta` | Verify network proof matches status |
+
+---
+
 ## Training Pipeline Visibility (v20.16.3) — February 10, 2026
 
 ### Summary

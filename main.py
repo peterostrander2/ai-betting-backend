@@ -1167,6 +1167,135 @@ async def debug_e2e_proof(mode: str = None):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 
+# ============================================================================
+# DEBUG: RESEARCH ENGINE SEMANTIC AUDIT (v20.16.5+)
+# ============================================================================
+
+@app.get("/debug/research-candidates/{sport}", dependencies=[Depends(_require_admin)])
+async def debug_research_candidates(sport: str, limit: int = 25):
+    """
+    Research Engine (Engine 2) Semantic Audit Endpoint.
+
+    Returns REAL pre-filter candidates with their actual research_breakdown
+    built at scoring time, plus real usage counter snapshots.
+
+    v20.16.5: Fixed to use real data from scoring, not reconstructed.
+    """
+    try:
+        from live_data_router import get_best_bets
+        import os as env_os
+
+        # Get best bets with debug mode - this returns real pre-filter data
+        result = await get_best_bets(sport, debug=True)
+
+        if not isinstance(result, dict):
+            return {"error": "Unexpected result type", "type": str(type(result))}
+
+        # Extract debug telemetry
+        debug_data = result.get("debug", {})
+
+        # Build auth_context
+        auth_context = {
+            "playbook_api": {
+                "key_present": bool(env_os.getenv("PLAYBOOK_API_KEY")),
+                "key_source": "env:PLAYBOOK_API_KEY" if env_os.getenv("PLAYBOOK_API_KEY") else "missing"
+            },
+            "odds_api": {
+                "key_present": bool(env_os.getenv("ODDS_API_KEY")),
+                "key_source": "env:ODDS_API_KEY" if env_os.getenv("ODDS_API_KEY") else "missing"
+            }
+        }
+
+        # Get REAL usage counter snapshots from debug output
+        usage_snapshot = debug_data.get("usage_counters_snapshot", {})
+        usage_before = usage_snapshot.get("before", {})
+        usage_after = usage_snapshot.get("after", {})
+        usage_delta = usage_snapshot.get("delta", {})
+
+        # Get network proof from integration_calls
+        integration_calls = debug_data.get("integration_calls", {})
+        network_proof = {
+            "playbook_http_requests_delta": integration_calls.get("playbook_api", {}).get("call_count", 0),
+            "playbook_called": integration_calls.get("playbook_api", {}).get("called", False),
+            "playbook_status": integration_calls.get("playbook_api", {}).get("status"),
+            "playbook_cache_hit": integration_calls.get("playbook_api", {}).get("cache_hit"),
+            "odds_http_requests_delta": integration_calls.get("odds_api", {}).get("call_count", 0),
+            "odds_called": integration_calls.get("odds_api", {}).get("called", False),
+            "odds_status": integration_calls.get("odds_api", {}).get("status"),
+            "odds_cache_hit": integration_calls.get("odds_api", {}).get("cache_hit"),
+        }
+
+        # Collect candidates using REAL research_breakdown from scoring
+        candidates_pre_filter = []
+
+        # First: Get SUPPRESSED candidates (below 6.5 threshold) - these are truly pre-filter
+        suppressed = debug_data.get("suppressed_candidates", [])
+        for pick in suppressed[:limit]:
+            candidates_pre_filter.append({
+                "pick_id": pick.get("pick_id", "unknown"),
+                "final_score": pick.get("final_score", 0),
+                "filtered_out_reason": pick.get("filtered_out_reason", "score_below_threshold"),
+                "research_breakdown": pick.get("research_breakdown", {}),  # REAL from scoring
+                "description": pick.get("description", ""),
+            })
+
+        # Then: Add passed candidates (props + games)
+        props = result.get("props", {})
+        props_picks = props.get("picks", []) if isinstance(props, dict) else []
+        for pick in props_picks[:limit - len(candidates_pre_filter)]:
+            candidates_pre_filter.append({
+                "pick_id": pick.get("pick_id", pick.get("id", "unknown")),
+                "final_score": pick.get("final_score", 0),
+                "filtered_out_reason": None,  # Passed filter
+                "research_breakdown": pick.get("research_breakdown", {}),  # REAL from scoring
+                "description": pick.get("description", ""),
+            })
+
+        game_picks = result.get("game_picks", {})
+        games_list = game_picks.get("picks", []) if isinstance(game_picks, dict) else []
+        for pick in games_list[:limit - len(candidates_pre_filter)]:
+            candidates_pre_filter.append({
+                "pick_id": pick.get("pick_id", pick.get("id", "unknown")),
+                "final_score": pick.get("final_score", 0),
+                "filtered_out_reason": None,  # Passed filter
+                "research_breakdown": pick.get("research_breakdown", {}),  # REAL from scoring
+                "description": pick.get("description", ""),
+            })
+
+        filtered_count = debug_data.get("filtered_below_6_5_total", 0)
+        total_prop_candidates = debug_data.get("total_prop_candidates", 0)
+        total_game_candidates = debug_data.get("total_game_candidates", 0)
+
+        return {
+            "candidates_pre_filter": candidates_pre_filter[:limit],
+            "auth_context": auth_context,
+            "network_proof": network_proof,
+            "usage_counters_before": {
+                "playbook_calls": usage_before.get("playbook_api", 0),
+                "odds_api_calls": usage_before.get("odds_api", 0),
+            },
+            "usage_counters_after": {
+                "playbook_calls": usage_after.get("playbook_api", 0),
+                "odds_api_calls": usage_after.get("odds_api", 0),
+            },
+            "usage_counters_delta": {
+                "playbook_calls": usage_delta.get("playbook_api_delta", 0),
+                "odds_api_calls": usage_delta.get("odds_api_delta", 0),
+            },
+            "total_candidates": total_prop_candidates + total_game_candidates,
+            "filtered_count": filtered_count,
+            "suppressed_count": len(suppressed),
+            "sport": sport.upper(),
+            "limit": limit,
+            # Include raw debug data for full transparency
+            "sharp_source": debug_data.get("sharp_source", "unknown"),
+            "splits_present_count": debug_data.get("splits_present_count", 0),
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
 @app.get("/ops/cache-status", dependencies=[Depends(_require_admin)])
 async def ops_cache_status():
     """Per-sport cache status for best-bets pre-warm verification."""

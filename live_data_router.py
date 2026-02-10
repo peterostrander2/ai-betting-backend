@@ -5626,13 +5626,27 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             },
             # v14.9 Research breakdown (clean engine separation)
             # v20.16: Added sharp_strength/lv_strength separation (sharp_boost from Playbook only)
+            # v20.16.5: Added source_api attribution for anti-conflation audit
             "research_breakdown": {
                 "sharp_boost": round(sharp_boost, 2),
                 "sharp_strength": sharp_strength,         # v20.16: From Playbook splits only
-                "sharp_status": "PLAYBOOK" if sharp_signal.get("money_pct") is not None else "NO_DATA",
+                "sharp_status": "SUCCESS" if sharp_signal.get("money_pct") is not None else "NO_DATA",
+                "sharp_source_api": "playbook_api",       # v20.16.5: INVARIANT - sharp ONLY from Playbook
+                "sharp_raw_inputs": {                     # v20.16.5: Raw inputs for audit
+                    "ticket_pct": sharp_signal.get("ticket_pct"),
+                    "money_pct": sharp_signal.get("money_pct"),
+                    "divergence": abs((sharp_signal.get("money_pct") or 0) - (sharp_signal.get("ticket_pct") or 0)) if sharp_signal.get("money_pct") is not None else None,
+                    "sharp_side": sharp_signal.get("sharp_side"),
+                },
                 "line_boost": round(line_boost, 2),
                 "lv": round(line_variance, 2),            # v20.16: Raw line variance value
                 "lv_strength": lv_strength,               # v20.16: From book dispersion only
+                "line_status": "SUCCESS" if line_variance > 0 else "NO_DATA",
+                "line_source_api": "odds_api",            # v20.16.5: INVARIANT - line ONLY from Odds API
+                "line_raw_inputs": {                      # v20.16.5: Raw inputs for audit
+                    "line_variance": round(line_variance, 2),
+                    "lv_strength": lv_strength,
+                },
                 "public_boost": round(public_boost, 2),
                 "liquidity_boost": round(liquidity_boost, 2),
                 "book_count": int(book_count or 0),
@@ -7905,6 +7919,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "contradiction_blocked_props": contradiction_debug["props_dropped"],
             "contradiction_blocked_games": contradiction_debug["games_dropped"],
             "contradiction_blocked_total": contradiction_debug["total_dropped"],
+            # v20.16.5: Suppressed candidates with research_breakdown for audit
+            # These are picks that failed the 6.5 threshold
+            "suppressed_candidates": [
+                {
+                    "pick_id": p.get("pick_id", p.get("id", "unknown")),
+                    "final_score": round(p.get("total_score", p.get("final_score", 0)), 2),
+                    "filtered_out_reason": "score_below_threshold",
+                    "research_breakdown": p.get("research_breakdown", {}),
+                    "description": p.get("description", ""),
+                }
+                for p in (_all_prop_candidates + _all_game_candidates)
+                if p.get("total_score", p.get("final_score", 0)) < min_score
+            ][:25],  # Cap at 25 to limit response size
             # v16.1 diversity filter telemetry
             "diversity_player_limited": diversity_debug.get("player_limited", 0),
             "diversity_game_limited": diversity_debug.get("game_limited", 0),
@@ -7953,6 +7980,24 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "events_keys": list(_espn_events_by_teams.keys())[:5] if _espn_events_by_teams and len(_espn_events_by_teams) <= 5 else (list(_espn_events_by_teams.keys())[:5] + [f"...and {len(_espn_events_by_teams) - 5} more"] if _espn_events_by_teams else []),
                 "fetch_error": _espn_fetch_error,
             },
+        }
+        # v20.16.5: Add usage counter snapshots for audit
+        usage_snapshot_after = {}
+        try:
+            from integration_registry import get_usage_snapshot
+            usage_snapshot_after = get_usage_snapshot()
+        except Exception:
+            pass
+        # Compute deltas
+        usage_deltas = {}
+        for api_name in ["odds_api", "playbook_api", "serpapi", "balldontlie"]:
+            before = usage_snapshot_before.get(api_name, {}).get("used_count", 0)
+            after = usage_snapshot_after.get(api_name, {}).get("used_count", 0)
+            usage_deltas[f"{api_name}_delta"] = after - before
+        result["debug"]["usage_counters_snapshot"] = {
+            "before": {k: v.get("used_count", 0) for k, v in usage_snapshot_before.items()},
+            "after": {k: v.get("used_count", 0) for k, v in usage_snapshot_after.items()},
+            "delta": usage_deltas,
         }
         apply_used_integrations_debug(result, used_integrations, debug_mode)
         attach_integration_telemetry_debug(result, integration_calls, integration_impact, debug_mode)
