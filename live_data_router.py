@@ -7738,6 +7738,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     if debug_mode:
         def _debug_pick(p):
             """Extract debug-relevant fields from a candidate pick."""
+            # v20.16: Extract ai_breakdown with audit fields
+            ai_breakdown = p.get("ai_breakdown", {})
             return {
                 "player_name": p.get("player_name", p.get("player", "")),
                 "matchup": p.get("matchup", p.get("game", "")),
@@ -7760,6 +7762,21 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "research": p.get("research_breakdown", {}),
                     "esoteric": p.get("esoteric_breakdown", {}),
                     "jarvis": p.get("jarvis_breakdown", {}),
+                    # v20.16: AI audit fields for debugging floor behavior
+                    "ai": ai_breakdown,
+                },
+                # v20.16: Raw AI component values for diagnosing floor dominance
+                "ai_audit": {
+                    "ai_mode": ai_breakdown.get("ai_mode", "UNKNOWN"),
+                    "models_used_count": ai_breakdown.get("models_used_count", 0),
+                    "deviation_score": ai_breakdown.get("deviation_score"),
+                    "agreement_score": ai_breakdown.get("agreement_score"),
+                    "edge_score": ai_breakdown.get("edge_score"),
+                    "factor_score": ai_breakdown.get("factor_score"),
+                    "alternative_base": ai_breakdown.get("alternative_base"),
+                    "base_score_used": ai_breakdown.get("base_score_used"),
+                    "pillar_boost": ai_breakdown.get("pillar_boost"),
+                    "model_std": ai_breakdown.get("model_std"),
                 },
                 "missing_data": {
                     "no_odds": not p.get("odds") and not p.get("best_odds"),
