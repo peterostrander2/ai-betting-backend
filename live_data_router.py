@@ -2119,7 +2119,11 @@ async def get_sharp_money(sport: str):
                 "home_team": game.get("home_team"),
                 "away_team": game.get("away_team"),
                 "line_variance": round(variance, 1),
-                "signal_strength": strength
+                "signal_strength": "NONE",           # v20.16.6: ANTI-CONFLATION - No Playbook = no sharp signal
+                "sharp_strength": "NONE",            # v20.16.6: Explicit - Odds API fallback has NO Playbook data
+                "lv_strength": strength,             # v20.16.6: Line variance strength (from Odds API)
+                "money_pct": None,                   # v20.16.6: No Playbook data
+                "ticket_pct": None,                  # v20.16.6: No Playbook data
             })
 
         logger.info("Odds API sharp analysis for %s: %d signals found", sport, len(data))
