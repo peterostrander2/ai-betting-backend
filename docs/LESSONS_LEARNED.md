@@ -2708,3 +2708,31 @@ Current fix is a graceful skip to eliminate log spam.
 **Fixed in:** v20.16.7 (Feb 10, 2026) — Commit `b3087a3`
 
 ---
+
+### Lesson 79: Daily Report Missing NCAAB — Hardcoded Sports List (v20.16.8)
+
+**Problem:** Daily report `/grader/daily-report` only showed NBA results even though NCAAB had 64 graded picks.
+
+**Root Cause:** The sports loop at `live_data_router.py:10201` was hardcoded:
+```python
+for sport in ["NBA", "NFL", "MLB", "NHL"]:  # NCAAB missing!
+```
+
+NCAAB was being graded and trained on (64 samples, 51.6% hit rate) but never displayed in the daily report because it wasn't in the loop.
+
+**The Fix (v20.16.8):**
+```python
+for sport in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
+```
+
+**Prevention:**
+1. **Use `SUPPORTED_SPORTS` constant** — don't hardcode sport lists in multiple places
+2. **Grep for sport lists before adding new sports** — `grep -n '\"NBA\".*\"NFL\"' *.py`
+3. **Test all sports in daily report** — verify each sport appears when it has data
+4. **Cross-reference with bias endpoint** — if `/grader/bias/{sport}` has samples, it should appear in daily report
+
+**Broader Pattern:** When a feature works for some sports but not others, check for hardcoded sport lists that might be missing the sport.
+
+**Fixed in:** v20.16.8 (Feb 10, 2026) — Commit `8c0bec9`
+
+---

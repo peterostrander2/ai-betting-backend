@@ -78,7 +78,7 @@
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (78 Total) - Key Categories
+### Lessons Learned (79 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -116,8 +116,9 @@
 | 76 | **v20.16.5 Engine 2 Anti-Conflation** | sharp_strength and lv_strength were conflated — now separate with source_api attribution |
 | 77 | **v20.16.6 Odds Fallback Conflation** | When Playbook unavailable, signal_strength from variance polluted sharp_strength — explicit NONE now |
 | 78 | **v20.16.7 XGBoost Feature Mismatch** | Model trained on 12 scoring features but runtime passed 6 context features — validate count before predict |
+| 79 | **v20.16.8 Daily Report Missing NCAAB** | Sports loop hardcoded [NBA,NFL,MLB,NHL] without NCAAB — 64 graded picks not showing in report |
 
-### NEVER DO Sections (36 Categories)
+### NEVER DO Sections (37 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -155,6 +156,7 @@
 - v20.15 Learning Loop & Prop Detection (rules 230-236)
 - v20.16.5+ Engine 2 Research Anti-Conflation (rules 237-244)
 - v20.16.7 XGBoost Feature Consistency (rules 245-248)
+- v20.16.8 Hardcoded Sports Lists (rules 249-251)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash

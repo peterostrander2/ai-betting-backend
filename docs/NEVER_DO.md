@@ -720,3 +720,11 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.debug.suppressed_can
 246. **NEVER mix training features with inference features** — document FEATURE_NAMES explicitly
 247. **NEVER rely on exception handling for feature mismatch** — validate upfront, skip gracefully
 248. **NEVER train on scoring outputs but predict with context inputs** — feature sets must match
+
+---
+
+## v20.16.8 Hardcoded Sports Lists (Feb 10, 2026)
+
+249. **NEVER hardcode sport lists in multiple places** — use `SUPPORTED_SPORTS` constant from one location
+250. **NEVER add a new sport without grepping for sport lists** — `grep -n '"NBA".*"NFL"' *.py` to find all
+251. **NEVER assume all sports are in a loop** — verify NCAAB, NCAAF, etc. are included where applicable
