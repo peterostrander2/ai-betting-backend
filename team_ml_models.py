@@ -479,9 +479,30 @@ class GameEnsembleModel:
 
     @property
     def is_trained(self) -> bool:
-        """Check if ensemble has been trained."""
-        return (self.weights.get("_trained_samples", 0) > 0 or
-                self.model is not None)
+        """Check if ensemble has been trained with real data."""
+        # v20.16.2: Require actual training samples, not just a loaded model file
+        # A model file might exist but be a placeholder with no real training
+        return self.weights.get("_trained_samples", 0) > 0
+
+    @property
+    def has_loaded_model(self) -> bool:
+        """Check if a model file was loaded (may be placeholder)."""
+        return self.model is not None
+
+    @property
+    def training_status(self) -> str:
+        """Get detailed training status.
+
+        Returns:
+            TRAINED: Has real training samples from graded picks
+            LOADED_PLACEHOLDER: Model file exists but no training samples
+            INITIALIZING: No model file and no training samples
+        """
+        if self.weights.get("_trained_samples", 0) > 0:
+            return "TRAINED"
+        elif self.model is not None:
+            return "LOADED_PLACEHOLDER"
+        return "INITIALIZING"
 
 
 # Global instances for reuse
@@ -571,10 +592,13 @@ def get_model_status() -> Dict:
             "matchups_tracked": len(matchup.matchups),
         },
         "ensemble": {
-            "status": "TRAINED" if ensemble.is_trained else "INITIALIZING",
+            # v20.16.2: Use training_status for honest reporting
+            # TRAINED = has real samples, LOADED_PLACEHOLDER = file exists but no samples
+            "status": ensemble.training_status,
             "training_source": ensemble_source,
             "samples_trained": ensemble.weights.get("_trained_samples", 0),
-            "has_loaded_model": ensemble.model is not None,
+            "has_loaded_model": ensemble.has_loaded_model,
+            "is_trained": ensemble.is_trained,  # True only with real samples
             "weights": {k: v for k, v in ensemble.weights.items() if not k.startswith("_")}
         }
     }
