@@ -518,28 +518,30 @@ class EnsembleStackingModel:
             except Exception as e:
                 logger.warning(f"GameEnsemble prediction failed: {e}")
 
+        # v20.16: If GameEnsemble available without model_predictions, use it directly
+        if self._game_ensemble is not None:
+            try:
+                # Use default equal weights
+                return self._game_ensemble.predict({}, features)
+            except Exception as e:
+                logger.warning(f"GameEnsemble fallback failed: {e}")
+
+        # Fallback: return feature mean (don't try untrained sklearn models)
         if not self.is_trained:
-            # Use simple average if not trained
-            predictions = []
+            return float(np.mean(features)) if len(features) > 0 else 25.0
+
+        # Use trained meta model (only if actually trained)
+        try:
+            base_predictions = []
             for model in self.base_models.values():
-                try:
-                    pred = model.predict(features.reshape(1, -1) if features.ndim == 1 else features)
-                    predictions.append(pred)
-                except Exception:
-                    pass
+                pred = model.predict(features.reshape(1, -1) if features.ndim == 1 else features)
+                base_predictions.append(pred)
 
-            if predictions:
-                return np.mean(predictions, axis=0)[0] if predictions[0].ndim > 0 else np.mean(predictions)
-            return np.mean(features) if len(features) > 0 else 25.0
-
-        # Use trained meta model
-        base_predictions = []
-        for model in self.base_models.values():
-            pred = model.predict(features.reshape(1, -1) if features.ndim == 1 else features)
-            base_predictions.append(pred)
-
-        stacked_features = np.column_stack(base_predictions)
-        return self.meta_model.predict(stacked_features)[0]
+            stacked_features = np.column_stack(base_predictions)
+            return self.meta_model.predict(stacked_features)[0]
+        except Exception as e:
+            logger.warning(f"Trained ensemble prediction failed: {e}")
+            return float(np.mean(features)) if len(features) > 0 else 25.0
 
 
 # ============================================
