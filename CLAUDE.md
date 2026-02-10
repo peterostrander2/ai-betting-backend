@@ -1529,6 +1529,38 @@ Throughout day → Best-bets served on-demand (cached 5-10 min)
 - Weekend schedule includes noon/afternoon fetches for daytime games
 - Live scores update every 2 minutes during games
 
+### Morning Spot Check (Run After 7:30 AM ET)
+
+Two quick commands to verify training ran:
+
+**1. Training Health:**
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/debug/training-status" \
+  -H "X-API-Key: YOUR_KEY" | jq '.training_health'
+# Expected: "HEALTHY"
+```
+
+**2. Artifact Timestamps (Proof Training Ran at 7 AM):**
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/debug/training-status" \
+  -H "X-API-Key: YOUR_KEY" | jq '.artifact_proof | to_entries[] | {file: .key, updated: .value.mtime_iso}'
+# Expected: All 3 files show today's date at 07:00:00-05:00
+```
+
+**3. Daily Report (Verify All Sports):**
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/grader/daily-report" \
+  -H "X-API-Key: YOUR_KEY" | jq '.by_sport | keys'
+# Expected: ["NBA", "NCAAB"] (active sports with picks)
+```
+
+| Result | Meaning |
+|--------|---------|
+| `HEALTHY` + today's 7 AM timestamps | Both jobs worked ✅ |
+| `STALE` | Training older than 24h — check scheduler |
+| `NEVER_RAN` | Training pipeline never executed — trigger manually |
+| Yesterday's timestamps | 7 AM job didn't run — check Railway logs |
+
 ---
 
 
