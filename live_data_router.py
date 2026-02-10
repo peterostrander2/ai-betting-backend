@@ -10198,7 +10198,7 @@ async def get_daily_community_report(days_back: int = 1):
         overall_lessons = []
         improvements = []
 
-        for sport in ["NBA", "NFL", "MLB", "NHL"]:
+        for sport in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
             predictions = grader.predictions.get(sport, [])
 
             # v20.5: Fix date window - should be exactly 1 day, not 2
