@@ -844,7 +844,19 @@ class MasterPredictionSystem:
                 'injury_impact': round(injury_impact, 2),
                 'edge': round(edge_analysis['edge_percent'], 2)
             },
-            
+
+            # v20.16: AI Audit Fields (Engine 1 transparency)
+            'ai_audit': {
+                'deviation_score': round(deviation_score, 3),
+                'agreement_score': round(agreement_score, 3),
+                'edge_score': round(edge_score, 3),
+                'factor_score': round(factor_score, 3),
+                'alternative_base': round(alternative_base, 3),
+                'base_score_used': 'DEVIATION' if deviation_score >= alternative_base else 'ALTERNATIVE',
+                'pillar_boost': round(pillar_boost, 3),
+                'model_std': round(model_std, 3),
+            },
+
             # Monte Carlo Details
             'monte_carlo': {
                 'simulations_run': 10000,

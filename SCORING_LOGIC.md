@@ -2,47 +2,104 @@
 
 <!-- SCORING_CONTRACT_JSON
 {
+  "base_score_gates": {
+    "edge_lean_min": 6.0,
+    "gold_star_min": 6.8
+  },
+  "boost_caps": {
+    "confluence_boost_cap": 1.5,
+    "expert_consensus_cap": 0.35,
+    "hook_penalty_cap": 0.25,
+    "jason_sim_boost_cap": 1.5,
+    "msrf_boost_cap": 1.0,
+    "prop_correlation_cap": 0.2,
+    "serp_boost_cap_total": 4.3,
+    "total_boost_cap": 1.5
+  },
+  "concentration_limits": {
+    "max_per_matchup": 2,
+    "max_per_sport_per_day": 8,
+    "max_props_per_player": 1
+  },
   "confluence_levels": {
     "DIVERGENT": 0.0,
-    "HARMONIC_CONVERGENCE": 4.5,
-    "IMMORTAL": 10.0,
-    "JARVIS_PERFECT": 7.0,
-    "MODERATE": 1.0,
-    "PERFECT": 5.0,
-    "STRONG": 3.0
+    "HARMONIC_CONVERGENCE": 1.5,
+    "IMMORTAL": 1.5,
+    "JARVIS_PERFECT": 1.5,
+    "MODERATE": 0.3,
+    "PERFECT": 1.5,
+    "STRONG": 1.0
+  },
+  "edge_lean_confluence_minimum": "MODERATE",
+  "engine_alignment_gate": {
+    "min_engines_above_threshold": 2,
+    "threshold": 6.5
   },
   "engine_weights": {
     "ai": 0.25,
-    "research": 0.35,
-    "esoteric": 0.20,
-    "jarvis": 0.20
+    "esoteric": 0.2,
+    "jarvis": 0.2,
+    "research": 0.35
+  },
+  "expert_consensus": {
+    "applies_to": "post_base",
+    "bet_types": ["SPREAD", "TOTAL", "MONEYLINE"],
+    "boost_cap": 0.35,
+    "enabled": true,
+    "min_sources": 3,
+    "output_fields": ["expert_consensus_boost", "expert_status", "expert_sources", "expert_reasons"],
+    "shadow_mode": true,
+    "staleness_hours": 24
   },
   "gold_star_gates": {
     "ai_score": 6.8,
-    "research_score": 5.5,
+    "esoteric_score": 5.5,
     "jarvis_score": 6.5,
-    "esoteric_score": 4.0
+    "research_score": 6.5
   },
   "gold_star_threshold": 7.5,
-  "min_final_score": 6.5,
-  "harmonic_boost": 1.5,
-  "boost_caps": {
-    "confluence_boost_cap": 10.0,
-    "msrf_boost_cap": 1.0,
-    "serp_boost_cap_total": 4.3,
-    "jason_sim_boost_cap": 1.5,
-    "total_boost_cap": 3.5
+  "harmonic_boost": 1.0,
+  "harmonic_convergence_threshold": 7.5,
+  "hook_discipline": {
+    "applies_to": "post_base",
+    "bonus_cap": 0.15,
+    "enabled": true,
+    "output_fields": ["hook_penalty", "hook_flagged", "hook_reasons"],
+    "penalty_cap": 0.25,
+    "sports": ["NFL"]
+  },
+  "min_final_score": 7.0,
+  "min_props_score": 6.5,
+  "persist_tiers": ["EDGE_LEAN", "GOLD_STAR", "TITANIUM_SMASH"],
+  "prop_correlation": {
+    "adjustment_cap": 0.2,
+    "applies_to": "post_base",
+    "bet_types": ["PROP", "TOTAL"],
+    "enabled": true,
+    "includes_game_total": true,
+    "output_fields": ["prop_correlation_adjustment", "prop_corr_status", "prop_corr_reasons"]
+  },
+  "sport_totals_calibration": {
+    "MLB": 0.0,
+    "NBA": 0.0,
+    "NCAAB": -0.75,
+    "NFL": 0.0,
+    "NHL": -4.0,
+    "enabled": true,
+    "last_updated": "2026-02-05"
   },
   "titanium_rule": {
     "min_engines_ge_threshold": 3,
     "threshold": 8.0
   },
-  "weather_status_enum": [
-    "APPLIED",
-    "NOT_RELEVANT",
-    "UNAVAILABLE",
-    "ERROR"
-  ]
+  "totals_side_calibration": {
+    "enabled": false,
+    "last_updated": "2026-02-05",
+    "min_samples_required": 50,
+    "over_penalty": -0.75,
+    "under_boost": 0.75
+  },
+  "weather_status_enum": ["APPLIED", "NOT_RELEVANT", "UNAVAILABLE", "ERROR"]
 }
 SCORING_CONTRACT_JSON -->
 
@@ -57,7 +114,8 @@ Ensemble adjustment is applied post-base for game picks when the ensemble model 
 
 - `live_adjustment`: bounded ±0.50, applied to research_score from live in-game momentum + line movement signals.
 - `totals_calibration_adj`: ±0.75 for OVER/UNDER bias correction based on learning loop data (v20.4).
-- `total_boost_cap`: Sum of confluence+msrf+jason_sim+serp capped at 3.5 to prevent score inflation (v20.6).
+- `total_boost_cap`: Sum of confluence+msrf+jason_sim+serp capped at 1.5 to prevent score inflation (v20.11).
+- `min_final_score`: 7.0 for game picks, 6.5 for props (v20.12/v20.13).
 
 ### Live In-Game Adjustment (Phase 9)
 - `live_adjustment` is a **bounded modifier** applied to **research_score** (not a new engine).

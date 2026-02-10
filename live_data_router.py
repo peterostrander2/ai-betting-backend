@@ -3326,13 +3326,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         return ai_score, ai_reasons
 
     # v20.1: AI Score Resolver - 8-model system as PRIMARY for games
-    # Returns (ai_score, reasons, ai_mode, models_used_count)
+    # Returns (ai_score, reasons, ai_mode, models_used_count, ai_audit)
     def _resolve_game_ai_score(
         mps,
         game_data: Dict,
         fallback_base: float = 5.0,
         sharp_signal: Optional[Dict] = None
-    ) -> Tuple[float, List[str], str, int]:
+    ) -> Tuple[float, List[str], str, int, Dict]:
         """
         PRIMARY AI score resolver for GAME picks using all 8 ML models.
 
@@ -3368,7 +3368,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             )
             reasons.append("ML unavailable: MasterPredictionSystem not loaded")
             reasons.extend(heuristic_reasons)
-            return ai_score, reasons, "HEURISTIC_FALLBACK", 0
+            # v20.16: Return empty audit dict for heuristic fallback
+            return ai_score, reasons, "HEURISTIC_FALLBACK", 0, {}
 
         try:
             # ===== BUILD GAME DATA FOR 8-MODEL PREDICTION =====
@@ -3470,7 +3471,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             if factors.get("edge", 0) > 5:
                 reasons.append(f"Edge: {factors.get('edge', 0):.1f}%")
 
-            return ai_score, reasons, "ML_PRIMARY", models_used
+            # v20.16: Extract AI audit fields for transparency
+            ai_audit = result.get("ai_audit", {})
+
+            return ai_score, reasons, "ML_PRIMARY", models_used, ai_audit
 
         except Exception as e:
             # ===== FALLBACK TO HEURISTIC =====
@@ -3480,7 +3484,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             )
             reasons.append(f"ML unavailable: {str(e)[:100]}")
             reasons.extend(heuristic_reasons)
-            return ai_score, reasons, "HEURISTIC_FALLBACK", 0
+            # v20.16: Return empty audit dict for heuristic fallback
+            return ai_score, reasons, "HEURISTIC_FALLBACK", 0, {}
             reasons.append(f"8-model partial: {str(e)[:50]}")
 
         # Cap total boost to reasonable range
@@ -3777,17 +3782,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             }
 
             # Run 8-model resolver (ML primary, heuristic fallback)
-            ai_score_raw, ai_reasons, _ai_mode, _models_used = _resolve_game_ai_score(
+            ai_score_raw, ai_reasons, _ai_mode, _models_used, _ai_audit = _resolve_game_ai_score(
                 mps=mps,
                 game_data=_game_data_for_ml,
                 fallback_base=base_ai,
                 sharp_signal=sharp_signal
             )
 
-            # Store telemetry for debug output
+            # Store telemetry for debug output (v20.16: includes ai_audit)
             _ai_telemetry = {
                 "ai_mode": _ai_mode,
-                "models_used_count": _models_used
+                "models_used_count": _models_used,
+                "ai_audit": _ai_audit  # v20.16: Engine 1 transparency
             }
 
             # The resolver returns 0-10 scale already for ML_PRIMARY
@@ -5632,6 +5638,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "vortex": round(vortex_score, 2),
                 "daily_edge": round(daily_edge_score, 2),
                 "trap_mod": round(trap_mod, 2)
+            },
+            # v20.16 AI breakdown (Engine 1 transparency - anti-fake-confidence audit)
+            "ai_breakdown": {
+                "ai_mode": _ai_telemetry.get("ai_mode", "UNKNOWN"),
+                "models_used_count": _ai_telemetry.get("models_used_count", 0),
+                "deviation_score": _ai_telemetry.get("ai_audit", {}).get("deviation_score"),
+                "agreement_score": _ai_telemetry.get("ai_audit", {}).get("agreement_score"),
+                "edge_score": _ai_telemetry.get("ai_audit", {}).get("edge_score"),
+                "factor_score": _ai_telemetry.get("ai_audit", {}).get("factor_score"),
+                "alternative_base": _ai_telemetry.get("ai_audit", {}).get("alternative_base"),
+                "base_score_used": _ai_telemetry.get("ai_audit", {}).get("base_score_used"),
+                "pillar_boost": _ai_telemetry.get("ai_audit", {}).get("pillar_boost"),
+                "model_std": _ai_telemetry.get("ai_audit", {}).get("model_std"),
             },
             # v16.0 Jarvis audit fields (ADDITIVE trigger scoring for GOLD_STAR eligibility)
             "jarvis_baseline": jarvis_data.get("jarvis_baseline", 4.5),

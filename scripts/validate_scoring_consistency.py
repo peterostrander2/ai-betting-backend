@@ -4,6 +4,16 @@ from pathlib import Path
 
 DOC_PATH = Path("SCORING_LOGIC.md")
 
+def normalize_for_comparison(obj):
+    """Convert sets to sorted lists for consistent comparison."""
+    if isinstance(obj, set):
+        return sorted(list(obj))
+    elif isinstance(obj, dict):
+        return {k: normalize_for_comparison(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [normalize_for_comparison(x) for x in obj]
+    return obj
+
 def load_doc_contract(md: str) -> dict:
     m = re.search(r"<!--\s*SCORING_CONTRACT_JSON\s*(\{.*?\})\s*SCORING_CONTRACT_JSON\s*-->", md, re.S)
     if not m:
@@ -12,11 +22,11 @@ def load_doc_contract(md: str) -> dict:
 
 def main() -> int:
     md = DOC_PATH.read_text(encoding="utf-8")
-    doc_contract = load_doc_contract(md)
+    doc_contract = normalize_for_comparison(load_doc_contract(md))
 
     sys.path.insert(0, '.')
     from core.scoring_contract import SCORING_CONTRACT
-    code_contract = SCORING_CONTRACT
+    code_contract = normalize_for_comparison(SCORING_CONTRACT)
 
     if doc_contract != code_contract:
         print("❌ Scoring contract mismatch (docs != code)")

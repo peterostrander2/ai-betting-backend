@@ -31,7 +31,8 @@ echo ""
 echo "🔍 Checking references in other files..."
 
 # Find all invariant references outside CLAUDE.md
-INVALID_REFS=$(grep -rh "INVARIANT [0-9]\+" --include="*.md" . 2>/dev/null | \
+# Exclude: backup files (*_BACKUP.md), docs folder (historical references)
+INVALID_REFS=$(grep -rh "INVARIANT [0-9]\+" --include="*.md" --exclude="*_BACKUP.md" --exclude-dir="docs" . 2>/dev/null | \
     grep -v "^###" | \
     grep -o "INVARIANT [0-9]\+" | \
     grep -o "[0-9]\+" | \
