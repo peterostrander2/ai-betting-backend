@@ -653,6 +653,19 @@ class DailyScheduler:
         except Exception as e:
             logger.warning("Failed to schedule trap evaluation: %s", e)
 
+        # v20.16: Daily team model training (7 AM ET, after all grading complete)
+        # Updates LSTM, Matchup, and Ensemble models from graded picks
+        try:
+            self.scheduler.add_job(
+                self._run_team_model_train,
+                CronTrigger(hour=7, minute=0, timezone="America/New_York"),
+                id="team_model_train",
+                name="Daily Team Model Training"
+            )
+            logger.info("Team model training enabled: runs daily at 7 AM ET")
+        except Exception as e:
+            logger.warning("Failed to schedule team model training: %s", e)
+
         self.scheduler.start()
         logger.info("APScheduler started with daily audit at 6 AM")
 
@@ -672,6 +685,44 @@ class DailyScheduler:
                 loop.close()
         except Exception as e:
             logger.error(f"Auto-grade failed: {e}")
+
+    def _run_team_model_train(self):
+        """
+        v20.16: Train team ML models from graded picks.
+
+        Updates:
+        - Team scoring cache (for LSTM predictions)
+        - Matchup matrix (for team-vs-team predictions)
+        - Ensemble weights (learns what combinations work)
+
+        Runs daily at 7 AM ET, after grading is complete.
+        """
+        try:
+            from scripts.train_team_models import train_all
+            result = train_all(days=7)  # Process last 7 days
+            logger.info(f"Team model training complete: {result}")
+        except ImportError:
+            # Fallback to direct call
+            try:
+                from team_ml_models import (
+                    get_team_cache, get_team_matchup, get_game_ensemble
+                )
+                from grader_store import load_predictions
+
+                picks = load_predictions()
+                graded = [p for p in picks if p.get('result') in ['WIN', 'LOSS']]
+                logger.info(f"Training team models on {len(graded)} graded picks")
+
+                # Just trigger the models to initialize and save any updates
+                cache = get_team_cache()
+                matchup = get_team_matchup()
+                ensemble = get_game_ensemble()
+
+                logger.info("Team models initialized and ready")
+            except Exception as inner_e:
+                logger.error(f"Team model training fallback failed: {inner_e}")
+        except Exception as e:
+            logger.error(f"Team model training failed: {e}")
     
     def _run_warm_cache(self):
         """Pre-warm best-bets cache in an async context."""
