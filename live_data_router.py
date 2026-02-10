@@ -11322,13 +11322,16 @@ async def get_training_status():
     """
     Get comprehensive training status for production monitoring.
 
-    v20.16.3: Returns all proof fields needed to verify training pipeline health.
+    v20.17.2: Returns all proof fields needed to verify training pipeline health,
+    including store audit with mechanically verifiable counts.
 
     Returns:
+        - build_info: build_sha, deploy_version, engine_version
         - model_status: ensemble/lstm/matchup status with proof fields
         - training_telemetry: last_train_run_at, graded_samples_seen, etc.
         - artifact_proof: file existence, size, mtime for each model artifact
         - scheduler_proof: next_run_time for training job
+        - store_audit: mechanically verifiable store provenance and data quality
         - training_health: HEALTHY | STALE | NEVER_RAN
 
     This endpoint is safe: no secrets, no heavy compute, fail-soft with errors[].
@@ -11339,6 +11342,13 @@ async def get_training_status():
     ET = pytz.timezone("America/New_York")
     errors = []
     now_et = datetime.now(ET)
+
+    # 0. Build info for deployment tracking
+    build_info = {
+        "build_sha": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")[:7],
+        "deploy_version": os.environ.get("DEPLOY_VERSION", "dev"),
+        "engine_version": "v20.17.2",
+    }
 
     # 1. Get model status
     model_status = {}
@@ -11468,11 +11478,22 @@ async def get_training_status():
             except Exception as e:
                 errors.append(f"training_health parse: {e}")
 
+    # 5. Store audit - mechanically verifiable counts
+    store_audit = {}
+    try:
+        from scripts.audit_training_store import get_store_audit_summary
+        store_audit = get_store_audit_summary()
+    except Exception as e:
+        errors.append(f"store_audit: {e}")
+        store_audit = {"error": str(e), "available": False}
+
     return {
+        "build_info": build_info,
         "model_status": model_status,
         "training_telemetry": training_telemetry,
         "artifact_proof": artifact_proof,
         "scheduler_proof": scheduler_proof,
+        "store_audit": store_audit,
         "training_health": training_health,
         "graded_picks_count": graded_count,
         "timestamp_et": now_et.isoformat(),

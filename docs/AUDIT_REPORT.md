@@ -5,6 +5,170 @@ Git SHA: (pending commit)
 
 ---
 
+## Engine 1 Training Semantic Proof (v20.17.2) — February 10, 2026
+
+### Summary
+
+The Engine 1 daily training pipeline has been enhanced with mechanically provable telemetry, semantic truthfulness verification, and store-level auditing to ensure the system can never silently train on wrong data.
+
+### Problem Addressed
+
+**Previous Issues (Fixed in v20.17.x):**
+
+1. **Fabricated Label Definition:** Ensemble training claimed "line ± 5" regression labels when the actual code used binary classification (WIN=1, LOSS=0). Fixed: `label_type: "binary_hit"`, `label_definition: "hit = 1.0 if result == WIN, hit = 0.0 if result == LOSS, PUSH excluded"`.
+
+2. **Misleading Field Names:** `graded_loaded_total` implied all records were graded when most weren't. Fixed: Renamed to `loaded_total` with separate `graded_total` and `ungraded_total` fields.
+
+3. **No Sample Discrepancy Explanation:** `samples_used` (12) << `eligible_total` (41) with no explanation why. Fixed: Per-model filter telemetry with drop reasons: `drop_no_model_preds`, `drop_insufficient_values`, `drop_push_excluded`.
+
+4. **No Store Provenance:** No way to verify which file was read or if it was the right one. Fixed: `store_provenance` section with path, volume mount, mtime, schema version.
+
+### New Files
+
+| File | Purpose |
+|------|---------|
+| `scripts/audit_training_store.py` | Store-level audit utility |
+| `docs/TRAINING_TRUTH_TABLE.md` | Complete training contract documentation |
+| `tests/test_training_telemetry.py` | 20+ filter/signature/audit tests |
+
+### Enhanced Endpoint: GET /live/debug/training-status
+
+Now returns comprehensive training proof:
+
+```json
+{
+  "build_info": {
+    "build_sha": "abc1234",
+    "deploy_version": "v20.17.2",
+    "engine_version": "v20.17.2"
+  },
+  "model_status": {
+    "ensemble": "TRAINED",
+    "ensemble_samples_trained": 21,
+    "lstm": "TRAINED",
+    "matchup": "TRAINED"
+  },
+  "training_telemetry": {
+    "last_train_run_at": "2026-02-10T07:00:00",
+    "filter_telemetry": {
+      "loaded_total": 866,
+      "graded_total": 421,
+      "ungraded_total": 445,
+      "drop_no_grade": 445,
+      "drop_no_result": 12,
+      "eligible_total": 41,
+      "assertion_passed": true
+    }
+  },
+  "store_audit": {
+    "store_provenance": {
+      "path": "/data/grader/predictions.jsonl",
+      "exists": true,
+      "mtime_iso": "2026-02-10T06:58:00",
+      "line_count": 866,
+      "size_bytes": 1234567,
+      "store_schema_version": "1.0"
+    },
+    "data_quality": {
+      "total_records": 866,
+      "graded_count": 421,
+      "missing_model_preds_total": 355,
+      "missing_model_preds_attribution": {
+        "old_schema": 200,
+        "non_game_market": 120,
+        "error_path": 15,
+        "unknown": 20
+      }
+    },
+    "reconciliation": {
+      "total_lines": 866,
+      "parsed_ok": 866,
+      "parse_errors": 0,
+      "reconciled": true
+    }
+  },
+  "training_health": "HEALTHY"
+}
+```
+
+### Attribution Buckets for Missing model_preds
+
+| Bucket | Meaning | Investigation |
+|--------|---------|---------------|
+| `old_schema` | Record predates model_preds (before 2026-02-01) | Expected, historical data |
+| `non_game_market` | Prop/other market (not scored by ensemble) | Expected, props don't use ensemble |
+| `error_path` | Error/timeout/fallback during scoring | Investigate if high |
+| `unknown` | Cannot determine reason | Investigate if high |
+
+### Filter Math Assertion
+
+**INVARIANT:** `eligible_total + sum(drops) == loaded_total`
+
+```
+sum_of_drops = drop_no_grade + drop_no_result + drop_wrong_market
+             + drop_missing_required + drop_outside_window + drop_wrong_sport
+assert eligible_total + sum_of_drops == loaded_total
+```
+
+If `assertion_passed: false`, training should halt and alert.
+
+### Binary Label Contract
+
+**INVARIANT:** Ensemble uses binary classification only.
+
+```python
+label_type: "binary_hit"
+label_definition: "hit = 1.0 if result == WIN, hit = 0.0 if result == LOSS, PUSH excluded"
+```
+
+- WIN = 1.0 (hit)
+- LOSS = 0.0 (miss)
+- PUSH = excluded (never trained on)
+
+**NEVER** use regression labels like "line ± 5" or "spread coverage".
+
+### Verification Commands
+
+```bash
+# Check training health and store audit
+curl -s "https://web-production-7b2a.up.railway.app/live/debug/training-status" \
+  -H "X-API-Key: YOUR_KEY" | jq '.training_health, .store_audit.data_quality'
+
+# Verify filter math assertion passed
+curl -s "https://web-production-7b2a.up.railway.app/live/debug/training-status" \
+  -H "X-API-Key: YOUR_KEY" | jq '.training_telemetry.filter_telemetry.assertion_passed'
+# Expected: true
+
+# Run store audit locally
+python scripts/audit_training_store.py --json --path /data/grader/predictions.jsonl
+
+# Run tests
+pytest tests/test_training_telemetry.py -v
+```
+
+### Test Coverage (20+ Tests)
+
+| Test Class | Tests | Purpose |
+|------------|-------|---------|
+| `TestFilterTelemetryAssertions` | 4 | Filter math, drop exclusivity |
+| `TestTrainingSignatures` | 6 | Schema hash, label definition |
+| `TestStoreAuditUtility` | 4 | Audit output shape, attribution |
+| `TestBinaryLabelInvariants` | 2 | PUSH excluded, binary labels |
+| `TestDataQualityGuardrails` | 4 | Graded/ungraded sum, schema version |
+| `TestModelPredsRequirements` | 2 | Insufficient/missing model_preds |
+| `TestModelStatusTelemetry` | 2 | Integration with model_status |
+
+### Non-Negotiable Invariants
+
+1. **Binary labels only:** Never regression, never "line ± N"
+2. **PUSH excluded:** PUSH results are never in training data
+3. **Filter math reconciles:** `assertion_passed: true` always
+4. **Graded/ungraded sum:** `graded_total + ungraded_total == loaded_total`
+5. **Store provenance present:** Path, mtime, schema version always tracked
+6. **Attribution for missing model_preds:** Every missing record explained
+
+---
+
 ## Engine 2 Research Semantic Audit (v20.16+) — February 10, 2026
 
 ### Summary
