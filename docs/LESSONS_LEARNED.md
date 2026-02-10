@@ -2415,3 +2415,146 @@ curl /live/grader/weights/NBA -H "X-API-Key: KEY" | jq '.weights | keys'
 **Fixed in:** v20.15 (Feb 9, 2026) — Commit `e8f0954`
 
 ---
+
+### Lesson 74: Training Pipeline "Looks Trained But Isn't" (v20.16)
+
+**Problem:** GameEnsembleModel reported `is_trained=True` simply because a model file existed on disk, even with 0 actual training samples. The sklearn base models (XGBoost/LightGBM/RandomForest) were never fitted, causing crashes when `predict()` was called.
+
+**Root Cause:** The `is_trained` property checked `self.model is not None` (file exists) rather than verifying actual training occurred. This allowed "trained" status with unfitted models.
+
+**The Fix — Hard Safety Rule (v20.16.1):**
+```python
+# advanced_ml_backend.py - EnsembleStackingModel
+class EnsembleStackingModel:
+    def __init__(self):
+        self._ensemble_pipeline_trained = False  # ONLY True after train() completes
+
+    def predict(self, features, model_predictions=None):
+        # HARD RULE: Never call .predict() on sklearn base models unless trained
+        if not self._ensemble_pipeline_trained:
+            return float(np.mean(features)) if len(features) > 0 else 25.0
+        # ... rest of predict logic
+```
+
+**Truthful Status Reporting (v20.16.2):**
+```python
+# team_ml_models.py - GameEnsembleModel
+@property
+def training_status(self) -> str:
+    if self.weights.get("_trained_samples", 0) > 0:
+        return "TRAINED"      # Has real training samples
+    elif self.model is not None:
+        return "LOADED_PLACEHOLDER"  # File exists but no training
+    return "INITIALIZING"     # No model file
+
+@property
+def is_trained(self) -> bool:
+    return self.weights.get("_trained_samples", 0) > 0  # Require actual samples
+```
+
+**Training Telemetry (proves pipeline executed):**
+```python
+# team_ml_models.py - Added to default weights
+"_last_train_run_at": None,
+"_graded_samples_seen": 0,
+"_samples_used_for_training": 0,
+"_volume_mount_path": "NOT_SET",
+```
+
+**Prevention:**
+1. **NEVER use file existence as "trained" status** — check actual training samples
+2. **Add `_pipeline_trained` flags** that ONLY become True after `train()` completes
+3. **Add training telemetry** to prove the pipeline is executing and persisting
+4. **Distinguish status levels** — TRAINED vs LOADED_PLACEHOLDER vs INITIALIZING
+
+**Files Modified:**
+- `advanced_ml_backend.py` — Added `_ensemble_pipeline_trained` flag, `_is_base_model_fitted()` helper
+- `team_ml_models.py` — Added `training_status` property, training telemetry fields, `record_training_run()`
+- `tests/test_ai_model_usage.py` — Added `TestEnsembleStackingModelSafety` (3 tests)
+
+**Fixed in:** v20.16.1/v20.16.2 (Feb 9-10, 2026)
+
+---
+
+### Lesson 75: Training Pipeline Visibility — Silent Failures (v20.16.3)
+
+**Problem:** The 7 AM ET training job was registered and supposedly running, but there was no way to prove:
+1. The job was actually scheduled (not just configured)
+2. Training was executing (not silently failing)
+3. Artifacts were being written to disk
+4. Training was fresh vs stale
+
+**Root Cause:** `/live/scheduler/status` only showed availability, not job details. No endpoint existed to audit training artifacts, telemetry, or health.
+
+**The Fix — Training Pipeline Visibility:**
+
+**1. Enhanced `/live/scheduler/status` (v20.16.3):**
+```json
+{
+  "scheduler_running": true,
+  "training_job_registered": true,
+  "jobs": [
+    {
+      "id": "team_model_train",
+      "name": "Daily Team Model Training",
+      "next_run_time_et": "2026-02-10T07:00:00-05:00",
+      "trigger_type": "CronTrigger",
+      "trigger": "cron[hour='7', minute='0']"
+    }
+  ]
+}
+```
+
+**2. New `/live/debug/training-status` endpoint:**
+```json
+{
+  "training_health": "HEALTHY",
+  "graded_picks_count": 557,
+  "training_telemetry": {
+    "last_train_run_at": "2026-02-10T03:54:07",
+    "graded_samples_seen": 866,
+    "samples_used_for_training": 21
+  },
+  "artifact_proof": {
+    "team_data_cache.json": {"exists": true, "size_bytes": 46090, "mtime_iso": "2026-02-09T22:54:07-05:00"},
+    "matchup_matrix.json": {"exists": true, "size_bytes": 101675, "mtime_iso": "2026-02-09T22:54:07-05:00"},
+    "ensemble_weights.json": {"exists": true, "size_bytes": 266, "mtime_iso": "2026-02-09T22:54:07-05:00"}
+  },
+  "scheduler_proof": {
+    "job_registered": true,
+    "next_run_time_et": "2026-02-10T07:00:00-05:00"
+  }
+}
+```
+
+**3. Training Health States:**
+| State | Condition | Action |
+|-------|-----------|--------|
+| HEALTHY | Training ran within 24h OR no graded picks | Normal |
+| STALE | Training older than 24h AND graded picks > 0 | Check scheduler |
+| NEVER_RAN | last_train_run_at null AND graded picks > 0 | Trigger manually |
+
+**Prevention:**
+1. **Every scheduled job needs visibility** — show next_run_time, trigger, job details
+2. **Artifact proof is non-negotiable** — show exists, size_bytes, mtime_iso for each file
+3. **Training health must classify staleness** — HEALTHY/STALE/NEVER_RAN based on timestamps
+4. **Fail-soft with errors[]** — never 500 on debug endpoints, collect errors and return
+
+**Verification Commands:**
+```bash
+# Check training job is registered
+curl /live/scheduler/status -H "X-API-Key: KEY" | jq '.training_job_registered'
+
+# Check training health and artifacts
+curl /live/debug/training-status -H "X-API-Key: KEY" | jq '{health:.training_health, artifacts:.artifact_proof}'
+```
+
+**Files Modified:**
+- `live_data_router.py` — Enhanced `/scheduler/status`, added `/debug/training-status`
+- `tests/test_training_status.py` — 13 tests for training visibility
+- `docs/AUDIT_REPORT.md` — v20.16.3 section with endpoint docs
+- `CLAUDE.md` — Updated endpoints table, added training health states
+
+**Fixed in:** v20.16.3 (Feb 10, 2026) — Commit `75117a0`
+
+---

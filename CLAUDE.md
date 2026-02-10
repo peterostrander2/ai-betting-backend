@@ -78,7 +78,7 @@
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (70 Total) - Key Categories
+### Lessons Learned (75 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -111,6 +111,8 @@
 | 71 | **v20.14 Grader Routes & Authentication** | Grader endpoints need `/live` prefix + API key — routes mounted at `/live/*`, public URLs require auth |
 | 72 | **v20.15 Prop Detection Bug** | Props stored as `market="player_points"` without `pick_type`, auto-grader check `in ("PROP", "PLAYER_PROP")` missed them — learning loop got 0 prop samples |
 | 73 | **v20.15 Incomplete Prop Markets** | Only 4 NBA props fetched (points/rebounds/assists/threes), missing steals/blocks/turnovers — "if we bet on it, we track it" |
+| 74 | **v20.16 "Trained But Isn't"** | `is_trained=True` based on file existence, not actual training samples — sklearn models never fitted, predict() crashes |
+| 75 | **v20.16.3 Training Visibility** | No way to prove training executed — added `/debug/training-status` with artifact_proof, training_health, telemetry |
 
 ### NEVER DO Sections (34 Categories)
 - ML & GLITCH (rules 1-10)
@@ -224,10 +226,12 @@
 |------|---------|
 | `core/scoring_contract.py` | Scoring constants (Option A weights, thresholds, boost caps, calibration) |
 | `core/scoring_pipeline.py` | Score calculation (single source of truth) |
-| `live_data_router.py` | Main API endpoints, pick scoring, ESPN live scores extraction (v20.11) |
+| `live_data_router.py` | Main API endpoints, pick scoring, `/debug/training-status` (v20.16.3) |
 | `utils/pick_normalizer.py` | Pick contract normalization (single source for all pick fields) |
 | `auto_grader.py` | Learning loop, bias calculation, weight updates. **prop_stat_types** at lines 176 & 1109 |
-| `daily_scheduler.py` | Cron jobs, **SPORT_STATS** config at line 174 — must match auto_grader |
+| `daily_scheduler.py` | Cron jobs, **SPORT_STATS** config at line 174, team_model_train job at 7 AM ET |
+| `team_ml_models.py` | TeamLSTM, TeamMatchup, GameEnsemble — training telemetry, `training_status` property |
+| `scripts/train_team_models.py` | Training script for team ML models (called at 7 AM ET) |
 | `result_fetcher.py` | Game result fetching, pick grading. **STAT_TYPE_MAP** at line 80 |
 | `grader_store.py` | Pick persistence (predictions.jsonl) |
 | `utils/contradiction_gate.py` | Prevents opposite side picks |
@@ -240,9 +244,21 @@
 | `scripts/ci_sanity_check.sh` | Full CI sanity check — runs all 10 session spot checks |
 | `scripts/prod_go_nogo.sh` | Production go/no-go validation before deploy |
 | `scripts/verify_grader_routes.sh` | Grader routes verification — tests all `/live/grader/*` endpoints (v20.14) |
+| `tests/test_training_status.py` | Training pipeline visibility tests (13 tests) — v20.16.3 |
+| `tests/test_ai_model_usage.py` | AI model safety tests including `TestEnsembleStackingModelSafety` — v20.16.1 |
 
-### Current Version: v20.15 (Feb 9, 2026)
-**Latest Enhancement (v20.15) — 2 Updates:**
+### Current Version: v20.16.3 (Feb 10, 2026)
+**Latest Enhancement (v20.16.3) — Training Pipeline Visibility:**
+- **Enhancement 1: Enhanced `/live/scheduler/status`** — Now shows all jobs with next_run_time_et, trigger_type, trigger, misfire_grace_time. Includes `training_job_registered` bool.
+- **Enhancement 2: New `/live/debug/training-status`** — Returns model_status, training_telemetry, artifact_proof (file exists/size/mtime), scheduler_proof, training_health (HEALTHY/STALE/NEVER_RAN).
+- **Tests:** 13 new tests in `tests/test_training_status.py`
+
+**Previous Fixes (v20.16.1/v20.16.2) — Model Safety:**
+- **Fix 1: Ensemble Hard Safety Rule (Lesson 74)** — Added `_ensemble_pipeline_trained` flag that ONLY becomes True after `train()` completes. Never call `.predict()` on unfitted sklearn models.
+- **Fix 2: Truthful Training Status (Lesson 74)** — `is_trained` now requires actual training samples (`_trained_samples > 0`), not just file existence. Added `training_status` property: TRAINED | LOADED_PLACEHOLDER | INITIALIZING.
+- **Fix 3: Training Telemetry** — `record_training_run()` writes `_last_train_run_at`, `_graded_samples_seen`, `_samples_used_for_training` to prove pipeline executed.
+
+**Previous Fixes (v20.15) — 2 Updates:**
 - **Fix 1: Auto-Grader Prop Detection (Lesson 72)** — Props stored with `market="player_points"` but no `pick_type` field. The check `in ("PROP", "PLAYER_PROP")` missed them. Fixed with expanded detection: `pick_type.startswith("PLAYER_")` or `player_name` presence. Learning loop now sees 63+ prop samples.
 - **Fix 2: Expanded Prop Market Coverage (Lesson 73)** — Only 4 NBA props were fetched. Added: steals, blocks, turnovers. Also expanded NFL (anytime_td), MLB (runs, home_runs, outs), NHL (goals, saves). Updated all 4 config locations: `prop_markets`, `prop_stat_types` (2x), `SPORT_STATS`, `STAT_TYPE_MAP`.
 

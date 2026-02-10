@@ -214,6 +214,8 @@ Daily 6 AM → auto_grader.grade_prediction() → /data/grader_data/weights.json
 **Runtime verification:**
 - `/live/scheduler/status` must return 200 and must not throw import errors
 - Must report ET timezone (America/New_York) and the configured job times
+- Must show all jobs with `next_run_time_et`, `trigger_type`, `trigger`
+- Must include `training_job_registered` bool (v20.16.3)
 
 **Docs:**
 - `CLAUDE.md` (Invariant [10])
@@ -221,6 +223,53 @@ Daily 6 AM → auto_grader.grade_prediction() → /data/grader_data/weights.json
 **Never do:**
 - Add jobs without exposing them via the status endpoint
 - Allow scheduler status to fail due to import/export drift
+
+---
+
+### E.1) Training Pipeline Visibility (v20.16.3)
+**Examples:** "models say trained but aren't", "training never ran", "artifacts stale".
+
+**Canonical sources:**
+- `team_ml_models.py` — TeamLSTM, TeamMatchup, GameEnsemble models
+- `scripts/train_team_models.py` — Training script (called at 7 AM ET)
+- `daily_scheduler.py` — `team_model_train` job registration
+
+**Verification endpoints:**
+```bash
+# Check training job is registered and shows next_run_time
+curl /live/scheduler/status -H "X-API-Key: KEY" | jq '.training_job_registered, (.jobs[]|select(.id=="team_model_train"))'
+
+# Check training health, telemetry, and artifact proof
+curl /live/debug/training-status -H "X-API-Key: KEY" | jq '{health:.training_health, artifacts:.artifact_proof}'
+```
+
+**Training health states:**
+| State | Condition | Action |
+|-------|-----------|--------|
+| HEALTHY | Training ran within 24h OR no graded picks | Normal operation |
+| STALE | Training older than 24h AND graded picks > 0 | Check scheduler, may need manual trigger |
+| NEVER_RAN | last_train_run_at null AND graded picks > 0 | Trigger manually via POST /live/grader/train-team-models |
+
+**Required proof fields:**
+- `training_job_registered` — Confirms 7 AM ET job exists
+- `artifact_proof[file].exists` — Proves artifacts written to disk
+- `artifact_proof[file].mtime_iso` — Proves when artifacts updated
+- `training_telemetry.last_train_run_at` — When training last executed
+- `training_health` — Overall health classification
+
+**Hard invariants:**
+1. `is_trained` must require actual training samples (not just file existence)
+2. `_ensemble_pipeline_trained` must ONLY be True after `train()` completes
+3. Training telemetry must be written on every training run
+
+**Tests:**
+- `tests/test_training_status.py` (13 tests)
+- `tests/test_ai_model_usage.py:TestEnsembleStackingModelSafety` (3 tests)
+
+**Never do:**
+- Use file existence as "trained" status (Lesson 74)
+- Allow training jobs to fail silently (Lesson 75)
+- Skip artifact proof in debug endpoints
 
 ---
 
