@@ -9982,6 +9982,53 @@ async def adjust_sport_weights(sport: str, adjust_config: Dict[str, Any] = None)
     }
 
 
+@router.post("/grader/train-team-models")
+async def train_team_models_endpoint(config: Dict[str, Any] = None):
+    """
+    Manually trigger team model training from graded picks.
+
+    v20.16.2: This trains LSTM, Matchup, and Ensemble models from
+    recently graded picks. Use this to test the training pipeline
+    without waiting for the 7 AM ET scheduled job.
+
+    Request body (optional):
+    {
+        "days": 7,           # Days of history to process (default: 7)
+        "sport": "NBA"       # Filter to specific sport (default: all)
+    }
+
+    Returns training results including telemetry proving execution.
+    """
+    try:
+        from scripts.train_team_models import train_all
+
+        cfg = config or {}
+        days = cfg.get("days", 7)
+        sport = cfg.get("sport")
+
+        result = train_all(days=days, sport=sport)
+
+        return {
+            "status": "success",
+            "training_result": result,
+            "timestamp": datetime.now().isoformat(),
+            "note": "Check model_status.training_telemetry to verify persistence"
+        }
+    except ImportError as e:
+        return {
+            "status": "error",
+            "error": f"Training module not available: {e}",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Team model training failed: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 @router.get("/grader/performance/{sport}")
 async def get_grader_performance(sport: str, days_back: int = 7):
     """
