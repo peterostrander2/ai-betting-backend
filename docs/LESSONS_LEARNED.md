@@ -2558,3 +2558,153 @@ curl /live/debug/training-status -H "X-API-Key: KEY" | jq '{health:.training_hea
 **Fixed in:** v20.16.3 (Feb 10, 2026) — Commit `75117a0`
 
 ---
+
+### Lesson 76: Engine 2 Research Anti-Conflation — Sharp vs Line Strength (v20.16.5)
+
+**Problem:** The Research engine had a semantic conflation bug where both `sharp_boost` (Playbook-derived) and `line_boost` (Odds API-derived) read from the same `sharp_signal` dict. Worse, line variance could "upgrade" `signal_strength` to STRONG, causing "Sharp signal STRONG" to appear when it was actually line variance triggering it.
+
+**Root Cause:**
+1. Single `sharp_signal` dict held both Playbook splits AND Odds API variance data
+2. Code at lines 2030-2033 escalated `signal_strength` based on line_variance
+3. No source attribution — couldn't tell which API provided which signal
+
+**The Fix — Anti-Conflation Hardening (v20.16.5):**
+
+**1. Separate strength fields:**
+```python
+"sharp_strength": "MILD",    # From Playbook divergence ONLY
+"lv_strength": "MODERATE",   # From Odds API variance ONLY (independent)
+```
+
+**2. Source attribution at scoring time:**
+```python
+"research_breakdown": {
+    "sharp_source_api": "playbook_api",   # INVARIANT: sharp ONLY from Playbook
+    "line_source_api": "odds_api",        # INVARIANT: line ONLY from Odds API
+    "sharp_raw_inputs": {"ticket_pct": 50, "money_pct": 55, "divergence": 5},
+    "line_raw_inputs": {"line_variance": 0.8, "lv_strength": "MILD"},
+}
+```
+
+**3. Status reflects data reality:**
+- `sharp_status: "SUCCESS"` only when `money_pct` is not None
+- `sharp_status: "NO_DATA"` when Playbook data unavailable
+
+**4. Debug endpoint for pre-filter candidates:**
+- `/debug/research-candidates/{sport}` shows suppressed picks
+- `usage_counters_snapshot` with before/after/delta proves real API calls
+
+**Anti-Conflation Invariants (MANDATORY):**
+1. `sharp_strength` MUST come from Playbook ticket/money divergence ONLY
+2. `lv_strength` MUST come from Odds API line variance ONLY
+3. Line variance can NEVER upgrade `sharp_strength`
+4. If `sharp_status == "NO_DATA"` then `sharp_strength` MUST be "NONE"
+
+**Verification:**
+```bash
+# Check source attribution
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.debug.suppressed_candidates[0].research_breakdown | {sharp_source_api, line_source_api, sharp_strength, lv_strength}'
+
+# Verify usage deltas
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.debug.usage_counters_snapshot.delta'
+```
+
+**Files Created/Modified:**
+- `core/research_types.py` — ComponentStatus enum, source constants
+- `docs/RESEARCH_TRUTH_TABLE.md` — Complete Engine 2 contract documentation
+- `tests/test_research_truthfulness.py` — 21 anti-conflation tests
+- `scripts/engine2_research_audit.py` — Runtime verification
+- `scripts/engine2_research_audit.sh` — Static + runtime checks
+- `live_data_router.py` — Source attribution at scoring time
+
+**Fixed in:** v20.16.5 (Feb 10, 2026) — Commit `8a40374`
+
+---
+
+### Lesson 77: Odds API Fallback — Sharp Strength Conflation (v20.16.6)
+
+**Problem:** When Playbook is unavailable and the system falls back to Odds API only, `signal_strength` was set from line variance. Since scoring code fell back to `signal_strength` for `sharp_strength`, this incorrectly reported line variance as sharp signal strength.
+
+**Root Cause:** The Odds API fallback path (lines 2108-2123) set `signal_strength` from variance but didn't set `sharp_strength` explicitly:
+```python
+# BEFORE (broken):
+data.append({
+    "line_variance": round(variance, 1),
+    "signal_strength": strength  # ← Derived from line variance!
+})
+# sharp_strength defaulted to signal_strength, conflating the two
+```
+
+**The Fix — Explicit NO_DATA Fields (v20.16.6):**
+```python
+# AFTER (fixed):
+data.append({
+    "line_variance": round(variance, 1),
+    "signal_strength": "NONE",         # No Playbook = no sharp signal
+    "sharp_strength": "NONE",          # Explicit - Odds fallback has NO Playbook data
+    "lv_strength": strength,           # Line variance strength (from Odds API)
+    "money_pct": None,                 # No Playbook data
+    "ticket_pct": None,                # No Playbook data
+})
+```
+
+**Invariant Enforced:**
+- If `sharp_status == "NO_DATA"` then `sharp_strength` MUST be "NONE"
+- Cannot be observed in production unless Playbook actually fails
+- Verified by tests + deployment proof (build_sha)
+
+**Prevention:**
+1. When an API is unavailable, ALL fields from that API must be explicitly set to None/NO_DATA
+2. Never let one API's data "pollute" another API's fields via fallback chains
+3. Add explicit `*_strength: "NONE"` instead of relying on default fallbacks
+
+**Fixed in:** v20.16.6 (Feb 10, 2026) — Commit `64f0db8`
+
+---
+
+### Lesson 78: XGBoost Feature Mismatch — Training vs Runtime (v20.16.7)
+
+**Problem:** XGBoost ensemble model was logging 48+ "Feature shape mismatch, expected: 12, got 6" warnings per request.
+
+**Root Cause:** The XGBoost model was trained on 12 scoring features:
+```
+ai_score, research_score, esoteric_score, jarvis_score, line, odds_american,
+confluence_boost, jason_sim_boost, titanium_triggered, sport_encoded,
+pick_type_encoded, side_encoded
+```
+
+But runtime code at `live_data_router.py:3387-3394` built 6 game context features:
+```
+def_rank, pace, vacuum, abs(spread), total, home_pick
+```
+
+These are **completely different feature sets**. The training script (`scripts/train_ensemble.py`) used scoring outputs, but the runtime passed game context inputs.
+
+**The Fix — Feature Count Validation (v20.16.7):**
+```python
+def predict(self, model_predictions, features=None):
+    if self.model is not None and features is not None:
+        expected_features = 12
+        if len(features) != expected_features:
+            # Feature mismatch - skip XGBoost, use weighted average
+            pass  # Fall through
+        else:
+            return float(self.model.predict(features.reshape(1, -1))[0])
+```
+
+**Prevention:**
+1. **Document training features explicitly** — `FEATURE_NAMES` constant in training script
+2. **Validate feature count at predict time** — don't rely on exception handling
+3. **Match training and inference feature sets** — or gracefully skip incompatible models
+4. **Test with actual model** — integration test that loads model and runs predict
+
+**Note:** The proper fix is to either:
+- Build 12 scoring features at runtime (requires post-scoring call)
+- Retrain model on 6 context features
+- Use `EnsembleManager` (ml_integration.py) which correctly uses scoring features
+
+Current fix is a graceful skip to eliminate log spam.
+
+**Fixed in:** v20.16.7 (Feb 10, 2026) — Commit `b3087a3`
+
+---

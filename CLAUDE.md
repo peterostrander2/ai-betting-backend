@@ -78,7 +78,7 @@
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (75 Total) - Key Categories
+### Lessons Learned (78 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -113,8 +113,11 @@
 | 73 | **v20.15 Incomplete Prop Markets** | Only 4 NBA props fetched (points/rebounds/assists/threes), missing steals/blocks/turnovers — "if we bet on it, we track it" |
 | 74 | **v20.16 "Trained But Isn't"** | `is_trained=True` based on file existence, not actual training samples — sklearn models never fitted, predict() crashes |
 | 75 | **v20.16.3 Training Visibility** | No way to prove training executed — added `/debug/training-status` with artifact_proof, training_health, telemetry |
+| 76 | **v20.16.5 Engine 2 Anti-Conflation** | sharp_strength and lv_strength were conflated — now separate with source_api attribution |
+| 77 | **v20.16.6 Odds Fallback Conflation** | When Playbook unavailable, signal_strength from variance polluted sharp_strength — explicit NONE now |
+| 78 | **v20.16.7 XGBoost Feature Mismatch** | Model trained on 12 scoring features but runtime passed 6 context features — validate count before predict |
 
-### NEVER DO Sections (34 Categories)
+### NEVER DO Sections (36 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -150,6 +153,8 @@
 - v20.13 Field Name Mapping & Gate Label Drift (rules 220-226)
 - v20.14 Grader Routes & Authentication (rules 227-229)
 - v20.15 Learning Loop & Prop Detection (rules 230-236)
+- v20.16.5+ Engine 2 Research Anti-Conflation (rules 237-244)
+- v20.16.7 XGBoost Feature Consistency (rules 245-248)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -246,9 +251,21 @@
 | `scripts/verify_grader_routes.sh` | Grader routes verification — tests all `/live/grader/*` endpoints (v20.14) |
 | `tests/test_training_status.py` | Training pipeline visibility tests (13 tests) — v20.16.3 |
 | `tests/test_ai_model_usage.py` | AI model safety tests including `TestEnsembleStackingModelSafety` — v20.16.1 |
+| `core/research_types.py` | ComponentStatus enum (SUCCESS/NO_DATA/ERROR/DISABLED), source constants — v20.16.5 |
+| `docs/RESEARCH_TRUTH_TABLE.md` | Engine 2 Research contract: 6 components, sources, anti-conflation rules — v20.16.5 |
+| `tests/test_research_truthfulness.py` | 21 anti-conflation tests: sharp/line separation, source attribution — v20.16.5 |
+| `scripts/engine2_research_audit.py` | Runtime verification: research_breakdown, usage counters, source APIs — v20.16.5 |
+| `scripts/engine2_research_audit.sh` | Static + runtime checks: conflation patterns, object separation — v20.16.5 |
 
-### Current Version: v20.16.4 (Feb 10, 2026)
-**Latest Enhancement (v20.16.4) — Automatic Training Verification:**
+### Current Version: v20.16.7 (Feb 10, 2026)
+**Latest Fixes (v20.16.5/v20.16.6/v20.16.7) — Engine 2 Research Semantic Audit:**
+- **Fix 1: Anti-Conflation (Lesson 76)** — `sharp_boost` and `line_boost` were both reading from same `sharp_signal` dict. Line variance was UPGRADING `signal_strength` to STRONG. Split into `playbook_sharp` (Playbook API only) and `odds_line` (Odds API only) objects that are NEVER merged.
+- **Fix 2: Odds API Fallback (Lesson 77)** — When Playbook unavailable, fallback path set `sharp_strength` from line variance. Fixed: `sharp_strength: "NONE"` explicitly set in Odds API fallback since no Playbook data exists.
+- **Fix 3: XGBoost Feature Mismatch (Lesson 78)** — Training used 12 features, runtime passed 6. Added feature count validation before predict; mismatches fall through to weighted average. Eliminated 48+ warnings per request.
+- **New Files:** `core/research_types.py` (ComponentStatus enum), `tests/test_research_truthfulness.py` (21 tests), `scripts/engine2_research_audit.py|.sh` (verification)
+- **Key Invariants:** `sharp_boost` ONLY from `playbook_sharp`, `line_boost` ONLY from `odds_line`. Source attribution: `sharp_source_api: "playbook_api"`, `line_source_api: "odds_api"`.
+
+**Previous Enhancement (v20.16.4) — Automatic Training Verification:**
 - **Enhancement: Training Verification Job** — Runs at 7:30 AM ET (30 min after training) to verify training executed. Checks `last_train_run_at`, `training_status`, and artifact mtimes. On failure: logs ERROR, writes alert to `/data/audit_logs/training_alert_{date}.json`.
 
 **Previous Enhancement (v20.16.3) — Training Pipeline Visibility:**

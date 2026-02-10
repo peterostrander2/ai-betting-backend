@@ -678,3 +678,45 @@ for stat in points rebounds assists threes steals blocks turnovers; do
   curl -s "/live/grader/bias/NBA?stat_type=$stat&days_back=30" -H "X-API-Key: KEY" | jq "{stat: \"$stat\", samples: .bias.sample_size}"
 done
 ```
+
+## 🚫 NEVER DO THESE (v20.16.5+ - Engine 2 Research Anti-Conflation)
+
+237. **NEVER read sharp_strength from line_variance** — sharp signal comes from Playbook splits ONLY
+238. **NEVER read lv_strength from Playbook data** — line variance comes from Odds API ONLY
+239. **NEVER let one API's data pollute another API's fields** — keep source attribution clean
+240. **NEVER set signal_strength from variance in fallback path** — when Playbook unavailable, sharp_strength MUST be "NONE"
+241. **NEVER omit source_api tags in research_breakdown** — must have `sharp_source_api` and `line_source_api`
+242. **NEVER skip raw_inputs in research_breakdown** — must show `sharp_raw_inputs` and `line_raw_inputs` for audit
+243. **NEVER claim sharp_status=SUCCESS without real Playbook data** — must have non-null money_pct/ticket_pct
+244. **NEVER skip usage_counters_snapshot in debug output** — must show before/after/delta for API calls
+
+**Anti-Conflation Invariants (Engine 2):**
+```
+INVARIANT 1: sharp_source_api == "playbook_api" (always)
+INVARIANT 2: line_source_api == "odds_api" (always)
+INVARIANT 3: If sharp_status == "NO_DATA" then sharp_strength == "NONE"
+INVARIANT 4: lv_strength varies independently of sharp_strength
+```
+
+**Verification:**
+```bash
+# Check source attribution and separation
+curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.debug.suppressed_candidates[0].research_breakdown | {
+  sharp_source_api, line_source_api,
+  sharp_strength, lv_strength,
+  sharp_status, line_status
+}'
+```
+
+**Key Files:**
+- `docs/RESEARCH_TRUTH_TABLE.md` — Complete Engine 2 contract
+- `core/research_types.py` — ComponentStatus enum, source constants
+- `tests/test_research_truthfulness.py` — 21 anti-conflation tests
+- `scripts/engine2_research_audit.sh` — Static + runtime verification
+
+## 🚫 NEVER DO THESE (v20.16.7 - XGBoost Feature Consistency)
+
+245. **NEVER pass wrong feature count to XGBoost** — validate len(features) == expected before predict()
+246. **NEVER mix training features with inference features** — document FEATURE_NAMES explicitly
+247. **NEVER rely on exception handling for feature mismatch** — validate upfront, skip gracefully
+248. **NEVER train on scoring outputs but predict with context inputs** — feature sets must match
