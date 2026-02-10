@@ -11367,7 +11367,8 @@ async def get_training_status():
             "matchup_tracked": status.get("matchup", {}).get("matchups_tracked", 0),
         }
 
-        training_telemetry = status.get("ensemble", {}).get("training_telemetry", {})
+        # v20.17.3: Fix path - training_telemetry is at top level, not inside "ensemble"
+        training_telemetry = status.get("training_telemetry", {})
     except Exception as e:
         errors.append(f"model_status: {e}")
 
