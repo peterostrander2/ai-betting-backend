@@ -2736,3 +2736,43 @@ for sport in ["NBA", "NFL", "MLB", "NHL", "NCAAB"]:
 **Fixed in:** v20.16.8 (Feb 10, 2026) — Commit `8c0bec9`
 
 ---
+
+### Lesson 80: Training Filter Telemetry — Proving Training Data Quality (v20.16.9)
+
+**Problem:** Training telemetry showed `samples_used_for_training: 41` but no way to verify those 41 were legitimate graded picks vs garbage data.
+
+**Root Cause:** The training pipeline only reported final counts, not what was filtered and why. Zero visibility into:
+- How many candidates were loaded from storage
+- How many were dropped for missing outcomes
+- How many were dropped for being outside the date window
+- How many were dropped for wrong sport
+
+**The Fix (v20.16.9):**
+Added `filter_counts` to training telemetry:
+```json
+{
+  "filter_counts": {
+    "candidates_loaded": 1473,
+    "dropped_missing_outcome": 1200,
+    "dropped_outside_window": 150,
+    "dropped_wrong_sport": 82,
+    "used_for_training": 41,
+    "sample_pick_ids": ["abc123def456", "..."]
+  }
+}
+```
+
+**Prevention:**
+1. **Always report filter telemetry** — when filtering data, report what was dropped and why
+2. **Include sample IDs** — proves which records were actually used (audit trail)
+3. **Single validation command** — `/live/debug/training-status` now shows filter proof
+4. **Assert filter math** — `candidates - dropped_* = used` must always balance
+
+**Verification:**
+```bash
+curl -s ".../live/debug/training-status" -H "X-API-Key: KEY" | jq '.training_telemetry.filter_counts'
+```
+
+**Fixed in:** v20.16.9 (Feb 10, 2026) — Commit `db8bc86`
+
+---

@@ -78,7 +78,7 @@
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (79 Total) - Key Categories
+### Lessons Learned (80 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -117,6 +117,7 @@
 | 77 | **v20.16.6 Odds Fallback Conflation** | When Playbook unavailable, signal_strength from variance polluted sharp_strength — explicit NONE now |
 | 78 | **v20.16.7 XGBoost Feature Mismatch** | Model trained on 12 scoring features but runtime passed 6 context features — validate count before predict |
 | 79 | **v20.16.8 Daily Report Missing NCAAB** | Sports loop hardcoded [NBA,NFL,MLB,NHL] without NCAAB — 64 graded picks not showing in report |
+| 80 | **v20.16.9 Training Filter Telemetry** | Training showed 41 samples but no proof they were legitimate — added filter_counts with drop reasons + sample_pick_ids |
 
 ### NEVER DO Sections (37 Categories)
 - ML & GLITCH (rules 1-10)
@@ -1552,6 +1553,13 @@ curl -s "https://web-production-7b2a.up.railway.app/live/debug/training-status" 
 curl -s "https://web-production-7b2a.up.railway.app/live/grader/daily-report" \
   -H "X-API-Key: YOUR_KEY" | jq '.by_sport | keys'
 # Expected: ["NBA", "NCAAB"] (active sports with picks)
+```
+
+**4. Training Filter Telemetry (Verify Training Data Quality) — v20.16.9:**
+```bash
+curl -s "https://web-production-7b2a.up.railway.app/live/debug/training-status" \
+  -H "X-API-Key: YOUR_KEY" | jq '.training_telemetry.filter_counts'
+# Shows: candidates_loaded, dropped_*, used_for_training, sample_pick_ids
 ```
 
 | Result | Meaning |
