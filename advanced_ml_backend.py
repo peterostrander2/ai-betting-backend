@@ -798,7 +798,19 @@ class MasterPredictionSystem:
         base_score = max(deviation_score, alternative_base)
 
         pillar_boost = pillar_analysis['overall_pillar_score']
+        # v20.16: Ensure pillar_boost is not nan (defensive)
+        if np.isnan(pillar_boost):
+            logger.warning("pillar_boost is nan, defaulting to 0.0")
+            pillar_boost = 0.0
+        # v20.16: Debug logging for ai_score calculation
+        logger.debug(f"MPS ai_score calc: deviation={deviation_score:.3f}, agreement={agreement_score:.3f}, "
+                     f"edge={edge_score:.3f}, factor={factor_score:.3f}, alt_base={alternative_base:.3f}, "
+                     f"base={base_score:.3f}, pillar_boost={pillar_boost}, model_std={model_std:.3f}")
         ai_score = min(10, max(0, base_score + pillar_boost))
+        # v20.16: Floor at 2.0 to prevent heuristic fallback on valid MPS runs
+        if ai_score < 2.0:
+            logger.warning(f"ai_score {ai_score:.2f} below floor, elevating to 2.0")
+            ai_score = max(2.0, ai_score)
         
         # Update pillar analysis with final AI score
         pillar_analysis_updated = self.pillars.analyze_all_pillars({
