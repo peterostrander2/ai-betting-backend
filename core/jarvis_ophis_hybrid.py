@@ -46,17 +46,22 @@ logger = logging.getLogger(__name__)
 # CONSTANTS
 # =============================================================================
 
-# v2.0 Delta model constants (NOT weighted average)
-OPHIS_NEUTRAL = 5.5        # Center point where delta = 0
-OPHIS_MIN = 4.5            # Minimum Ophis raw score
-OPHIS_MAX = 6.5            # Maximum Ophis raw score
-OPHIS_DELTA_CAP = 0.75     # Maximum adjustment ±0.75
+# v2.0 Delta model constants (kept for backward compatibility)
+OPHIS_NEUTRAL = 5.5        # Center point where delta = 0 (v2.1 legacy)
+OPHIS_MIN = 4.5            # Minimum Ophis raw score (v2.1 legacy)
+OPHIS_MAX = 6.5            # Maximum Ophis raw score (v2.1 legacy)
+OPHIS_DELTA_CAP = 0.75     # Maximum adjustment ±0.75 (used in v2.2)
+
+# v2.2: Weighted blend constants
+JARVIS_WEIGHT = 0.55       # 55% Jarvis in target blend
+OPHIS_WEIGHT = 0.45        # 45% Ophis in target blend
+OPHIS_SCALE_FACTOR = 5.0   # Scales MSRF [0, 2.0] to [0, 10]
 
 # MSRF component cap inside Jarvis (prevents MSRF from dominating)
 JARVIS_MSRF_COMPONENT_CAP = 2.0
 
 # Version string
-VERSION = "JARVIS_OPHIS_HYBRID_v2.1"
+VERSION = "JARVIS_OPHIS_HYBRID_v2.2"
 
 # Ophis mathematical constants
 OPH_PI = 3.141592653589793
@@ -542,18 +547,29 @@ def calculate_hybrid_jarvis_score(
     jarvis_trigger_contribs = savant_result.get("jarvis_trigger_contribs", {})
 
     # =========================================================================
-    # v2.0 BLEND: Jarvis Primary + Bounded Ophis Delta (NOT weighted average)
+    # v2.2 BLEND: Weighted Blend (55/45) Under Bounded Delta Cap
     # =========================================================================
-    # Map ophis_raw [4.5, 6.5] to delta [-0.75, +0.75] centered at 5.5
-    # ophis_raw = 5.5 → delta = 0 (neutral)
-    # ophis_raw = 6.5 → delta = +0.75 (max boost)
-    # ophis_raw = 4.5 → delta = -0.75 (max penalty)
-    ophis_delta_unbounded = ((ophis_raw - OPHIS_NEUTRAL) / (OPHIS_MAX - OPHIS_NEUTRAL)) * OPHIS_DELTA_CAP
-    ophis_delta = max(-OPHIS_DELTA_CAP, min(OPHIS_DELTA_CAP, ophis_delta_unbounded))
+    # Step 1: Normalize Ophis to 0-10 scale
+    ophis_score_norm = msrf_component * OPHIS_SCALE_FACTOR  # [0, 2.0] → [0, 10]
 
-    # Final hybrid score = Jarvis + bounded delta
-    jarvis_rs = jarvis_score_before_ophis + ophis_delta
+    # Step 2: Compute 55/45 target blend
+    jarvis_target_blend = (JARVIS_WEIGHT * jarvis_score_before_ophis) + (OPHIS_WEIGHT * ophis_score_norm)
+
+    # Step 3: Delta from Jarvis anchor
+    ophis_delta_raw = jarvis_target_blend - jarvis_score_before_ophis
+
+    # Step 4: Apply bounded cap (safety invariant)
+    ophis_delta_applied = max(-OPHIS_DELTA_CAP, min(OPHIS_DELTA_CAP, ophis_delta_raw))
+
+    # Step 5: Saturation flag (>= not > per v2.2 spec)
+    ophis_delta_saturated = abs(ophis_delta_raw) >= OPHIS_DELTA_CAP
+
+    # Step 6: Final = Jarvis + bounded delta
+    jarvis_rs = jarvis_score_before_ophis + ophis_delta_applied
     jarvis_rs = max(0.0, min(10.0, jarvis_rs))  # Clamp to 0-10
+
+    # v2.2: ophis_delta now equals ophis_delta_applied (backward compat alias)
+    ophis_delta = ophis_delta_applied
 
     # =========================================================================
     # COLLECT TRIGGERS AND REASONS - v2.1: Use savant_result
@@ -623,16 +639,26 @@ def calculate_hybrid_jarvis_score(
 
         # Version and blend info
         "version": VERSION,
-        "blend_type": "JARVIS_PRIMARY_OPHIS_DELTA",
+        "blend_type": "JARVIS_WEIGHTED_BLEND_CAPPED_DELTA",
+        "jarvis_blend_type": "JARVIS_WEIGHTED_BLEND_CAPPED_DELTA",  # v2.2: For API output
         "whisper_tier": whisper_tier,
 
-        # v2.0 Delta model transparency fields (hybrid additional)
+        # v2.0 Delta model transparency fields (hybrid additional) - KEPT for backward compat
         "jarvis_score_before_ophis": round(jarvis_score_before_ophis, 4),
         "jarvis_component": round(jarvis_score_before_ophis, 4),  # Alias for clarity
         "ophis_raw": round(ophis_raw, 4),
-        "ophis_delta": round(ophis_delta, 4),
+        "ophis_delta": round(ophis_delta, 4),  # v2.2: Now equals ophis_delta_applied
         "ophis_delta_cap": OPHIS_DELTA_CAP,
         "ophis_component": round(ophis_raw, 4),  # Alias for clarity
+
+        # v2.2: NEW Weighted Blend Transparency Fields
+        "ophis_score_norm": round(ophis_score_norm, 4),           # Ophis on 0-10 scale (msrf * 5)
+        "jarvis_target_blend": round(jarvis_target_blend, 4),     # 55/45 target
+        "ophis_delta_raw": round(ophis_delta_raw, 4),             # Before clamping
+        "ophis_delta_applied": round(ophis_delta_applied, 4),     # After clamping
+        "ophis_delta_saturated": ophis_delta_saturated,           # True when cap hit (>= not >)
+        "jarvis_weight": JARVIS_WEIGHT,                           # 0.55
+        "ophis_weight": OPHIS_WEIGHT,                             # 0.45
 
         # MSRF components (CRITICAL - must be in payload)
         "msrf_component": round(msrf_component, 4),
@@ -662,7 +688,7 @@ def calculate_hybrid_jarvis_score(
 # =============================================================================
 
 __all__ = [
-    # Constants (v2.1 delta model)
+    # Constants (v2.2 weighted blend model)
     "OPHIS_NEUTRAL",
     "OPHIS_MIN",
     "OPHIS_MAX",
@@ -673,6 +699,10 @@ __all__ = [
     "MSRF_NORMAL",
     "MSRF_IMPORTANT",
     "VERSION",
+    # v2.2: Weighted blend constants
+    "JARVIS_WEIGHT",
+    "OPHIS_WEIGHT",
+    "OPHIS_SCALE_FACTOR",
     # Functions
     "calculate_hybrid_jarvis_score",
     "score_msrf_from_z_values",

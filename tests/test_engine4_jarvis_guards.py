@@ -364,8 +364,8 @@ def test_hybrid_is_additive_not_weighted_avg(hybrid_function, sample_inputs):
         f"jarvis_rs={jarvis_rs} != jarvis_before({jarvis_before}) + ophis_delta({ophis_delta}) = {expected}"
 
 
-def test_blend_type_is_additive_not_weighted(hybrid_function, sample_inputs):
-    """Hybrid: blend_type = 'JARVIS_PRIMARY_OPHIS_DELTA' (not weighted)."""
+def test_blend_type_is_weighted_blend_capped_delta(hybrid_function, sample_inputs):
+    """v2.2: blend_type = 'JARVIS_WEIGHTED_BLEND_CAPPED_DELTA'."""
     result = hybrid_function(
         home_team=sample_inputs["home_team"],
         away_team=sample_inputs["away_team"],
@@ -373,9 +373,12 @@ def test_blend_type_is_additive_not_weighted(hybrid_function, sample_inputs):
     )
 
     blend_type = result.get("blend_type", "")
-    assert blend_type == "JARVIS_PRIMARY_OPHIS_DELTA", \
-        f"blend_type={blend_type}, expected 'JARVIS_PRIMARY_OPHIS_DELTA'"
-    assert "WEIGHTED" not in blend_type.upper(), "blend_type should not contain 'WEIGHTED'"
+    assert blend_type == "JARVIS_WEIGHTED_BLEND_CAPPED_DELTA", \
+        f"blend_type={blend_type}, expected 'JARVIS_WEIGHTED_BLEND_CAPPED_DELTA'"
+    # v2.2: Also verify jarvis_blend_type for API output
+    jarvis_blend_type = result.get("jarvis_blend_type", "")
+    assert jarvis_blend_type == "JARVIS_WEIGHTED_BLEND_CAPPED_DELTA", \
+        f"jarvis_blend_type={jarvis_blend_type}, expected 'JARVIS_WEIGHTED_BLEND_CAPPED_DELTA'"
 
 
 # =============================================================================
@@ -525,3 +528,76 @@ def test_hybrid_triggers_match_real_savant(hybrid_function, sample_inputs):
         assert key in hybrid_contribs, f"Missing real savant trigger {key} in hybrid"
         assert abs(hybrid_contribs[key] - value) < 0.01, \
             f"Trigger {key}: hybrid={hybrid_contribs[key]} != real_savant={value}"
+
+
+# =============================================================================
+# TEST 12-16: v2.2 WEIGHTED BLEND FORMULA GUARDS
+# =============================================================================
+
+def test_weighted_blend_math_reconciles(hybrid_function, sample_inputs):
+    """v2.2: target == 0.55*jarvis_before + 0.45*ophis_score_norm"""
+    result = hybrid_function(
+        home_team=sample_inputs["home_team"],
+        away_team=sample_inputs["away_team"],
+        sport=sample_inputs["sport"],
+        matchup_date=sample_inputs["matchup_date"],
+    )
+    expected_target = (0.55 * result["jarvis_score_before_ophis"]) + \
+                      (0.45 * result["ophis_score_norm"])
+    assert abs(result["jarvis_target_blend"] - expected_target) < 0.001, \
+        f"Target mismatch: {result['jarvis_target_blend']:.4f} != {expected_target:.4f}"
+
+
+def test_delta_raw_is_target_minus_jarvis(hybrid_function, sample_inputs):
+    """v2.2: ophis_delta_raw == jarvis_target_blend - jarvis_before"""
+    result = hybrid_function(
+        home_team=sample_inputs["home_team"],
+        away_team=sample_inputs["away_team"],
+        sport=sample_inputs["sport"],
+        matchup_date=sample_inputs["matchup_date"],
+    )
+    expected_delta_raw = result["jarvis_target_blend"] - result["jarvis_score_before_ophis"]
+    assert abs(result["ophis_delta_raw"] - expected_delta_raw) < 0.001, \
+        f"Delta raw mismatch: {result['ophis_delta_raw']:.4f} != {expected_delta_raw:.4f}"
+
+
+def test_delta_applied_is_clamped(hybrid_function, sample_inputs):
+    """v2.2: ophis_delta_applied in [-0.75, +0.75]"""
+    from core.jarvis_ophis_hybrid import OPHIS_DELTA_CAP
+    result = hybrid_function(
+        home_team=sample_inputs["home_team"],
+        away_team=sample_inputs["away_team"],
+        sport=sample_inputs["sport"],
+        matchup_date=sample_inputs["matchup_date"],
+    )
+    assert -OPHIS_DELTA_CAP <= result["ophis_delta_applied"] <= OPHIS_DELTA_CAP, \
+        f"ophis_delta_applied={result['ophis_delta_applied']:.4f} not in [-{OPHIS_DELTA_CAP}, +{OPHIS_DELTA_CAP}]"
+
+
+def test_final_equals_before_plus_applied_delta(hybrid_function, sample_inputs):
+    """v2.2: jarvis_rs == jarvis_before + ophis_delta_applied (clamped to 0-10)"""
+    result = hybrid_function(
+        home_team=sample_inputs["home_team"],
+        away_team=sample_inputs["away_team"],
+        sport=sample_inputs["sport"],
+        matchup_date=sample_inputs["matchup_date"],
+    )
+    expected_final = result["jarvis_score_before_ophis"] + result["ophis_delta_applied"]
+    expected_final = max(0.0, min(10.0, expected_final))
+    assert abs(result["jarvis_rs"] - expected_final) < 0.001, \
+        f"Final mismatch: jarvis_rs={result['jarvis_rs']:.4f} != {expected_final:.4f}"
+
+
+def test_delta_saturation_flag_matches_math(hybrid_function, sample_inputs):
+    """v2.2: ophis_delta_saturated == (|ophis_delta_raw| >= 0.75) - MUST BE TRUTHFUL"""
+    from core.jarvis_ophis_hybrid import OPHIS_DELTA_CAP
+    result = hybrid_function(
+        home_team=sample_inputs["home_team"],
+        away_team=sample_inputs["away_team"],
+        sport=sample_inputs["sport"],
+        matchup_date=sample_inputs["matchup_date"],
+    )
+    delta_raw = result["ophis_delta_raw"]
+    expected_saturated = abs(delta_raw) >= OPHIS_DELTA_CAP  # 0.75 (>= not >)
+    assert result["ophis_delta_saturated"] == expected_saturated, \
+        f"Saturation flag lies: saturated={result['ophis_delta_saturated']} but |delta_raw|={abs(delta_raw):.4f}"

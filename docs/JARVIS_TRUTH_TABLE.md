@@ -1,7 +1,7 @@
 # ENGINE 4 (JARVIS) - TRUTH TABLE
 
 **Generated:** Step 1 Wiring Investigation (Feb 10, 2026)
-**Updated:** Step 6 v2.1 Fix (Feb 11, 2026)
+**Updated:** v2.2 Weighted Blend Under Bounded Delta Cap (Feb 11, 2026)
 **Constraint:** Production selector now available via JARVIS_IMPL env var
 
 ---
@@ -36,7 +36,75 @@ live_data_router.py    core/jarvis_ophis_hybrid.py
 
 **Fallback:** If `jarvis_savant_engine` can't be imported, returns `version: "JARVIS_FALLBACK_v1.0"` with simplified gematria.
 
-**Version:** `JARVIS_OPHIS_HYBRID_v2.1`
+**Version:** `JARVIS_OPHIS_HYBRID_v2.1` → Updated to `JARVIS_OPHIS_HYBRID_v2.2` (see v2.2 section below)
+
+---
+
+## v2.2 WEIGHTED BLEND (Feb 11, 2026)
+
+**Enhancement:** Implements true 55/45 weighted blend under bounded delta cap.
+
+**Problem:** v2.1 delta model wasn't a true 55/45 blend — Ophis was just a minor ±0.75 modifier.
+
+**Solution:** v2.2 computes the 55/45 target blend, then bounds the adjustment toward target (max ±0.75).
+
+**Formula:**
+```python
+# Constants
+JARVIS_WEIGHT = 0.55
+OPHIS_WEIGHT = 0.45
+OPHIS_DELTA_CAP = 0.75
+OPHIS_SCALE_FACTOR = 5.0
+
+# 1. Normalize Ophis to 0-10 scale
+ophis_score_norm = msrf_component * OPHIS_SCALE_FACTOR  # [0, 2.0] → [0, 10]
+
+# 2. Compute 55/45 target blend
+jarvis_target_blend = (0.55 * jarvis_before) + (0.45 * ophis_score_norm)
+
+# 3. Delta from Jarvis anchor
+ophis_delta_raw = jarvis_target_blend - jarvis_before
+
+# 4. Bounded cap (safety invariant)
+ophis_delta_applied = clamp(ophis_delta_raw, -0.75, +0.75)
+
+# 5. Final score
+jarvis_rs = clamp(jarvis_before + ophis_delta_applied, 0.0, 10.0)
+```
+
+**Key Semantics:**
+- **Target:** True 55% Jarvis / 45% Ophis blend in `jarvis_target_blend`
+- **Final:** Jarvis is the anchor; system applies bounded move toward target (max ±0.75)
+- **Realized vs Target:** Full 45% Ophis influence only when |delta_raw| < 0.75
+- **Saturation:** `ophis_delta_saturated = (abs(ophis_delta_raw) >= OPHIS_DELTA_CAP)` — uses `>=` not `>`
+
+**v2.2 NEW Output Fields (added, no removals):**
+```python
+{
+    "ophis_score_norm": float,           # Ophis on 0-10 scale (msrf * 5)
+    "jarvis_target_blend": float,        # 55/45 target
+    "ophis_delta_raw": float,            # Before clamping
+    "ophis_delta_applied": float,        # After clamping (same as ophis_delta)
+    "ophis_delta_saturated": bool,       # True when cap hit (>= not >)
+    "jarvis_weight": 0.55,               # For transparency
+    "ophis_weight": 0.45,                # For transparency
+    "jarvis_blend_type": "JARVIS_WEIGHTED_BLEND_CAPPED_DELTA",  # For API output
+    "blend_type": "JARVIS_WEIGHTED_BLEND_CAPPED_DELTA",         # Internal
+}
+```
+
+**Backward Compatibility:** All v2.1 fields retained (`ophis_raw`, `ophis_component`, `ophis_delta`, etc.). No removals.
+
+**MSRF Note:** `ophis_score_norm = msrf_component * 5.0` assumes MSRF is the entire Ophis signal. If additional Ophis components are added later, this normalization must be revisited.
+
+**Version:** `JARVIS_OPHIS_HYBRID_v2.2`
+
+**Guard Tests Added:** 5 new tests in `tests/test_engine4_jarvis_guards.py`:
+1. `test_weighted_blend_math_reconciles` — target == 0.55*jarvis + 0.45*ophis
+2. `test_delta_raw_is_target_minus_jarvis` — delta_raw == target - jarvis_before
+3. `test_delta_applied_is_clamped` — delta_applied in [-0.75, +0.75]
+4. `test_final_equals_before_plus_applied_delta` — jarvis_rs == before + applied
+5. `test_delta_saturation_flag_matches_math` — saturation flag uses `>=` predicate
 
 ---
 
@@ -199,73 +267,106 @@ jarvis_rs = clamp(0, 10, jarvis_rs)
 
 ---
 
-## HYBRID BLEND MODEL (v2.0)
+## HYBRID BLEND MODEL (v2.2)
 
-**Formula:** Jarvis Primary + Bounded Ophis Delta (NOT weighted average)
+**Formula:** Weighted Blend (55/45) Under Bounded Delta Cap
 
 ```python
 # Constants
-JARVIS_BASELINE = 4.5
-OPHIS_NEUTRAL = 5.5       # Center point where delta = 0
-OPHIS_DELTA_CAP = 0.75    # Max adjustment ±0.75
+JARVIS_WEIGHT = 0.55
+OPHIS_WEIGHT = 0.45
+OPHIS_DELTA_CAP = 0.75
+OPHIS_SCALE_FACTOR = 5.0
 JARVIS_MSRF_COMPONENT_CAP = 2.0
 
-# 1. Calculate Jarvis score (unchanged)
+# 1. Calculate Jarvis score (unchanged from v2.1)
 jarvis_score = JARVIS_BASELINE + trigger_contribs + gematria_contrib + goldilocks_contrib
 jarvis_score = clamp(0, 10, jarvis_score)
 
-# 2. Calculate Ophis raw score
+# 2. Normalize Ophis to 0-10 scale
 msrf_component = min(JARVIS_MSRF_COMPONENT_CAP, msrf_score)
-ophis_raw = JARVIS_BASELINE + msrf_component  # Range: [4.5, 6.5]
+ophis_score_norm = msrf_component * OPHIS_SCALE_FACTOR  # [0, 2.0] → [0, 10]
 
-# 3. Convert Ophis to bounded delta
-ophis_delta = ((ophis_raw - OPHIS_NEUTRAL) / (OPHIS_MAX - OPHIS_NEUTRAL)) * OPHIS_DELTA_CAP
-ophis_delta = clamp(-OPHIS_DELTA_CAP, +OPHIS_DELTA_CAP, ophis_delta)
+# 3. Compute 55/45 target blend
+jarvis_target_blend = (JARVIS_WEIGHT * jarvis_score) + (OPHIS_WEIGHT * ophis_score_norm)
 
-# 4. Hybrid = Jarvis + Ophis delta
-jarvis_rs = jarvis_score + ophis_delta
+# 4. Delta from Jarvis anchor
+ophis_delta_raw = jarvis_target_blend - jarvis_score
+
+# 5. Apply bounded cap (safety invariant)
+ophis_delta_applied = clamp(-OPHIS_DELTA_CAP, +OPHIS_DELTA_CAP, ophis_delta_raw)
+
+# 6. Saturation flag (>= not >)
+ophis_delta_saturated = abs(ophis_delta_raw) >= OPHIS_DELTA_CAP
+
+# 7. Final = Jarvis + bounded delta
+jarvis_rs = jarvis_score + ophis_delta_applied
 jarvis_rs = clamp(0.0, 10.0, jarvis_rs)
 ```
 
-**Delta Mapping:**
+**Delta Mapping Examples (v2.2):**
 
-| Ophis Raw | Delta | Effect |
-|-----------|-------|--------|
-| 4.5 (min) | -0.75 | Max penalty |
-| 5.0 | -0.375 | Slight penalty |
-| 5.5 (neutral) | 0.0 | No change |
-| 6.0 | +0.375 | Slight boost |
-| 6.5 (max) | +0.75 | Max boost |
+| jarvis_before | msrf | ophis_norm | target | delta_raw | delta_applied | final |
+|---------------|------|------------|--------|-----------|---------------|-------|
+| 7.0 | 1.0 | 5.0 | 6.1 | -0.9 | -0.75 | 6.25 |
+| 7.0 | 2.0 | 10.0 | 8.35 | +1.35 | +0.75 | 7.75 |
+| 7.0 | 0.0 | 0.0 | 3.85 | -3.15 | -0.75 | 6.25 |
+| 5.0 | 1.1 | 5.5 | 5.225 | +0.225 | +0.225 | 5.225 |
+| 4.5 | 1.0 | 5.0 | 4.725 | +0.225 | +0.225 | 4.725 |
 
-**Hybrid Additional Output Fields:**
+**Hybrid Output Fields (v2.2 — all fields, no removals):**
 
 ```python
 {
-    "blend_type": "JARVIS_PRIMARY_OPHIS_DELTA",
+    # Version and blend type
+    "version": "JARVIS_OPHIS_HYBRID_v2.2",
+    "blend_type": "JARVIS_WEIGHTED_BLEND_CAPPED_DELTA",
+    "jarvis_blend_type": "JARVIS_WEIGHTED_BLEND_CAPPED_DELTA",
+
+    # Jarvis anchor
     "jarvis_score_before_ophis": float,  # Pure Jarvis [0, 10]
-    "ophis_raw": float,                   # Raw Ophis [4.5, 6.5]
-    "ophis_delta": float,                 # Bounded [-0.75, +0.75]
+    "jarvis_component": float,            # Alias
+
+    # v2.0 legacy fields (KEPT for backward compat)
+    "ophis_raw": float,                   # = 4.5 + msrf_component
+    "ophis_delta": float,                 # = ophis_delta_applied
     "ophis_delta_cap": 0.75,
+    "ophis_component": float,             # Alias for ophis_raw
+
+    # v2.2 NEW transparency fields
+    "ophis_score_norm": float,            # Ophis on 0-10 scale (msrf * 5)
+    "jarvis_target_blend": float,         # 55/45 target
+    "ophis_delta_raw": float,             # Before clamping
+    "ophis_delta_applied": float,         # After clamping
+    "ophis_delta_saturated": bool,        # True when |delta_raw| >= 0.75
+    "jarvis_weight": 0.55,
+    "ophis_weight": 0.45,
+
+    # MSRF components
     "msrf_component": float,              # MSRF contribution (capped at 2.0)
     "msrf_status": "IN_JARVIS",
-    "version": "JARVIS_OPHIS_HYBRID_v2.0",
 }
 ```
 
 ---
 
-## INVARIANTS
+## INVARIANTS (v2.2)
 
-1. **Score Range:** `jarvis_rs` always in [0, 10] (clamped)
-2. **Baseline Present:** `jarvis_baseline = 4.5` when inputs present
-3. **Ophis Delta Bounded:** [-0.75, +0.75] (hybrid only)
-4. **MSRF Cap:** 2.0 (hybrid only)
-5. **Version Reflects Implementation:** Savant = "JARVIS_SAVANT_v11.08", Hybrid = "JARVIS_OPHIS_HYBRID_v2.0"
-6. **jarvis_active:** True when inputs present
-7. **Output Schema Stable:** All 11 required fields always returned
-8. **Selector Deterministic:** Invalid JARVIS_IMPL defaults to "savant"
-9. **Ophis Neutral:** When ophis_raw = 5.5, delta = 0 (hybrid only)
-10. **Hybrid is Additive:** `jarvis_rs = jarvis_before + ophis_delta` (NOT weighted average)
+| # | Invariant | Enforced By |
+|---|-----------|-------------|
+| 1 | `jarvis_rs` in [0, 10] | Clamp at output |
+| 2 | `jarvis_baseline` = 4.5 when inputs present | Unchanged |
+| 3 | `ophis_delta_applied` bounded ±0.75 | `OPHIS_DELTA_CAP` clamp |
+| 4 | MSRF cap = 2.0 | `JARVIS_MSRF_COMPONENT_CAP` |
+| 5 | `version` = "JARVIS_OPHIS_HYBRID_v2.2" | Constant |
+| 6 | `jarvis_active` = True when inputs present | Unchanged |
+| 7 | All required output fields present | Schema validation |
+| 8 | `jarvis_before` == savant.jarvis_rs | Shared module (v2.1 fix) |
+| 9 | `ophis_score_norm` in [0, 10] | MSRF cap * 5 |
+| 10 | `jarvis_target_blend` = 0.55*jarvis + 0.45*ophis | Formula check |
+| 11 | `ophis_delta_raw` = target - jarvis_before | Formula check |
+| 12 | `jarvis_rs` = jarvis_before + delta_applied | Formula check |
+| 13 | `ophis_delta_saturated` = |delta_raw| >= 0.75 | Predicate uses >= not > |
 
 ---
 
@@ -275,7 +376,7 @@ jarvis_rs = clamp(0.0, 10.0, jarvis_rs)
 ---
 # JARVIS ENGINE 4 - TRUTH TABLE
 # Generated: Step 1 Wiring Investigation
-# NO BEHAVIOR CHANGES - Documentation Only
+# Updated: v2.2 Weighted Blend (Feb 11, 2026)
 
 wired_implementations:
   primary:
@@ -287,12 +388,15 @@ wired_implementations:
     selected_when: "JARVIS_IMPL=savant (default)"
   alternative:
     name: JarvisOphisHybrid
-    version: "JARVIS_OPHIS_HYBRID_v2.0"
+    version: "JARVIS_OPHIS_HYBRID_v2.2"
     file: core/jarvis_ophis_hybrid.py
     status: AVAILABLE
     selected_when: "JARVIS_IMPL=hybrid"
-    blend_model: "JARVIS_PRIMARY_OPHIS_DELTA"
+    blend_model: "JARVIS_WEIGHTED_BLEND_CAPPED_DELTA"
     ophis_delta_cap: 0.75
+    jarvis_weight: 0.55
+    ophis_weight: 0.45
+    ophis_scale_factor: 5.0
 
 selector:
   env_var: JARVIS_IMPL
@@ -363,26 +467,42 @@ required_output_fields:
   - immortal_detected
   - version
 
-hybrid_additional_fields:
-  - blend_type
-  - jarvis_score_before_ophis
-  - ophis_raw
-  - ophis_delta
-  - ophis_delta_cap
+hybrid_v2_1_fields_kept:  # UNCHANGED (backward compat)
+  - ophis_raw                  # = 4.5 + msrf_component
+  - ophis_component            # Alias for ophis_raw
+  - ophis_delta                # = ophis_delta_applied
+  - ophis_delta_cap            # 0.75
   - msrf_component
-  - msrf_status
+  - jarvis_msrf_component
+  - jarvis_msrf_component_raw
+  - blend_type                 # Internal use
+  - jarvis_score_before_ophis
+  - jarvis_component
+
+hybrid_v2_2_new_fields:       # ADDED in v2.2
+  - ophis_score_norm           # Ophis on 0-10 scale (msrf * 5)
+  - jarvis_target_blend        # 55/45 target
+  - ophis_delta_raw            # Before clamping
+  - ophis_delta_applied        # After clamping
+  - ophis_delta_saturated      # True when cap hit (|delta_raw| >= 0.75)
+  - jarvis_weight              # 0.55
+  - ophis_weight               # 0.45
+  - jarvis_blend_type          # For API output
 
 invariants:
   1_score_range: "[0, 10]"
   2_jarvis_baseline: 4.5
   3_ophis_delta_bounded: "[-0.75, +0.75]"
   4_msrf_cap: 2.0
-  5_version_reflects_impl: true
+  5_version: "JARVIS_OPHIS_HYBRID_v2.2"
   6_jarvis_active_when_inputs: true
   7_output_schema_stable: true
-  8_selector_deterministic: "invalid -> savant"
-  9_ophis_neutral_yields_zero: "ophis_raw=5.5 -> delta=0"
-  10_hybrid_is_additive: "NOT weighted average"
+  8_jarvis_before_equals_savant: "shared module guarantee"
+  9_ophis_score_norm_range: "[0, 10]"
+  10_target_blend_formula: "0.55*jarvis + 0.45*ophis"
+  11_delta_raw_formula: "target - jarvis_before"
+  12_final_formula: "jarvis_before + delta_applied"
+  13_saturation_predicate: "|delta_raw| >= 0.75 (uses >=)"
 
 hard_guard_tests: tests/test_engine4_jarvis_guards.py
 
