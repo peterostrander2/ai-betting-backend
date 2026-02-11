@@ -4147,8 +4147,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         glitch_reasons = []
         _game_date_obj = None  # Initialize here so MSRF can use it even if GLITCH try block fails
 
+        # v20.18: Initialize NOAA request-local proof for semantic audit
+        _noaa_request_proof = None
         try:
-            from esoteric_engine import get_glitch_aggregate, calculate_chrome_resonance
+            from alt_data_sources.noaa import init_noaa_request_proof
+            _noaa_request_proof = init_noaa_request_proof()
+        except ImportError:
+            pass
+
+        try:
+            from esoteric_engine import get_glitch_aggregate, calculate_chrome_resonance, build_esoteric_breakdown_with_provenance
             from player_birth_data import get_player_data as get_player_birth
 
             # Get player birth date for Chrome Resonance (props only)
@@ -5567,6 +5575,48 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         _glitch_signals = glitch_result.get("breakdown", {}) if glitch_result else {}
         _kp_data = _glitch_signals.get("kp_index", {}) if _glitch_signals else {}
 
+        # v20.18 Build full esoteric breakdown with per-signal provenance (Engine 3 semantic audit)
+        try:
+            _esoteric_breakdown_full = build_esoteric_breakdown_with_provenance(
+                glitch_result=glitch_result if glitch_result else None,
+                phase8_result=phase8_full_result if 'phase8_full_result' in locals() else None,
+                numerology_raw=numerology_raw if 'numerology_raw' in locals() else 0.5,
+                numerology_signals=[],
+                player_name=player_name,
+                game_date=_game_date_obj,
+                birth_date_str=_player_birth if '_player_birth' in locals() else None,
+                astro_score=astro_score,
+                fib_score=fib_score,
+                vortex_score=vortex_score,
+                daily_edge_score=daily_edge_score,
+                trap_mod=trap_mod,
+                vortex_boost=vortex_boost,
+                fib_retracement_boost=fib_retracement_boost,
+                altitude_boost=altitude_adj if 'altitude_adj' in locals() else 0.0,
+                surface_boost=surface_adj if 'surface_adj' in locals() else 0.0,
+                sport=sport_upper,
+                home_team=home_team,
+                away_team=away_team,
+                spread=spread,
+                total=total,
+                prop_line=prop_line,
+                venue_city=None,
+                noaa_request_proof=_noaa_request_proof if '_noaa_request_proof' in locals() else None,
+            )
+        except Exception as e:
+            logger.debug("Esoteric breakdown provenance failed, using simple fallback: %s", e)
+            _esoteric_breakdown_full = {
+                "magnitude_input": round(_eso_magnitude, 2),
+                "numerology": round(numerology_score, 2),
+                "astro": round(astro_score, 2),
+                "fibonacci": round(fib_score, 2),
+                "vortex": round(vortex_score, 2),
+                "daily_edge": round(daily_edge_score, 2),
+                "trap_mod": round(trap_mod, 2),
+                "_fallback": True,
+                "_error": str(e)
+            }
+
         return {
             "total_score": round(final_score, 2),
             "final_score": round(final_score, 2),  # Alias for frontend
@@ -5659,16 +5709,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "signal_strength": sharp_strength,        # v20.16: Now equals sharp_strength (legacy compat)
                 "total": round(research_score, 2)
             },
-            # v15.0 Esoteric breakdown (NO gematria, NO jarvis, NO public_fade - clean separation)
-            "esoteric_breakdown": {
-                "magnitude_input": round(_eso_magnitude, 2),
-                "numerology": round(numerology_score, 2),
-                "astro": round(astro_score, 2),
-                "fibonacci": round(fib_score, 2),
-                "vortex": round(vortex_score, 2),
-                "daily_edge": round(daily_edge_score, 2),
-                "trap_mod": round(trap_mod, 2)
-            },
+            # v20.18 Esoteric breakdown with per-signal provenance (Engine 3 semantic audit)
+            "esoteric_breakdown": _esoteric_breakdown_full,
             # v20.16 AI breakdown (Engine 1 transparency - anti-fake-confidence audit)
             "ai_breakdown": {
                 "ai_mode": _ai_telemetry.get("ai_mode", "UNKNOWN"),
@@ -11501,6 +11543,377 @@ async def get_training_status():
         "timestamp_et": now_et.isoformat(),
         "errors": errors if errors else None,
     }
+
+
+# ============================================================================
+# ENGINE 3 ESOTERIC SEMANTIC AUDIT ENDPOINT (v20.18)
+# ============================================================================
+
+@router.get("/debug/esoteric-candidates/{sport}")
+async def debug_esoteric_candidates(
+    sport: str,
+    limit: int = 25,
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    DEBUG ENDPOINT: Esoteric candidates with full semantic audit data.
+
+    Returns ALL candidates (including suppressed below 6.5) with:
+    - Full esoteric_breakdown with per-signal provenance
+    - auth_context (NOAA: auth_type="none", SerpAPI: key_present bool)
+    - request_proof (request-local NOAA call counters)
+    - filtered_out_reason for suppressed candidates
+
+    This endpoint enables semantic truthfulness verification:
+    - Every signal has source_api attribution
+    - Every external API call has call_proof with http_requests_delta
+    - auth_context shows auth_type="none" for NOAA (NOT key_present)
+    - request_proof proves calls happened on THIS request
+
+    Args:
+        sport: Sport code (NBA, NFL, etc.)
+        limit: Maximum candidates to return (default 25)
+
+    Returns:
+        candidates_pre_filter: All scored candidates with full breakdown
+        auth_context: NOAA/SerpAPI auth info
+        request_proof: Request-local NOAA call counters
+        total_candidates: Total count before any filtering
+        passed_filter_count: Count passing 6.5 threshold
+        suppressed_count: Count below 6.5 threshold
+        build_sha: Deployed commit SHA
+
+    Requires:
+        X-API-Key header
+    """
+    sport_lower = sport.lower()
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    sport_upper = sport.upper()
+
+    # Initialize request-local NOAA proof
+    try:
+        from alt_data_sources.noaa import (
+            init_noaa_request_proof,
+            get_noaa_request_proof,
+            get_noaa_auth_context,
+        )
+        noaa_proof = init_noaa_request_proof()
+        noaa_auth = get_noaa_auth_context()
+    except ImportError:
+        noaa_proof = None
+        noaa_auth = {"auth_type": "none", "enabled": False, "base_url_source": "unavailable"}
+
+    # Get SerpAPI auth context
+    try:
+        from esoteric_engine import get_serpapi_auth_context
+        serpapi_auth = get_serpapi_auth_context()
+    except ImportError:
+        serpapi_auth = {"auth_type": "api_key", "key_present": False, "key_source": "none"}
+
+    # Get engines
+    mps = get_master_prediction_system()
+    daily_energy = get_daily_energy()
+    jarvis = get_jarvis_savant()
+    vedic = get_vedic_astro()
+
+    # Get ET date for filtering
+    try:
+        from core.time_et import et_day_bounds
+        start_et, end_et, start_utc, end_utc = et_day_bounds()
+        date_str = start_et.date().isoformat()
+    except Exception:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Fetch candidates
+    candidates_pre_filter = []
+    total_candidates = 0
+    passed_filter_count = 0
+    suppressed_count = 0
+
+    try:
+        # Get props for the sport
+        props_data = await _fetch_props_internal(sport_lower, date_str)
+        props_events = props_data.get("events", [])
+
+        # Get game events
+        games_data = await _fetch_games_internal(sport_lower, date_str)
+        game_events = games_data.get("events", [])
+
+        # Process a sample of props
+        for prop_event in props_events[:min(limit, len(props_events))]:
+            total_candidates += 1
+
+            try:
+                # Extract prop info
+                player_name = prop_event.get("player_name", "Unknown")
+                prop_line = prop_event.get("line", 0)
+                home_team = prop_event.get("home_team", "")
+                away_team = prop_event.get("away_team", "")
+                game_str = f"{away_team}@{home_team}"
+                game_datetime = prop_event.get("commence_time")
+                event_id = prop_event.get("event_id", "")
+
+                # Get player birth data
+                from player_birth_data import get_player_data
+                player_data = get_player_data(player_name)
+                birth_date_str = player_data.get("birth_date") if player_data else None
+
+                # Calculate GLITCH aggregate
+                from esoteric_engine import get_glitch_aggregate, get_phase8_esoteric_signals, build_esoteric_breakdown_with_provenance
+
+                game_date_obj = None
+                if game_datetime:
+                    try:
+                        if isinstance(game_datetime, str):
+                            game_datetime = datetime.fromisoformat(game_datetime.replace('Z', '+00:00'))
+                        game_date_obj = game_datetime.date() if hasattr(game_datetime, 'date') else None
+                    except Exception:
+                        game_date_obj = datetime.now().date()
+                else:
+                    game_date_obj = datetime.now().date()
+
+                # Get GLITCH result
+                glitch_result = get_glitch_aggregate(
+                    birth_date_str=birth_date_str,
+                    game_date=game_date_obj,
+                    game_time=game_datetime if isinstance(game_datetime, datetime) else None,
+                    line_history=None,  # Would need DB access
+                    value_for_benford=None,
+                    primary_value=prop_line
+                )
+
+                # Get Phase 8 result
+                phase8_result = get_phase8_esoteric_signals(
+                    game_datetime=game_datetime if isinstance(game_datetime, datetime) else None,
+                    game_date=game_date_obj,
+                    sport=sport_upper,
+                    home_team=home_team,
+                    away_team=away_team,
+                    pick_type="PROP",
+                    pick_side="Over",
+                )
+
+                # Build esoteric breakdown with provenance
+                esoteric_breakdown = build_esoteric_breakdown_with_provenance(
+                    glitch_result=glitch_result,
+                    phase8_result=phase8_result,
+                    numerology_raw=0.5,
+                    numerology_signals=[],
+                    player_name=player_name,
+                    game_date=game_date_obj,
+                    birth_date_str=birth_date_str,
+                    astro_score=5.0,
+                    fib_score=0,
+                    vortex_score=0,
+                    daily_edge_score=0,
+                    trap_mod=0,
+                    vortex_boost=0,
+                    fib_retracement_boost=0,
+                    altitude_boost=0,
+                    surface_boost=0,
+                    sport=sport_upper,
+                    home_team=home_team,
+                    away_team=away_team,
+                    spread=None,
+                    total=None,
+                    prop_line=prop_line,
+                    venue_city=None,
+                    noaa_request_proof=noaa_proof,
+                )
+
+                # Calculate a sample esoteric score
+                esoteric_score = glitch_result.get("glitch_score_10", 5.0)
+                final_score = 5.0 + esoteric_score * SCORING_WEIGHTS.get("esoteric", 0.20)  # Simplified for demo
+
+                # Determine if passed filter
+                passed_filter = final_score >= SCORING_THRESHOLDS.get("output_minimum", 6.5)
+                if passed_filter:
+                    passed_filter_count += 1
+                else:
+                    suppressed_count += 1
+
+                candidate = {
+                    "pick_id": hashlib.sha256(f"{event_id}|{player_name}|{prop_line}".encode()).hexdigest()[:12],
+                    "player_name": player_name,
+                    "matchup": game_str,
+                    "prop_line": prop_line,
+                    "esoteric_score": round(esoteric_score, 2),
+                    "final_score": round(final_score, 2),
+                    "passed_filter": passed_filter,
+                    "filtered_out_reason": None if passed_filter else "score_below_threshold",
+                    "esoteric_breakdown": esoteric_breakdown,
+                    "esoteric_reasons": glitch_result.get("reasons", []) + phase8_result.get("reasons", []),
+                }
+                candidates_pre_filter.append(candidate)
+
+            except Exception as e:
+                logger.warning("Error processing prop candidate: %s", e)
+                continue
+
+        # Process a sample of games
+        for game_event in game_events[:min(limit - len(candidates_pre_filter), len(game_events))]:
+            if len(candidates_pre_filter) >= limit:
+                break
+
+            total_candidates += 1
+
+            try:
+                home_team = game_event.get("home_team", "")
+                away_team = game_event.get("away_team", "")
+                game_str = f"{away_team}@{home_team}"
+                spread = game_event.get("spread", 0)
+                total = game_event.get("total", 220)
+                game_datetime = game_event.get("commence_time")
+                event_id = game_event.get("id", "")
+
+                game_date_obj = None
+                if game_datetime:
+                    try:
+                        if isinstance(game_datetime, str):
+                            game_datetime = datetime.fromisoformat(game_datetime.replace('Z', '+00:00'))
+                        game_date_obj = game_datetime.date() if hasattr(game_datetime, 'date') else None
+                    except Exception:
+                        game_date_obj = datetime.now().date()
+                else:
+                    game_date_obj = datetime.now().date()
+
+                from esoteric_engine import get_glitch_aggregate, get_phase8_esoteric_signals, build_esoteric_breakdown_with_provenance
+
+                # Get GLITCH result (no birth date for games)
+                glitch_result = get_glitch_aggregate(
+                    birth_date_str=None,
+                    game_date=game_date_obj,
+                    game_time=game_datetime if isinstance(game_datetime, datetime) else None,
+                    line_history=None,
+                    value_for_benford=None,
+                    primary_value=spread
+                )
+
+                # Get Phase 8 result
+                phase8_result = get_phase8_esoteric_signals(
+                    game_datetime=game_datetime if isinstance(game_datetime, datetime) else None,
+                    game_date=game_date_obj,
+                    sport=sport_upper,
+                    home_team=home_team,
+                    away_team=away_team,
+                    pick_type="SPREAD",
+                    pick_side=home_team,
+                )
+
+                # Build esoteric breakdown with provenance
+                esoteric_breakdown = build_esoteric_breakdown_with_provenance(
+                    glitch_result=glitch_result,
+                    phase8_result=phase8_result,
+                    numerology_raw=0.5,
+                    numerology_signals=[],
+                    player_name=None,
+                    game_date=game_date_obj,
+                    birth_date_str=None,
+                    astro_score=5.0,
+                    fib_score=0,
+                    vortex_score=0,
+                    daily_edge_score=0,
+                    trap_mod=0,
+                    vortex_boost=0,
+                    fib_retracement_boost=0,
+                    altitude_boost=0,
+                    surface_boost=0,
+                    sport=sport_upper,
+                    home_team=home_team,
+                    away_team=away_team,
+                    spread=spread,
+                    total=total,
+                    prop_line=None,
+                    venue_city=None,
+                    noaa_request_proof=noaa_proof,
+                )
+
+                esoteric_score = glitch_result.get("glitch_score_10", 5.0)
+                final_score = 5.0 + esoteric_score * SCORING_WEIGHTS.get("esoteric", 0.20)
+
+                passed_filter = final_score >= SCORING_THRESHOLDS.get("output_minimum", 6.5)
+                if passed_filter:
+                    passed_filter_count += 1
+                else:
+                    suppressed_count += 1
+
+                candidate = {
+                    "pick_id": hashlib.sha256(f"{event_id}|{home_team}|{spread}".encode()).hexdigest()[:12],
+                    "player_name": None,
+                    "matchup": game_str,
+                    "spread": spread,
+                    "total": total,
+                    "esoteric_score": round(esoteric_score, 2),
+                    "final_score": round(final_score, 2),
+                    "passed_filter": passed_filter,
+                    "filtered_out_reason": None if passed_filter else "score_below_threshold",
+                    "esoteric_breakdown": esoteric_breakdown,
+                    "esoteric_reasons": glitch_result.get("reasons", []) + phase8_result.get("reasons", []),
+                }
+                candidates_pre_filter.append(candidate)
+
+            except Exception as e:
+                logger.warning("Error processing game candidate: %s", e)
+                continue
+
+    except Exception as e:
+        logger.error("Error fetching candidates for esoteric debug: %s", e)
+
+    # Build request proof from noaa_proof
+    request_proof = noaa_proof.to_dict() if noaa_proof else {
+        "noaa_calls": 0,
+        "noaa_2xx": 0,
+        "noaa_4xx": 0,
+        "noaa_5xx": 0,
+        "noaa_timeouts": 0,
+        "noaa_cache_hits": 0,
+        "noaa_errors": 0,
+    }
+
+    # Build auth context
+    auth_context = {
+        "noaa": noaa_auth,
+        "serpapi": serpapi_auth,
+    }
+
+    # Get build SHA
+    build_sha = BUILD_SHA if 'BUILD_SHA' in globals() else os.getenv("BUILD_SHA", "unknown")
+
+    return {
+        "candidates_pre_filter": candidates_pre_filter,
+        "auth_context": auth_context,
+        "request_proof": request_proof,
+        "total_candidates": total_candidates,
+        "passed_filter_count": passed_filter_count,
+        "suppressed_count": suppressed_count,
+        "sport": sport_upper,
+        "date_et": date_str,
+        "build_sha": build_sha,
+    }
+
+
+async def _fetch_props_internal(sport: str, date_str: str) -> Dict[str, Any]:
+    """Internal helper to fetch props for esoteric debug endpoint."""
+    try:
+        from odds_api import get_props
+        props = await get_props(sport)
+        return {"events": props.get("events", []) if props else []}
+    except Exception as e:
+        logger.warning("Props fetch error: %s", e)
+        return {"events": []}
+
+
+async def _fetch_games_internal(sport: str, date_str: str) -> Dict[str, Any]:
+    """Internal helper to fetch games for esoteric debug endpoint."""
+    try:
+        from odds_api import get_games
+        games = await get_games(sport)
+        return {"events": games if isinstance(games, list) else games.get("events", []) if games else []}
+    except Exception as e:
+        logger.warning("Games fetch error: %s", e)
+        return {"events": []}
 
 
 @router.post("/ml/train-ensemble")
