@@ -1,24 +1,28 @@
 """
-JARVIS-OPHIS HYBRID ENGINE v1.1 "TITAN BLEND"
-=============================================
-Contract Version: 20.1
+JARVIS-OPHIS HYBRID ENGINE v2.0 "JARVIS PRIMARY + OPHIS DELTA"
+==============================================================
+Contract Version: 20.2
 
 Engine 4 in the 4-engine scoring architecture.
-Blend: 53% Ophis / 47% Jarvis
+Blend: Jarvis Primary + Bounded Ophis Delta (NOT weighted average)
+
+Formula:
+    hybrid_score = jarvis_score + ophis_delta
+    where ophis_delta is bounded [-0.75, +0.75]
 
 MSRF is a CORE COMPONENT of this engine (not a post-base boost).
-- Ophis Z-scan produces Z-values from win-date temporal analysis
-- Jarvis scores those Z-values against MSRF sacred number sets
+- Ophis Z-scan produces Z-values from matchup date temporal analysis
+- Win dates are DEFERRED to Phase 2 (currently uses matchup_date only)
 - MSRF contribution is clamped to JARVIS_MSRF_COMPONENT_CAP (2.0)
+- Ophis raw [4.5, 6.5] maps to delta [-0.75, +0.75] centered at 5.5
 
-Output: jarvis_score (0-10) with internal MSRF component
+Output: jarvis_score (0-10) with Jarvis as primary, Ophis as modifier
 Payload fields:
-- jarvis_rs (alias jarvis_score)
-- jarvis_msrf_component_raw
-- jarvis_msrf_component (clamped)
-- msrf_status = "IN_JARVIS"
-- jarvis_triggers_hit
-- jarvis_reasons
+- jarvis_rs (final hybrid score)
+- jarvis_score_before_ophis (pure Jarvis)
+- ophis_raw, ophis_delta, ophis_delta_cap
+- msrf_component, msrf_status = "IN_JARVIS"
+- blend_type = "JARVIS_PRIMARY_OPHIS_DELTA"
 
 CRITICAL: Post-base msrf_boost is ALWAYS 0.0 - MSRF lives ONLY here.
 """
@@ -35,12 +39,17 @@ logger = logging.getLogger(__name__)
 # CONSTANTS
 # =============================================================================
 
-# Blend weights (v1.1 TITAN BLEND)
-OPHIS_WEIGHT = 0.53
-JARVIS_WEIGHT = 0.47
+# v2.0 Delta model constants (NOT weighted average)
+OPHIS_NEUTRAL = 5.5        # Center point where delta = 0
+OPHIS_MIN = 4.5            # Minimum Ophis raw score
+OPHIS_MAX = 6.5            # Maximum Ophis raw score
+OPHIS_DELTA_CAP = 0.75     # Maximum adjustment ±0.75
 
 # MSRF component cap inside Jarvis (prevents MSRF from dominating)
 JARVIS_MSRF_COMPONENT_CAP = 2.0
+
+# Version string
+VERSION = "JARVIS_OPHIS_HYBRID_v2.0"
 
 # Ophis mathematical constants
 OPH_PI = 3.141592653589793
@@ -324,11 +333,18 @@ def calculate_hybrid_jarvis_score(
     sport: str = "NBA",
     matchup_date: Optional[date] = None,
     player_name: Optional[str] = None,
+    total: Optional[float] = None,
+    prop_line: Optional[float] = None,
+    game_str: str = "",
 ) -> Dict[str, Any]:
     """
     Calculate hybrid Jarvis-Ophis score with MSRF integrated.
 
-    Blend: 53% Ophis (MSRF Z-scan) / 47% Jarvis (gematria triggers)
+    v2.0 Blend: Jarvis Primary + Bounded Ophis Delta (NOT weighted average)
+
+    Formula:
+        hybrid_score = jarvis_score + ophis_delta
+        where ophis_delta = clamp((ophis_raw - 5.5) / 1.0 * 0.75, -0.75, +0.75)
 
     This is THE Engine 4 implementation for the 4-engine scoring architecture.
     MSRF contribution is INSIDE this engine, not a post-base boost.
@@ -342,28 +358,40 @@ def calculate_hybrid_jarvis_score(
         sport: Sport code
         matchup_date: Date of the matchup
         player_name: Player name for props (optional)
+        total: Game total (optional)
+        prop_line: Prop line (optional)
+        game_str: Matchup string for gematria (optional)
 
     Returns:
-        Dict with jarvis_rs (0-10), MSRF components, triggers, and full audit trail
+        Dict with jarvis_rs (0-10), Jarvis + Ophis delta components, and full audit trail
     """
     # Handle missing inputs
     if not home_team and not away_team:
         return {
+            # Required output fields (same as savant)
             "jarvis_rs": None,
+            "jarvis_baseline": JARVIS_BASELINE,
+            "jarvis_trigger_contribs": {},
             "jarvis_active": False,
             "jarvis_hits_count": 0,
             "jarvis_triggers_hit": [],
             "jarvis_reasons": [],
             "jarvis_fail_reasons": ["MISSING_TEAMS"],
+            "jarvis_no_trigger_reason": "INPUTS_MISSING",
             "jarvis_inputs_used": {},
             "immortal_detected": False,
-            "version": "1.1-TITAN",
-            "blend_type": "OPHIS_JARVIS_HYBRID",
+            # Version and blend info
+            "version": VERSION,
+            "blend_type": "JARVIS_PRIMARY_OPHIS_DELTA",
             "whisper_tier": "SILENT",
-            "ophis_raw": 0.0,
-            "ophis_normalized": 0.0,
-            "jarvis_boost": 0.0,
-            "jarvis_scaled": 0.0,
+            # v2.0 Delta model transparency fields
+            "jarvis_score_before_ophis": None,
+            "jarvis_component": None,
+            "ophis_raw": None,
+            "ophis_delta": 0.0,
+            "ophis_delta_cap": OPHIS_DELTA_CAP,
+            "ophis_component": None,
+            "msrf_component": 0.0,
             "jarvis_msrf_component": 0.0,
             "jarvis_msrf_component_raw": 0.0,
             "msrf_status": "IN_JARVIS",
@@ -375,7 +403,7 @@ def calculate_hybrid_jarvis_score(
         matchup_date = date.today()
 
     # =========================================================================
-    # OPHIS COMPONENT (53%)
+    # OPHIS COMPONENT (Delta Modifier)
     # =========================================================================
     # Generate Z-values and score against MSRF sets
     z_values = generate_z_values_from_date(matchup_date, home_team, away_team)
@@ -385,25 +413,37 @@ def calculate_hybrid_jarvis_score(
     msrf_component_raw = msrf_result["raw_score"]
     msrf_component = msrf_result["clamped_score"]
 
-    # Ophis base: JARVIS_BASELINE + MSRF component (scaled to 0-10)
+    # Ophis raw: JARVIS_BASELINE + MSRF component (range: [4.5, 6.5])
     ophis_raw = JARVIS_BASELINE + msrf_component
-    ophis_normalized = min(10.0, ophis_raw)
 
     # =========================================================================
-    # JARVIS COMPONENT (47%)
+    # JARVIS COMPONENT (Primary Scorer)
     # =========================================================================
     gematria_result = calculate_jarvis_gematria_score(home_team, away_team, player_name)
     jarvis_boost = gematria_result["total_boost"]
     immortal_detected = gematria_result["immortal_detected"]
 
-    # Jarvis base: JARVIS_BASELINE + trigger boosts
-    jarvis_raw = JARVIS_BASELINE + jarvis_boost
-    jarvis_scaled = min(10.0, jarvis_raw)
+    # Jarvis score: JARVIS_BASELINE + trigger boosts (range: [4.5, 10.0])
+    jarvis_score_before_ophis = JARVIS_BASELINE + jarvis_boost
+    jarvis_score_before_ophis = max(0.0, min(10.0, jarvis_score_before_ophis))
+
+    # Build trigger contributions dict for schema compatibility
+    jarvis_trigger_contribs = {}
+    for trig in gematria_result["triggers_hit"]:
+        jarvis_trigger_contribs[trig["name"]] = trig["boost"]
 
     # =========================================================================
-    # BLEND: 53% Ophis / 47% Jarvis
+    # v2.0 BLEND: Jarvis Primary + Bounded Ophis Delta (NOT weighted average)
     # =========================================================================
-    jarvis_rs = (OPHIS_WEIGHT * ophis_normalized) + (JARVIS_WEIGHT * jarvis_scaled)
+    # Map ophis_raw [4.5, 6.5] to delta [-0.75, +0.75] centered at 5.5
+    # ophis_raw = 5.5 → delta = 0 (neutral)
+    # ophis_raw = 6.5 → delta = +0.75 (max boost)
+    # ophis_raw = 4.5 → delta = -0.75 (max penalty)
+    ophis_delta_unbounded = ((ophis_raw - OPHIS_NEUTRAL) / (OPHIS_MAX - OPHIS_NEUTRAL)) * OPHIS_DELTA_CAP
+    ophis_delta = max(-OPHIS_DELTA_CAP, min(OPHIS_DELTA_CAP, ophis_delta_unbounded))
+
+    # Final hybrid score = Jarvis + bounded delta
+    jarvis_rs = jarvis_score_before_ophis + ophis_delta
     jarvis_rs = max(0.0, min(10.0, jarvis_rs))  # Clamp to 0-10
 
     # =========================================================================
@@ -441,43 +481,50 @@ def calculate_hybrid_jarvis_score(
         whisper_tier = "SILENT"
 
     # =========================================================================
-    # BUILD OUTPUT
+    # BUILD OUTPUT (v2.0 schema with required fields + hybrid additional fields)
     # =========================================================================
     return {
-        # Primary score
+        # Required output fields (same as savant - schema contract)
         "jarvis_rs": round(jarvis_rs, 2),
+        "jarvis_baseline": JARVIS_BASELINE,
+        "jarvis_trigger_contribs": jarvis_trigger_contribs,
         "jarvis_active": True,
         "jarvis_hits_count": len(triggers_hit),
         "jarvis_triggers_hit": triggers_hit[:10],  # Top 10
         "jarvis_reasons": reasons,
         "jarvis_fail_reasons": [],
-
-        # Inputs used
+        "jarvis_no_trigger_reason": None if jarvis_boost > 0 else "NO_TRIGGER_BASELINE",
         "jarvis_inputs_used": {
             "home_team": home_team,
             "away_team": away_team,
             "player_name": player_name,
             "spread": spread,
+            "total": total,
+            "prop_line": prop_line,
             "odds": odds,
             "public_pct": public_pct,
             "sport": sport,
             "matchup_date": matchup_date.isoformat() if matchup_date else None,
+            "game_str": game_str,
         },
-
-        # Version and blend info
-        "version": "1.1-TITAN",
-        "blend_type": "OPHIS_JARVIS_HYBRID",
-        "whisper_tier": whisper_tier,
         "immortal_detected": immortal_detected,
 
-        # Component breakdown
+        # Version and blend info
+        "version": VERSION,
+        "blend_type": "JARVIS_PRIMARY_OPHIS_DELTA",
+        "whisper_tier": whisper_tier,
+
+        # v2.0 Delta model transparency fields (hybrid additional)
+        "jarvis_score_before_ophis": round(jarvis_score_before_ophis, 4),
+        "jarvis_component": round(jarvis_score_before_ophis, 4),  # Alias for clarity
         "ophis_raw": round(ophis_raw, 4),
-        "ophis_normalized": round(ophis_normalized, 4),
-        "jarvis_boost": round(jarvis_boost, 4),
-        "jarvis_scaled": round(jarvis_scaled, 4),
+        "ophis_delta": round(ophis_delta, 4),
+        "ophis_delta_cap": OPHIS_DELTA_CAP,
+        "ophis_component": round(ophis_raw, 4),  # Alias for clarity
 
         # MSRF components (CRITICAL - must be in payload)
-        "jarvis_msrf_component": round(msrf_component, 4),
+        "msrf_component": round(msrf_component, 4),
+        "jarvis_msrf_component": round(msrf_component, 4),  # Alias
         "jarvis_msrf_component_raw": round(msrf_component_raw, 4),
         "msrf_status": "IN_JARVIS",  # MSRF is inside Jarvis, not post-base
 
@@ -496,14 +543,17 @@ def calculate_hybrid_jarvis_score(
 # =============================================================================
 
 __all__ = [
-    # Constants
-    "OPHIS_WEIGHT",
-    "JARVIS_WEIGHT",
+    # Constants (v2.0 delta model)
+    "OPHIS_NEUTRAL",
+    "OPHIS_MIN",
+    "OPHIS_MAX",
+    "OPHIS_DELTA_CAP",
     "JARVIS_MSRF_COMPONENT_CAP",
     "JARVIS_BASELINE",
     "JARVIS_TRIGGERS",
     "MSRF_NORMAL",
     "MSRF_IMPORTANT",
+    "VERSION",
     # Functions
     "calculate_hybrid_jarvis_score",
     "score_msrf_from_z_values",

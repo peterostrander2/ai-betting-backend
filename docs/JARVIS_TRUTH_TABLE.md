@@ -1,15 +1,18 @@
 # ENGINE 4 (JARVIS) - TRUTH TABLE
 
 **Generated:** Step 1 Wiring Investigation (Feb 10, 2026)
-**Constraint:** NO BEHAVIOR CHANGES - Documentation Only
+**Updated:** Step 3 Implementation (Feb 11, 2026)
+**Constraint:** Production selector now available via JARVIS_IMPL env var
 
 ---
 
 ## WIRING SUMMARY
 
 - **Default Jarvis implementation:** `JarvisSavantEngine` v11.08 from `jarvis_savant_engine.py`
-- **Fallback conditions:** If import fails, falls back to string matching against `JARVIS_TRIGGERS` (NOT hybrid)
-- **Hybrid status:** `core/jarvis_ophis_hybrid.py` is DEAD_CODE (only imported in tests/scripts, never in scoring path)
+- **Alternative implementation:** `JarvisOphisHybrid` v2.0 from `core/jarvis_ophis_hybrid.py`
+- **Selector:** `JARVIS_IMPL` env var ("savant" default, "hybrid" available)
+- **Fallback conditions:** Invalid JARVIS_IMPL value defaults to "savant"
+- **Hybrid status:** AVAILABLE (selectable via `JARVIS_IMPL=hybrid`)
 
 ---
 
@@ -35,41 +38,51 @@
 ## IMPLEMENTATION SELECTOR
 
 **File:** `live_data_router.py`
-**Function:** `get_jarvis_savant()`
-**Lines:** 13161-13171
+**Env Var:** `JARVIS_IMPL` (default: "savant", options: "savant" | "hybrid")
+**Functions:** `get_jarvis_impl()`, `get_jarvis_engine()`
 
 ```python
-def get_jarvis_savant():
-    """Lazy load JarvisSavantEngine."""
-    global _jarvis_savant_engine
-    if _jarvis_savant_engine is None:
-        try:
-            from jarvis_savant_engine import get_jarvis_engine
-            _jarvis_savant_engine = get_jarvis_engine()
-            logger.info("JarvisSavantEngine initialized")
-        except ImportError as e:
-            logger.warning("JarvisSavantEngine not available: %s", e)
-    return _jarvis_savant_engine
+JARVIS_IMPL = os.getenv("JARVIS_IMPL", "savant").lower()
+if JARVIS_IMPL not in ("savant", "hybrid"):
+    logger.warning("Invalid JARVIS_IMPL='%s', defaulting to 'savant'", JARVIS_IMPL)
+    JARVIS_IMPL = "savant"
+
+def get_jarvis_impl() -> str:
+    """Get current Jarvis implementation name."""
+    return JARVIS_IMPL
+
+def get_jarvis_engine():
+    """Get Jarvis engine based on JARVIS_IMPL selector."""
+    if JARVIS_IMPL == "hybrid":
+        return get_jarvis_hybrid()  # returns calculate_hybrid_jarvis_score function
+    else:
+        return get_jarvis_savant()  # returns JarvisSavantEngine singleton
 ```
 
 **Selection Logic:**
-1. Try to import `JarvisSavantEngine` from `jarvis_savant_engine.py`
-2. If import succeeds: Use `JarvisSavantEngine` (always succeeds - file exists)
-3. If import fails: Return `None`, scoring uses string fallback (lines 3036-3057)
+1. Read `JARVIS_IMPL` env var at module load
+2. Validate value is "savant" or "hybrid" (invalid defaults to "savant")
+3. `JARVIS_IMPL=savant` → Use `JarvisSavantEngine` (default behavior)
+4. `JARVIS_IMPL=hybrid` → Use `calculate_hybrid_jarvis_score` from `core/jarvis_ophis_hybrid.py`
+
+**Deterministic:** No try/except fallback as primary selection. Selector is observable via `get_jarvis_impl()`.
 
 ---
 
-## DEAD_CODE PROOF: `core/jarvis_ophis_hybrid.py`
+## HYBRID IMPLEMENTATION STATUS
 
-**Grep for `jarvis_ophis_hybrid` in entire codebase:**
+**Status:** AVAILABLE (selectable via `JARVIS_IMPL=hybrid`)
 
-| File | Line | Usage | Scoring Path? |
-|------|------|-------|---------------|
-| `tests/test_reconciliation.py` | 28 | `from core.jarvis_ophis_hybrid import ...` | NO (test file) |
-| `scripts/engine4_jarvis_audit.py` | 47 | `from core.jarvis_ophis_hybrid import ...` | NO (audit script) |
-| `live_data_router.py` | - | **No matches** | N/A |
+**Imports of `jarvis_ophis_hybrid` in codebase:**
 
-**Conclusion:** `jarvis_ophis_hybrid.py` is never imported in `live_data_router.py` or any transitive import in the scoring path. Status: **DEAD_CODE**
+| File | Usage | Scoring Path? |
+|------|-------|---------------|
+| `live_data_router.py` | `get_jarvis_hybrid()` lazy loader | YES (when `JARVIS_IMPL=hybrid`) |
+| `tests/test_engine4_jarvis_guards.py` | Guard tests | NO (test file) |
+| `tests/test_reconciliation.py` | Reconciliation tests | NO (test file) |
+| `scripts/engine4_jarvis_audit.py` | Audit script | NO (script) |
+
+**Hybrid is active when:** `JARVIS_IMPL=hybrid` environment variable is set
 
 ---
 
@@ -150,14 +163,73 @@ jarvis_rs = clamp(0, 10, jarvis_rs)
 
 ---
 
+## HYBRID BLEND MODEL (v2.0)
+
+**Formula:** Jarvis Primary + Bounded Ophis Delta (NOT weighted average)
+
+```python
+# Constants
+JARVIS_BASELINE = 4.5
+OPHIS_NEUTRAL = 5.5       # Center point where delta = 0
+OPHIS_DELTA_CAP = 0.75    # Max adjustment ±0.75
+JARVIS_MSRF_COMPONENT_CAP = 2.0
+
+# 1. Calculate Jarvis score (unchanged)
+jarvis_score = JARVIS_BASELINE + trigger_contribs + gematria_contrib + goldilocks_contrib
+jarvis_score = clamp(0, 10, jarvis_score)
+
+# 2. Calculate Ophis raw score
+msrf_component = min(JARVIS_MSRF_COMPONENT_CAP, msrf_score)
+ophis_raw = JARVIS_BASELINE + msrf_component  # Range: [4.5, 6.5]
+
+# 3. Convert Ophis to bounded delta
+ophis_delta = ((ophis_raw - OPHIS_NEUTRAL) / (OPHIS_MAX - OPHIS_NEUTRAL)) * OPHIS_DELTA_CAP
+ophis_delta = clamp(-OPHIS_DELTA_CAP, +OPHIS_DELTA_CAP, ophis_delta)
+
+# 4. Hybrid = Jarvis + Ophis delta
+jarvis_rs = jarvis_score + ophis_delta
+jarvis_rs = clamp(0.0, 10.0, jarvis_rs)
+```
+
+**Delta Mapping:**
+
+| Ophis Raw | Delta | Effect |
+|-----------|-------|--------|
+| 4.5 (min) | -0.75 | Max penalty |
+| 5.0 | -0.375 | Slight penalty |
+| 5.5 (neutral) | 0.0 | No change |
+| 6.0 | +0.375 | Slight boost |
+| 6.5 (max) | +0.75 | Max boost |
+
+**Hybrid Additional Output Fields:**
+
+```python
+{
+    "blend_type": "JARVIS_PRIMARY_OPHIS_DELTA",
+    "jarvis_score_before_ophis": float,  # Pure Jarvis [0, 10]
+    "ophis_raw": float,                   # Raw Ophis [4.5, 6.5]
+    "ophis_delta": float,                 # Bounded [-0.75, +0.75]
+    "ophis_delta_cap": 0.75,
+    "msrf_component": float,              # MSRF contribution (capped at 2.0)
+    "msrf_status": "IN_JARVIS",
+    "version": "JARVIS_OPHIS_HYBRID_v2.0",
+}
+```
+
+---
+
 ## INVARIANTS
 
-1. **Score Range:** `jarvis_rs` always in [0, 10] (clamped at line 3063)
-2. **No API Calls:** Jarvis engines receive pre-fetched inputs only
-3. **Baseline Present:** 4.5 baseline when inputs present (never 0)
-4. **Output Schema Stable:** All 11 fields always returned
-5. **Stacking Decay:** 0.7^n decay for n-th trigger
-6. **GOLD_STAR Gate:** `jarvis_rs >= 6.5` required for GOLD_STAR tier
+1. **Score Range:** `jarvis_rs` always in [0, 10] (clamped)
+2. **Baseline Present:** `jarvis_baseline = 4.5` when inputs present
+3. **Ophis Delta Bounded:** [-0.75, +0.75] (hybrid only)
+4. **MSRF Cap:** 2.0 (hybrid only)
+5. **Version Reflects Implementation:** Savant = "JARVIS_SAVANT_v11.08", Hybrid = "JARVIS_OPHIS_HYBRID_v2.0"
+6. **jarvis_active:** True when inputs present
+7. **Output Schema Stable:** All 11 required fields always returned
+8. **Selector Deterministic:** Invalid JARVIS_IMPL defaults to "savant"
+9. **Ophis Neutral:** When ophis_raw = 5.5, delta = 0 (hybrid only)
+10. **Hybrid is Additive:** `jarvis_rs = jarvis_before + ophis_delta` (NOT weighted average)
 
 ---
 
@@ -172,25 +244,31 @@ jarvis_rs = clamp(0, 10, jarvis_rs)
 wired_implementations:
   primary:
     name: JarvisSavantEngine
-    version: "11.08"
+    version: "JARVIS_SAVANT_v11.08"
     file: jarvis_savant_engine.py
     class_lines: 282-1055
     status: ACTIVE
+    selected_when: "JARVIS_IMPL=savant (default)"
   alternative:
     name: JarvisOphisHybrid
-    version: "1.1-TITAN"
+    version: "JARVIS_OPHIS_HYBRID_v2.0"
     file: core/jarvis_ophis_hybrid.py
-    status: DEAD_CODE
-    proof:
-      - "live_data_router.py: No matches for jarvis_ophis_hybrid"
-      - "Only imported in tests/test_reconciliation.py:28 (test file)"
-      - "Only imported in scripts/engine4_jarvis_audit.py:47 (audit script)"
+    status: AVAILABLE
+    selected_when: "JARVIS_IMPL=hybrid"
+    blend_model: "JARVIS_PRIMARY_OPHIS_DELTA"
+    ophis_delta_cap: 0.75
 
-selector_location:
+selector:
+  env_var: JARVIS_IMPL
+  default: "savant"
+  valid_values: ["savant", "hybrid"]
+  invalid_handling: "default to savant with warning"
   file: live_data_router.py
-  function: get_jarvis_savant
-  lines: 13161-13171
-  fallback: string_matching_if_import_fails
+  functions:
+    - get_jarvis_impl
+    - get_jarvis_engine
+    - get_jarvis_savant
+    - get_jarvis_hybrid
 
 entrypoint:
   file: live_data_router.py
@@ -247,14 +325,30 @@ required_output_fields:
   - jarvis_no_trigger_reason
   - jarvis_inputs_used
   - immortal_detected
+  - version
+
+hybrid_additional_fields:
+  - blend_type
+  - jarvis_score_before_ophis
+  - ophis_raw
+  - ophis_delta
+  - ophis_delta_cap
+  - msrf_component
+  - msrf_status
 
 invariants:
-  - score_range: "[0, 10]"
-  - no_api_calls_inside_engine: true
-  - baseline_when_inputs_present: 4.5
-  - output_schema_stable: true
-  - stacking_decay: 0.7
-  - gold_star_gate: "jarvis_rs >= 6.5"
+  1_score_range: "[0, 10]"
+  2_jarvis_baseline: 4.5
+  3_ophis_delta_bounded: "[-0.75, +0.75]"
+  4_msrf_cap: 2.0
+  5_version_reflects_impl: true
+  6_jarvis_active_when_inputs: true
+  7_output_schema_stable: true
+  8_selector_deterministic: "invalid -> savant"
+  9_ophis_neutral_yields_zero: "ophis_raw=5.5 -> delta=0"
+  10_hybrid_is_additive: "NOT weighted average"
+
+hard_guard_tests: tests/test_engine4_jarvis_guards.py
 
 trigger_contributions:
   IMMORTAL_2178: 3.5

@@ -3088,6 +3088,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "jarvis_no_trigger_reason": jarvis_no_trigger_reason,
             "jarvis_inputs_used": jarvis_inputs_used,
             "immortal_detected": immortal_detected,
+            # v2.0: Version field for observability
+            "version": "JARVIS_SAVANT_v11.08",
+            "blend_type": "SAVANT",
         }
 
     # ============================================================================
@@ -3990,19 +3993,61 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         pillar_score = sharp_boost + line_boost + public_boost
 
         # =================================================================
-        # v15.1 JARVIS ENGINE (Standalone 0-10) - Called FIRST
+        # v15.1 JARVIS ENGINE (0-10) - Savant or Hybrid based on JARVIS_IMPL
         # =================================================================
-        jarvis_data = calculate_jarvis_engine_score(
-            jarvis_engine=jarvis,
-            game_str=game_str,
-            player_name=player_name,
-            home_team=home_team,
-            away_team=away_team,
-            spread=spread,
-            total=total,
-            prop_line=prop_line,
-            date_et=get_today_date_et() if 'get_today_date_et' in dir() else ""
-        )
+        if JARVIS_IMPL == "hybrid":
+            # v2.0 Hybrid mode: Jarvis Primary + Ophis Delta
+            from datetime import date as _date_type
+            _matchup_date = None
+            try:
+                _date_et_str = get_today_date_et() if 'get_today_date_et' in dir() else ""
+                if _date_et_str:
+                    _matchup_date = _date_type.fromisoformat(_date_et_str)
+            except Exception:
+                _matchup_date = _date_type.today()
+
+            hybrid_fn = get_jarvis_hybrid()
+            if hybrid_fn:
+                jarvis_data = hybrid_fn(
+                    home_team=home_team,
+                    away_team=away_team,
+                    spread=spread,
+                    odds=None,  # Pass if available in future
+                    public_pct=None,  # Pass if available in future
+                    sport=sport,
+                    matchup_date=_matchup_date,
+                    player_name=player_name,
+                    total=total,
+                    prop_line=prop_line,
+                    game_str=game_str,
+                )
+            else:
+                # Fallback to savant if hybrid not available
+                jarvis_data = calculate_jarvis_engine_score(
+                    jarvis_engine=jarvis,
+                    game_str=game_str,
+                    player_name=player_name,
+                    home_team=home_team,
+                    away_team=away_team,
+                    spread=spread,
+                    total=total,
+                    prop_line=prop_line,
+                    date_et=get_today_date_et() if 'get_today_date_et' in dir() else ""
+                )
+        else:
+            # Savant mode (default)
+            jarvis_data = calculate_jarvis_engine_score(
+                jarvis_engine=jarvis,
+                game_str=game_str,
+                player_name=player_name,
+                home_team=home_team,
+                away_team=away_team,
+                spread=spread,
+                total=total,
+                prop_line=prop_line,
+                date_et=get_today_date_et() if 'get_today_date_et' in dir() else ""
+            )
+
         jarvis_rs = jarvis_data["jarvis_rs"]
         jarvis_active = jarvis_data["jarvis_active"]
         jarvis_hits_count = jarvis_data["jarvis_hits_count"]
@@ -4012,6 +4057,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         jarvis_inputs_used = jarvis_data.get("jarvis_inputs_used", {})
         immortal_detected = jarvis_data["immortal_detected"]
         jarvis_triggered = jarvis_hits_count > 0
+        # v2.0: Extract version and blend_type for observability
+        jarvis_version = jarvis_data.get("version", "JARVIS_SAVANT_v11.08")
+        jarvis_blend_type = jarvis_data.get("blend_type", "SAVANT")
 
         # =================================================================
         # v15.2 ESOTERIC SCORE (0-10) - Per-Pick Differentiation
@@ -5750,6 +5798,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "jarvis_fail_reasons": jarvis_fail_reasons,
             "jarvis_no_trigger_reason": jarvis_data.get("jarvis_no_trigger_reason"),
             "jarvis_inputs_used": jarvis_inputs_used,
+            # v2.0: Version and blend type for observability
+            "jarvis_version": jarvis_version,
+            "jarvis_blend_type": jarvis_blend_type,
+            # v2.0 Hybrid additional fields (only present when hybrid)
+            "jarvis_score_before_ophis": jarvis_data.get("jarvis_score_before_ophis"),
+            "ophis_raw": jarvis_data.get("ophis_raw"),
+            "ophis_delta": jarvis_data.get("ophis_delta"),
+            "ophis_delta_cap": jarvis_data.get("ophis_delta_cap"),
+            "msrf_component": jarvis_data.get("msrf_component"),
             # v11.08 TITANIUM fields
             "titanium_triggered": titanium_triggered,
             "titanium_explanation": titanium_explanation,
@@ -13154,21 +13211,60 @@ async def list_correlations():
 
 # Import engines (lazy load to avoid circular imports)
 _jarvis_savant_engine = None
+_jarvis_hybrid_engine = None
 _vedic_astro_engine = None
 _esoteric_learning_loop = None
 
+# =============================================================================
+# JARVIS IMPLEMENTATION SELECTOR (v2.0)
+# =============================================================================
+# Env var: JARVIS_IMPL
+# Values: "savant" (default), "hybrid"
+# Invalid values default to "savant"
+
+JARVIS_IMPL = os.getenv("JARVIS_IMPL", "savant").lower()
+if JARVIS_IMPL not in ("savant", "hybrid"):
+    logger.warning("Invalid JARVIS_IMPL='%s', defaulting to 'savant'", JARVIS_IMPL)
+    JARVIS_IMPL = "savant"
+
+
+def get_jarvis_impl() -> str:
+    """Return the active Jarvis implementation string."""
+    return JARVIS_IMPL
+
 
 def get_jarvis_savant():
-    """Lazy load JarvisSavantEngine."""
+    """Lazy load JarvisSavantEngine (standalone savant mode)."""
     global _jarvis_savant_engine
     if _jarvis_savant_engine is None:
         try:
             from jarvis_savant_engine import get_jarvis_engine
             _jarvis_savant_engine = get_jarvis_engine()
-            logger.info("JarvisSavantEngine initialized")
+            logger.info("JarvisSavantEngine initialized (JARVIS_IMPL=%s)", JARVIS_IMPL)
         except ImportError as e:
             logger.warning("JarvisSavantEngine not available: %s", e)
     return _jarvis_savant_engine
+
+
+def get_jarvis_hybrid():
+    """Lazy load Jarvis-Ophis hybrid callable (hybrid mode)."""
+    global _jarvis_hybrid_engine
+    if _jarvis_hybrid_engine is None:
+        try:
+            from core.jarvis_ophis_hybrid import calculate_hybrid_jarvis_score
+            _jarvis_hybrid_engine = calculate_hybrid_jarvis_score
+            logger.info("JarvisOphisHybrid initialized (JARVIS_IMPL=%s)", JARVIS_IMPL)
+        except ImportError as e:
+            logger.warning("JarvisOphisHybrid not available: %s", e)
+    return _jarvis_hybrid_engine
+
+
+def get_jarvis_engine():
+    """Get the active Jarvis engine based on JARVIS_IMPL selector."""
+    if JARVIS_IMPL == "hybrid":
+        return get_jarvis_hybrid()
+    else:
+        return get_jarvis_savant()
 
 
 def get_vedic_astro():
