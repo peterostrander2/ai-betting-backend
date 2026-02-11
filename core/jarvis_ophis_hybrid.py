@@ -328,7 +328,7 @@ def calculate_jarvis_gematria_score(
 
 
 # =============================================================================
-# v2.1: CALL THE ACTUAL PRODUCTION SAVANT SCORER
+# v2.1: CALL THE SHARED JARVIS SCORE API (NO CIRCULAR IMPORTS)
 # =============================================================================
 
 def _get_savant_jarvis_score(
@@ -342,12 +342,10 @@ def _get_savant_jarvis_score(
     matchup_date: Optional[date] = None,
 ) -> Dict[str, Any]:
     """
-    Get Jarvis score by calling the ACTUAL production savant scorer.
+    Get Jarvis score by calling the shared jarvis_score_api module.
 
-    v2.1 FIX: This calls the real calculate_jarvis_engine_score() from
-    live_data_router.py - the exact same function used when JARVIS_IMPL=savant.
-
-    Uses lazy import to avoid circular dependency.
+    v2.1 FIX: Uses core.jarvis_score_api which has NO circular import risk.
+    This is the SAME scoring function used by live_data_router in savant mode.
     """
     # Build matchup string if not provided
     if not game_str and home_team and away_team:
@@ -359,15 +357,13 @@ def _get_savant_jarvis_score(
     date_et = matchup_date.isoformat() if matchup_date else ""
 
     try:
-        # LAZY IMPORT: Avoid circular dependency with live_data_router
-        # This works because by the time this function is called,
-        # live_data_router is already fully loaded.
-        from live_data_router import calculate_jarvis_engine_score, get_jarvis_savant
+        # Import from shared module - NO CIRCULAR DEPENDENCY
+        from core.jarvis_score_api import calculate_jarvis_engine_score, get_savant_engine
 
         # Get the savant engine singleton
-        jarvis_engine = get_jarvis_savant()
+        jarvis_engine = get_savant_engine()
 
-        # Call the ACTUAL production scorer - same function used in savant mode
+        # Call the ACTUAL production scorer
         result = calculate_jarvis_engine_score(
             jarvis_engine=jarvis_engine,
             game_str=game_str,
@@ -383,8 +379,8 @@ def _get_savant_jarvis_score(
         return result
 
     except ImportError as e:
-        # Fallback if live_data_router can't be imported (shouldn't happen in production)
-        logger.warning("Could not import from live_data_router: %s - using fallback", e)
+        # Fallback if jarvis_score_api can't be imported (shouldn't happen)
+        logger.warning("Could not import jarvis_score_api: %s - using fallback", e)
         return _fallback_jarvis_score(home_team, away_team, player_name, game_str, matchup_date)
 
 
@@ -395,7 +391,7 @@ def _fallback_jarvis_score(
     game_str: str,
     matchup_date: Optional[date],
 ) -> Dict[str, Any]:
-    """Fallback scoring when live_data_router import fails (test/dev environments)."""
+    """Fallback scoring when jarvis_score_api import fails."""
     # Use simplified gematria as last resort
     gematria_result = calculate_jarvis_gematria_score(home_team, away_team, player_name)
     jarvis_boost = gematria_result.get("total_boost", 0.0)

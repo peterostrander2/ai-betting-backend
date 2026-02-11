@@ -414,15 +414,11 @@ def test_hybrid_jarvis_before_matches_real_savant(hybrid_function, sample_inputs
     """
     v2.1 FIX: Hybrid's jarvis_score_before_ophis must match the REAL savant scorer.
 
-    This test imports the ACTUAL production scorer from live_data_router.py
-    (same function used when JARVIS_IMPL=savant) and compares against that.
-    NOT testing against the hybrid's internal function.
+    This test imports the SHARED jarvis_score_api module (same function used
+    by both live_data_router and hybrid). NO CIRCULAR IMPORTS.
     """
-    # Import the REAL production savant scorer
-    try:
-        from live_data_router import calculate_jarvis_engine_score, get_jarvis_savant
-    except ImportError as e:
-        pytest.skip(f"live_data_router import failed (FastAPI not installed?): {e}")
+    # Import from shared module - NO FastAPI dependency
+    from core.jarvis_score_api import calculate_jarvis_engine_score, get_savant_engine
 
     # Build game_str same way hybrid does
     game_str = sample_inputs["game_str"]
@@ -432,7 +428,7 @@ def test_hybrid_jarvis_before_matches_real_savant(hybrid_function, sample_inputs
             game_str = f"{sample_inputs['player_name']} {game_str}"
 
     # Get the savant engine singleton
-    jarvis_engine = get_jarvis_savant()
+    jarvis_engine = get_savant_engine()
 
     # Call the REAL production scorer - same code path as JARVIS_IMPL=savant
     real_savant_result = calculate_jarvis_engine_score(
@@ -489,18 +485,15 @@ def test_hybrid_includes_savant_version(hybrid_function, sample_inputs):
 
 def test_hybrid_triggers_match_real_savant(hybrid_function, sample_inputs):
     """v2.1: Hybrid's trigger_contribs should match the REAL savant scorer."""
-    # Import the REAL production savant scorer
-    try:
-        from live_data_router import calculate_jarvis_engine_score, get_jarvis_savant
-    except ImportError as e:
-        pytest.skip(f"live_data_router import failed (FastAPI not installed?): {e}")
+    # Import from shared module - NO FastAPI dependency, NO circular imports
+    from core.jarvis_score_api import calculate_jarvis_engine_score, get_savant_engine
 
     # Build game_str same way hybrid does
     game_str = sample_inputs["game_str"]
     if not game_str:
         game_str = f"{sample_inputs['away_team']} @ {sample_inputs['home_team']}"
 
-    jarvis_engine = get_jarvis_savant()
+    jarvis_engine = get_savant_engine()
 
     real_savant_result = calculate_jarvis_engine_score(
         jarvis_engine=jarvis_engine,
