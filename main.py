@@ -1296,6 +1296,156 @@ async def debug_research_candidates(sport: str, limit: int = 25):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 
+# ============================================================================
+# DEBUG: ESOTERIC ENGINE SEMANTIC AUDIT (v20.18 - Engine 3)
+# ============================================================================
+
+@app.get("/debug/esoteric-candidates/{sport}", dependencies=[Depends(_require_admin)])
+async def debug_esoteric_candidates(sport: str, limit: int = 25):
+    """
+    Esoteric Engine (Engine 3) Semantic Audit Endpoint.
+
+    Returns candidates with full esoteric_breakdown including:
+    - Per-signal provenance (source_api, source_type, call_proof)
+    - auth_context (NOAA: auth_type="none", SerpAPI: key_present bool)
+    - request_proof (request-local NOAA call counters via contextvars)
+    - filtered_out_reason for suppressed candidates
+
+    v20.18: Implements semantic truthfulness verification for Engine 3.
+    """
+    try:
+        from live_data_router import get_best_bets
+        import os as env_os
+
+        # Initialize request-local NOAA proof
+        noaa_proof = None
+        noaa_auth = {"auth_type": "none", "enabled": False, "base_url_source": "unavailable"}
+        try:
+            from alt_data_sources.noaa import (
+                init_noaa_request_proof,
+                get_noaa_request_proof,
+                get_noaa_auth_context,
+            )
+            noaa_proof = init_noaa_request_proof()
+            noaa_auth = get_noaa_auth_context()
+        except ImportError:
+            pass
+
+        # Get SerpAPI auth context
+        serpapi_auth = {"auth_type": "api_key", "key_present": False, "key_source": "none"}
+        try:
+            serpapi_key = env_os.getenv("SERPAPI_KEY") or env_os.getenv("SERP_API_KEY")
+            serpapi_auth = {
+                "auth_type": "api_key",
+                "key_present": bool(serpapi_key),
+                "key_source": "env:SERPAPI_KEY" if serpapi_key else "none"
+            }
+        except Exception:
+            pass
+
+        # Get best bets with debug mode
+        result = await get_best_bets(sport, debug=True)
+
+        if not isinstance(result, dict):
+            return {"error": "Unexpected result type", "type": str(type(result))}
+
+        # Extract debug telemetry
+        debug_data = result.get("debug", {})
+
+        # Build auth_context (NOAA uses auth_type="none" since it's a public API)
+        auth_context = {
+            "noaa": noaa_auth,
+            "serpapi": serpapi_auth,
+        }
+
+        # Get request-local NOAA proof
+        request_proof = {
+            "noaa_calls": 0,
+            "noaa_2xx": 0,
+            "noaa_4xx": 0,
+            "noaa_5xx": 0,
+            "noaa_cache_hits": 0,
+            "noaa_timeouts": 0,
+        }
+        if noaa_proof:
+            try:
+                proof_dict = noaa_proof.to_dict()
+                request_proof = {
+                    "noaa_calls": proof_dict.get("calls", 0),
+                    "noaa_2xx": proof_dict.get("2xx", 0),
+                    "noaa_4xx": proof_dict.get("4xx", 0),
+                    "noaa_5xx": proof_dict.get("5xx", 0),
+                    "noaa_cache_hits": proof_dict.get("cache_hits", 0),
+                    "noaa_timeouts": proof_dict.get("timeouts", 0),
+                }
+            except Exception:
+                pass
+
+        # Collect candidates with esoteric breakdown
+        candidates_pre_filter = []
+
+        # Get suppressed candidates (below 6.5 threshold)
+        suppressed = debug_data.get("suppressed_candidates", [])
+        for pick in suppressed[:limit]:
+            candidates_pre_filter.append({
+                "pick_id": pick.get("pick_id", "unknown"),
+                "final_score": pick.get("final_score", 0),
+                "esoteric_score": pick.get("esoteric_score", 0),
+                "passed_filter": False,
+                "filtered_out_reason": pick.get("filtered_out_reason", "score_below_threshold"),
+                "esoteric_breakdown": pick.get("esoteric_breakdown", {}),
+                "esoteric_reasons": pick.get("esoteric_reasons", []),
+                "description": pick.get("description", ""),
+            })
+
+        # Add passed candidates (props + games)
+        props = result.get("props", {})
+        props_picks = props.get("picks", []) if isinstance(props, dict) else []
+        for pick in props_picks[:limit - len(candidates_pre_filter)]:
+            candidates_pre_filter.append({
+                "pick_id": pick.get("pick_id", pick.get("id", "unknown")),
+                "final_score": pick.get("final_score", 0),
+                "esoteric_score": pick.get("esoteric_score", 0),
+                "passed_filter": True,
+                "filtered_out_reason": None,
+                "esoteric_breakdown": pick.get("esoteric_breakdown", {}),
+                "esoteric_reasons": pick.get("esoteric_reasons", []),
+                "description": pick.get("description", ""),
+            })
+
+        game_picks = result.get("game_picks", {})
+        game_picks_list = game_picks.get("picks", []) if isinstance(game_picks, dict) else []
+        for pick in game_picks_list[:limit - len(candidates_pre_filter)]:
+            candidates_pre_filter.append({
+                "pick_id": pick.get("pick_id", pick.get("id", "unknown")),
+                "final_score": pick.get("final_score", 0),
+                "esoteric_score": pick.get("esoteric_score", 0),
+                "passed_filter": True,
+                "filtered_out_reason": None,
+                "esoteric_breakdown": pick.get("esoteric_breakdown", {}),
+                "esoteric_reasons": pick.get("esoteric_reasons", []),
+                "description": pick.get("description", ""),
+            })
+
+        # Get build SHA
+        build_sha = env_os.getenv("RAILWAY_GIT_COMMIT_SHA", "unknown")[:8]
+
+        return {
+            "candidates_pre_filter": candidates_pre_filter,
+            "auth_context": auth_context,
+            "request_proof": request_proof,
+            "total_candidates": len(candidates_pre_filter) + debug_data.get("filtered_below_6_5_total", 0),
+            "passed_filter_count": sum(1 for c in candidates_pre_filter if c.get("passed_filter")),
+            "suppressed_count": sum(1 for c in candidates_pre_filter if not c.get("passed_filter")),
+            "sport": sport.upper(),
+            "limit": limit,
+            "build_sha": build_sha,
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
 @app.get("/ops/cache-status", dependencies=[Depends(_require_admin)])
 async def ops_cache_status():
     """Per-sport cache status for best-bets pre-warm verification."""
