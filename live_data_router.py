@@ -4147,11 +4147,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         glitch_reasons = []
         _game_date_obj = None  # Initialize here so MSRF can use it even if GLITCH try block fails
 
-        # v20.18: Initialize NOAA request-local proof for semantic audit
+        # v20.18: Get or initialize NOAA request-local proof for semantic audit
+        # Check if a proof already exists (e.g., from debug endpoint) before creating new one
         _noaa_request_proof = None
         try:
-            from alt_data_sources.noaa import init_noaa_request_proof
-            _noaa_request_proof = init_noaa_request_proof()
+            from alt_data_sources.noaa import init_noaa_request_proof, get_noaa_request_proof
+            _noaa_request_proof = get_noaa_request_proof()
+            if _noaa_request_proof is None:
+                _noaa_request_proof = init_noaa_request_proof()
         except ImportError:
             pass
 
