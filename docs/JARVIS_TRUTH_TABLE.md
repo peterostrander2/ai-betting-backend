@@ -8,18 +8,22 @@
 
 ## v2.1 FIX (Feb 11, 2026)
 
-**Critical A/B Bug Fixed:** Hybrid's `jarvis_score_before_ophis` now uses the SAVANT engine's scoring logic.
+**Critical A/B Bug Fixed:** Hybrid's `jarvis_score_before_ophis` now comes from the ACTUAL production savant scorer.
 
-**Problem:** Hybrid v2.0 used a simplified `calculate_jarvis_gematria_score()` that was missing:
-- REDUCTION triggers (master number match)
-- POWER_NUMBER triggers (11, 22, 44, 55, 66, 77, 88, 99)
-- TESLA_REDUCTION triggers (3, 6, 9 digit sum)
-- Goldilocks Zone (spread 4.0-9.0)
-- Stacking decay (0.7^n)
+**Problem:** Hybrid v2.0 used its own simplified `calculate_jarvis_gematria_score()` which didn't match production savant scoring. This caused A/B comparison failures (e.g., Austin Peay vs Queens: Savant=7.35, Hybrid=5.25).
 
-**Solution:** Hybrid now calls `_calculate_savant_jarvis_score()` which uses the exact same `JarvisSavantEngine` methods and additive formula as the production savant implementation.
+**Solution:** Hybrid now calls `_get_savant_jarvis_score()` which:
+1. **Lazily imports** `calculate_jarvis_engine_score` and `get_jarvis_savant` from `live_data_router.py`
+2. **Calls the EXACT same function** used when `JARVIS_IMPL=savant`
+3. **Returns the real production result**, not a re-implementation
 
-**Invariant Added:** When `ophis_delta=0`, `hybrid.jarvis_score_before_ophis == savant.jarvis_rs`
+**Why This Matters:** If savant changes its internal constants, stacking logic, or adds new contributions, hybrid will automatically pick up those changes. No more drift.
+
+**Invariant Added:** `hybrid.jarvis_score_before_ophis == savant.jarvis_rs` (for same inputs)
+
+**Test:** `test_hybrid_jarvis_before_matches_real_savant` compares against the REAL `live_data_router.calculate_jarvis_engine_score()`, not against hybrid's internal functions.
+
+**Fallback:** If `live_data_router` can't be imported (test/dev without FastAPI), uses simplified gematria and returns `version: "JARVIS_FALLBACK_v1.0"`.
 
 **Version:** `JARVIS_OPHIS_HYBRID_v2.1`
 

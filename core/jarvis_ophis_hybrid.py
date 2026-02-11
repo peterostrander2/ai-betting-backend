@@ -103,27 +103,8 @@ JARVIS_TRIGGERS = {
     138: {"name": "PLASMA CYCLE", "boost": 1.5, "tier": "MEDIUM"},
 }
 
-# Jarvis baseline
+# Jarvis baseline (used by fallback and for ophis_raw calculation)
 JARVIS_BASELINE = 4.5
-
-# v2.1: TRIGGER_CONTRIBUTIONS - MUST match live_data_router.py exactly!
-TRIGGER_CONTRIBUTIONS = {
-    2178: 3.5,   # IMMORTAL - highest
-    201: 2.5,    # ORDER - high
-    33: 2.0,     # MASTER - Gold-Star eligible
-    93: 2.0,     # WILL - Gold-Star eligible
-    322: 2.0,    # SOCIETY - Gold-Star eligible
-    666: 1.5,    # BEAST - medium
-    888: 1.5,    # JESUS - medium
-    369: 1.5,    # TESLA KEY - medium
-}
-POWER_NUMBER_CONTRIB = 0.8
-TESLA_REDUCTION_CONTRIB = 0.5
-REDUCTION_MATCH_CONTRIB = 0.5
-GEMATRIA_STRONG_CONTRIB = 1.5
-GEMATRIA_MODERATE_CONTRIB = 0.8
-GOLDILOCKS_CONTRIB = 0.5
-STACKING_DECAY = 0.7  # Each additional trigger contributes 70% of previous
 
 # Simple gematria tables
 SIMPLE_GEMATRIA = {chr(i): i - 96 for i in range(97, 123)}  # a=1, b=2, etc.
@@ -347,10 +328,10 @@ def calculate_jarvis_gematria_score(
 
 
 # =============================================================================
-# v2.1: SAVANT ENGINE SCORING (SAME AS live_data_router.py)
+# v2.1: CALL THE ACTUAL PRODUCTION SAVANT SCORER
 # =============================================================================
 
-def _calculate_savant_jarvis_score(
+def _get_savant_jarvis_score(
     home_team: str,
     away_team: str,
     player_name: Optional[str] = None,
@@ -361,171 +342,86 @@ def _calculate_savant_jarvis_score(
     matchup_date: Optional[date] = None,
 ) -> Dict[str, Any]:
     """
-    Calculate Jarvis score using the SAME logic as savant engine.
+    Get Jarvis score by calling the ACTUAL production savant scorer.
 
-    v2.1 FIX: This ensures hybrid's jarvis_before matches savant's jarvis_rs.
+    v2.1 FIX: This calls the real calculate_jarvis_engine_score() from
+    live_data_router.py - the exact same function used when JARVIS_IMPL=savant.
 
-    Uses lazy import to avoid circular dependency with live_data_router.py.
+    Uses lazy import to avoid circular dependency.
     """
-    # Lazy import savant engine to avoid circular dependency
-    try:
-        from jarvis_savant_engine import get_jarvis_engine
-        jarvis_engine = get_jarvis_engine()
-    except ImportError:
-        jarvis_engine = None
-        logger.warning("JarvisSavantEngine not available, falling back to simplified scoring")
-
     # Build matchup string if not provided
     if not game_str and home_team and away_team:
         game_str = f"{away_team} @ {home_team}"
         if player_name:
             game_str = f"{player_name} {game_str}"
 
-    # Track inputs used
-    jarvis_inputs_used = {
-        "matchup_str": game_str if game_str else None,
-        "date_et": matchup_date.isoformat() if matchup_date else None,
-        "spread": spread if spread != 0 else None,
-        "total": total if total != 0 else None,
-        "player_line": prop_line if prop_line != 0 else None,
-        "home_team": home_team if home_team else None,
-        "away_team": away_team if away_team else None,
-        "player_name": player_name if player_name else None
-    }
+    # Build date_et string
+    date_et = matchup_date.isoformat() if matchup_date else ""
 
-    # Check if critical inputs are missing
-    inputs_missing = not game_str or (not home_team and not away_team)
+    try:
+        # LAZY IMPORT: Avoid circular dependency with live_data_router
+        # This works because by the time this function is called,
+        # live_data_router is already fully loaded.
+        from live_data_router import calculate_jarvis_engine_score, get_jarvis_savant
 
-    if inputs_missing:
-        return {
-            "jarvis_rs": None,
-            "jarvis_baseline": None,
-            "jarvis_trigger_contribs": {},
-            "jarvis_active": False,
-            "jarvis_hits_count": 0,
-            "jarvis_triggers_hit": [],
-            "jarvis_reasons": ["Inputs missing - cannot run"],
-            "jarvis_fail_reasons": ["Missing critical inputs (matchup_str or teams)"],
-            "jarvis_no_trigger_reason": "INPUTS_MISSING",
-            "jarvis_inputs_used": jarvis_inputs_used,
-            "immortal_detected": False,
-            "version": "JARVIS_SAVANT_v11.08",
-            "blend_type": "SAVANT",
-        }
+        # Get the savant engine singleton
+        jarvis_engine = get_jarvis_savant()
 
-    # Initialize scoring
-    jarvis_triggers_hit = []
-    jarvis_trigger_contribs = {}
-    jarvis_fail_reasons = []
-    jarvis_no_trigger_reason = None
-    immortal_detected = False
-    total_trigger_contrib = 0.0
-    gematria_contrib = 0.0
-    goldilocks_contrib = 0.0
-    trigger_count = 0
-
-    if jarvis_engine:
-        # 1. Sacred Triggers - ADDITIVE contributions (SAME as live_data_router.py)
-        trigger_result = jarvis_engine.check_jarvis_trigger(game_str)
-        sorted_triggers = sorted(
-            trigger_result.get("triggers_hit", []),
-            key=lambda t: TRIGGER_CONTRIBUTIONS.get(t["number"], 0.5),
-            reverse=True
+        # Call the ACTUAL production scorer - same function used in savant mode
+        result = calculate_jarvis_engine_score(
+            jarvis_engine=jarvis_engine,
+            game_str=game_str,
+            player_name=player_name or "",
+            home_team=home_team,
+            away_team=away_team,
+            spread=spread,
+            total=total,
+            prop_line=prop_line,
+            date_et=date_et,
         )
 
-        for i, trig in enumerate(sorted_triggers):
-            trigger_num = trig["number"]
-            match_type = trig.get("match_type", "DIRECT")
+        return result
 
-            # Get base contribution
-            if trigger_num in TRIGGER_CONTRIBUTIONS:
-                base_contrib = TRIGGER_CONTRIBUTIONS[trigger_num]
-            elif match_type == "POWER_NUMBER":
-                base_contrib = POWER_NUMBER_CONTRIB
-            elif match_type == "TESLA_REDUCTION":
-                base_contrib = TESLA_REDUCTION_CONTRIB
-            elif match_type == "REDUCTION":
-                base_contrib = REDUCTION_MATCH_CONTRIB
-            else:
-                base_contrib = 0.5  # Default for unknown triggers
+    except ImportError as e:
+        # Fallback if live_data_router can't be imported (shouldn't happen in production)
+        logger.warning("Could not import from live_data_router: %s - using fallback", e)
+        return _fallback_jarvis_score(home_team, away_team, player_name, game_str, matchup_date)
 
-            # Apply stacking decay (70% for each subsequent trigger)
-            decay_factor = STACKING_DECAY ** i
-            actual_contrib = base_contrib * decay_factor
 
-            jarvis_triggers_hit.append({
-                "number": trigger_num,
-                "name": trig["name"],
-                "match_type": match_type,
-                "base_contrib": round(base_contrib, 2),
-                "actual_contrib": round(actual_contrib, 2),
-                "decay_factor": round(decay_factor, 2)
-            })
-            jarvis_trigger_contribs[trig["name"]] = round(actual_contrib, 2)
-            total_trigger_contrib += actual_contrib
-            trigger_count += 1
-
-            if trigger_num == 2178:
-                immortal_detected = True
-
-        # 2. Gematria Signal - ADDITIVE contribution
-        if player_name and home_team:
-            gematria = jarvis_engine.calculate_gematria_signal(player_name, home_team, away_team or "")
-            signal_strength = gematria.get("signal_strength", 0)
-            if signal_strength > 0.7:
-                gematria_contrib = GEMATRIA_STRONG_CONTRIB
-                jarvis_trigger_contribs["gematria_strong"] = gematria_contrib
-            elif signal_strength > 0.4:
-                gematria_contrib = GEMATRIA_MODERATE_CONTRIB
-                jarvis_trigger_contribs["gematria_moderate"] = gematria_contrib
-
-        # 3. Mid-Spread Goldilocks - ADDITIVE contribution
-        mid_spread = jarvis_engine.calculate_mid_spread_signal(spread)
-        if mid_spread.get("signal") == "GOLDILOCKS":
-            goldilocks_contrib = GOLDILOCKS_CONTRIB
-            jarvis_trigger_contribs["goldilocks_zone"] = goldilocks_contrib
-
-    else:
-        # Fallback: use simplified gematria (when savant engine unavailable)
-        fallback_result = calculate_jarvis_gematria_score(home_team, away_team, player_name)
-        total_trigger_contrib = fallback_result.get("total_boost", 0.0)
-        immortal_detected = fallback_result.get("immortal_detected", False)
-        for trig in fallback_result.get("triggers_hit", []):
-            jarvis_triggers_hit.append(trig)
-            jarvis_trigger_contribs[trig["name"]] = trig["boost"]
-
-    # Calculate final jarvis_rs = baseline + all contributions
-    jarvis_rs = JARVIS_BASELINE + total_trigger_contrib + gematria_contrib + goldilocks_contrib
-
-    # Cap at 0-10 range
+def _fallback_jarvis_score(
+    home_team: str,
+    away_team: str,
+    player_name: Optional[str],
+    game_str: str,
+    matchup_date: Optional[date],
+) -> Dict[str, Any]:
+    """Fallback scoring when live_data_router import fails (test/dev environments)."""
+    # Use simplified gematria as last resort
+    gematria_result = calculate_jarvis_gematria_score(home_team, away_team, player_name)
+    jarvis_boost = gematria_result.get("total_boost", 0.0)
+    jarvis_rs = JARVIS_BASELINE + jarvis_boost
     jarvis_rs = max(0.0, min(10.0, jarvis_rs))
-
-    # Determine jarvis_active and build reasons
-    jarvis_hits_count = len(jarvis_triggers_hit)
-    has_any_contrib = total_trigger_contrib > 0 or gematria_contrib > 0 or goldilocks_contrib > 0
-
-    if has_any_contrib:
-        jarvis_reasons = list(jarvis_trigger_contribs.keys())
-        jarvis_no_trigger_reason = None
-    else:
-        jarvis_reasons = [f"Baseline {JARVIS_BASELINE} (no triggers)"]
-        jarvis_no_trigger_reason = "NO_TRIGGER_BASELINE"
-        jarvis_fail_reasons.append(f"No triggers fired - baseline {JARVIS_BASELINE}")
 
     return {
         "jarvis_rs": round(jarvis_rs, 2),
         "jarvis_baseline": JARVIS_BASELINE,
-        "jarvis_trigger_contribs": jarvis_trigger_contribs,
+        "jarvis_trigger_contribs": {t["name"]: t["boost"] for t in gematria_result.get("triggers_hit", [])},
         "jarvis_active": True,
-        "jarvis_hits_count": jarvis_hits_count,
-        "jarvis_triggers_hit": jarvis_triggers_hit,
-        "jarvis_reasons": jarvis_reasons,
-        "jarvis_fail_reasons": jarvis_fail_reasons,
-        "jarvis_no_trigger_reason": jarvis_no_trigger_reason,
-        "jarvis_inputs_used": jarvis_inputs_used,
-        "immortal_detected": immortal_detected,
-        "version": "JARVIS_SAVANT_v11.08",
-        "blend_type": "SAVANT",
+        "jarvis_hits_count": len(gematria_result.get("triggers_hit", [])),
+        "jarvis_triggers_hit": gematria_result.get("triggers_hit", []),
+        "jarvis_reasons": [t["name"] for t in gematria_result.get("triggers_hit", [])] or [f"Baseline {JARVIS_BASELINE} (no triggers)"],
+        "jarvis_fail_reasons": [] if jarvis_boost > 0 else [f"No triggers fired - baseline {JARVIS_BASELINE}"],
+        "jarvis_no_trigger_reason": None if jarvis_boost > 0 else "NO_TRIGGER_BASELINE",
+        "jarvis_inputs_used": {
+            "matchup_str": game_str,
+            "date_et": matchup_date.isoformat() if matchup_date else None,
+            "home_team": home_team,
+            "away_team": away_team,
+            "player_name": player_name,
+        },
+        "immortal_detected": gematria_result.get("immortal_detected", False),
+        "version": "JARVIS_FALLBACK_v1.0",
+        "blend_type": "FALLBACK",
     }
 
 
@@ -626,11 +522,12 @@ def calculate_hybrid_jarvis_score(
     ophis_raw = JARVIS_BASELINE + msrf_component
 
     # =========================================================================
-    # JARVIS COMPONENT (Primary Scorer) - v2.1: Uses SAVANT engine for base
+    # JARVIS COMPONENT (Primary Scorer) - v2.1: Calls ACTUAL production savant
     # =========================================================================
-    # v2.1 FIX: Call savant scoring to get the TRUE jarvis_score_before_ophis
-    # This ensures hybrid's base matches what savant would produce.
-    savant_result = _calculate_savant_jarvis_score(
+    # v2.1 FIX: Call the REAL production savant scorer from live_data_router.py
+    # This is the exact same function used when JARVIS_IMPL=savant.
+    # Guarantees: hybrid.jarvis_before == savant.jarvis_rs for same inputs.
+    savant_result = _get_savant_jarvis_score(
         home_team=home_team,
         away_team=away_team,
         player_name=player_name,
