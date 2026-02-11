@@ -1370,13 +1370,14 @@ async def debug_esoteric_candidates(sport: str, limit: int = 25):
         if noaa_proof:
             try:
                 proof_dict = noaa_proof.to_dict()
+                # Keys in to_dict() are prefixed with "noaa_" - use correct keys
                 request_proof = {
-                    "noaa_calls": proof_dict.get("calls", 0),
-                    "noaa_2xx": proof_dict.get("2xx", 0),
-                    "noaa_4xx": proof_dict.get("4xx", 0),
-                    "noaa_5xx": proof_dict.get("5xx", 0),
-                    "noaa_cache_hits": proof_dict.get("cache_hits", 0),
-                    "noaa_timeouts": proof_dict.get("timeouts", 0),
+                    "noaa_calls": proof_dict.get("noaa_calls", 0),
+                    "noaa_2xx": proof_dict.get("noaa_2xx", 0),
+                    "noaa_4xx": proof_dict.get("noaa_4xx", 0),
+                    "noaa_5xx": proof_dict.get("noaa_5xx", 0),
+                    "noaa_cache_hits": proof_dict.get("noaa_cache_hits", 0),
+                    "noaa_timeouts": proof_dict.get("noaa_timeouts", 0),
                 }
             except Exception:
                 pass
