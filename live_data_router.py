@@ -4057,7 +4057,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         jarvis_inputs_used = jarvis_data.get("jarvis_inputs_used", {})
         immortal_detected = jarvis_data["immortal_detected"]
         jarvis_triggered = jarvis_hits_count > 0
-        # v2.0: Extract version and blend_type for observability
+        # v2.0: Extract version, blend_type, and impl for observability
+        jarvis_impl = get_jarvis_impl()  # "savant" or "hybrid"
         jarvis_version = jarvis_data.get("version", "JARVIS_SAVANT_v11.08")
         jarvis_blend_type = jarvis_data.get("blend_type", "SAVANT")
 
@@ -5798,7 +5799,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "jarvis_fail_reasons": jarvis_fail_reasons,
             "jarvis_no_trigger_reason": jarvis_data.get("jarvis_no_trigger_reason"),
             "jarvis_inputs_used": jarvis_inputs_used,
-            # v2.0: Version and blend type for observability
+            # v2.0: Version, impl, and blend type for observability
+            "jarvis_impl": jarvis_impl,  # "savant" or "hybrid"
             "jarvis_version": jarvis_version,
             "jarvis_blend_type": jarvis_blend_type,
             # v2.0 Hybrid additional fields (only present when hybrid)
@@ -9992,9 +9994,38 @@ async def debug_integrations(
         )
 
         if quick:
-            return get_integrations_summary()
+            result = get_integrations_summary()
         else:
-            return await get_all_integrations_status()
+            result = await get_all_integrations_status()
+
+        # v2.0: Add Jarvis runtime proof section
+        jarvis_impl = get_jarvis_impl()
+        jarvis_savant_loaded = False
+        jarvis_hybrid_loaded = False
+
+        try:
+            from jarvis_savant_engine import get_jarvis_engine as _get_savant
+            jarvis_savant_loaded = True
+        except ImportError:
+            pass
+
+        try:
+            from core.jarvis_ophis_hybrid import calculate_hybrid_jarvis_score as _get_hybrid
+            jarvis_hybrid_loaded = True
+        except ImportError:
+            pass
+
+        result["jarvis_runtime"] = {
+            "jarvis_impl": jarvis_impl,
+            "selected_by": "JARVIS_IMPL env var",
+            "savant_module_loaded": jarvis_savant_loaded,
+            "hybrid_module_loaded": jarvis_hybrid_loaded,
+            "active_engine": "jarvis_savant_engine" if jarvis_impl == "savant" else "core/jarvis_ophis_hybrid",
+            "version_expected": "JARVIS_SAVANT_v11.08" if jarvis_impl == "savant" else "JARVIS_OPHIS_HYBRID_v2.0",
+            "fallback_used": jarvis_impl == "savant" and not jarvis_savant_loaded,
+        }
+
+        return result
 
     except ImportError as e:
         return {
