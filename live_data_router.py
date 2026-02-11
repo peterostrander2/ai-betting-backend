@@ -7965,14 +7965,17 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "contradiction_blocked_props": contradiction_debug["props_dropped"],
             "contradiction_blocked_games": contradiction_debug["games_dropped"],
             "contradiction_blocked_total": contradiction_debug["total_dropped"],
-            # v20.16.5: Suppressed candidates with research_breakdown for audit
+            # v20.18: Suppressed candidates with full breakdown for semantic audit
             # These are picks that failed the 6.5 threshold
             "suppressed_candidates": [
                 {
                     "pick_id": p.get("pick_id", p.get("id", "unknown")),
                     "final_score": round(p.get("total_score", p.get("final_score", 0)), 2),
+                    "esoteric_score": round(p.get("esoteric_score", 0), 2),
                     "filtered_out_reason": "score_below_threshold",
                     "research_breakdown": p.get("research_breakdown", {}),
+                    "esoteric_breakdown": p.get("esoteric_breakdown", {}),
+                    "esoteric_reasons": p.get("esoteric_reasons", []),
                     "description": p.get("description", ""),
                 }
                 for p in (_all_prop_candidates + _all_game_candidates)
