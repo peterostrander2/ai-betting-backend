@@ -133,11 +133,50 @@ def _get_serpapi_key() -> Optional[str]:
     return os.getenv("SERPAPI_KEY") or os.getenv("SERP_API_KEY")
 
 
+def _search_twitter_direct(query: str, num_results: int = 20) -> List[Dict[str, Any]]:
+    """
+    Search Twitter/X via direct Twitter API v2.
+
+    Preferred over SerpAPI to avoid quota burn.
+    Returns results in same format as _search_twitter_via_serp for compatibility.
+    """
+    try:
+        from alt_data_sources.twitter import search_tweets, TWITTER_ENABLED
+        if not TWITTER_ENABLED:
+            return []
+
+        result = search_tweets(query, max_results=num_results, include_metrics=True)
+        if result.get("status") != "SUCCESS":
+            return []
+
+        # Convert to same format as SerpAPI results
+        converted = []
+        for tweet in result.get("tweets", []):
+            converted.append({
+                "title": tweet.get("text", "")[:100],
+                "snippet": tweet.get("text", ""),
+                "link": f"https://twitter.com/i/status/{tweet.get('id', '')}",
+                "source": "twitter_api_direct",
+                "engagement": tweet.get("engagement", 0),
+                "metrics": tweet.get("metrics", {}),
+            })
+        logger.info("Twitter direct search: %d results for '%s'", len(converted), query[:30])
+        return converted
+
+    except ImportError:
+        logger.debug("Twitter direct module not available")
+        return []
+    except Exception as e:
+        logger.warning("Twitter direct search failed: %s", e)
+        return []
+
+
 def _search_twitter_via_serp(query: str, num_results: int = 20) -> List[Dict[str, Any]]:
     """
-    Search Twitter/X via SerpAPI.
+    Search Twitter/X via SerpAPI (fallback).
 
     Uses Google search with site:twitter.com or site:x.com
+    NOTE: Prefer _search_twitter_direct when TWITTER_BEARER is available.
     """
     api_key = _get_serpapi_key()
     if not api_key:
@@ -177,6 +216,22 @@ def _search_twitter_via_serp(query: str, num_results: int = 20) -> List[Dict[str
         return []
 
 
+def _search_twitter(query: str, num_results: int = 20) -> List[Dict[str, Any]]:
+    """
+    Search Twitter/X - prefers direct API, falls back to SerpAPI.
+
+    This is the main entry point for Twitter search in gematria intel.
+    """
+    # Try direct Twitter API first (no quota burn)
+    results = _search_twitter_direct(query, num_results)
+    if results:
+        return results
+
+    # Fall back to SerpAPI
+    logger.debug("Falling back to SerpAPI for Twitter search")
+    return _search_twitter_via_serp(query, num_results)
+
+
 def fetch_account_posts(handle: str, days_back: int = 3) -> List[Dict[str, Any]]:
     """
     Fetch recent posts from a Twitter/X account.
@@ -198,7 +253,7 @@ def fetch_account_posts(handle: str, days_back: int = 3) -> List[Dict[str, Any]]
 
     # Search for account's posts
     query = f"from:{handle}"
-    results = _search_twitter_via_serp(query, num_results=30)
+    results = _search_twitter(query, num_results=30)
 
     posts = []
     cutoff = datetime.now() - timedelta(days=days_back)

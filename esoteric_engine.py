@@ -1370,6 +1370,40 @@ def get_glitch_aggregate(
         except ImportError:
             pass  # signals module not available
 
+    # 6. FRED Economic Sentiment (weight: 0.15) - consumer sentiment + VIX
+    try:
+        from alt_data_sources.fred import get_economic_betting_signal, FRED_ENABLED
+        if FRED_ENABLED:
+            fred_data = get_economic_betting_signal()
+            if fred_data.get("status") in ("SUCCESS", "PARTIAL"):
+                results["economic_sentiment"] = fred_data
+                weight = 0.15
+                fred_score = fred_data.get("combined_score", 0.5)
+                weighted_score += fred_score * weight
+                total_weight += weight
+                if fred_data.get("triggered"):
+                    triggered_signals.append("economic_sentiment")
+                reasons.append(f"ECONOMIC: {fred_data.get('recommendation', 'N/A')}")
+    except ImportError:
+        pass  # FRED module not available
+
+    # 7. Finnhub Market Sentiment (weight: 0.10) - stock market correlation
+    try:
+        from alt_data_sources.finnhub import get_market_betting_signal, FINNHUB_ENABLED
+        if FINNHUB_ENABLED:
+            market_data = get_market_betting_signal()
+            if market_data.get("status") == "SUCCESS":
+                results["market_sentiment"] = market_data
+                weight = 0.10
+                market_score = market_data.get("score", 0.5)
+                weighted_score += market_score * weight
+                total_weight += weight
+                if market_data.get("triggered"):
+                    triggered_signals.append(f"market_{market_data.get('market_state', 'unknown').lower()}")
+                reasons.append(f"MARKET: {market_data.get('market_state', 'UNKNOWN')} ({market_data.get('recommendation', '')})")
+    except ImportError:
+        pass  # Finnhub module not available
+
     # Normalize score if we have weights
     if total_weight > 0:
         final_score = weighted_score / total_weight
@@ -2186,3 +2220,591 @@ def get_phase8_esoteric_signals(
         "reasons": reasons,
         "breakdown": results
     }
+
+
+# =============================================================================
+# SEMANTIC AUDIT: PER-SIGNAL PROVENANCE (v20.18)
+# =============================================================================
+
+def _build_signal_provenance(
+    signal_name: str,
+    value: float,
+    triggered: bool,
+    source_type: str,  # "INTERNAL" or "EXTERNAL"
+    source_api: str = None,  # "noaa", "serpapi", or None
+    status: str = "SUCCESS",
+    raw_inputs_summary: dict = None,
+    call_proof: dict = None,
+    contribution: float = None
+) -> Dict[str, Any]:
+    """
+    Build per-signal provenance object for semantic truthfulness.
+
+    Args:
+        signal_name: Name of the signal
+        value: Computed value (0-1 scale)
+        triggered: Whether signal triggered
+        source_type: "INTERNAL" or "EXTERNAL"
+        source_api: "noaa", "serpapi", or None for internal
+        status: "SUCCESS", "NO_DATA", "DISABLED", "ERROR", "FALLBACK"
+        raw_inputs_summary: Dict with required_inputs_present and signal-specific data
+        call_proof: Dict with source, cache_hit, fetched_at, http_requests_delta, 2xx_delta
+        contribution: Final weighted contribution to esoteric score
+
+    Returns:
+        Dict with standardized provenance structure
+    """
+    return {
+        "value": round(value, 4) if value is not None else 0,
+        "status": status,
+        "source_api": source_api,
+        "source_type": source_type,
+        "raw_inputs_summary": raw_inputs_summary or {},
+        "call_proof": call_proof,
+        "triggered": triggered,
+        "contribution": round(contribution, 4) if contribution is not None else 0,
+    }
+
+
+def build_esoteric_breakdown_with_provenance(
+    glitch_result: Dict[str, Any] = None,
+    phase8_result: Dict[str, Any] = None,
+    numerology_raw: float = 0.5,
+    numerology_signals: list = None,
+    player_name: str = None,
+    game_date = None,
+    birth_date_str: str = None,
+    astro_score: float = 0.5,
+    fib_score: float = 0,
+    vortex_score: float = 0,
+    daily_edge_score: float = 0,
+    trap_mod: float = 0,
+    vortex_boost: float = 0,
+    fib_retracement_boost: float = 0,
+    altitude_boost: float = 0,
+    surface_boost: float = 0,
+    sport: str = None,
+    home_team: str = None,
+    away_team: str = None,
+    spread: float = None,
+    total: float = None,
+    prop_line: float = None,
+    venue_city: str = None,
+    noaa_request_proof: "NOAARequestProof" = None,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Build complete esoteric_breakdown with per-signal provenance.
+
+    This is the central function for semantic truthfulness in Engine 3.
+    Every signal gets standardized provenance including:
+    - Status (SUCCESS/NO_DATA/DISABLED/ERROR/FALLBACK)
+    - Source API attribution (noaa/serpapi/null)
+    - Raw inputs summary with required_inputs_present
+    - Call proof for external APIs
+
+    Args:
+        glitch_result: Output from get_glitch_aggregate()
+        phase8_result: Output from get_phase8_esoteric_signals()
+        ... other signal inputs ...
+        noaa_request_proof: Request-scoped proof from noaa.py
+
+    Returns:
+        Dict mapping signal_name -> provenance object
+    """
+    breakdown = {}
+
+    # Get NOAA call proof from request context
+    noaa_proof = noaa_request_proof
+    noaa_2xx = noaa_proof.http_2xx if noaa_proof else 0
+    noaa_cache_hits = noaa_proof.cache_hits if noaa_proof else 0
+
+    # =================================================================
+    # GLITCH PROTOCOL SIGNALS
+    # =================================================================
+    glitch_breakdown = glitch_result.get("breakdown", {}) if glitch_result else {}
+
+    # Chrome Resonance (INTERNAL)
+    chrome_data = glitch_breakdown.get("chrome_resonance", {})
+    chrome_has_birth = bool(birth_date_str)
+    breakdown["chrome_resonance"] = _build_signal_provenance(
+        signal_name="chrome_resonance",
+        value=chrome_data.get("score", 0.5) if chrome_has_birth else 0,
+        triggered=chrome_data.get("triggered", False),
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if chrome_has_birth and chrome_data else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {
+                "birth_date": chrome_has_birth,
+                "game_date": game_date is not None,
+            },
+            "interval_name": chrome_data.get("interval_name"),
+            "resonance_type": chrome_data.get("resonance_type"),
+        },
+        call_proof=None,
+        contribution=chrome_data.get("score", 0) * 0.25 if chrome_has_birth else 0,
+    )
+
+    # Void Moon (INTERNAL)
+    void_data = glitch_breakdown.get("void_moon", {})
+    breakdown["void_moon"] = _build_signal_provenance(
+        signal_name="void_moon",
+        value=0.3 if void_data.get("is_void") else 0.7,
+        triggered=void_data.get("is_void", False),
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS",
+        raw_inputs_summary={
+            "required_inputs_present": {"game_date": game_date is not None},
+            "is_void": void_data.get("is_void"),
+            "moon_sign": void_data.get("moon_sign"),
+            "confidence": void_data.get("confidence"),
+        },
+        call_proof=None,
+        contribution=(0.3 if void_data.get("is_void") else 0.7) * 0.20,
+    )
+
+    # Noosphere (EXTERNAL - serpapi, typically DISABLED)
+    noosphere_data = glitch_breakdown.get("noosphere", {})
+    try:
+        from alt_data_sources.serpapi import SERPAPI_ENABLED
+        serpapi_enabled = SERPAPI_ENABLED
+    except ImportError:
+        serpapi_enabled = False
+
+    breakdown["noosphere"] = _build_signal_provenance(
+        signal_name="noosphere",
+        value=noosphere_data.get("velocity", 0) if serpapi_enabled else 0,
+        triggered=noosphere_data.get("triggered", False) if serpapi_enabled else False,
+        source_type="EXTERNAL",
+        source_api="serpapi",
+        status="SUCCESS" if serpapi_enabled and noosphere_data.get("source") == "serpapi_live" else "DISABLED",
+        raw_inputs_summary={
+            "required_inputs_present": {"serpapi_key": serpapi_enabled},
+        },
+        call_proof=None if not serpapi_enabled else {
+            "source": noosphere_data.get("source"),
+            "cache_hit": False,
+            "fetched_at": noosphere_data.get("fetched_at"),
+        },
+        contribution=0,  # Disabled
+    )
+
+    # Hurst Exponent (INTERNAL)
+    hurst_data = glitch_breakdown.get("hurst", {})
+    hurst_has_data = hurst_data.get("regime") != "INSUFFICIENT_DATA"
+    breakdown["hurst"] = _build_signal_provenance(
+        signal_name="hurst",
+        value=0.5 + abs(hurst_data.get("h_value", 0.5) - 0.5) if hurst_has_data else 0,
+        triggered=hurst_data.get("regime") not in ("RANDOM_WALK", "INSUFFICIENT_DATA"),
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if hurst_has_data else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {"line_history": hurst_has_data},
+            "h_value": hurst_data.get("h_value"),
+            "regime": hurst_data.get("regime"),
+        },
+        call_proof=None,
+        contribution=(0.5 + abs(hurst_data.get("h_value", 0.5) - 0.5)) * 0.25 if hurst_has_data else 0,
+    )
+
+    # Kp-Index (EXTERNAL - noaa)
+    kp_data = glitch_breakdown.get("kp_index", {})
+    kp_source = kp_data.get("source", "fallback")
+    kp_success = kp_source in ("noaa_live", "cache")
+
+    breakdown["kp_index"] = _build_signal_provenance(
+        signal_name="kp_index",
+        value=kp_data.get("score", 0.5),
+        triggered=kp_data.get("triggered", False),
+        source_type="EXTERNAL",
+        source_api="noaa",
+        status="SUCCESS" if kp_success else "FALLBACK",
+        raw_inputs_summary={
+            "required_inputs_present": {},
+            "kp_value": kp_data.get("kp_value"),
+            "storm_level": kp_data.get("storm_level"),
+        },
+        call_proof={
+            "source": kp_source,
+            "cache_hit": kp_source == "cache",
+            "fetched_at": kp_data.get("timestamp"),
+            "http_requests_delta": 1 if kp_source == "noaa_live" else 0,
+            "2xx_delta": 1 if kp_source == "noaa_live" else 0,
+        } if kp_source != "fallback" else None,
+        contribution=kp_data.get("score", 0.5) * 0.25,
+    )
+
+    # Benford Anomaly (INTERNAL)
+    benford_data = glitch_breakdown.get("benford", {})
+    benford_has_data = benford_data.get("values_count", 0) >= 10
+    breakdown["benford"] = _build_signal_provenance(
+        signal_name="benford",
+        value=benford_data.get("score", 0.5) if benford_has_data else 0,
+        triggered=benford_data.get("triggered", False),
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if benford_has_data else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {"value_for_benford": benford_has_data},
+            "chi_squared": benford_data.get("chi_squared"),
+            "deviation": benford_data.get("deviation"),
+            "values_count": benford_data.get("values_count", 0),
+        },
+        call_proof=None,
+        contribution=benford_data.get("score", 0.5) * 0.10 if benford_has_data else 0,
+    )
+
+    # =================================================================
+    # PHASE 8 SIGNALS
+    # =================================================================
+    phase8_breakdown = phase8_result.get("breakdown", {}) if phase8_result else {}
+
+    # Lunar Phase (INTERNAL)
+    lunar_data = phase8_breakdown.get("lunar_phase", {})
+    breakdown["lunar_phase"] = _build_signal_provenance(
+        signal_name="lunar_phase",
+        value=abs(lunar_data.get("boost_over", 0)) + abs(lunar_data.get("boost_under", 0)),
+        triggered=lunar_data.get("triggered", False),
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS",
+        raw_inputs_summary={
+            "required_inputs_present": {"game_datetime": True},
+            "phase": lunar_data.get("phase"),
+            "phase_decimal": lunar_data.get("phase_decimal"),
+        },
+        call_proof=None,
+        contribution=abs(lunar_data.get("boost_over", 0)) + abs(lunar_data.get("boost_under", 0)),
+    )
+
+    # Mercury Retrograde (INTERNAL)
+    mercury_data = phase8_breakdown.get("mercury_retrograde", {})
+    breakdown["mercury_retrograde"] = _build_signal_provenance(
+        signal_name="mercury_retrograde",
+        value=abs(mercury_data.get("adjustment", 0)),
+        triggered=mercury_data.get("triggered", False),
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS",
+        raw_inputs_summary={
+            "required_inputs_present": {"game_date": game_date is not None},
+            "is_retrograde": mercury_data.get("is_retrograde"),
+            "is_shadow": mercury_data.get("is_shadow"),
+        },
+        call_proof=None,
+        contribution=mercury_data.get("adjustment", 0),
+    )
+
+    # Rivalry Intensity (INTERNAL)
+    rivalry_data = phase8_breakdown.get("rivalry", {})
+    rivalry_has_inputs = bool(sport and home_team and away_team)
+    breakdown["rivalry_intensity"] = _build_signal_provenance(
+        signal_name="rivalry_intensity",
+        value=rivalry_data.get("under_boost", 0) if rivalry_data.get("triggered") else 0,
+        triggered=rivalry_data.get("triggered", False),
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if rivalry_has_inputs else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {
+                "sport": bool(sport),
+                "home_team": bool(home_team),
+                "away_team": bool(away_team),
+            },
+            "is_rivalry": rivalry_data.get("is_rivalry"),
+            "intensity": rivalry_data.get("intensity"),
+        },
+        call_proof=None,
+        contribution=rivalry_data.get("under_boost", 0),
+    )
+
+    # Streak Momentum (INTERNAL)
+    home_streak_data = phase8_breakdown.get("home_streak", {})
+    away_streak_data = phase8_breakdown.get("away_streak", {})
+    streak_triggered = home_streak_data.get("triggered", False) or away_streak_data.get("triggered", False)
+    breakdown["streak_momentum"] = _build_signal_provenance(
+        signal_name="streak_momentum",
+        value=(home_streak_data.get("for_boost", 0) + away_streak_data.get("for_boost", 0)) / 2,
+        triggered=streak_triggered,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if home_team or away_team else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {
+                "team": bool(home_team or away_team),
+                "streak_length": True,  # Defaults to 0
+                "streak_type": True,  # Defaults to W
+            },
+            "home_streak": home_streak_data,
+            "away_streak": away_streak_data,
+        },
+        call_proof=None,
+        contribution=home_streak_data.get("for_boost", 0) + away_streak_data.get("for_boost", 0),
+    )
+
+    # Solar Flare (EXTERNAL - noaa)
+    solar_data = phase8_breakdown.get("solar_flare", {})
+    solar_source = solar_data.get("source", "unavailable")
+    solar_success = solar_source in ("noaa_live", "cache", "kp_fallback")
+
+    breakdown["solar_flare"] = _build_signal_provenance(
+        signal_name="solar_flare",
+        value=solar_data.get("chaos_boost", 0),
+        triggered=solar_data.get("triggered", False),
+        source_type="EXTERNAL",
+        source_api="noaa",
+        status="SUCCESS" if solar_success else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {},
+            "flare_class": solar_data.get("flare_class"),
+            "flux": solar_data.get("flux"),
+        },
+        call_proof={
+            "source": solar_source,
+            "cache_hit": "cache" in solar_source,
+            "fetched_at": solar_data.get("fetched_at"),
+            "http_requests_delta": 1 if solar_source == "noaa_live" else 0,
+            "2xx_delta": 1 if solar_source == "noaa_live" else 0,
+        } if solar_success else None,
+        contribution=solar_data.get("chaos_boost", 0) * 0.5,
+    )
+
+    # =================================================================
+    # PHASE 1 SIGNALS
+    # =================================================================
+
+    # Biorhythm (INTERNAL - PROP only)
+    breakdown["biorhythm"] = _build_signal_provenance(
+        signal_name="biorhythm",
+        value=0,  # Would be computed in live_data_router
+        triggered=False,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if birth_date_str and player_name else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {
+                "birth_date": bool(birth_date_str),
+                "game_date": game_date is not None,
+            },
+        },
+        call_proof=None,
+        contribution=0,
+    )
+
+    # Gann Square (INTERNAL - GAME only)
+    gann_has_inputs = spread is not None or total is not None
+    breakdown["gann_square"] = _build_signal_provenance(
+        signal_name="gann_square",
+        value=0,  # Computed elsewhere
+        triggered=False,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if gann_has_inputs else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {
+                "spread": spread is not None,
+                "total": total is not None,
+            },
+        },
+        call_proof=None,
+        contribution=0,
+    )
+
+    # Founders Echo (INTERNAL - GAME only)
+    founders_has_inputs = bool(home_team and away_team)
+    breakdown["founders_echo"] = _build_signal_provenance(
+        signal_name="founders_echo",
+        value=0,  # Computed elsewhere
+        triggered=False,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if founders_has_inputs else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {
+                "home_team": bool(home_team),
+                "away_team": bool(away_team),
+            },
+        },
+        call_proof=None,
+        contribution=0,
+    )
+
+    # Numerology (INTERNAL)
+    breakdown["numerology"] = _build_signal_provenance(
+        signal_name="numerology",
+        value=numerology_raw,
+        triggered=len(numerology_signals or []) > 0,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS",  # Always has fallback to game_string
+        raw_inputs_summary={
+            "required_inputs_present": {
+                "player_name": bool(player_name),
+                "game_date": game_date is not None,
+            },
+            "signals_hit": numerology_signals[:3] if numerology_signals else [],
+        },
+        call_proof=None,
+        contribution=numerology_raw * 0.35,
+    )
+
+    # Astro Score (INTERNAL)
+    breakdown["astro_score"] = _build_signal_provenance(
+        signal_name="astro_score",
+        value=astro_score / 10 if astro_score else 0,
+        triggered=astro_score > 0.6 if astro_score else False,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS",
+        raw_inputs_summary={
+            "required_inputs_present": {"game_date": game_date is not None},
+        },
+        call_proof=None,
+        contribution=astro_score * 0.25 if astro_score else 0,
+    )
+
+    # =================================================================
+    # SUPPORTING SIGNALS
+    # =================================================================
+
+    # Vortex Energy (INTERNAL)
+    vortex_has_input = prop_line is not None or total is not None or spread is not None
+    breakdown["vortex_energy"] = _build_signal_provenance(
+        signal_name="vortex_energy",
+        value=vortex_boost,
+        triggered=vortex_boost > 0,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if vortex_has_input else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {"prop_line": prop_line is not None},
+        },
+        call_proof=None,
+        contribution=vortex_boost,
+    )
+
+    # Fibonacci (INTERNAL)
+    breakdown["fibonacci"] = _build_signal_provenance(
+        signal_name="fibonacci",
+        value=fib_score,
+        triggered=fib_score > 0,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if vortex_has_input else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {"magnitude": vortex_has_input},
+        },
+        call_proof=None,
+        contribution=fib_score,
+    )
+
+    # Fibonacci Retracement (INTERNAL)
+    breakdown["fib_retracement"] = _build_signal_provenance(
+        signal_name="fib_retracement",
+        value=fib_retracement_boost,
+        triggered=fib_retracement_boost > 0,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if fib_retracement_boost > 0 else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {
+                "current_line": spread is not None or total is not None,
+                "season_high": fib_retracement_boost > 0,
+                "season_low": fib_retracement_boost > 0,
+            },
+        },
+        call_proof=None,
+        contribution=fib_retracement_boost,
+    )
+
+    # Altitude Impact (INTERNAL)
+    breakdown["altitude_impact"] = _build_signal_provenance(
+        signal_name="altitude_impact",
+        value=altitude_boost,
+        triggered=altitude_boost > 0,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if venue_city else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {"venue_city": bool(venue_city)},
+        },
+        call_proof=None,
+        contribution=altitude_boost,
+    )
+
+    # Surface Impact (INTERNAL)
+    breakdown["surface_impact"] = _build_signal_provenance(
+        signal_name="surface_impact",
+        value=surface_boost,
+        triggered=surface_boost > 0,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if sport else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {
+                "sport": bool(sport),
+                "venue": bool(venue_city),
+            },
+        },
+        call_proof=None,
+        contribution=surface_boost,
+    )
+
+    # Daily Edge (INTERNAL)
+    breakdown["daily_edge"] = _build_signal_provenance(
+        signal_name="daily_edge",
+        value=daily_edge_score,
+        triggered=daily_edge_score > 0,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS",
+        raw_inputs_summary={
+            "required_inputs_present": {"game_date": True},  # Always available
+        },
+        call_proof=None,
+        contribution=daily_edge_score,
+    )
+
+    # Trap Mod (INTERNAL)
+    breakdown["trap_mod"] = _build_signal_provenance(
+        signal_name="trap_mod",
+        value=abs(trap_mod),
+        triggered=trap_mod != 0,
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS",
+        raw_inputs_summary={
+            "required_inputs_present": {
+                "spread": spread is not None,
+                "total": total is not None,
+            },
+            "modifier": trap_mod,
+        },
+        call_proof=None,
+        contribution=trap_mod,
+    )
+
+    return breakdown
+
+
+def get_serpapi_auth_context() -> Dict[str, Any]:
+    """
+    Get SerpAPI auth context for semantic audit.
+    """
+    try:
+        from alt_data_sources.serpapi import SERPAPI_ENABLED
+        import os
+        key_present = bool(os.getenv("SERPAPI_KEY"))
+        return {
+            "auth_type": "api_key",
+            "key_present": key_present,
+            "key_source": "env:SERPAPI_KEY" if key_present else "none",
+        }
+    except ImportError:
+        return {
+            "auth_type": "api_key",
+            "key_present": False,
+            "key_source": "none",
+        }

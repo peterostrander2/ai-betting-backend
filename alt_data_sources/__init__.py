@@ -262,6 +262,84 @@ except ImportError:
     def get_serp_betting_intelligence(*args, **kwargs):
         return {"available": False, "boosts": {"ai": 0, "research": 0, "esoteric": 0, "jarvis": 0, "context": 0}}
 
+# FRED Economic Data (v20.18 - Consumer Sentiment, VIX)
+try:
+    from .fred import (
+        get_economic_betting_signal,
+        get_consumer_sentiment,
+        get_vix_signal,
+        get_fred_auth_context,
+        FRED_ENABLED,
+    )
+    FRED_AVAILABLE = True
+except ImportError:
+    FRED_AVAILABLE = False
+    FRED_ENABLED = False
+
+    def get_economic_betting_signal(*args, **kwargs):
+        return {"combined_score": 0.5, "status": "DISABLED", "triggered": False}
+
+    def get_consumer_sentiment(*args, **kwargs):
+        return {"sentiment_value": None, "score": 0.5, "status": "DISABLED"}
+
+    def get_vix_signal(*args, **kwargs):
+        return {"vix_value": None, "score": 0.5, "status": "DISABLED"}
+
+    def get_fred_auth_context(*args, **kwargs):
+        return {"auth_type": "api_key", "key_present": False, "enabled": False}
+
+# Finnhub Market Data (v20.18 - Stock Market Correlation)
+try:
+    from .finnhub import (
+        get_market_betting_signal,
+        get_market_sentiment,
+        get_market_quote,
+        get_finnhub_auth_context,
+        FINNHUB_ENABLED,
+    )
+    FINNHUB_AVAILABLE = True
+except ImportError:
+    FINNHUB_AVAILABLE = False
+    FINNHUB_ENABLED = False
+
+    def get_market_betting_signal(*args, **kwargs):
+        return {"score": 0.5, "status": "DISABLED", "triggered": False}
+
+    def get_market_sentiment(*args, **kwargs):
+        return {"sentiment_score": 0.5, "status": "DISABLED", "market_state": "UNKNOWN"}
+
+    def get_market_quote(*args, **kwargs):
+        return {"status": "DISABLED", "current_price": None}
+
+    def get_finnhub_auth_context(*args, **kwargs):
+        return {"auth_type": "api_key", "key_present": False, "enabled": False}
+
+# Twitter Direct API (v20.18 - Replace SerpAPI for Twitter search)
+try:
+    from .twitter import (
+        search_tweets,
+        get_gematria_twitter_intel,
+        get_public_sentiment as get_twitter_public_sentiment,
+        get_twitter_auth_context,
+        TWITTER_ENABLED,
+    )
+    TWITTER_DIRECT_AVAILABLE = True
+except ImportError:
+    TWITTER_DIRECT_AVAILABLE = False
+    TWITTER_ENABLED = False
+
+    def search_tweets(*args, **kwargs):
+        return {"status": "DISABLED", "tweets": [], "count": 0}
+
+    def get_gematria_twitter_intel(*args, **kwargs):
+        return {"status": "DISABLED", "intel": [], "total_engagement": 0}
+
+    def get_twitter_public_sentiment(*args, **kwargs):
+        return {"sentiment_score": 0.5, "status": "DISABLED", "volume": 0}
+
+    def get_twitter_auth_context(*args, **kwargs):
+        return {"auth_type": "bearer_token", "key_present": False, "enabled": False}
+
     def get_serp_prop_intelligence(*args, **kwargs):
         return {"available": False, "boosts": {"ai": 0, "research": 0, "esoteric": 0, "jarvis": 0, "context": 0}}
 

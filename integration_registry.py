@@ -169,7 +169,7 @@ def register_integration(
 register_integration(
     name="odds_api",
     description="The Odds API - Live odds, lines, props for all sports",
-    env_vars=["ODDS_API_KEY", "EXPO_PUBLIC_ODDS_API_KEY"],
+    env_vars=["ODDS_API_KEY"],
     required=True,
     modules=["live_data_router.py", "odds_api.py"],
     endpoints=[
@@ -187,7 +187,7 @@ register_integration(
 register_integration(
     name="playbook_api",
     description="Playbook Sports API - Sharp money, splits, injuries for all sports",
-    env_vars=["PLAYBOOK_API_KEY", "EXPO_PUBLIC_PLAYBOOK_API_KEY"],
+    env_vars=["PLAYBOOK_API_KEY"],
     required=True,
     modules=["live_data_router.py", "playbook_api.py"],
     endpoints=[
@@ -236,8 +236,7 @@ register_integration(
 register_integration(
     name="astronomy_api",
     description="AstronomyAPI - Moon phases, astro data for esoteric engine (25% of esoteric)",
-    env_vars=["ASTRONOMY_API_ID", "EXPO_PUBLIC_ASTRONOMY_API_ID",
-              "ASTRONOMY_API_SECRET", "EXPO_PUBLIC_ASTRONOMY_API_SECRET"],
+    env_vars=["ASTRONOMY_API_ID", "ASTRONOMY_API_SECRET"],
     required=True,  # REQUIRED - Feeds esoteric scoring engine (20% weight)
     modules=["esoteric_engine.py", "live_data_router.py"],
     endpoints=["/live/esoteric-edge", "/esoteric/today-energy", "/live/best-bets/{sport}"],
@@ -249,7 +248,7 @@ register_integration(
 register_integration(
     name="noaa_space_weather",
     description="NOAA Space Weather - Solar activity, geomagnetic data for esoteric",
-    env_vars=["NOAA_BASE_URL", "EXPO_PUBLIC_NOAA_BASE_URL"],
+    env_vars=["NOAA_BASE_URL"],
     required=True,  # REQUIRED - Feeds esoteric engine
     modules=["esoteric_engine.py"],
     endpoints=["/live/esoteric-edge", "/esoteric/today-energy", "/live/best-bets/{sport}"],
@@ -395,7 +394,7 @@ def get_env_value(*env_vars: str) -> Optional[str]:
 
 async def validate_odds_api() -> Dict[str, Any]:
     """Validate Odds API connectivity."""
-    key = get_env_value("ODDS_API_KEY", "EXPO_PUBLIC_ODDS_API_KEY")
+    key = get_env_value("ODDS_API_KEY")
     if not key:
         return {"configured": False, "reachable": False, "error": "API key not set"}
 
@@ -425,7 +424,7 @@ async def validate_odds_api() -> Dict[str, Any]:
 
 async def validate_playbook_api() -> Dict[str, Any]:
     """Validate Playbook API connectivity."""
-    key = get_env_value("PLAYBOOK_API_KEY", "EXPO_PUBLIC_PLAYBOOK_API_KEY")
+    key = get_env_value("PLAYBOOK_API_KEY")
     if not key:
         return {"configured": False, "reachable": False, "error": "API key not set"}
 
@@ -1053,11 +1052,6 @@ RUNTIME_ENV_VARS = [
     "ENABLE_DEMO",
     "ESOTERIC_STORAGE_PATH",
     "EXPERT_CONSENSUS_SHADOW_MODE",
-    "EXPO_PUBLIC_ASTRONOMY_API_ID",
-    "EXPO_PUBLIC_ASTRONOMY_API_SECRET",
-    "EXPO_PUBLIC_NOAA_BASE_URL",
-    "EXPO_PUBLIC_ODDS_API_KEY",
-    "EXPO_PUBLIC_PLAYBOOK_API_KEY",
     "FRONTEND_DIR",
     "GRADER_DATA_DIR",
     "GRADER_MOUNT_ROOT",
