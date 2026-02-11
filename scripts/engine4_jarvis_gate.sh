@@ -91,8 +91,8 @@ pick_count=$(echo "$bets_json" | jq '[.game_picks.picks // [], .props.picks // [
 echo "  Total picks: $pick_count"
 
 if [[ "$pick_count" -gt 0 ]]; then
-    # Extract Jarvis fields from first game pick or first prop
-    sample=$(echo "$bets_json" | jq '(.game_picks.picks[0] // .props.picks[0]) | .ai_breakdown // {}')
+    # Extract Jarvis fields from first game pick or first prop (at root level, not in ai_breakdown)
+    sample=$(echo "$bets_json" | jq '(.game_picks.picks[0] // .props.picks[0])')
 
     jarvis_impl_pick=$(echo "$sample" | jq -r '.jarvis_impl // "MISSING"')
     jarvis_version=$(echo "$sample" | jq -r '.jarvis_version // "MISSING"')
@@ -111,11 +111,11 @@ if [[ "$pick_count" -gt 0 ]]; then
         exit 1
     fi
 
-    # If hybrid, validate hybrid-specific fields
+    # If hybrid, validate hybrid-specific fields (in scoring_breakdown or root)
     if [[ "$jarvis_impl_pick" == "hybrid" ]]; then
-        ophis_delta=$(echo "$sample" | jq -r '.ophis_delta // "MISSING"')
-        ophis_delta_cap=$(echo "$sample" | jq -r '.ophis_delta_cap // "MISSING"')
-        jarvis_before=$(echo "$sample" | jq -r '.jarvis_score_before_ophis // "MISSING"')
+        ophis_delta=$(echo "$sample" | jq -r '.ophis_delta // .scoring_breakdown.ophis_delta // "MISSING"')
+        ophis_delta_cap=$(echo "$sample" | jq -r '.ophis_delta_cap // .scoring_breakdown.ophis_delta_cap // "MISSING"')
+        jarvis_before=$(echo "$sample" | jq -r '.jarvis_score_before_ophis // .scoring_breakdown.jarvis_score_before_ophis // "MISSING"')
 
         echo "    [HYBRID] ophis_delta: $ophis_delta"
         echo "    [HYBRID] ophis_delta_cap: $ophis_delta_cap"
@@ -128,9 +128,9 @@ if [[ "$pick_count" -gt 0 ]]; then
 
         # Validate delta bounds [-0.75, +0.75]
         if echo "$sample" | jq -e '
-            (.ophis_delta | type == "number") and
-            (.ophis_delta >= -0.75) and
-            (.ophis_delta <= 0.75)
+            ((.ophis_delta // .scoring_breakdown.ophis_delta) | type == "number") and
+            ((.ophis_delta // .scoring_breakdown.ophis_delta) >= -0.75) and
+            ((.ophis_delta // .scoring_breakdown.ophis_delta) <= 0.75)
         ' >/dev/null 2>&1; then
             echo "    PASS: ophis_delta within bounds"
         else
@@ -140,11 +140,11 @@ if [[ "$pick_count" -gt 0 ]]; then
 
         # Validate delta reconciliation: jarvis_rs ≈ jarvis_before + ophis_delta
         if echo "$sample" | jq -e '
-            (.jarvis_score_before_ophis | type == "number") and
-            (.ophis_delta | type == "number") and
+            ((.jarvis_score_before_ophis // .scoring_breakdown.jarvis_score_before_ophis) | type == "number") and
+            ((.ophis_delta // .scoring_breakdown.ophis_delta) | type == "number") and
             (.jarvis_rs | type == "number") and
             (
-                ((.jarvis_score_before_ophis + .ophis_delta) - .jarvis_rs) | fabs < 0.01
+                (((.jarvis_score_before_ophis // .scoring_breakdown.jarvis_score_before_ophis) + (.ophis_delta // .scoring_breakdown.ophis_delta)) - .jarvis_rs) | fabs < 0.01
                 or
                 # Handle clamping at boundaries
                 (.jarvis_rs == 0 or .jarvis_rs == 10)
@@ -170,13 +170,13 @@ echo ""
 echo "[3/3] Validating jarvis_rs bounds across all picks..."
 
 if [[ "$pick_count" -gt 0 ]]; then
-    # Check all picks have jarvis_rs in [0, 10]
+    # Check all picks have jarvis_rs in [0, 10] (at root level)
     if echo "$bets_json" | jq -e '
         [.game_picks.picks // [], .props.picks // []] | add | all(
-            .ai_breakdown.jarvis_rs == null or
+            .jarvis_rs == null or
             (
-                (.ai_breakdown.jarvis_rs >= 0) and
-                (.ai_breakdown.jarvis_rs <= 10)
+                (.jarvis_rs >= 0) and
+                (.jarvis_rs <= 10)
             )
         )
     ' >/dev/null 2>&1; then
