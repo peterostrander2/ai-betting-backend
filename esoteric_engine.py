@@ -1370,39 +1370,9 @@ def get_glitch_aggregate(
         except ImportError:
             pass  # signals module not available
 
-    # 6. FRED Economic Sentiment (weight: 0.15) - consumer sentiment + VIX
-    try:
-        from alt_data_sources.fred import get_economic_betting_signal, FRED_ENABLED
-        if FRED_ENABLED:
-            fred_data = get_economic_betting_signal()
-            if fred_data.get("status") in ("SUCCESS", "PARTIAL"):
-                results["economic_sentiment"] = fred_data
-                weight = 0.15
-                fred_score = fred_data.get("combined_score", 0.5)
-                weighted_score += fred_score * weight
-                total_weight += weight
-                if fred_data.get("triggered"):
-                    triggered_signals.append("economic_sentiment")
-                reasons.append(f"ECONOMIC: {fred_data.get('recommendation', 'N/A')}")
-    except ImportError:
-        pass  # FRED module not available
-
-    # 7. Finnhub Market Sentiment (weight: 0.10) - stock market correlation
-    try:
-        from alt_data_sources.finnhub import get_market_betting_signal, FINNHUB_ENABLED
-        if FINNHUB_ENABLED:
-            market_data = get_market_betting_signal()
-            if market_data.get("status") == "SUCCESS":
-                results["market_sentiment"] = market_data
-                weight = 0.10
-                market_score = market_data.get("score", 0.5)
-                weighted_score += market_score * weight
-                total_weight += weight
-                if market_data.get("triggered"):
-                    triggered_signals.append(f"market_{market_data.get('market_state', 'unknown').lower()}")
-                reasons.append(f"MARKET: {market_data.get('market_state', 'UNKNOWN')} ({market_data.get('recommendation', '')})")
-    except ImportError:
-        pass  # Finnhub module not available
+    # NOTE: FRED and Finnhub API clients exist in alt_data_sources/ but are NOT
+    # wired into scoring. They are available for future use but adding them here
+    # would change scoring behavior (violates "DO NOT change scoring weights").
 
     # Normalize score if we have weights
     if total_weight > 0:
