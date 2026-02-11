@@ -357,8 +357,168 @@ Tests in `tests/test_training_telemetry.py`:
 
 ---
 
+## Filter Telemetry Field Definitions
+
+### Top-Level Counts
+
+| Field | Definition | Source |
+|-------|------------|--------|
+| `loaded_total` | Total records read from predictions.jsonl | `scripts/audit_training_store.py:line_count` |
+| `graded_total` | Records with `grade_status == "GRADED"` | `data_quality.graded_count` |
+| `ungraded_total` | Records without GRADED status | `data_quality.ungraded_count` |
+| `eligible_total` | Records passing ALL filters (ready for training) | `loaded_total - sum(drops)` |
+| `samples_used` | Actual samples in sklearn `fit()` | May be less than eligible (ensemble-specific drops) |
+
+### Drop Reason Fields
+
+| Field | Condition | Mutually Exclusive |
+|-------|-----------|-------------------|
+| `drop_no_grade` | `grade_status != "GRADED"` | Yes - checked first |
+| `drop_no_result` | `result not in ("WIN", "LOSS", "PUSH")` | Yes |
+| `drop_wrong_market` | `pick_type not in SUPPORTED_GAME_MARKETS` | Yes |
+| `drop_missing_required` | `home_team`, `away_team`, `sport`, or `date_et` empty | Yes |
+| `drop_outside_window` | `date_et` outside training window (7 days) | Yes |
+| `drop_wrong_sport` | Sport filter applied and doesn't match | Yes |
+
+### Ensemble-Specific Drops
+
+| Field | Condition | Impact |
+|-------|-----------|--------|
+| `drop_no_model_preds` | Missing `ai_breakdown.raw_inputs.model_preds` | Can't train ensemble |
+| `drop_insufficient_values` | `len(model_preds.values) < 4` | Need exactly 4 features |
+| `drop_push_excluded` | `result == "PUSH"` | By design - binary only |
+
+### Math Invariant
+
+```python
+# MUST hold for every training run
+assert eligible_total + sum(all_drops) == loaded_total
+```
+
+---
+
+## What Training Consumes
+
+### Data Source
+
+```
+Path: /data/grader/predictions.jsonl
+Format: JSONL (one JSON record per line)
+Source: grader_store.persist_pick() from /live/best-bets/{sport}
+```
+
+### Label Contract
+
+```python
+label_type = "binary_hit"
+label_definition = "hit = 1.0 if result == WIN, hit = 0.0 if result == LOSS, PUSH excluded"
+```
+
+**Critical:** PUSH results are NEVER used for training. They are excluded by design.
+
+### Feature Requirements
+
+| Model | Required Fields | Feature Count |
+|-------|-----------------|---------------|
+| Team LSTM | `home_team`, `away_team`, `sport`, `result` | Variable (team encodings) |
+| Team Matchup | `home_team`, `away_team`, `sport`, `result` | Variable (matchup pairs) |
+| Game Ensemble | `ai_breakdown.raw_inputs.model_preds.values` | Exactly 4 floats |
+
+---
+
+## What Is NOT Proven by a Single Run
+
+### Single Run Proves
+
+- Training executed (artifacts updated with today's timestamp)
+- Filter math reconciles (no missing picks)
+- Schema matches between training and inference
+- No unknown attribution buckets
+
+### Single Run Does NOT Prove
+
+| What | Why | How to Verify |
+|------|-----|---------------|
+| Model accuracy improved | Need historical comparison | Compare hit_rate over rolling 7-day windows |
+| Training data is diverse | Could be biased sample | Check `distribution.by_sport`, `by_market` |
+| No data corruption | Single snapshot | Compare line_count trends day-over-day |
+| Ensemble weights optimal | Need holdout validation | Run backtests on held-out data |
+
+### Monitoring Metrics to Watch
+
+| Metric | Healthy Trend | Alert Threshold |
+|--------|---------------|-----------------|
+| `graded_count` growth | +10-50/day | < 5/day for 3 days |
+| `samples_used_for_training` | > 20 per run | < 10 |
+| `unknown` attribution | Always 0 | Any > 0 |
+| Artifact mtime | Updated daily at 7 AM ET | > 24h since update |
+| `ensemble_signature.schema_match` | Always true | false |
+
+### Longitudinal Dashboard Query
+
+```bash
+# Track training health over time (run daily, store results)
+curl -s ".../live/debug/training-status" -H "X-API-Key: KEY" | jq '{
+  date: (now | strftime("%Y-%m-%d")),
+  graded_count: .store_audit.data_quality.graded_count,
+  samples_used: .training_telemetry.samples_used_for_training,
+  unknown_count: .store_audit.data_quality.missing_model_preds_attribution.unknown,
+  training_health: .training_health
+}'
+```
+
+---
+
+## Single-Command Daily Validation
+
+**Copy this verbatim for daily Engine 1 validation:**
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+API_KEY='YOUR_API_KEY'
+BASE='https://web-production-7b2a.up.railway.app'
+
+json="$(curl -fsS -H "X-API-Key: ${API_KEY}" "${BASE}/live/debug/training-status")"
+
+echo "$json" | jq '{
+  build_sha: (.verification_proof.build_sha // .build_sha // null),
+  training_health: .training_health,
+  last_train_run_at: .training_telemetry.last_train_run_at,
+  graded_samples_seen: .training_telemetry.graded_samples_seen,
+  samples_used_for_training: .training_telemetry.samples_used_for_training,
+  missing_model_preds_attribution: .store_audit.data_quality.missing_model_preds_attribution,
+  artifacts: .artifact_proof,
+  ensemble_signature: .training_telemetry.training_signatures.ensemble
+}'
+
+echo "$json" | jq -e '
+  (.verification_proof.build_sha? // .build_sha? | type == "string" and length > 0)
+  and (.training_health == "HEALTHY")
+  and (.training_telemetry.last_train_run_at != null)
+  and ((.training_telemetry.graded_samples_seen // 0) > 0)
+  and ((.training_telemetry.samples_used_for_training // 0) >= 0)
+  and ((.store_audit.data_quality.total_records // 0) > 0)
+  and ((.store_audit.data_quality.graded_count // 0) > 0)
+  and ((.store_audit.data_quality.missing_model_preds_attribution.unknown // 0) == 0)
+  and (
+    (.training_telemetry.training_signatures.ensemble? // null) == null
+    or (
+      (.training_telemetry.training_signatures.ensemble.schema_match == true)
+      and (.training_telemetry.training_signatures.ensemble.label_type == "binary_hit")
+      and (.training_telemetry.training_signatures.ensemble.filter_telemetry.assertion_passed == true)
+    )
+  )
+' >/dev/null
+
+echo "✅ HARD CHECKS PASS"
+```
+
+---
+
 ## Changelog
 
+- **v20.17.3** - Added lessons 81-83 (telemetry path, attribution buckets, empty dict conditionals)
 - **v20.17.2** - Added store audit utility, attribution buckets, enhanced training-status endpoint
 - **v20.17.1** - Fixed label definition (binary_hit), renamed telemetry fields
 - **v20.17.0** - Added mechanically checkable filter telemetry

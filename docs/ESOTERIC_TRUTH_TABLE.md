@@ -57,7 +57,7 @@ This document defines the **single source of truth** for Engine 3 (Esoteric) sig
 
 ### GLITCH Protocol (6 signals)
 
-Called via `get_glitch_aggregate()` in esoteric_engine.py (lines 1234-1387)
+Called via `get_glitch_aggregate()` in esoteric_engine.py (lines 1234-1450)
 
 | Signal | Source Type | Source API | Required Inputs | Failure Behavior | Max Contribution |
 |--------|-------------|------------|-----------------|------------------|------------------|
@@ -110,12 +110,18 @@ Called via `get_phase8_esoteric_signals()` in esoteric_engine.py (lines 2053-218
 
 | Signal | Location | Status | Why Not Wired |
 |--------|----------|--------|---------------|
-| `phoenix_resonance` | esoteric_engine.py:801-927 | ORPHANED | Function defined but never called |
-| `golden_ratio` | signals/math_glitch.py | ORPHANED | Not called from get_glitch_aggregate() |
-| `prime_detection` | signals/math_glitch.py | ORPHANED | Not called from get_glitch_aggregate() |
+| `golden_ratio` | signals/math_glitch.py | DORMANT | Code exists but not called from get_glitch_aggregate() |
+| `prime_resonance` | signals/math_glitch.py | DORMANT | Code exists but not called from get_glitch_aggregate() |
+| `phoenix_resonance` | esoteric_engine.py | DORMANT | calculate_phoenix_resonance() exists but not called |
+| `planetary_hour` | jarvis_savant_engine.py | DORMANT | VedicAstroEngine.calculate_planetary_hour() exists but not used in scoring |
 | `symmetry_analysis` | signals/math_glitch.py | ORPHANED | Not called from get_glitch_aggregate() |
-| `schumann_fallback` | esoteric_engine.py:375-417 | FALLBACK ONLY | Only used when NOAA fails |
 | `parlay_correlations` | esoteric_engine.py | ORPHANED | Only for parlay endpoint |
+
+### Fallback Signals (not counted in total)
+
+| Signal | Location | Status | Why Not Counted |
+|--------|----------|--------|-----------------|
+| `schumann_fallback` | esoteric_engine.py:375-417 | FALLBACK ONLY | Only used when NOAA fails |
 
 ---
 
@@ -271,12 +277,16 @@ wired_signals:
   - trap_mod
 
 present_not_wired:
-  - phoenix_resonance
-  - golden_ratio
-  - prime_detection
+  - golden_ratio       # Code exists but not called
+  - prime_resonance    # Code exists but not called
+  - phoenix_resonance  # Code exists but not called
+  - planetary_hour     # Code exists but not called
   - symmetry_analysis
-  - schumann_fallback
   - parlay_correlations
+
+# Fallback signals (not in wired count)
+fallback_signals:
+  - schumann_fallback
 
 external_api_signals:
   noaa:

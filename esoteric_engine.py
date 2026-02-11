@@ -1283,7 +1283,7 @@ def get_glitch_aggregate(
     else:
         reasons.append(f"VOID_MOON: Clear - {void_moon.get('moon_sign', 'unknown')}")
 
-    # 2b. Noosphere Velocity from SerpAPI (weight: 0.15) - real search trends
+    # 2b. Noosphere Velocity from SerpAPI (weight: 0.08) - real search trends (DISABLED by default)
     noosphere_data = None
     try:
         from alt_data_sources.serpapi import get_noosphere_data, SERPAPI_ENABLED
@@ -1369,6 +1369,9 @@ def get_glitch_aggregate(
             reasons.append(f"BENFORD: {benford.get('reason', 'UNKNOWN')}")
         except ImportError:
             pass  # signals module not available
+
+    # NOTE: golden_ratio, prime_resonance, phoenix_resonance exist in codebase
+    # but are NOT wired into scoring (present but not wired - see ESOTERIC_TRUTH_TABLE.md)
 
     # NOTE: FRED and Finnhub API clients exist in alt_data_sources/ but are NOT
     # wired into scoring. They are available for future use but adding them here
@@ -2261,6 +2264,8 @@ def build_esoteric_breakdown_with_provenance(
     prop_line: float = None,
     venue_city: str = None,
     noaa_request_proof: "NOAARequestProof" = None,
+    planetary_hour_data: Dict[str, Any] = None,
+    planetary_hour_mod: float = 0,
 ) -> Dict[str, Dict[str, Any]]:
     """
     Build complete esoteric_breakdown with per-signal provenance.
@@ -2425,6 +2430,9 @@ def build_esoteric_breakdown_with_provenance(
         call_proof=None,
         contribution=benford_data.get("score", 0.5) * 0.10 if benford_has_data else 0,
     )
+
+    # NOTE: golden_ratio, prime_resonance, phoenix_resonance, planetary_hour exist in codebase
+    # but are NOT wired into scoring (present but not wired - see ESOTERIC_TRUTH_TABLE.md)
 
     # =================================================================
     # PHASE 8 SIGNALS
@@ -2755,6 +2763,8 @@ def build_esoteric_breakdown_with_provenance(
         call_proof=None,
         contribution=trap_mod,
     )
+
+    # NOTE: planetary_hour exists in VedicAstroEngine but is NOT wired into scoring
 
     return breakdown
 

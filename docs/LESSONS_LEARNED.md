@@ -2776,3 +2776,137 @@ curl -s ".../live/debug/training-status" -H "X-API-Key: KEY" | jq '.training_tel
 **Fixed in:** v20.16.9 (Feb 10, 2026) — Commit `db8bc86`
 
 ---
+
+### Lesson 81: Training Telemetry Path Is Top-Level (v20.17.3)
+
+**Problem:** `/live/debug/training-status` showed `training_health: "NEVER_RAN"` even after successful 7 AM training.
+
+**Root Cause:** Endpoint read `training_telemetry` from wrong path:
+```python
+# BUG at live_data_router.py:11371 before fix
+training_telemetry = status.get("ensemble", {}).get("training_telemetry", {})
+
+# CORRECT after fix
+training_telemetry = status.get("training_telemetry", {})
+```
+
+The `get_model_status()` function in `team_ml_models.py:605` returns `training_telemetry` at the TOP level of the dict, not nested inside `"ensemble"`.
+
+**How We Detected It:**
+1. Training ran at 7:00 AM (verified by artifact mtimes)
+2. Endpoint returned `training_health: "NEVER_RAN"`
+3. Debug inspection of `get_model_status()` return structure revealed path mismatch
+
+**The Fix (v20.17.3):**
+Changed path at `live_data_router.py:11371`:
+```python
+training_telemetry = status.get("training_telemetry", {})
+```
+
+**Prevention:**
+1. **Verify return structure** — Always check actual function output before accessing nested keys
+2. **Test:** `tests/test_training_status.py::test_training_telemetry_at_top_level`
+3. **Audit command:**
+```bash
+curl -s ".../live/debug/training-status" -H "X-API-Key: KEY" | \
+  jq -e '.training_telemetry.last_train_run_at != null or .training_health == "NEVER_RAN"'
+```
+
+**Fixed in:** v20.17.3 (Feb 10, 2026)
+
+---
+
+### Lesson 82: Missing model_preds Attribution Buckets (v20.17.3)
+
+**Problem:** 950 game picks (64% of game market) had `missing_model_preds_attribution.unknown` because the attribution function lacked buckets for common missing patterns.
+
+**Root Cause:** `scripts/audit_training_store.py:_attribute_missing_model_preds()` didn't handle:
+- `heuristic_fallback` — MPS returned `ai_mode == "HEURISTIC_FALLBACK"`
+- `empty_raw_inputs` — Game picks with `ai_breakdown` present but `raw_inputs == {}`
+
+**How We Detected It:**
+1. Store audit showed `unknown: 950` for game picks
+2. Manual record inspection revealed two distinct patterns
+3. Pattern 1: `ai_mode == "HEURISTIC_FALLBACK"` (MPS unavailable during scoring)
+4. Pattern 2: Game picks with empty `raw_inputs` despite having `ai_breakdown`
+
+**The Fix (v20.17.3):**
+Added two attribution buckets at `scripts/audit_training_store.py:254`:
+
+```python
+def _attribute_missing_model_preds(record, date_et, pick_type, market_type):
+    # ... existing checks ...
+
+    # Check 4: HEURISTIC_FALLBACK mode
+    ai_mode = ai_breakdown.get("ai_mode", record.get("ai_mode", ""))
+    if ai_mode == "HEURISTIC_FALLBACK":
+        return "heuristic_fallback"
+
+    # Check 5: Empty raw_inputs for game market
+    raw_inputs = ai_breakdown.get("raw_inputs", {})
+    if market_type == "game" and not raw_inputs:
+        return "empty_raw_inputs"
+
+    return "unknown"
+```
+
+**Prevention:**
+1. **Invariant:** `unknown == 0` for all game picks
+2. **Test:** `tests/test_training_telemetry.py::test_attribution_buckets_complete`
+3. **Audit command:**
+```bash
+curl -s ".../live/debug/training-status" -H "X-API-Key: KEY" | \
+  jq -e '.store_audit.data_quality.missing_model_preds_attribution.unknown == 0'
+```
+
+**Fixed in:** v20.17.3 (Feb 10, 2026)
+
+---
+
+### Lesson 83: Empty Dict Conditionals Are False (v20.17.3)
+
+**Problem:** Training signatures were not stored even though training ran successfully.
+
+**Root Cause:** Python truthiness of empty dict:
+```python
+# BUG: Empty dict {} is falsy in Python
+if filter_telemetry:
+    training_signatures["ensemble"] = {...}
+
+# When filter_telemetry == {}, this block is SKIPPED
+# bool({}) == False
+```
+
+**How We Detected It:**
+1. `ensemble_signature: null` in training-status response after verified training run
+2. Debug showed `filter_telemetry` was `{}` (empty dict), not `None`
+3. Traced to conditional that expected truthy value
+
+**The Fix (v20.17.3):**
+Use explicit checks for the meaningful condition:
+
+```python
+# CORRECT: Check for None explicitly
+if filter_telemetry is not None:
+    training_signatures["ensemble"] = {...}
+
+# OR: Check for presence of specific keys
+if "assertion_passed" in filter_telemetry:
+    training_signatures["ensemble"] = {...}
+```
+
+**Prevention:**
+1. **Code review pattern:** Grep for `if some_dict:` where `{}` is a valid state
+2. **Test:** `tests/test_training_telemetry.py::test_empty_dict_not_skipped`
+3. **Scan command:**
+```bash
+# Find potential bugs
+grep -n "if filter_telemetry:" team_ml_models.py scripts/train_team_models.py
+# Should return 0 matches (explicit None checks instead)
+```
+
+**Broader Pattern:** When an empty collection is a valid/meaningful state (not an error), never use bare truthiness check. Use explicit `is not None` or key presence checks.
+
+**Fixed in:** v20.17.3 (Feb 10, 2026)
+
+---

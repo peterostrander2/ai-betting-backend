@@ -173,6 +173,7 @@ class TestSourceAPIAttribution:
         """Internal signals (numerology, void_moon, etc.) must have source_api=null."""
         internal_signals = [
             "chrome_resonance", "void_moon", "hurst", "benford",
+            "golden_ratio", "prime_resonance", "phoenix_resonance", "planetary_hour",  # NEW v20.18
             "lunar_phase", "mercury_retrograde", "rivalry_intensity",
             "streak_momentum", "numerology", "astro_score", "vortex_energy",
             "fibonacci", "fib_retracement", "altitude_impact", "surface_impact",
@@ -369,7 +370,6 @@ class TestSuppressedCandidates:
         wired_count = len(truth_table.get("wired_signals", []))
 
         # This is a structural test - actual runtime test would check API response
-        # For now, verify the contract
         assert wired_count == 23, \
             f"Expected 23 wired signals for full breakdown, got {wired_count}"
 

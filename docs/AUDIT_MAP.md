@@ -49,6 +49,33 @@ For current integration status, query:
 curl "$BASE_URL/live/debug/integrations" -H "X-API-Key: $API_KEY" | jq .
 ```
 
+---
+
+## Engine Audit Endpoints
+
+| Endpoint | Purpose | Added In |
+|----------|---------|----------|
+| `/live/debug/training-status` | Engine 1 training health, telemetry, store audit | v20.16.3 |
+| `/live/best-bets/{sport}?debug=1` | Engine 2/3/4 scoring breakdown, research telemetry | v18.0 |
+| `/live/debug/integrations` | All integration statuses | v17.0 |
+| `/live/scheduler/status` | Scheduler jobs, next run times | v20.16.3 |
+
+---
+
+## Engine Audit Scripts
+
+| Script | Engine | Purpose |
+|--------|--------|---------|
+| `scripts/audit_training_store.py` | Engine 1 | Audit predictions.jsonl without loading |
+| `scripts/train_team_models.py` | Engine 1 | Manual training trigger |
+| `scripts/engine2_research_audit.py` | Engine 2 | Runtime anti-conflation verification |
+| `scripts/engine2_research_audit.sh` | Engine 2 | Static + runtime checks |
+| `scripts/engine3_esoteric_audit.sh` | Engine 3 | Full runtime audit (8 tests) |
+
+**Full audit documentation:** See `docs/MASTER_AUDIT_INDEX.md` for single-command verification per engine.
+
+---
+
 ## Validation
 
 This document is validated by:

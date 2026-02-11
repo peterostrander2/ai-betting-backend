@@ -1073,6 +1073,149 @@ fi
 
 ---
 
+## 81. Training Telemetry Path Is Top-Level (v20.17.3)
+
+### The Mistake
+The `/live/debug/training-status` endpoint read `training_telemetry` from the wrong path:
+
+```python
+# WRONG (BUG at live_data_router.py:11371 before fix)
+training_telemetry = status.get("ensemble", {}).get("training_telemetry", {})
+
+# CORRECT (after fix)
+training_telemetry = status.get("training_telemetry", {})
+```
+
+### How We Detected It
+- `training_health` showed `"NEVER_RAN"` even after successful 7 AM training
+- Debug inspection revealed `training_telemetry` was at TOP level of `get_model_status()` return, NOT inside `"ensemble"` dict
+- Verified by reading `team_ml_models.py:get_model_status()` (line 605)
+
+### Why It Mattered
+- False "NEVER_RAN" status masked successful training
+- No visibility into actual training health
+- Could lead to unnecessary manual training triggers
+
+### The Fix
+Changed path at `live_data_router.py:11371`:
+```python
+training_telemetry = status.get("training_telemetry", {})
+```
+
+### Permanent Guard
+- **Test:** `tests/test_training_status.py::test_training_telemetry_path`
+- **Audit command:**
+```bash
+curl -s ".../live/debug/training-status" -H "X-API-Key: KEY" | \
+  jq -e '.training_telemetry.last_train_run_at != null or .training_health == "NEVER_RAN"'
+```
+
+### Rule
+> **INVARIANT**: Always verify the actual return structure of `get_model_status()` before accessing nested keys. The function returns `training_telemetry` at TOP level.
+
+---
+
+## 82. Missing model_preds Attribution Buckets (v20.17.3)
+
+### The Mistake
+950 game picks (64% of game market) had `missing_model_preds_attribution.unknown` because the attribution function lacked buckets for:
+- `heuristic_fallback` — MPS returned `ai_mode == "HEURISTIC_FALLBACK"`
+- `empty_raw_inputs` — game market with `ai_breakdown` but empty `raw_inputs`
+
+### How We Detected It
+- Store audit showed `unknown: 950` for game picks
+- Manual inspection of records revealed two missing attribution patterns
+- Pattern 1: `ai_mode == "HEURISTIC_FALLBACK"` (MPS unavailable)
+- Pattern 2: Game picks with `ai_breakdown` present but `raw_inputs == {}`
+
+### Why It Mattered
+- Couldn't diagnose why 950 game picks lacked ensemble training data
+- No way to distinguish expected missing (old schema) from unexpected missing
+- Training pipeline appeared less healthy than it was
+
+### The Fix
+Added two new attribution buckets at `scripts/audit_training_store.py:254`:
+
+```python
+def _attribute_missing_model_preds(record, date_et, pick_type, market_type):
+    # ... existing checks ...
+
+    # Check 4: HEURISTIC_FALLBACK mode (MPS unavailable or failed)
+    ai_mode = ai_breakdown.get("ai_mode", record.get("ai_mode", ""))
+    if ai_mode == "HEURISTIC_FALLBACK":
+        return "heuristic_fallback"
+
+    # Check 5: Empty raw_inputs for game market
+    raw_inputs = ai_breakdown.get("raw_inputs", {})
+    if market_type == "game" and not raw_inputs:
+        return "empty_raw_inputs"
+
+    return "unknown"
+```
+
+### Permanent Guard
+- **Test:** `tests/test_training_telemetry.py::test_attribution_buckets_complete`
+- **Audit command:**
+```bash
+curl -s ".../live/debug/training-status" -H "X-API-Key: KEY" | \
+  jq -e '.store_audit.data_quality.missing_model_preds_attribution.unknown == 0'
+```
+
+### Rule
+> **INVARIANT**: `missing_model_preds_attribution.unknown` MUST be 0 for game picks. All missing model_preds must have a known attribution bucket.
+
+---
+
+## 83. Empty Dict Conditionals Are False (v20.17.3)
+
+### The Mistake
+Training signatures were not stored because of this pattern:
+
+```python
+# BUG: Empty dict {} is falsy in Python
+if filter_telemetry:
+    training_signatures["ensemble"] = {...}
+
+# When filter_telemetry == {}, this block is SKIPPED
+```
+
+### How We Detected It
+- `ensemble_signature: null` in training-status response after training ran
+- Debug showed `filter_telemetry` was `{}` (empty dict), not `None`
+- Python truthiness: `bool({}) == False`
+
+### Why It Mattered
+- Training ran successfully but signature wasn't recorded
+- No proof of training parameters (label_type, schema_match)
+- Audit couldn't verify training correctness
+
+### The Fix
+Explicit check for the meaningful condition:
+
+```python
+# CORRECT: Check for None explicitly, or check specific keys
+if filter_telemetry is not None:
+    training_signatures["ensemble"] = {...}
+
+# OR: Check for the presence of data you need
+if "assertion_passed" in filter_telemetry:
+    training_signatures["ensemble"] = {...}
+```
+
+### Permanent Guard
+- **Code review pattern:** Grep for `if some_dict:` where `{}` is a valid state
+- **Test:** `tests/test_training_telemetry.py::test_empty_dict_conditional`
+- **Command:**
+```bash
+grep -n "if filter_telemetry:" team_ml_models.py scripts/train_team_models.py
+# Should return 0 matches (explicit None checks instead)
+```
+
+### Rule
+> **INVARIANT**: Never use `if some_dict:` when `{}` is a meaningful empty state. Use `if some_dict is not None:` or check for specific keys.
+
+---
+
 ## Adding New Lessons
 
 When you encounter a bug or issue, add it here:

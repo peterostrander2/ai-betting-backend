@@ -4504,6 +4504,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         except Exception as e:
             logger.warning("Phase 8 signals calculation failed: %s", e)
 
+        # NOTE: planetary_hour exists in jarvis_savant_engine.VedicAstroEngine but is
+        # NOT wired into scoring (present but not wired - see ESOTERIC_TRUTH_TABLE.md)
+
         # ===== WEATHER IMPACT (v20.0 Phase 9) =====
         # Weather only affects outdoor sports (NFL, MLB, NCAAF)
         # Indoor sports (NBA, NHL, NCAAB) and dome stadiums are skipped
@@ -5605,6 +5608,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 prop_line=prop_line,
                 venue_city=None,
                 noaa_request_proof=_noaa_request_proof if '_noaa_request_proof' in locals() else None,
+                planetary_hour_data=planetary_hour_data if 'planetary_hour_data' in locals() else None,
+                planetary_hour_mod=planetary_hour_mod if 'planetary_hour_mod' in locals() else 0.0,
             )
         except Exception as e:
             logger.debug("Esoteric breakdown provenance failed, using simple fallback: %s", e)

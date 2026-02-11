@@ -118,6 +118,9 @@
 | 78 | **v20.16.7 XGBoost Feature Mismatch** | Model trained on 12 scoring features but runtime passed 6 context features — validate count before predict |
 | 79 | **v20.16.8 Daily Report Missing NCAAB** | Sports loop hardcoded [NBA,NFL,MLB,NHL] without NCAAB — 64 graded picks not showing in report |
 | 80 | **v20.16.9 Training Filter Telemetry** | Training showed 41 samples but no proof they were legitimate — added filter_counts with drop reasons + sample_pick_ids |
+| 81 | **v20.17.3 Training Telemetry Path** | `training_telemetry` is at TOP level of `get_model_status()`, NOT inside `"ensemble"` dict — endpoint read wrong path, showed NEVER_RAN when healthy |
+| 82 | **v20.17.3 Attribution Buckets** | 950 picks had "unknown" missing model_preds — added `heuristic_fallback` and `empty_raw_inputs` buckets for proper diagnosis |
+| 83 | **v20.17.3 Empty Dict Conditionals** | `if filter_telemetry:` is False for empty dict `{}` — training signatures not stored if passed as empty; check explicitly |
 
 ### NEVER DO Sections (37 Categories)
 - ML & GLITCH (rules 1-10)
@@ -158,6 +161,7 @@
 - v20.16.5+ Engine 2 Research Anti-Conflation (rules 237-244)
 - v20.16.7 XGBoost Feature Consistency (rules 245-248)
 - v20.16.8 Hardcoded Sports Lists (rules 249-251)
+- v20.17.3 Training Telemetry (rules 252-257)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -260,8 +264,15 @@
 | `scripts/engine2_research_audit.py` | Runtime verification: research_breakdown, usage counters, source APIs — v20.16.5 |
 | `scripts/engine2_research_audit.sh` | Static + runtime checks: conflation patterns, object separation — v20.16.5 |
 
-### Current Version: v20.16.7 (Feb 10, 2026)
-**Latest Fixes (v20.16.5/v20.16.6/v20.16.7) — Engine 2 Research Semantic Audit:**
+### Current Version: v20.17.3 (Feb 10, 2026)
+**Latest Fixes (v20.17.3) — Engine 1 Training Telemetry Audit:**
+- **Fix 1: Training Telemetry Path (Lesson 81)** — `/live/debug/training-status` was reading `status["ensemble"]["training_telemetry"]` but it should be `status["training_telemetry"]` (top level). Caused `training_health: "NEVER_RAN"` when training was healthy.
+- **Fix 2: Attribution Buckets (Lesson 82)** — 950 picks had "unknown" missing model_preds. Added `heuristic_fallback` (ai_mode == HEURISTIC_FALLBACK) and `empty_raw_inputs` (game market with empty raw_inputs) buckets. Now `unknown: 0`.
+- **Fix 3: Top-Level build_sha** — Added `build_sha` to training-status response for single-call validation.
+- **Validation Command:** See "Training Status Validation" section below.
+- **Key Files:** `scripts/audit_training_store.py`, `live_data_router.py:11370`, `docs/TRAINING_TRUTH_TABLE.md`
+
+**Previous Fixes (v20.16.5/v20.16.6/v20.16.7) — Engine 2 Research Semantic Audit:**
 - **Fix 1: Anti-Conflation (Lesson 76)** — `sharp_boost` and `line_boost` were both reading from same `sharp_signal` dict. Line variance was UPGRADING `signal_strength` to STRONG. Split into `playbook_sharp` (Playbook API only) and `odds_line` (Odds API only) objects that are NEVER merged.
 - **Fix 2: Odds API Fallback (Lesson 77)** — When Playbook unavailable, fallback path set `sharp_strength` from line variance. Fixed: `sharp_strength: "NONE"` explicitly set in Odds API fallback since no Playbook data exists.
 - **Fix 3: XGBoost Feature Mismatch (Lesson 78)** — Training used 12 features, runtime passed 6. Added feature count validation before predict; mismatches fall through to weighted average. Eliminated 48+ warnings per request.
@@ -1568,6 +1579,186 @@ curl -s "https://web-production-7b2a.up.railway.app/live/debug/training-status" 
 | `STALE` | Training older than 24h — check scheduler |
 | `NEVER_RAN` | Training pipeline never executed — trigger manually |
 | Yesterday's timestamps | 7 AM job didn't run — check Railway logs |
+
+### Training Status Validation (v20.17.3)
+
+**Complete validation script with hard assertions:**
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+API_KEY='YOUR_KEY'
+BASE='https://web-production-7b2a.up.railway.app'
+
+json="$(curl -fsS -H "X-API-Key: ${API_KEY}" "${BASE}/live/debug/training-status")"
+
+# 1) Print compact status
+echo "$json" | jq '{
+  build_sha: (.verification_proof.build_sha // .build_sha // null),
+  training_health: .training_health,
+  last_train_run_at: .training_telemetry.last_train_run_at,
+  graded_samples_seen: .training_telemetry.graded_samples_seen,
+  samples_used_for_training: .training_telemetry.samples_used_for_training,
+  missing_model_preds_attribution: .store_audit.data_quality.missing_model_preds_attribution,
+  artifacts: .artifact_proof,
+  ensemble_signature: .training_telemetry.training_signatures.ensemble
+}'
+
+# 2) Hard assertions (exits non-zero if any fail)
+echo "$json" | jq -e '
+  (.verification_proof.build_sha? // .build_sha? | type == "string" and length > 0)
+  and (.training_health == "HEALTHY")
+  and (.training_telemetry.last_train_run_at != null)
+  and ((.training_telemetry.graded_samples_seen // 0) > 0)
+  and ((.training_telemetry.samples_used_for_training // 0) >= 0)
+  and ((.store_audit.data_quality.total_records // 0) > 0)
+  and ((.store_audit.data_quality.graded_count // 0) > 0)
+  and ((.store_audit.data_quality.missing_model_preds_attribution.unknown // 0) == 0)
+  and (
+    (.training_telemetry.training_signatures.ensemble? // null) == null
+    or (
+      (.training_telemetry.training_signatures.ensemble.schema_match == true)
+      and (.training_telemetry.training_signatures.ensemble.label_type == "binary_hit")
+      and (.training_telemetry.training_signatures.ensemble.filter_telemetry.assertion_passed == true)
+    )
+  )
+' >/dev/null
+
+echo "✅ HARD CHECKS PASS"
+```
+
+**Note:** The `ensemble_signature == null` allowance handles runs before telemetry fixes deployed. Remove once all runs have signatures.
+
+**Attribution Buckets (missing model_preds):**
+| Bucket | Meaning | Expected? |
+|--------|---------|-----------|
+| `old_schema` | Before 2026-02-01 (model_preds not added yet) | Yes |
+| `non_game_market` | Prop pick (no ensemble scoring) | Yes |
+| `error_path` | Explicit error/timeout/fallback indicator | Investigate |
+| `heuristic_fallback` | ai_mode == HEURISTIC_FALLBACK (MPS unavailable) | Investigate if high |
+| `empty_raw_inputs` | Game market but raw_inputs empty (MPS partial result) | Investigate if high |
+| `unknown` | Cannot determine reason | MUST be 0 |
+
+---
+
+## Deployment Gates (Required Before Deploy)
+
+**Three gates must pass before any production deployment:**
+
+### Gate A: Build SHA Verification
+```bash
+# Verify deployed commit matches expected
+curl -s "$BASE_URL/health" | jq -e '.build_sha == "EXPECTED_SHA"'
+```
+
+### Gate B: Engine 1 Training Health (jq Hard Assertions)
+```bash
+json="$(curl -fsS -H 'X-API-Key: YOUR_KEY' \
+  'https://web-production-7b2a.up.railway.app/live/debug/training-status')"
+
+echo "$json" | jq '{
+  build_sha: (.verification_proof.build_sha // .build_sha // null),
+  training_health: .training_health,
+  last_train_run_at: .training_telemetry.last_train_run_at,
+  graded_samples_seen: .training_telemetry.graded_samples_seen,
+  samples_used_for_training: .training_telemetry.samples_used_for_training,
+  missing_model_preds_attribution: .store_audit.data_quality.missing_model_preds_attribution,
+  artifacts: .artifact_proof,
+  ensemble_signature: .training_telemetry.training_signatures.ensemble
+}'
+
+echo "$json" | jq -e '
+  (.verification_proof.build_sha? // .build_sha? | type == "string" and length > 0)
+  and (.training_health == "HEALTHY")
+  and (.training_telemetry.last_train_run_at != null)
+  and ((.training_telemetry.graded_samples_seen // 0) > 0)
+  and ((.training_telemetry.samples_used_for_training // 0) >= 0)
+  and ((.store_audit.data_quality.total_records // 0) > 0)
+  and ((.store_audit.data_quality.graded_count // 0) > 0)
+  and ((.store_audit.data_quality.missing_model_preds_attribution.unknown // 0) == 0)
+  and (
+    (.training_telemetry.training_signatures.ensemble? // null) == null
+    or (
+      (.training_telemetry.training_signatures.ensemble.schema_match == true)
+      and (.training_telemetry.training_signatures.ensemble.label_type == "binary_hit")
+      and (.training_telemetry.training_signatures.ensemble.filter_telemetry.assertion_passed == true)
+    )
+  )
+' >/dev/null
+
+echo "✅ GATE B PASS"
+```
+
+### Gate C: Engine 2 Research Anti-Conflation
+```bash
+json="$(curl -fsS -H 'X-API-Key: YOUR_KEY' \
+  'https://web-production-7b2a.up.railway.app/live/best-bets/NBA?debug=1')"
+
+echo "$json" | jq '.game_picks.picks[0] | {
+  final_score,
+  research_breakdown,
+  research_reasons: (.research_reasons[0:3] // [])
+}'
+
+# Hard semantic checks - ALL must pass
+echo "$json" | jq -e '
+  (.game_picks.picks // []) | all(
+    # SHARP: if boost > 0, must be Playbook + SUCCESS + real inputs
+    (
+      (.research_breakdown.sharp_boost // 0) <= 0
+      or (
+        .research_breakdown.sharp_source_api == "playbook_api"
+        and .research_breakdown.sharp_status == "SUCCESS"
+        and (.research_breakdown.sharp_raw_inputs.ticket_pct != null)
+        and (.research_breakdown.sharp_raw_inputs.money_pct != null)
+      )
+    )
+    and
+    # LINE: if boost > 0, must be Odds API + SUCCESS + real inputs
+    (
+      (.research_breakdown.line_boost // 0) <= 0
+      or (
+        .research_breakdown.line_source_api == "odds_api"
+        and .research_breakdown.line_status == "SUCCESS"
+        and (.research_breakdown.line_raw_inputs.line_variance != null)
+      )
+    )
+    and
+    # Anti-conflation: sharp_status != SUCCESS → sharp_strength == NONE
+    (
+      (.research_breakdown.sharp_status == "SUCCESS")
+      or ((.research_breakdown.sharp_strength // "NONE") == "NONE")
+    )
+    and
+    # No "Sharp" reason when sharp_status != SUCCESS
+    (
+      (.research_breakdown.sharp_status == "SUCCESS")
+      or ((.research_reasons // []) | all(test("Sharp") | not))
+    )
+  )
+' >/dev/null
+
+echo "✅ GATE C PASS"
+```
+
+### Important: jq Assertion Failures
+
+**When `jq -e` returns non-zero exit:**
+
+1. **Do NOT blame phantom shell quoting** unless you can reproduce the exact quoting issue
+2. **Check actual response** with `echo "$json" | jq .` to see raw data
+3. **Verify field paths** match current API response shape
+4. **Common causes:**
+   - Response shape changed (add optional chaining `?` or `// null`)
+   - Field genuinely missing (actual bug, not assertion bug)
+   - Network error (curl returned empty/error response)
+
+**The jq command is correct if it worked before.** Investigate response content first.
+
+**Shell quoting rules:**
+- Always single-quote jq filters (avoid double quotes)
+- Use `==` instead of `!=` (inequality can cause shell quoting issues)
+- Use `<= 0` instead of `!= 0` or negated `> 0`
+- Use `test("pattern") | not` instead of `!~`
 
 ---
 

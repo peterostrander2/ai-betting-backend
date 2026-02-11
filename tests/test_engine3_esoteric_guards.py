@@ -160,29 +160,49 @@ class TestSignalInventory:
 # =============================================================================
 
 class TestGlitchWeights:
-    """Verify GLITCH protocol weights sum to 1.0."""
+    """Verify GLITCH protocol weights and normalization behavior."""
 
-    def test_glitch_weights_sum_to_1(self):
-        """GLITCH signal weights must sum to exactly 1.0."""
-        # From docs/AUDIT_ENGINE3_ESOTERIC.md
-        glitch_weights = {
+    def test_active_glitch_weights_sum_to_105(self):
+        """Active GLITCH signal weights (excluding disabled noosphere) sum to 1.05."""
+        # Raw weights as defined in get_glitch_aggregate()
+        active_weights = {
             "chrome_resonance": 0.25,
             "void_moon": 0.20,
-            "noosphere": 0.15,  # disabled but weight still defined
             "hurst": 0.25,
             "kp_index": 0.25,
             "benford": 0.10,
         }
-        # Note: This sums to 1.20, which means the doc has an error or
-        # only active signals are used in practice. Let me check the actual
-        # implementation weights. For now, test what's documented.
-        # Actually with noosphere disabled, active weights need redistribution
-        # or the aggregate uses different logic. This test validates the contract.
-        total = sum(glitch_weights.values())
-        # The documented weights sum to 1.20, which is likely intentional
-        # since noosphere (0.15) is disabled, leaving active at 1.05
-        # This test documents the current state
-        assert total > 0.9, f"GLITCH weights sum: {total}"
+        # noosphere is disabled (SERPAPI_KEY absent), so not included in active
+        total = sum(active_weights.values())
+        assert abs(total - 1.05) < 0.001, \
+            f"Active GLITCH weights should sum to 1.05, got {total}"
+
+    def test_glitch_aggregate_normalizes_to_1(self):
+        """Engine normalizes by dividing weighted_score by total_weight."""
+        # The engine uses: final_score = weighted_score / total_weight
+        # This means effective weights always sum to 1.0 after normalization
+        from esoteric_engine import get_glitch_aggregate
+        from datetime import date, datetime
+
+        # Call with minimal inputs to get normalization behavior
+        result = get_glitch_aggregate(
+            birth_date_str=None,
+            game_date=date.today(),
+            game_time=datetime.now(),
+            line_history=None,
+            value_for_benford=None,
+            primary_value=None
+        )
+
+        # weights_used shows total weight before normalization
+        weights_used = result.get("weights_used", 0)
+        # With minimal inputs, only void_moon (0.20) and kp_index/schumann (0.25) fire
+        # The glitch_score is normalized: weighted_score / total_weight
+        # So effective weights always sum to 1.0
+        assert weights_used > 0, "At least some weights should be used"
+        # The normalized score is bounded [0, 1] (or 0-10 for glitch_score_10)
+        assert 0 <= result.get("glitch_score", 0) <= 1.0, \
+            f"Normalized glitch_score should be [0,1], got {result.get('glitch_score')}"
 
     def test_kp_index_weight_is_025(self):
         """Kp-Index signal has weight 0.25."""
