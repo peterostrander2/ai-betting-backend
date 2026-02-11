@@ -1,8 +1,27 @@
 # ENGINE 4 (JARVIS) - TRUTH TABLE
 
 **Generated:** Step 1 Wiring Investigation (Feb 10, 2026)
-**Updated:** Step 3 Implementation (Feb 11, 2026)
+**Updated:** Step 6 v2.1 Fix (Feb 11, 2026)
 **Constraint:** Production selector now available via JARVIS_IMPL env var
+
+---
+
+## v2.1 FIX (Feb 11, 2026)
+
+**Critical A/B Bug Fixed:** Hybrid's `jarvis_score_before_ophis` now uses the SAVANT engine's scoring logic.
+
+**Problem:** Hybrid v2.0 used a simplified `calculate_jarvis_gematria_score()` that was missing:
+- REDUCTION triggers (master number match)
+- POWER_NUMBER triggers (11, 22, 44, 55, 66, 77, 88, 99)
+- TESLA_REDUCTION triggers (3, 6, 9 digit sum)
+- Goldilocks Zone (spread 4.0-9.0)
+- Stacking decay (0.7^n)
+
+**Solution:** Hybrid now calls `_calculate_savant_jarvis_score()` which uses the exact same `JarvisSavantEngine` methods and additive formula as the production savant implementation.
+
+**Invariant Added:** When `ophis_delta=0`, `hybrid.jarvis_score_before_ophis == savant.jarvis_rs`
+
+**Version:** `JARVIS_OPHIS_HYBRID_v2.1`
 
 ---
 

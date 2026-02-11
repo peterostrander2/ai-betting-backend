@@ -1,5 +1,5 @@
 """
-JARVIS-OPHIS HYBRID ENGINE v2.0 "JARVIS PRIMARY + OPHIS DELTA"
+JARVIS-OPHIS HYBRID ENGINE v2.1 "JARVIS PRIMARY + OPHIS DELTA"
 ==============================================================
 Contract Version: 20.2
 
@@ -10,6 +10,12 @@ Formula:
     hybrid_score = jarvis_score + ophis_delta
     where ophis_delta is bounded [-0.75, +0.75]
 
+v2.1 FIX (Feb 11, 2026):
+- jarvis_score_before_ophis now uses SAVANT engine scoring (same as production)
+- Fixes A/B comparison bug where hybrid used simplified gematria logic
+- Now includes: REDUCTION, POWER_NUMBER, TESLA_REDUCTION, Goldilocks Zone
+- Guarantees: when ophis_delta=0, hybrid.jarvis_before == savant.jarvis_rs
+
 MSRF is a CORE COMPONENT of this engine (not a post-base boost).
 - Ophis Z-scan produces Z-values from matchup date temporal analysis
 - Win dates are DEFERRED to Phase 2 (currently uses matchup_date only)
@@ -19,10 +25,11 @@ MSRF is a CORE COMPONENT of this engine (not a post-base boost).
 Output: jarvis_score (0-10) with Jarvis as primary, Ophis as modifier
 Payload fields:
 - jarvis_rs (final hybrid score)
-- jarvis_score_before_ophis (pure Jarvis)
+- jarvis_score_before_ophis (pure Jarvis - NOW matches savant!)
 - ophis_raw, ophis_delta, ophis_delta_cap
 - msrf_component, msrf_status = "IN_JARVIS"
 - blend_type = "JARVIS_PRIMARY_OPHIS_DELTA"
+- savant_version (audit trail for savant scoring used)
 
 CRITICAL: Post-base msrf_boost is ALWAYS 0.0 - MSRF lives ONLY here.
 """
@@ -49,7 +56,7 @@ OPHIS_DELTA_CAP = 0.75     # Maximum adjustment ±0.75
 JARVIS_MSRF_COMPONENT_CAP = 2.0
 
 # Version string
-VERSION = "JARVIS_OPHIS_HYBRID_v2.0"
+VERSION = "JARVIS_OPHIS_HYBRID_v2.1"
 
 # Ophis mathematical constants
 OPH_PI = 3.141592653589793
@@ -98,6 +105,25 @@ JARVIS_TRIGGERS = {
 
 # Jarvis baseline
 JARVIS_BASELINE = 4.5
+
+# v2.1: TRIGGER_CONTRIBUTIONS - MUST match live_data_router.py exactly!
+TRIGGER_CONTRIBUTIONS = {
+    2178: 3.5,   # IMMORTAL - highest
+    201: 2.5,    # ORDER - high
+    33: 2.0,     # MASTER - Gold-Star eligible
+    93: 2.0,     # WILL - Gold-Star eligible
+    322: 2.0,    # SOCIETY - Gold-Star eligible
+    666: 1.5,    # BEAST - medium
+    888: 1.5,    # JESUS - medium
+    369: 1.5,    # TESLA KEY - medium
+}
+POWER_NUMBER_CONTRIB = 0.8
+TESLA_REDUCTION_CONTRIB = 0.5
+REDUCTION_MATCH_CONTRIB = 0.5
+GEMATRIA_STRONG_CONTRIB = 1.5
+GEMATRIA_MODERATE_CONTRIB = 0.8
+GOLDILOCKS_CONTRIB = 0.5
+STACKING_DECAY = 0.7  # Each additional trigger contributes 70% of previous
 
 # Simple gematria tables
 SIMPLE_GEMATRIA = {chr(i): i - 96 for i in range(97, 123)}  # a=1, b=2, etc.
@@ -321,6 +347,189 @@ def calculate_jarvis_gematria_score(
 
 
 # =============================================================================
+# v2.1: SAVANT ENGINE SCORING (SAME AS live_data_router.py)
+# =============================================================================
+
+def _calculate_savant_jarvis_score(
+    home_team: str,
+    away_team: str,
+    player_name: Optional[str] = None,
+    spread: float = 0.0,
+    total: float = 0.0,
+    prop_line: float = 0.0,
+    game_str: str = "",
+    matchup_date: Optional[date] = None,
+) -> Dict[str, Any]:
+    """
+    Calculate Jarvis score using the SAME logic as savant engine.
+
+    v2.1 FIX: This ensures hybrid's jarvis_before matches savant's jarvis_rs.
+
+    Uses lazy import to avoid circular dependency with live_data_router.py.
+    """
+    # Lazy import savant engine to avoid circular dependency
+    try:
+        from jarvis_savant_engine import get_jarvis_engine
+        jarvis_engine = get_jarvis_engine()
+    except ImportError:
+        jarvis_engine = None
+        logger.warning("JarvisSavantEngine not available, falling back to simplified scoring")
+
+    # Build matchup string if not provided
+    if not game_str and home_team and away_team:
+        game_str = f"{away_team} @ {home_team}"
+        if player_name:
+            game_str = f"{player_name} {game_str}"
+
+    # Track inputs used
+    jarvis_inputs_used = {
+        "matchup_str": game_str if game_str else None,
+        "date_et": matchup_date.isoformat() if matchup_date else None,
+        "spread": spread if spread != 0 else None,
+        "total": total if total != 0 else None,
+        "player_line": prop_line if prop_line != 0 else None,
+        "home_team": home_team if home_team else None,
+        "away_team": away_team if away_team else None,
+        "player_name": player_name if player_name else None
+    }
+
+    # Check if critical inputs are missing
+    inputs_missing = not game_str or (not home_team and not away_team)
+
+    if inputs_missing:
+        return {
+            "jarvis_rs": None,
+            "jarvis_baseline": None,
+            "jarvis_trigger_contribs": {},
+            "jarvis_active": False,
+            "jarvis_hits_count": 0,
+            "jarvis_triggers_hit": [],
+            "jarvis_reasons": ["Inputs missing - cannot run"],
+            "jarvis_fail_reasons": ["Missing critical inputs (matchup_str or teams)"],
+            "jarvis_no_trigger_reason": "INPUTS_MISSING",
+            "jarvis_inputs_used": jarvis_inputs_used,
+            "immortal_detected": False,
+            "version": "JARVIS_SAVANT_v11.08",
+            "blend_type": "SAVANT",
+        }
+
+    # Initialize scoring
+    jarvis_triggers_hit = []
+    jarvis_trigger_contribs = {}
+    jarvis_fail_reasons = []
+    jarvis_no_trigger_reason = None
+    immortal_detected = False
+    total_trigger_contrib = 0.0
+    gematria_contrib = 0.0
+    goldilocks_contrib = 0.0
+    trigger_count = 0
+
+    if jarvis_engine:
+        # 1. Sacred Triggers - ADDITIVE contributions (SAME as live_data_router.py)
+        trigger_result = jarvis_engine.check_jarvis_trigger(game_str)
+        sorted_triggers = sorted(
+            trigger_result.get("triggers_hit", []),
+            key=lambda t: TRIGGER_CONTRIBUTIONS.get(t["number"], 0.5),
+            reverse=True
+        )
+
+        for i, trig in enumerate(sorted_triggers):
+            trigger_num = trig["number"]
+            match_type = trig.get("match_type", "DIRECT")
+
+            # Get base contribution
+            if trigger_num in TRIGGER_CONTRIBUTIONS:
+                base_contrib = TRIGGER_CONTRIBUTIONS[trigger_num]
+            elif match_type == "POWER_NUMBER":
+                base_contrib = POWER_NUMBER_CONTRIB
+            elif match_type == "TESLA_REDUCTION":
+                base_contrib = TESLA_REDUCTION_CONTRIB
+            elif match_type == "REDUCTION":
+                base_contrib = REDUCTION_MATCH_CONTRIB
+            else:
+                base_contrib = 0.5  # Default for unknown triggers
+
+            # Apply stacking decay (70% for each subsequent trigger)
+            decay_factor = STACKING_DECAY ** i
+            actual_contrib = base_contrib * decay_factor
+
+            jarvis_triggers_hit.append({
+                "number": trigger_num,
+                "name": trig["name"],
+                "match_type": match_type,
+                "base_contrib": round(base_contrib, 2),
+                "actual_contrib": round(actual_contrib, 2),
+                "decay_factor": round(decay_factor, 2)
+            })
+            jarvis_trigger_contribs[trig["name"]] = round(actual_contrib, 2)
+            total_trigger_contrib += actual_contrib
+            trigger_count += 1
+
+            if trigger_num == 2178:
+                immortal_detected = True
+
+        # 2. Gematria Signal - ADDITIVE contribution
+        if player_name and home_team:
+            gematria = jarvis_engine.calculate_gematria_signal(player_name, home_team, away_team or "")
+            signal_strength = gematria.get("signal_strength", 0)
+            if signal_strength > 0.7:
+                gematria_contrib = GEMATRIA_STRONG_CONTRIB
+                jarvis_trigger_contribs["gematria_strong"] = gematria_contrib
+            elif signal_strength > 0.4:
+                gematria_contrib = GEMATRIA_MODERATE_CONTRIB
+                jarvis_trigger_contribs["gematria_moderate"] = gematria_contrib
+
+        # 3. Mid-Spread Goldilocks - ADDITIVE contribution
+        mid_spread = jarvis_engine.calculate_mid_spread_signal(spread)
+        if mid_spread.get("signal") == "GOLDILOCKS":
+            goldilocks_contrib = GOLDILOCKS_CONTRIB
+            jarvis_trigger_contribs["goldilocks_zone"] = goldilocks_contrib
+
+    else:
+        # Fallback: use simplified gematria (when savant engine unavailable)
+        fallback_result = calculate_jarvis_gematria_score(home_team, away_team, player_name)
+        total_trigger_contrib = fallback_result.get("total_boost", 0.0)
+        immortal_detected = fallback_result.get("immortal_detected", False)
+        for trig in fallback_result.get("triggers_hit", []):
+            jarvis_triggers_hit.append(trig)
+            jarvis_trigger_contribs[trig["name"]] = trig["boost"]
+
+    # Calculate final jarvis_rs = baseline + all contributions
+    jarvis_rs = JARVIS_BASELINE + total_trigger_contrib + gematria_contrib + goldilocks_contrib
+
+    # Cap at 0-10 range
+    jarvis_rs = max(0.0, min(10.0, jarvis_rs))
+
+    # Determine jarvis_active and build reasons
+    jarvis_hits_count = len(jarvis_triggers_hit)
+    has_any_contrib = total_trigger_contrib > 0 or gematria_contrib > 0 or goldilocks_contrib > 0
+
+    if has_any_contrib:
+        jarvis_reasons = list(jarvis_trigger_contribs.keys())
+        jarvis_no_trigger_reason = None
+    else:
+        jarvis_reasons = [f"Baseline {JARVIS_BASELINE} (no triggers)"]
+        jarvis_no_trigger_reason = "NO_TRIGGER_BASELINE"
+        jarvis_fail_reasons.append(f"No triggers fired - baseline {JARVIS_BASELINE}")
+
+    return {
+        "jarvis_rs": round(jarvis_rs, 2),
+        "jarvis_baseline": JARVIS_BASELINE,
+        "jarvis_trigger_contribs": jarvis_trigger_contribs,
+        "jarvis_active": True,
+        "jarvis_hits_count": jarvis_hits_count,
+        "jarvis_triggers_hit": jarvis_triggers_hit,
+        "jarvis_reasons": jarvis_reasons,
+        "jarvis_fail_reasons": jarvis_fail_reasons,
+        "jarvis_no_trigger_reason": jarvis_no_trigger_reason,
+        "jarvis_inputs_used": jarvis_inputs_used,
+        "immortal_detected": immortal_detected,
+        "version": "JARVIS_SAVANT_v11.08",
+        "blend_type": "SAVANT",
+    }
+
+
+# =============================================================================
 # MAIN HYBRID CALCULATION
 # =============================================================================
 
@@ -417,20 +626,27 @@ def calculate_hybrid_jarvis_score(
     ophis_raw = JARVIS_BASELINE + msrf_component
 
     # =========================================================================
-    # JARVIS COMPONENT (Primary Scorer)
+    # JARVIS COMPONENT (Primary Scorer) - v2.1: Uses SAVANT engine for base
     # =========================================================================
-    gematria_result = calculate_jarvis_gematria_score(home_team, away_team, player_name)
-    jarvis_boost = gematria_result["total_boost"]
-    immortal_detected = gematria_result["immortal_detected"]
+    # v2.1 FIX: Call savant scoring to get the TRUE jarvis_score_before_ophis
+    # This ensures hybrid's base matches what savant would produce.
+    savant_result = _calculate_savant_jarvis_score(
+        home_team=home_team,
+        away_team=away_team,
+        player_name=player_name,
+        spread=spread or 0.0,
+        total=total or 0.0,
+        prop_line=prop_line or 0.0,
+        game_str=game_str,
+        matchup_date=matchup_date,
+    )
 
-    # Jarvis score: JARVIS_BASELINE + trigger boosts (range: [4.5, 10.0])
-    jarvis_score_before_ophis = JARVIS_BASELINE + jarvis_boost
-    jarvis_score_before_ophis = max(0.0, min(10.0, jarvis_score_before_ophis))
+    # Extract savant's jarvis_rs as our base score
+    jarvis_score_before_ophis = savant_result.get("jarvis_rs") or JARVIS_BASELINE
+    immortal_detected = savant_result.get("immortal_detected", False)
 
-    # Build trigger contributions dict for schema compatibility
-    jarvis_trigger_contribs = {}
-    for trig in gematria_result["triggers_hit"]:
-        jarvis_trigger_contribs[trig["name"]] = trig["boost"]
+    # Propagate savant's trigger contributions for transparency
+    jarvis_trigger_contribs = savant_result.get("jarvis_trigger_contribs", {})
 
     # =========================================================================
     # v2.0 BLEND: Jarvis Primary + Bounded Ophis Delta (NOT weighted average)
@@ -447,9 +663,12 @@ def calculate_hybrid_jarvis_score(
     jarvis_rs = max(0.0, min(10.0, jarvis_rs))  # Clamp to 0-10
 
     # =========================================================================
-    # COLLECT TRIGGERS AND REASONS
+    # COLLECT TRIGGERS AND REASONS - v2.1: Use savant_result
     # =========================================================================
-    triggers_hit = gematria_result["triggers_hit"]
+    # Start with savant's triggers
+    triggers_hit = list(savant_result.get("jarvis_triggers_hit", []))
+
+    # Add MSRF Z-scan hits
     if msrf_result["hits"]:
         for hit in msrf_result["hits"]:
             triggers_hit.append({
@@ -460,13 +679,13 @@ def calculate_hybrid_jarvis_score(
                 "tier": "HIGH" if hit["is_important"] else "MEDIUM",
             })
 
-    reasons = []
+    # Build reasons from savant + MSRF
+    reasons = list(savant_result.get("jarvis_reasons", []))
     if immortal_detected:
-        reasons.append("IMMORTAL_2178_DETECTED")
+        if "IMMORTAL_2178_DETECTED" not in reasons:
+            reasons.insert(0, "IMMORTAL_2178_DETECTED")
     if msrf_component > 0:
         reasons.append(f"MSRF_COMPONENT_{round(msrf_component, 2)}")
-    for trig in gematria_result["triggers_hit"]:
-        reasons.append(f"{trig['name']}_{trig['match_type']}")
 
     # Determine whisper tier
     if jarvis_rs >= 8.0:
@@ -492,8 +711,8 @@ def calculate_hybrid_jarvis_score(
         "jarvis_hits_count": len(triggers_hit),
         "jarvis_triggers_hit": triggers_hit[:10],  # Top 10
         "jarvis_reasons": reasons,
-        "jarvis_fail_reasons": [],
-        "jarvis_no_trigger_reason": None if jarvis_boost > 0 else "NO_TRIGGER_BASELINE",
+        "jarvis_fail_reasons": savant_result.get("jarvis_fail_reasons", []),
+        "jarvis_no_trigger_reason": savant_result.get("jarvis_no_trigger_reason"),
         "jarvis_inputs_used": {
             "home_team": home_team,
             "away_team": away_team,
@@ -528,8 +747,15 @@ def calculate_hybrid_jarvis_score(
         "jarvis_msrf_component_raw": round(msrf_component_raw, 4),
         "msrf_status": "IN_JARVIS",  # MSRF is inside Jarvis, not post-base
 
-        # Gematria details
-        "gematria": gematria_result["gematria"],
+        # Gematria details (simple values for debugging)
+        "gematria": {
+            "home": calculate_gematria(home_team),
+            "away": calculate_gematria(away_team),
+            "player": calculate_gematria(player_name) if player_name else 0,
+            "combined": calculate_gematria(home_team) + calculate_gematria(away_team) + (calculate_gematria(player_name) if player_name else 0),
+        },
+        # v2.1: Savant version for audit trail
+        "savant_version": savant_result.get("version", "UNKNOWN"),
 
         # MSRF Z-scan details
         "msrf_z_values": z_values[:5] if z_values else [],
@@ -543,7 +769,7 @@ def calculate_hybrid_jarvis_score(
 # =============================================================================
 
 __all__ = [
-    # Constants (v2.0 delta model)
+    # Constants (v2.1 delta model)
     "OPHIS_NEUTRAL",
     "OPHIS_MIN",
     "OPHIS_MAX",

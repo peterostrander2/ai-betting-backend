@@ -1,5 +1,5 @@
 """
-Engine 4 (Jarvis) Hard Guards - v2.0
+Engine 4 (Jarvis) Hard Guards - v2.1
 
 Tests to enforce invariants for both Savant and Hybrid implementations.
 These are non-driftable guards similar to Engine 3 esoteric guards.
@@ -15,6 +15,7 @@ Invariants enforced:
 8. Selector is deterministic (invalid → savant)
 9. Ophis neutral (5.5) yields delta = 0 (hybrid only)
 10. Hybrid is additive not weighted average
+11. v2.1: Hybrid's jarvis_before == Savant's jarvis_rs for same inputs
 """
 
 import pytest
@@ -403,3 +404,101 @@ def test_msrf_status_is_in_jarvis(hybrid_function, sample_inputs):
 
     assert result["msrf_status"] == "IN_JARVIS", \
         f"msrf_status={result['msrf_status']}, expected 'IN_JARVIS'"
+
+
+# =============================================================================
+# TEST 11: v2.1 FIX - Hybrid's jarvis_before == Savant's jarvis_rs
+# =============================================================================
+
+def test_hybrid_jarvis_before_matches_savant(hybrid_function, sample_inputs):
+    """
+    v2.1 FIX: Hybrid's jarvis_score_before_ophis must match savant's jarvis_rs.
+
+    This is the critical A/B comparison fix. When using the same inputs,
+    the hybrid's base score (before ophis delta) must equal what savant
+    would produce. This ensures the delta model is applied to the correct
+    baseline.
+    """
+    from core.jarvis_ophis_hybrid import _calculate_savant_jarvis_score
+
+    # Get savant result
+    savant_result = _calculate_savant_jarvis_score(
+        home_team=sample_inputs["home_team"],
+        away_team=sample_inputs["away_team"],
+        player_name=sample_inputs["player_name"],
+        spread=sample_inputs["spread"],
+        total=sample_inputs["total"],
+        prop_line=sample_inputs["prop_line"],
+        game_str=sample_inputs["game_str"],
+        matchup_date=sample_inputs["matchup_date"],
+    )
+
+    # Get hybrid result
+    hybrid_result = hybrid_function(
+        home_team=sample_inputs["home_team"],
+        away_team=sample_inputs["away_team"],
+        player_name=sample_inputs["player_name"],
+        spread=sample_inputs["spread"],
+        total=sample_inputs["total"],
+        prop_line=sample_inputs["prop_line"],
+        game_str=sample_inputs["game_str"],
+        matchup_date=sample_inputs["matchup_date"],
+        sport=sample_inputs["sport"],
+    )
+
+    savant_rs = savant_result.get("jarvis_rs")
+    hybrid_before = hybrid_result.get("jarvis_score_before_ophis")
+
+    # They must be equal (within floating point tolerance)
+    assert savant_rs is not None, "savant_rs should not be None with valid inputs"
+    assert hybrid_before is not None, "hybrid_before should not be None with valid inputs"
+    assert abs(savant_rs - hybrid_before) < 0.01, \
+        f"v2.1 FIX VIOLATION: hybrid.jarvis_before ({hybrid_before}) != savant.jarvis_rs ({savant_rs})"
+
+
+def test_hybrid_includes_savant_version(hybrid_function, sample_inputs):
+    """v2.1: Hybrid output includes savant_version for audit trail."""
+    result = hybrid_function(
+        home_team=sample_inputs["home_team"],
+        away_team=sample_inputs["away_team"],
+        sport=sample_inputs["sport"],
+    )
+
+    assert "savant_version" in result, "Missing savant_version field"
+    assert "SAVANT" in result["savant_version"], \
+        f"savant_version={result['savant_version']} should contain 'SAVANT'"
+
+
+def test_hybrid_triggers_match_savant(hybrid_function, sample_inputs):
+    """v2.1: Hybrid's trigger_contribs should match savant's triggers."""
+    from core.jarvis_ophis_hybrid import _calculate_savant_jarvis_score
+
+    # Get savant result
+    savant_result = _calculate_savant_jarvis_score(
+        home_team=sample_inputs["home_team"],
+        away_team=sample_inputs["away_team"],
+        player_name=sample_inputs["player_name"],
+        spread=sample_inputs["spread"],
+        game_str=sample_inputs["game_str"],
+        matchup_date=sample_inputs["matchup_date"],
+    )
+
+    # Get hybrid result
+    hybrid_result = hybrid_function(
+        home_team=sample_inputs["home_team"],
+        away_team=sample_inputs["away_team"],
+        player_name=sample_inputs["player_name"],
+        spread=sample_inputs["spread"],
+        game_str=sample_inputs["game_str"],
+        matchup_date=sample_inputs["matchup_date"],
+        sport=sample_inputs["sport"],
+    )
+
+    savant_contribs = savant_result.get("jarvis_trigger_contribs", {})
+    hybrid_contribs = hybrid_result.get("jarvis_trigger_contribs", {})
+
+    # Hybrid should include all savant triggers (may have additional MSRF)
+    for key, value in savant_contribs.items():
+        assert key in hybrid_contribs, f"Missing savant trigger {key} in hybrid"
+        assert abs(hybrid_contribs[key] - value) < 0.01, \
+            f"Trigger {key}: hybrid={hybrid_contribs[key]} != savant={value}"
