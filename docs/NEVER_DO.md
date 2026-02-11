@@ -118,7 +118,15 @@ Reference this file when making changes in the relevant area.
 - **NEVER** mutate `esoteric_score` after BASE_4 calculation
 - **NEVER** bypass GLITCH aggregate when computing esoteric_score
 - **NEVER** enable noosphere without re-enabling SERP (currently cancelled)
-- **NEVER** claim 17 signals — actual count is 29 (23 active, 4 dormant, 1 disabled)
+- **NEVER** claim 17 signals — actual count is 29 (23 active, 6 dormant, 1 disabled)
+
+**v20.18 Audit-Only Posture (Lesson 84):**
+- **NEVER** activate dormant signals during an audit task — audit = observe, not modify
+- **NEVER** change GLITCH weights during audit — weights are 0.25/0.20/0.15/0.25/0.25/0.10 (chrome/void/noosphere/hurst/kp/benford)
+- **NEVER** conflate old plan files with current task requirements
+- **NEVER** use weak guard assertions like `assert total > 0.9` — use exact: `assert abs(total - 1.05) < 0.001`
+- **ALWAYS** verify scoring output unchanged before committing audit changes
+- **ALWAYS** update docs/ESOTERIC_TRUTH_TABLE.md when changing wired signal count
 
 57. **NEVER** assume `pick_type == "GAME"` for game picks - actual values are "SPREAD", "MONEYLINE", "TOTAL", "SHARP"
 58. **NEVER** check `pick_type == "GAME"` directly - use pattern: `_is_game_pick = pick_type in ("GAME", "SPREAD", "MONEYLINE", "TOTAL", "SHARP")`

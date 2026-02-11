@@ -2910,3 +2910,92 @@ grep -n "if filter_telemetry:" team_ml_models.py scripts/train_team_models.py
 **Fixed in:** v20.17.3 (Feb 10, 2026)
 
 ---
+
+### Lesson 84: Audit-Only vs Behavior Change — Engine 3 Behavior Creep (v20.18)
+
+**Problem:** Engine 3 scoring behavior was modified when the constraint was "audit-only" (add instrumentation without changing scores).
+
+**What Happened:**
+1. Task: Add semantic audit infrastructure to Engine 3 (provenance fields, NOAA request proof)
+2. Mistake: Also activated 4 dormant signals (golden_ratio, prime_resonance, phoenix_resonance, planetary_hour)
+3. Mistake: Redistributed GLITCH weights to accommodate new signals
+4. Result: Engine 3 scoring behavior changed — violated non-interference constraint
+
+**Why It's Wrong:**
+- Audit instrumentation should be **transparent** — it observes, not modifies
+- Activating dormant signals = **model change** (changes scores, changes picks)
+- Weight redistribution = **model change** (changes relative signal contributions)
+- User explicitly said "don't change scoring behavior"
+
+**Root Cause Analysis:**
+1. Plan file existed for "Activate Dormant Signals" (old task)
+2. Current task was different: "Add audit infrastructure"
+3. Conflated the two tasks despite different requirements
+4. Weak guard test (`assert total > 0.9`) didn't catch weight changes
+
+**The Fix (v20.18):**
+1. Reverted all signal activations — dormant signals remain dormant
+2. Restored original GLITCH weights: chrome 0.25, void 0.20, noosphere 0.15, hurst 0.25, kp 0.25, benford 0.10
+3. Hardened guard tests with exact assertions:
+```python
+# BEFORE (toothless):
+assert total > 0.9  # Passes even with wrong weights!
+
+# AFTER (hard assertion):
+assert abs(total - 1.05) < 0.001, f"Active GLITCH weights should sum to 1.05, got {total}"
+```
+4. Added comments in code marking dormant signals as NOT wired
+
+**Prevention:**
+1. **Distinguish audit from feature:** Audit = observe, Feature = modify
+2. **Check plan file relevance:** Old plans may not match current task
+3. **Hard assertions in guards:** Use exact values, not weak thresholds
+4. **Non-interference check:** Before committing, verify scoring output unchanged
+
+**Guard Test Pattern:**
+```python
+def test_glitch_weights_exact(self):
+    """GLITCH weights must sum to exactly 1.05 (pre-normalization)."""
+    active_weights = {
+        "chrome_resonance": 0.25,
+        "void_moon": 0.20,
+        "hurst": 0.25,
+        "kp_index": 0.25,
+        "benford": 0.10,
+    }
+    total = sum(active_weights.values())
+    assert abs(total - 1.05) < 0.001, f"Expected 1.05, got {total}"
+```
+
+**Commit:** `dfec72b fix(engine3): revert behavior creep; harden glitch weight guards`
+
+**Key Files:**
+- `esoteric_engine.py` — Removed signal activations, restored weights
+- `live_data_router.py` — Removed planetary hour application
+- `tests/test_engine3_esoteric_guards.py` — Hardened weight assertions
+- `docs/ESOTERIC_TRUTH_TABLE.md` — Restored 23 wired, 6 dormant
+
+**Verification:**
+```bash
+# Weights must sum to 1.05 (active GLITCH signals)
+pytest tests/test_engine3_esoteric_guards.py -v -k "glitch_weights"
+
+# Signal count unchanged
+pytest tests/test_esoteric_truthfulness.py -v -k "wired_signal_count"
+```
+
+**The Rule:** When task is "add audit infrastructure," the ONLY acceptable changes are:
+- New debug fields/endpoints
+- Provenance metadata
+- Request proof counters
+- Guard tests
+
+NEVER acceptable during audit:
+- Activating dormant signals
+- Changing weights
+- Modifying scoring formulas
+- Adding boosts
+
+**Fixed in:** v20.18 (Feb 10, 2026)
+
+---

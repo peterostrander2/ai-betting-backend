@@ -78,7 +78,7 @@
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (80 Total) - Key Categories
+### Lessons Learned (84 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -121,6 +121,7 @@
 | 81 | **v20.17.3 Training Telemetry Path** | `training_telemetry` is at TOP level of `get_model_status()`, NOT inside `"ensemble"` dict — endpoint read wrong path, showed NEVER_RAN when healthy |
 | 82 | **v20.17.3 Attribution Buckets** | 950 picks had "unknown" missing model_preds — added `heuristic_fallback` and `empty_raw_inputs` buckets for proper diagnosis |
 | 83 | **v20.17.3 Empty Dict Conditionals** | `if filter_telemetry:` is False for empty dict `{}` — training signatures not stored if passed as empty; check explicitly |
+| 84 | **v20.18 Engine 3 Behavior Creep** | Activated dormant signals during audit task — audit = observe, not modify; use hard weight assertions |
 
 ### NEVER DO Sections (37 Categories)
 - ML & GLITCH (rules 1-10)
@@ -264,8 +265,16 @@
 | `scripts/engine2_research_audit.py` | Runtime verification: research_breakdown, usage counters, source APIs — v20.16.5 |
 | `scripts/engine2_research_audit.sh` | Static + runtime checks: conflation patterns, object separation — v20.16.5 |
 
-### Current Version: v20.17.3 (Feb 10, 2026)
-**Latest Fixes (v20.17.3) — Engine 1 Training Telemetry Audit:**
+### Current Version: v20.18 (Feb 10, 2026)
+**Latest Fixes (v20.18) — Engine 3 Semantic Audit (Audit-Only Posture):**
+- **Fix 1: Behavior Creep Revert (Lesson 84)** — Reverted activation of 4 dormant signals (golden_ratio, prime_resonance, phoenix_resonance, planetary_hour) that violated audit-only constraint. Audit = observe, not modify.
+- **Fix 2: Weight Guard Hardening (Lesson 84)** — Changed weak assertion `assert total > 0.9` to hard assertion `assert abs(total - 1.05) < 0.001`. Prevents weight drift.
+- **Fix 3: GLITCH Weight Restoration** — Restored original weights: chrome 0.25, void 0.20, noosphere 0.15, hurst 0.25, kp 0.25, benford 0.10.
+- **Key Files:** `esoteric_engine.py`, `tests/test_engine3_esoteric_guards.py`, `docs/ESOTERIC_TRUTH_TABLE.md`
+- **Invariant:** 23 wired signals, 6 dormant (code exists but NOT called in scoring path)
+- **Commit:** `dfec72b fix(engine3): revert behavior creep; harden glitch weight guards`
+
+**Previous Fixes (v20.17.3) — Engine 1 Training Telemetry Audit:**
 - **Fix 1: Training Telemetry Path (Lesson 81)** — `/live/debug/training-status` was reading `status["ensemble"]["training_telemetry"]` but it should be `status["training_telemetry"]` (top level). Caused `training_health: "NEVER_RAN"` when training was healthy.
 - **Fix 2: Attribution Buckets (Lesson 82)** — 950 picks had "unknown" missing model_preds. Added `heuristic_fallback` (ai_mode == HEURISTIC_FALLBACK) and `empty_raw_inputs` (game market with empty raw_inputs) buckets. Now `unknown: 0`.
 - **Fix 3: Top-Level build_sha** — Added `build_sha` to training-status response for single-call validation.

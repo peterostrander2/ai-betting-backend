@@ -480,6 +480,42 @@ request_proof = {
 | `tests/test_esoteric_truthfulness.py` | `test_request_proof_is_request_local` | contextvars isolation |
 | `tests/test_esoteric_truthfulness.py` | `test_cache_hit_requires_cache_counter` | Cache truthfulness |
 | `tests/test_esoteric_truthfulness.py` | `test_noaa_live_requires_2xx_counter` | Live call truthfulness |
+| `tests/test_engine3_esoteric_guards.py` | `test_active_glitch_weights_sum_to_105` | GLITCH weights = 1.05 (exact) |
+| `tests/test_engine3_esoteric_guards.py` | `test_glitch_aggregate_normalizes_to_1` | Normalized score in [0,1] |
+| `tests/test_engine3_esoteric_guards.py` | `test_kp_index_weight_is_025` | Kp-Index weight = 0.25 |
+
+### GLITCH Weight Guard (v20.18 — Lesson 84)
+
+**Invariant:** Active GLITCH weights MUST sum to exactly 1.05 (before normalization).
+
+| Signal | Weight | Status |
+|--------|--------|--------|
+| chrome_resonance | 0.25 | ACTIVE |
+| void_moon | 0.20 | ACTIVE |
+| noosphere | 0.15 | DISABLED (no SERPAPI_KEY) |
+| hurst | 0.25 | ACTIVE |
+| kp_index | 0.25 | ACTIVE |
+| benford | 0.10 | ACTIVE |
+| **Total (active)** | **1.05** | |
+
+**Guard Test:**
+```python
+def test_active_glitch_weights_sum_to_105(self):
+    """Active GLITCH signal weights (excluding disabled noosphere) sum to 1.05."""
+    active_weights = {
+        "chrome_resonance": 0.25,
+        "void_moon": 0.20,
+        "hurst": 0.25,
+        "kp_index": 0.25,
+        "benford": 0.10,
+    }
+    total = sum(active_weights.values())
+    assert abs(total - 1.05) < 0.001, f"Active GLITCH weights should sum to 1.05, got {total}"
+```
+
+**Why Hard Assertion Matters:**
+- Weak: `assert total > 0.9` — passes with wrong weights!
+- Hard: `assert abs(total - 1.05) < 0.001` — catches any drift
 
 ### Audit Scripts
 
