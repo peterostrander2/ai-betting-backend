@@ -12,18 +12,29 @@
 
 **Problem:** Hybrid v2.0 used its own simplified `calculate_jarvis_gematria_score()` which didn't match production savant scoring. This caused A/B comparison failures (e.g., Austin Peay vs Queens: Savant=7.35, Hybrid=5.25).
 
-**Solution:** Hybrid now calls `_get_savant_jarvis_score()` which:
-1. **Lazily imports** `calculate_jarvis_engine_score` and `get_jarvis_savant` from `live_data_router.py`
-2. **Calls the EXACT same function** used when `JARVIS_IMPL=savant`
-3. **Returns the real production result**, not a re-implementation
+**Solution:** Created `core/jarvis_score_api.py` as a SHARED dependency-light module:
+1. **Single source of truth:** Contains `calculate_jarvis_engine_score()` and `get_savant_engine()`
+2. **No circular imports:** Only imports from `jarvis_savant_engine.py` (no FastAPI dependencies)
+3. **Both use same code:** `live_data_router` and `hybrid` both import from this shared module
+4. **No drift possible:** If savant logic changes, both implementations get the update automatically
 
-**Why This Matters:** If savant changes its internal constants, stacking logic, or adds new contributions, hybrid will automatically pick up those changes. No more drift.
+**Architecture:**
+```
+jarvis_savant_engine.py (engine class)
+           ↓
+core/jarvis_score_api.py (shared scoring function) ← SINGLE SOURCE OF TRUTH
+           ↓               ↓
+live_data_router.py    core/jarvis_ophis_hybrid.py
+(JARVIS_IMPL=savant)   (JARVIS_IMPL=hybrid)
+```
+
+**Why This Matters:** Previous approach of lazy-importing from `live_data_router` created circular import risk and required FastAPI to be installed for tests.
 
 **Invariant Added:** `hybrid.jarvis_score_before_ophis == savant.jarvis_rs` (for same inputs)
 
-**Test:** `test_hybrid_jarvis_before_matches_real_savant` compares against the REAL `live_data_router.calculate_jarvis_engine_score()`, not against hybrid's internal functions.
+**Test:** `test_hybrid_jarvis_before_matches_real_savant` imports from `core.jarvis_score_api` (same module hybrid uses). No skips, no FastAPI dependency.
 
-**Fallback:** If `live_data_router` can't be imported (test/dev without FastAPI), uses simplified gematria and returns `version: "JARVIS_FALLBACK_v1.0"`.
+**Fallback:** If `jarvis_savant_engine` can't be imported, returns `version: "JARVIS_FALLBACK_v1.0"` with simplified gematria.
 
 **Version:** `JARVIS_OPHIS_HYBRID_v2.1`
 
@@ -43,18 +54,20 @@
 
 | Component | File | Lines | Purpose |
 |-----------|------|-------|---------|
-| Jarvis Entry Point | `live_data_router.py` | 2870-3091 | `calculate_jarvis_engine_score()` - v16.0 ADDITIVE |
-| Call Site | `live_data_router.py` | 3995-4012 | Where Jarvis is called from `calculate_pick_score()` |
-| Singleton Init | `live_data_router.py` | 13161-13171 | `get_jarvis_savant()` lazy loader |
+| **SHARED SCORING API** | `core/jarvis_score_api.py` | 1-351 | **SINGLE SOURCE OF TRUTH** for Jarvis scoring |
+| Shared: get_savant_engine() | `core/jarvis_score_api.py` | 68-83 | Engine singleton (imports from jarvis_savant_engine) |
+| Shared: calculate_jarvis_engine_score() | `core/jarvis_score_api.py` | 90-295 | v16.0 ADDITIVE scoring function |
+| Shared: score_jarvis() | `core/jarvis_score_api.py` | 302-334 | Convenience wrapper |
 | Savant Engine Class | `jarvis_savant_engine.py` | 282-1055 | `JarvisSavantEngine` class (v11.08) |
 | Trigger Detection | `jarvis_savant_engine.py` | 350-425 | `check_jarvis_trigger()` |
 | Gematria Calculation | `jarvis_savant_engine.py` | 437-456 | `calculate_gematria()` |
 | Gematria Signal | `jarvis_savant_engine.py` | 458-503 | `calculate_gematria_signal()` |
 | Mid-Spread Signal | `jarvis_savant_engine.py` | 856-888 | `calculate_mid_spread_signal()` |
-| Hybrid (DEAD_CODE) | `core/jarvis_ophis_hybrid.py` | 1-515 | Never imported in scoring path |
-| Trigger Contributions | `live_data_router.py` | 2912-2921 | `TRIGGER_CONTRIBUTIONS` dict |
-| Stacking Decay | `live_data_router.py` | 2928 | `STACKING_DECAY = 0.7` |
-| String Fallback | `live_data_router.py` | 3036-3057 | Fallback when jarvis_engine is None |
+| Hybrid Implementation | `core/jarvis_ophis_hybrid.py` | 1-550 | v2.1 with shared module imports |
+| Hybrid: _get_savant_jarvis_score() | `core/jarvis_ophis_hybrid.py` | 226-280 | Calls shared module |
+| Call Site (live router) | `live_data_router.py` | 3995-4012 | Where Jarvis is called from `calculate_pick_score()` |
+| Trigger Contributions | `core/jarvis_score_api.py` | 27-36 | `TRIGGER_CONTRIBUTIONS` dict |
+| Stacking Decay | `core/jarvis_score_api.py` | 44 | `STACKING_DECAY = 0.7` |
 
 ---
 
