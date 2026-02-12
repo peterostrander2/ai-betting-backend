@@ -310,12 +310,13 @@ class TestJarvisPayload:
             home_team="Los Angeles Lakers", away_team="Boston Celtics",
             sport="NBA", matchup_date=date(2026, 2, 10),
         )
+        # v2.2: Updated field names to match actual hybrid output
         required = [
             "jarvis_rs", "jarvis_active", "jarvis_hits_count",
             "jarvis_triggers_hit", "jarvis_reasons", "jarvis_fail_reasons",
             "jarvis_inputs_used", "immortal_detected", "version",
             "blend_type", "whisper_tier",
-            "ophis_raw", "ophis_normalized", "jarvis_boost", "jarvis_scaled",
+            "ophis_raw", "ophis_score_norm",  # v2.2: was ophis_normalized
             "jarvis_msrf_component", "jarvis_msrf_component_raw", "msrf_status",
             "gematria",
         ]
@@ -342,7 +343,8 @@ class TestJarvisPayload:
     def test_empty_inputs_returns_null_score(self):
         r = calculate_hybrid_jarvis_score(home_team="", away_team="")
         assert r["jarvis_rs"] is None
-        assert r["msrf_status"] == "IN_JARVIS"
+        # v2.2.1: When inputs are missing, MSRF can't compute - correct status is INPUTS_MISSING
+        assert r["msrf_status"] == "INPUTS_MISSING"
 
 
 # =========================================================================
