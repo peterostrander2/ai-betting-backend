@@ -78,7 +78,7 @@
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (84 Total) - Key Categories
+### Lessons Learned (85 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -122,6 +122,7 @@
 | 82 | **v20.17.3 Attribution Buckets** | 950 picks had "unknown" missing model_preds — added `heuristic_fallback` and `empty_raw_inputs` buckets for proper diagnosis |
 | 83 | **v20.17.3 Empty Dict Conditionals** | `if filter_telemetry:` is False for empty dict `{}` — training signatures not stored if passed as empty; check explicitly |
 | 84 | **v20.18 Engine 3 Behavior Creep** | Activated dormant signals during audit task — audit = observe, not modify; use hard weight assertions |
+| 85 | **ENGINE 4 v2.2.1 Scale Factor Calibration** | SF=4.0 showed 96% -bias; calibrate SF based on `mean(msrf)/mean(jarvis)` ratio; check side-balance not just saturation rate |
 
 ### NEVER DO Sections (37 Categories)
 - ML & GLITCH (rules 1-10)
@@ -264,9 +265,24 @@
 | `tests/test_research_truthfulness.py` | 21 anti-conflation tests: sharp/line separation, source attribution — v20.16.5 |
 | `scripts/engine2_research_audit.py` | Runtime verification: research_breakdown, usage counters, source APIs — v20.16.5 |
 | `scripts/engine2_research_audit.sh` | Static + runtime checks: conflation patterns, object separation — v20.16.5 |
+| `core/jarvis_ophis_hybrid.py` | ENGINE 4 Jarvis-Ophis hybrid blend — v2.2.1 with OPHIS_SCALE_FACTOR calibration |
+| `core/jarvis_score_api.py` | Shared Jarvis scoring module (single source of truth for savant + hybrid) — v2.1 |
+| `docs/JARVIS_TRUTH_TABLE.md` | ENGINE 4 contract: blend formula, calibration table, invariants — v2.2.1 |
+| `tests/test_engine4_jarvis_guards.py` | 34 guard tests: blend math, saturation flag, delta bounds — v2.2.1 |
 
-### Current Version: v20.18 (Feb 10, 2026)
-**Latest Fixes (v20.18) — Engine 3 Semantic Audit (Audit-Only Posture):**
+### Current Version: v20.18.1 (Feb 12, 2026)
+**Latest Fixes (v20.18.1) — ENGINE 4 Scale Factor Calibration (Lesson 85):**
+- **Fix: OPHIS_SCALE_FACTOR calibrated to 5.0** — SF=4.0 showed 96% -bias (96% of saturations were -0.75 clamps). Root cause: `msrf_mean ≈ 0.97` vs `jarvis_mean ≈ 5.38` created systematic negative bias.
+- **Calibration Table:**
+  - SF=4.0: 37% sat, mean=-1.21, 4%/96% balance (strong -bias)
+  - SF=5.0: 42% sat, mean=-0.31, 42%/58% balance (**SELECTED**)
+  - SF=5.5: 57% sat, mean=+0.18, 61%/39% balance (high saturation)
+- **Key Insight:** Saturation rate alone is misleading; must check side-balance. Low saturation with one-sided clamps indicates miscalibration.
+- **Formula:** Target SF ≈ `jarvis_mean / msrf_mean` for centering
+- **Key Files:** `core/jarvis_ophis_hybrid.py:73`, `docs/JARVIS_TRUTH_TABLE.md`
+- **Commit:** `0cd8592 fix(engine4): calibrate OPHIS_SCALE_FACTOR to 5.0 for balanced saturation`
+
+**Previous Fixes (v20.18) — Engine 3 Semantic Audit (Audit-Only Posture):**
 - **Fix 1: Behavior Creep Revert (Lesson 84)** — Reverted activation of 4 dormant signals (golden_ratio, prime_resonance, phoenix_resonance, planetary_hour) that violated audit-only constraint. Audit = observe, not modify.
 - **Fix 2: Weight Guard Hardening (Lesson 84)** — Changed weak assertion `assert total > 0.9` to hard assertion `assert abs(total - 1.05) < 0.001`. Prevents weight drift.
 - **Fix 3: GLITCH Weight Restoration** — Restored original weights: chrome 0.25, void 0.20, noosphere 0.15, hurst 0.25, kp 0.25, benford 0.10.

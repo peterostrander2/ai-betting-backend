@@ -2999,3 +2999,76 @@ NEVER acceptable during audit:
 **Fixed in:** v20.18 (Feb 10, 2026)
 
 ---
+
+### Lesson 85: Scale Factor Calibration — Distribution Centering vs Saturation Trade-off (v2.2.1)
+
+**Problem:** ENGINE 4 Jarvis-Ophis hybrid showed 96% -BIAS saturation (96% of cap hits were -0.75 clamps).
+
+**What Happened:**
+1. v2.2 implemented weighted blend: `target = 0.55*jarvis + 0.45*ophis_norm`
+2. Per-hit MSRF scores reduced (2.0→0.6, 1.0→0.3) to fix 100% saturation
+3. With SF=4.0: saturation dropped to 37%, but 96% were negative clamps
+4. Root cause: `msrf_mean ≈ 0.97`, `jarvis_before_mean ≈ 5.38`
+5. With SF=4.0: `ophis_norm_mean = 0.97 * 4.0 = 3.88` (much lower than jarvis)
+6. Result: `mean(diff) = -1.21` → systematic negative bias
+
+**Why It's Wrong:**
+- Saturation rate alone is misleading without side-bias analysis
+- A "low saturation" (37%) with 96% one-sided clamps indicates miscalibration
+- The target blend formula `0.55*J + 0.45*O` needs `mean(O) ≈ mean(J)` for balance
+
+**Root Cause Analysis:**
+1. Initial sweep analysis used wrong sample or methodology
+2. Comments claimed SF=4.0 was "optimal" based on 105-pick sweep
+3. 210-pick audit revealed actual mean(diff) = -1.21, not -0.85
+4. Per-hit score reduction changed MSRF distribution without recalibrating SF
+
+**The Fix (v2.2.1 calibration):**
+
+| SF  | Sat% | Mean(diff) | +/- Balance | Assessment |
+|-----|------|------------|-------------|------------|
+| 4.0 | 37%  | -1.21      | 4%/96%      | Strong -bias |
+| 4.5 | 45%  | -1.00      | 19%/81%     | -bias |
+| 5.0 | 42%  | -0.31      | 42%/58%     | **SELECTED** |
+| 5.5 | 57%  | +0.18      | 61%/39%     | High saturation |
+
+**SF=5.0 selected** because:
+- Centering: mean(diff) ≈ -0.31 (close to 0)
+- Side balance: 42%/58% (not one-sided)
+- Saturation: 42% (moderate, acceptable trade-off)
+
+**The Math:**
+- Saturation occurs when `|ophis_norm - jarvis_before| >= 1.67` (which is `0.75 / 0.45`)
+- Higher SF → higher `ophis_norm` mean and std
+- Trade-off: centering (mean closer to 0) vs saturation (std determines tail probability)
+- Target SF = `jarvis_mean / msrf_mean = 5.38 / 0.97 ≈ 5.5` for perfect centering
+- SF=5.0 chosen as compromise between centering and saturation
+
+**Prevention:**
+1. **Always check side-bias:** Low saturation with one-sided clamps is a bug
+2. **Understand the formula:** If `output = A*X + B*Y`, need `mean(X) ≈ mean(Y)` for balance
+3. **Recalibrate after distribution changes:** Per-hit score reduction changed MSRF distribution
+4. **Use larger samples:** 105 picks wasn't enough; 210 picks revealed true distribution
+5. **Document the trade-off:** Can't have both perfect centering AND low saturation
+
+**Calibration Checklist:**
+```python
+# After changing MSRF per-hit scores or sacred sets:
+1. Run 200+ pick sample with consistent seed
+2. Check: mean(diff) should be close to 0 (within ±0.5)
+3. Check: saturation side balance should be 35-65% each way
+4. Check: saturation rate (higher is OK if balanced)
+5. If mean(diff) is negative: increase SF
+6. If mean(diff) is positive: decrease SF
+```
+
+**Key Files:**
+- `core/jarvis_ophis_hybrid.py:73` — OPHIS_SCALE_FACTOR default
+- `docs/JARVIS_TRUTH_TABLE.md` — Calibration table and rationale
+- `tests/test_engine4_jarvis_guards.py` — 34 guard tests
+
+**Commit:** `0cd8592 fix(engine4): calibrate OPHIS_SCALE_FACTOR to 5.0 for balanced saturation`
+
+**Fixed in:** v2.2.1 (Feb 12, 2026)
+
+---

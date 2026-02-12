@@ -736,3 +736,62 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | jq '.debug.suppressed_can
 249. **NEVER hardcode sport lists in multiple places** — use `SUPPORTED_SPORTS` constant from one location
 250. **NEVER add a new sport without grepping for sport lists** — `grep -n '"NBA".*"NFL"' *.py` to find all
 251. **NEVER assume all sports are in a loop** — verify NCAAB, NCAAF, etc. are included where applicable
+
+## 🚫 NEVER DO THESE (v2.2.1 - Engine 4 Jarvis-Ophis Hybrid Calibration)
+
+245. **NEVER change OPHIS_SCALE_FACTOR without running 200+ pick audit** — small samples (100 picks) don't reveal true distribution
+246. **NEVER evaluate saturation rate alone** — must also check side-balance (+/- clamp distribution)
+247. **NEVER assume low saturation = good calibration** — 37% saturation with 96% one-sided clamps is worse than 50% with 50/50 balance
+248. **NEVER change per-hit scores without recalibrating SF** — per-hit scores affect msrf_mean, which affects optimal SF
+249. **NEVER set SF without checking msrf_mean vs jarvis_mean** — optimal SF ≈ jarvis_mean / msrf_mean
+250. **NEVER ignore mean(diff) when tuning SF** — mean(diff) should be close to 0 (within ±0.5)
+251. **NEVER claim "best centering" for SF that causes high saturation** — balance centering vs saturation
+252. **NEVER trust old sweep data after changing MSRF scoring** — distribution changes require new calibration
+
+**ENGINE 4 Calibration Invariants:**
+```
+INVARIANT 1: mean(diff) = mean(ophis_norm) - mean(jarvis_before) should be in [-0.5, +0.5]
+INVARIANT 2: saturation side-balance should be 35-65% each way (not one-sided)
+INVARIANT 3: ophis_norm = msrf_component * OPHIS_SCALE_FACTOR
+INVARIANT 4: |ophis_delta_applied| <= 0.75 (OPHIS_DELTA_CAP)
+INVARIANT 5: ophis_delta_saturated == (|ophis_delta_raw| >= 0.75)
+```
+
+**Calibration Checklist:**
+```bash
+# After changing MSRF per-hit scores or OPHIS_SCALE_FACTOR:
+python3 << 'EOF'
+import sys; sys.path.insert(0, '.')
+from core.jarvis_ophis_hybrid import calculate_hybrid_jarvis_score, OPHIS_SCALE_FACTOR
+from datetime import date, timedelta
+import random
+
+random.seed(42)
+picks = []
+teams = ["Lakers", "Celtics", "Warriors", "Heat", "Bucks", "Nuggets"]
+for i in range(210):
+    home, away = random.sample(teams, 2)
+    result = calculate_hybrid_jarvis_score(home, away, "NBA", date.today() + timedelta(days=random.randint(-30, 30)))
+    picks.append({
+        "diff": result["ophis_score_norm"] - result["jarvis_score_before_ophis"],
+        "sat": result["ophis_delta_saturated"],
+        "delta": result["ophis_delta_applied"]
+    })
+
+sat_picks = [p for p in picks if p["sat"]]
+pos = sum(1 for p in sat_picks if p["delta"] > 0)
+neg = sum(1 for p in sat_picks if p["delta"] < 0)
+mean_diff = sum(p["diff"] for p in picks) / len(picks)
+
+print(f"SF={OPHIS_SCALE_FACTOR}")
+print(f"Saturation: {len(sat_picks)}/{len(picks)} = {len(sat_picks)/len(picks)*100:.0f}%")
+print(f"Balance: +{pos} / -{neg} = {pos/len(sat_picks)*100:.0f}%/{neg/len(sat_picks)*100:.0f}%")
+print(f"Mean(diff): {mean_diff:.2f}")
+
+# Assertions
+assert abs(mean_diff) < 1.0, f"mean(diff) too far from 0: {mean_diff}"
+assert 0.25 <= pos/len(sat_picks) <= 0.75, f"Side balance off: {pos/len(sat_picks)}"
+print("✅ Calibration OK")
+EOF
+```
+
