@@ -64,7 +64,11 @@ OPHIS_DELTA_CAP = 0.75     # Maximum adjustment ±0.75 (used in v2.2)
 # v2.2: Weighted blend constants
 JARVIS_WEIGHT = 0.55       # 55% Jarvis in target blend
 OPHIS_WEIGHT = 0.45        # 45% Ophis in target blend
-OPHIS_SCALE_FACTOR = 5.0   # Scales MSRF [0, 2.0] to [0, 10]
+# v2.2.1: OPHIS_SCALE_FACTOR configurable via env var (default 5.0)
+# Analysis shows 5.0 is optimal: ophis_norm ≈ jarvis_before minimizes |delta_raw|
+# Lower values (3.0-3.5) actually INCREASE saturation due to negative delta bias
+# Saturation occurs when |ophis_norm - jarvis_before| >= 1.67 (= 0.75/0.45)
+OPHIS_SCALE_FACTOR = float(os.getenv("OPHIS_SCALE_FACTOR", "5.0"))
 
 # MSRF component cap inside Jarvis (prevents MSRF from dominating)
 JARVIS_MSRF_COMPONENT_CAP = 2.0
