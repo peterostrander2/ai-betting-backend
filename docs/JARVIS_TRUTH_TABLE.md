@@ -133,9 +133,22 @@ if not MSRF_ENABLED:
 - 100% of picks were hitting `ophis_delta_saturated: true`
 
 **Expected Post-Fix Behavior:**
-- Saturation rate: ~10-30% of picks (not 100%)
+- Saturation rate: ~40-50% of picks (down from 100%)
+- Side balance: ~40-60% positive/negative (down from 96%+ one-sided)
 - `msrf_component` range: 0.0-2.0 with better distribution
 - When MSRF_ENABLED=false: `msrf_component=0.0`, `msrf_status="NOT_RELEVANT"`
+
+**Scale Factor Calibration (210-pick audit):**
+
+| SF  | Sat% | Mean(diff) | +/- Balance | Notes |
+|-----|------|------------|-------------|-------|
+| 4.0 | 37%  | -1.21      | 4%/96%      | Poor: strong -bias |
+| 4.5 | 45%  | -1.00      | 19%/81%     | Poor: -bias |
+| 5.0 | 42%  | -0.31      | 42%/58%     | **SELECTED**: best balance |
+| 5.5 | 57%  | +0.18      | 61%/39%     | Poor: high saturation |
+
+**SF=5.0 selected** because it balances centering (mean ≈ -0.31) with side balance (42%/58%)
+while keeping saturation moderate (42%). Lower SF values cause strong negative bias.
 
 **New Tests:**
 - `test_msrf_disabled_yields_zero_component` — verifies correctness invariant

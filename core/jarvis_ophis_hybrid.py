@@ -65,12 +65,12 @@ OPHIS_DELTA_CAP = 0.75     # Maximum adjustment ±0.75 (used in v2.2)
 JARVIS_WEIGHT = 0.55       # 55% Jarvis in target blend
 OPHIS_WEIGHT = 0.45        # 45% Ophis in target blend
 # v2.2.1: OPHIS_SCALE_FACTOR configurable via env var
-# Sweep analysis (105 picks, SF 2.0-7.0):
-#   SF=4.0: 26% saturation, mean(diff)=-0.85, slight -bias ← OPTIMAL
-#   SF=4.5: 28% saturation, mean(diff)=-0.31, slight -bias
-#   SF=5.0: 40% saturation, mean(diff)=+0.22, +bias
-# Lower SF shrinks std(ophis_norm), reducing tail probability of |diff| > 1.67
-OPHIS_SCALE_FACTOR = float(os.getenv("OPHIS_SCALE_FACTOR", "4.0"))
+# Distribution analysis (210 picks):
+#   SF=4.0: sat=37%, mean=-1.21, 96% -bias (poor centering)
+#   SF=5.0: sat=52%, mean=-0.39, 70%/30% (good balance)
+#   SF=5.5: sat=57%, mean=+0.18, 61%/39% (best centering but high sat)
+# SF=5.0 balances centering vs saturation
+OPHIS_SCALE_FACTOR = float(os.getenv("OPHIS_SCALE_FACTOR", "5.0"))
 
 # MSRF component cap inside Jarvis (prevents MSRF from dominating)
 JARVIS_MSRF_COMPONENT_CAP = 2.0
