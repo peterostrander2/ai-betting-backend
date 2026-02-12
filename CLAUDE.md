@@ -279,8 +279,11 @@
 | `core/jarvis_score_api.py` | Shared Jarvis scoring module (single source of truth for savant + hybrid) — v2.1 |
 | `docs/JARVIS_TRUTH_TABLE.md` | ENGINE 4 contract: blend formula, calibration table, invariants — v2.2.1 |
 | `tests/test_engine4_jarvis_guards.py` | 34 guard tests: blend math, saturation flag, delta bounds — v2.2.1 |
+| `core/integration_contract.py` | Integration definitions with criticality tiers — v2.0.0 (v20.19) |
+| `scripts/integration_gate.sh` | Production wire-level verification for integrations — v20.19 |
+| `tests/test_pick_data_contract.py` | Pick schema validation tests (boundary contract tests) — v20.19 |
 
-### Current Version: v20.19 (Feb 12, 2026)
+### Current Version: v20.20 (Feb 12, 2026)
 **Latest Change (v20.19) — Engine Weight Rebalancing:**
 - **Jarvis (Engine 4):** 20% → 25% (increased to reflect calibrated hybrid blend value)
 - **Esoteric (Engine 3):** 20% → 15% (reduced to compensate)
@@ -729,13 +732,43 @@ API_KEY=YOUR_KEY bash scripts/perf_audit_best_bets.sh
 ---
 
 
-## Integration Registry Expectations
+## Integration Registry Expectations (v2.0.0)
 
+### Status Categories
 - **Validated**: env vars set + connectivity OK.
 - **Configured**: env vars set but connectivity not verified.
 - **Unreachable**: env vars set but API unreachable (fail‑loud).
 - **Not configured**: missing required env vars (fail‑loud).
 - `last_used_at` must update on **both cache hits and live fetches** for all paid integrations.
+
+### Criticality Tiers (v20.19)
+
+| Tier | Health Impact | Integrations |
+|------|---------------|--------------|
+| **CRITICAL** | `/health.ok = false` | odds_api, playbook_api, balldontlie, railway_storage, database |
+| **DEGRADED_OK** | `status = degraded`, `ok = true` | redis, whop_api |
+| **OPTIONAL** | Log warning only | serpapi, twitter_api, astronomy_api, noaa_space_weather, fred_api, finnhub_api |
+| **RELEVANCE_GATED** | Context-dependent | weather_api (outdoor sports only) |
+
+### Integration Gate Script
+```bash
+# Run before deployment to validate all integrations
+API_KEY=your_key ./scripts/integration_gate.sh
+
+# Exit codes:
+# 0 = All checks passed
+# 1 = Critical integration missing/unreachable (BLOCK DEPLOY)
+# 2 = Optional integrations failing (system degraded)
+```
+
+### Data Contract Tests
+```bash
+# Run schema validation tests
+pytest tests/test_pick_data_contract.py -v
+
+# Run against live endpoint
+RUN_LIVE_TESTS=1 API_KEY=your_key pytest tests/test_pick_data_contract.py -v
+```
 
 **Engine Separation Rules:**
 1. **Research Engine** - ALL market signals ONLY (sharp, splits, variance, public fade)
