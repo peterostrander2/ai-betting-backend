@@ -337,7 +337,7 @@ echo "✅ ENGINE 2 HARD SEMANTIC CHECKS PASS"
 | GLITCH signals missing | No `glitch_breakdown` | `get_glitch_aggregate()` not called |
 | NOAA unavailable | Kp-index always 0 | External API timeout, no fallback |
 | Timezone error | Lunar phase calculation fails | Naive datetime in astro code |
-| Engine weight wrong | Esoteric contributes wrong % | `ENGINE_WEIGHTS["esoteric"]` != 0.20 |
+| Engine weight wrong | Esoteric contributes wrong % | `ENGINE_WEIGHTS["esoteric"]` != 0.15 |
 | **v20.18: Global counter contamination** | request_proof shows other request's calls | Not using contextvars |
 | **v20.18: NOAA auth_context wrong** | `key_present` in public API | Using keyed API pattern for public API |
 | **v20.18: Missing per-signal provenance** | Can't prove signal computed | No `source_api`, `call_proof`, `status` |

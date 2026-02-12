@@ -29,8 +29,8 @@ BASE_4 = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.20) + (Jarvis × 0.2
 base_score = (
     (ai_score * 0.25) +
     (research_score * 0.35) +
-    (esoteric_score * 0.20) +
-    (jarvis_score * 0.20)
+    (esoteric_score * 0.15) +
+    (jarvis_score * 0.25)
 )
 ```
 

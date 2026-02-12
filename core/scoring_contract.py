@@ -9,8 +9,8 @@ All scoring logic MUST reference these constants (no duplicated literals).
 ENGINE_WEIGHTS = {
     "ai": 0.25,        # 8 AI models
     "research": 0.35,  # Sharp money, splits, variance
-    "esoteric": 0.20,  # Numerology, astro, fib, vortex
-    "jarvis": 0.20,    # Gematria, sacred triggers
+    "esoteric": 0.15,  # Numerology, astro, fib, vortex (v20.19: reduced from 0.20)
+    "jarvis": 0.25,    # Gematria, sacred triggers (v20.19: increased from 0.20)
 }
 
 # Context modifier cap (applied as bounded boost, NOT a weighted engine)

@@ -47,8 +47,8 @@ When working on frontend, check:
 **Engine Weights (Option A - matches scoring_contract.py):**
 - AI: 25%
 - Research: 35%
-- Esoteric: 20%
-- Jarvis: 20%
+- Esoteric: 15%
+- Jarvis: 25%
 - **Context: modifier only (±0.35 cap) - NOT a weighted engine**
 
 ---

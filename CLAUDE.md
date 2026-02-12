@@ -53,7 +53,7 @@
 | 1 | Storage Persistence | ALL data under `RAILWAY_VOLUME_MOUNT_PATH=/data` |
 | 2 | Titanium 3-of-4 Rule | `titanium=true` ONLY when ≥3 of 4 engines ≥8.0 |
 | 3 | ET Today-Only Gating | ALL picks for games in today's ET window ONLY |
-| 4 | Option A Scoring | 4-engine base (AI 25%, Research 35%, Esoteric 20%, Jarvis 20%) + context modifier |
+| 4 | Option A Scoring | 4-engine base (AI 25%, Research 35%, Esoteric 15%, Jarvis 25%) + context modifier |
 | 5 | Jarvis Additive | Jarvis is weighted engine, NOT separate boost |
 | 6 | Output Filtering | `final_score >= 6.5` required for output |
 | 7 | Contradiction Gate | Never output both Over AND Under on same line |
@@ -270,8 +270,15 @@
 | `docs/JARVIS_TRUTH_TABLE.md` | ENGINE 4 contract: blend formula, calibration table, invariants — v2.2.1 |
 | `tests/test_engine4_jarvis_guards.py` | 34 guard tests: blend math, saturation flag, delta bounds — v2.2.1 |
 
-### Current Version: v20.18.1 (Feb 12, 2026)
-**Latest Fixes (v20.18.1) — ENGINE 4 Scale Factor Calibration (Lesson 85):**
+### Current Version: v20.19 (Feb 12, 2026)
+**Latest Change (v20.19) — Engine Weight Rebalancing:**
+- **Jarvis (Engine 4):** 20% → 25% (increased to reflect calibrated hybrid blend value)
+- **Esoteric (Engine 3):** 20% → 15% (reduced to compensate)
+- **Total remains 100%:** AI 25% + Research 35% + Esoteric 15% + Jarvis 25% = 100%
+- **Rationale:** Jarvis hybrid blend (v2.2.1) has proven reliable with calibrated scale factor; increased weight rewards system confidence in Engine 4
+- **Files updated:** `core/scoring_contract.py`, `core/compute_final_score.py`, tests, CLAUDE.md
+
+**Previous Fixes (v20.18.1) — ENGINE 4 Scale Factor Calibration (Lesson 85):**
 - **Fix: OPHIS_SCALE_FACTOR calibrated to 5.0** — SF=4.0 showed 96% -bias (96% of saturations were -0.75 clamps). Root cause: `msrf_mean ≈ 0.97` vs `jarvis_mean ≈ 5.38` created systematic negative bias.
 - **Calibration Table:**
   - SF=4.0: 37% sat, mean=-1.21, 4%/96% balance (strong -bias)
@@ -602,7 +609,7 @@ CONTEXT_MODIFIER_CAP = 0.35  # Context is a bounded modifier, NOT an engine
 
 **Scoring Formula (EXACT):**
 ```python
-BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
+BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.15) + (jarvis × 0.25)
 FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_boost + serp_boost + ensemble_adjustment + live_adjustment + totals_calibration_adj + hook_penalty + expert_consensus_boost + prop_correlation_adjustment
 ```
 
@@ -1356,8 +1363,8 @@ function BadPickCard({ pick }: { pick: Pick }) {
   const finalScore = (
     pick.ai_score * 0.25 +
     pick.research_score * 0.35 +
-    pick.esoteric_score * 0.20 +
-    pick.jarvis_rs * 0.20
+    pick.esoteric_score * 0.15 +
+    pick.jarvis_rs * 0.25
   );
 
   // ❌ NEVER do this
@@ -1809,7 +1816,7 @@ Check Cache (5-10 min TTL)
    - Drops: Events for tomorrow/yesterday
          ↓
 3. SCORE: 4 base engines + Jason Sim 2.0
-   - AI (25%) + Research (35%) + Esoteric (20%) + Jarvis (20%)
+   - AI (25%) + Research (35%) + Esoteric (15%) + Jarvis (25%)
    - Confluence boost + MSRF/SERP (if enabled) + Jason Sim boost
    - Tier assignment (TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN)
          ↓
@@ -1993,8 +2000,8 @@ FINAL = BASE_4 + context_modifier + confluence_boost + msrf_boost + jason_sim_bo
 **Engines:**
 1. **AI (25%)** - 8 AI models with dynamic calibration
 2. **Research (35%)** - Sharp money, line variance, public fade
-3. **Esoteric (20%)** - Numerology, astro, fib, vortex, daily edge
-4. **Jarvis (20%)** - Gematria triggers, mid-spread goldilocks
+3. **Esoteric (15%)** - Numerology, astro, fib, vortex, daily edge (v20.19: reduced from 20%)
+4. **Jarvis (25%)** - Gematria triggers, mid-spread goldilocks (v20.19: increased from 20%)
 
 **Post-Pick:**
 5. **Jason Sim 2.0** - Confluence boost (can be negative)
@@ -2413,7 +2420,7 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 - Base (2-3 pts): 2.0 default, 3.0 when real splits data present with money-ticket divergence
 - Officials adjustment (Pillar 16): OfficialsAnalyzer adjusts based on referee tendencies
 
-### Engine 3: Esoteric Score (20%)
+### Engine 3: Esoteric Score (15%)
 - 29 signals across GLITCH Protocol, Phase 8, Physics, Math Glitch, Phase 1, and Context
 - **Active signals: 23** | Dormant: 4 | Disabled: 1 (noosphere - SERP cancelled)
 - **GLITCH Protocol (5 active)**: chrome_resonance, void_moon, hurst, kp_index, benford
@@ -2423,7 +2430,7 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 - Park Factors (Pillar 17, MLB only): Venue-based adjustments
 - **Audit doc**: `docs/AUDIT_ENGINE3_ESOTERIC.md` — canonical boundary map with all 29 signals
 
-### Engine 4: Jarvis Score (20%)
+### Engine 4: Jarvis Score (25%)
 - Gematria triggers: 2178, 201, 33, 93, 322
 - Mid-spread Goldilocks, trap detection
 - `jarvis_savant_engine.py`

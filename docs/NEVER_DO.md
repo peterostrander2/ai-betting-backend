@@ -112,7 +112,7 @@ Reference this file when making changes in the relevant area.
 ## 🚫 NEVER DO THESE (Esoteric/Phase 1 Signals)
 
 **Engine 3 Contract Rules:**
-- **NEVER** change esoteric weight from 0.20 without updating `core/scoring_contract.py`
+- **NEVER** change esoteric weight from 0.15 without updating `core/scoring_contract.py`
 - **NEVER** add new esoteric signals without documenting in `docs/AUDIT_ENGINE3_ESOTERIC.md`
 - **NEVER** remove NOAA fallback logic (Kp-Index must work when API is down)
 - **NEVER** mutate `esoteric_score` after BASE_4 calculation
@@ -274,15 +274,15 @@ Reference this file when making changes in the relevant area.
 135. **NEVER** describe context_score as a "weighted engine" - it's a bounded modifier (±0.35)
 136. **NEVER** use old weight percentages (AI 15%, Research 20%, Esoteric 15%, Jarvis 10%, Context 30%)
 137. **NEVER** skip updating `docs/FRONTEND_INTEGRATION.md` when backend scoring changes
-138. **ALWAYS** verify frontend tooltips show: AI 25%, Research 35%, Esoteric 20%, Jarvis 20%, Context ±0.35
+138. **ALWAYS** verify frontend tooltips show: AI 25%, Research 35%, Esoteric 15%, Jarvis 25%, Context ±0.35
 
 **Correct Option A Weights (authoritative source: `core/scoring_contract.py`):**
 ```python
 ENGINE_WEIGHTS = {
     "ai": 0.25,        # 25% - 8 AI models
     "research": 0.35,  # 35% - Sharp money, splits, variance (LARGEST)
-    "esoteric": 0.20,  # 20% - Numerology, astro, fib, vortex
-    "jarvis": 0.20,    # 20% - Gematria, sacred triggers
+    "esoteric": 0.15,  # 15% - Numerology, astro, fib, vortex (v20.19: reduced from 20%)
+    "jarvis": 0.25,    # 25% - Gematria, sacred triggers (v20.19: increased from 20%)
 }
 CONTEXT_MODIFIER_CAP = 0.35  # ±0.35 (NOT a weighted engine!)
 ```
@@ -522,7 +522,7 @@ return result  # No source tracking
 **Post-Base Signal Architecture (v20.11):**
 ```python
 # ❌ WRONG — Mutating engine score after base_score is computed
-base_score = (ai * 0.25) + (research * 0.35) + (esoteric * 0.20) + (jarvis * 0.20)
+base_score = (ai * 0.25) + (research * 0.35) + (esoteric * 0.15) + (jarvis * 0.25)
 research += hook_penalty  # TOO LATE! base_score already locked, this has NO EFFECT
 
 # ✅ CORRECT — Pass as explicit parameter to scoring function

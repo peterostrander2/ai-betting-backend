@@ -37,8 +37,8 @@
   },
   "engine_weights": {
     "ai": 0.25,
-    "esoteric": 0.2,
-    "jarvis": 0.2,
+    "esoteric": 0.15,
+    "jarvis": 0.25,
     "research": 0.35
   },
   "expert_consensus": {

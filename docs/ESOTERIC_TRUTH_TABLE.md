@@ -395,6 +395,6 @@ source_type_enum:
 ## Related Documentation
 
 - `docs/AUDIT_ENGINE3_ESOTERIC.md` - Existing audit document
-- `core/scoring_contract.py` - Engine weights (esoteric = 0.20)
+- `core/scoring_contract.py` - Engine weights (esoteric = 0.15)
 - `tests/test_esoteric_truthfulness.py` - Semantic truthfulness tests
 - `scripts/engine3_esoteric_audit.py` - Runtime audit script

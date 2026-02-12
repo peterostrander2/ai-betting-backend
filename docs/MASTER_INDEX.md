@@ -48,7 +48,7 @@ This is also wired into `scripts/ci_sanity_check.sh` as a **non-blocking** step.
 **Examples:** engine weights, MIN_FINAL_SCORE, Gold Star gates, Titanium rule, confluence boost values.
 
 **Current Architecture (v18.0 Option A):**
-- 4 base engines (weighted): AI (25%), Research (35%), Esoteric (20%), Jarvis (20%)
+- 4 base engines (weighted): AI (25%), Research (35%), Esoteric (15%), Jarvis (25%)
 - Context is a bounded modifier (cap ±0.35), not a weighted engine
 - Titanium: 3/4 engines >= 8.0 (AI/Research/Esoteric/Jarvis only)
 - GOLD_STAR gates: ai>=6.8, research>=6.5, jarvis>=6.5, esoteric>=5.5 (context gate removed)

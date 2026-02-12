@@ -462,10 +462,10 @@ final_score = clamp(
   , 0.0, 10.0
 )
 
-base_4 = ai_score       × 0.25   (FROZEN)
-       + research_score  × 0.35   (FROZEN)
-       + esoteric_score  × 0.20   (FROZEN)
-       + jarvis_score    × 0.20   (FROZEN)
+base_4 = ai_score       × 0.25
+       + research_score  × 0.35
+       + esoteric_score  × 0.15   (v20.19: reduced from 0.20)
+       + jarvis_score    × 0.25   (v20.19: increased from 0.20)
 ```
 
 ### Jarvis-Ophis Hybrid (Engine 4)

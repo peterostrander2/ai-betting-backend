@@ -1,15 +1,15 @@
 # Engine 3 (Esoteric) Boundary Audit
 
-**Version:** v20.14
-**Last Updated:** 2026-02-08
-**Status:** ACTIVE (Weight: 0.20)
+**Version:** v20.19
+**Last Updated:** 2026-02-12
+**Status:** ACTIVE (Weight: 0.15)
 
 ## Overview
 
-Engine 3 (Esoteric) contributes 20% of the BASE_4 score in the Option A scoring formula:
+Engine 3 (Esoteric) contributes 15% of the BASE_4 score in the Option A scoring formula:
 
 ```
-BASE_4 = (AI * 0.25) + (Research * 0.35) + (Esoteric * 0.20) + (Jarvis * 0.20)
+BASE_4 = (AI * 0.25) + (Research * 0.35) + (Esoteric * 0.15) + (Jarvis * 0.25)
 FINAL  = clamp(0..10, BASE_4 + context_modifier + post_base_boosts)
 ```
 
@@ -161,14 +161,14 @@ curl /live/best-bets/NBA?debug=1 -H "X-API-Key: KEY" | \
 
 # Verify esoteric weight in scoring_contract
 grep -A5 "ENGINE_WEIGHTS" core/scoring_contract.py | grep esoteric
-# Should show: "esoteric": 0.20
+# Should show: "esoteric": 0.15
 ```
 
 ---
 
 ## Related Documentation
 
-- `core/scoring_contract.py` - Engine weights (esoteric = 0.20)
+- `core/scoring_contract.py` - Engine weights (esoteric = 0.15)
 - `core/scoring_pipeline.py` - Score computation
 - `CLAUDE.md` - Master documentation (Invariant 16: 18-Pillar Scoring)
 - `docs/JARVIS_SAVANT_MASTER_SPEC.md` - Full system specification

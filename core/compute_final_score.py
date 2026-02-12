@@ -20,10 +20,10 @@ Formula (Option A):
       , 0.0, 10.0
     )
 
-    BASE_4 = ai_score       × 0.25   (FROZEN)
-           + research_score  × 0.35   (FROZEN)
-           + esoteric_score  × 0.20   (FROZEN)
-           + jarvis_score    × 0.20   (FROZEN)
+    BASE_4 = ai_score       × 0.25
+           + research_score  × 0.35
+           + esoteric_score  × 0.15   (v20.19: reduced from 0.20)
+           + jarvis_score    × 0.25   (v20.19: increased from 0.20)
 
 CRITICAL RULES:
 1. Engine scores are NEVER mutated after base_score is computed.
@@ -46,8 +46,8 @@ logger = logging.getLogger(__name__)
 ENGINE_WEIGHTS = {
     "ai": 0.25,
     "research": 0.35,
-    "esoteric": 0.20,
-    "jarvis": 0.20,
+    "esoteric": 0.15,  # v20.19: reduced from 0.20
+    "jarvis": 0.25,    # v20.19: increased from 0.20
 }
 
 # Validate weights sum to 1.0 on import
@@ -114,7 +114,7 @@ def compute_base_score(
     """
     Compute BASE_4 from the four engine scores using frozen weights.
 
-    BASE_4 = ai*0.25 + research*0.35 + esoteric*0.20 + jarvis*0.20
+    BASE_4 = ai*0.25 + research*0.35 + esoteric*0.15 + jarvis*0.25
 
     Args:
         ai_score: AI engine score (0-10)

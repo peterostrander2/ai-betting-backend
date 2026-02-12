@@ -37,7 +37,7 @@ FINAL = BASE_4
       + ensemble_adjustment (if present)
       + live_adjustment (live-only)
 ```
-- `BASE_4 = ai*0.25 + research*0.35 + esoteric*0.20 + jarvis*0.20`
+- `BASE_4 = ai*0.25 + research*0.35 + esoteric*0.15 + jarvis*0.25`
 - `context_modifier` is bounded in ±0.35
 
 ## Error Schema (Structured, Fail-Soft)

@@ -244,8 +244,8 @@ class TestWeightsFrozen:
     def test_weights_exact(self):
         assert ENGINE_WEIGHTS["ai"] == 0.25
         assert ENGINE_WEIGHTS["research"] == 0.35
-        assert ENGINE_WEIGHTS["esoteric"] == 0.20
-        assert ENGINE_WEIGHTS["jarvis"] == 0.20
+        assert ENGINE_WEIGHTS["esoteric"] == 0.15  # v20.19: reduced from 0.20
+        assert ENGINE_WEIGHTS["jarvis"] == 0.25    # v20.19: increased from 0.20
 
     def test_weights_sum(self):
         assert abs(sum(ENGINE_WEIGHTS.values()) - 1.0) < 0.001
@@ -259,8 +259,8 @@ class TestWeightsFrozen:
         b = compute_base_score(10.0, 10.0, 10.0, 10.0)
         assert abs(b["contributions"]["ai"] - 2.5) < 0.001
         assert abs(b["contributions"]["research"] - 3.5) < 0.001
-        assert abs(b["contributions"]["esoteric"] - 2.0) < 0.001
-        assert abs(b["contributions"]["jarvis"] - 2.0) < 0.001
+        assert abs(b["contributions"]["esoteric"] - 1.5) < 0.001  # v20.19: 10.0 * 0.15 = 1.5
+        assert abs(b["contributions"]["jarvis"] - 2.5) < 0.001   # v20.19: 10.0 * 0.25 = 2.5
 
 
 # =========================================================================
@@ -336,7 +336,7 @@ class TestJarvisPayload:
         )
         js = r["jarvis_rs"]
         base = compute_base_score(7.0, 7.0, 7.0, js)
-        expected_contribution = round(js * 0.20, 4)
+        expected_contribution = round(js * 0.25, 4)  # v20.19: 0.25
         assert abs(base["contributions"]["jarvis"] - expected_contribution) < 0.001
 
     def test_empty_inputs_returns_null_score(self):
@@ -354,13 +354,9 @@ class TestProductionScenario:
 
     def test_nhl_audit_scenario(self):
         """
-        OLD production:
-          base=6.08, confluence=3.0, msrf=0.8, serp=0.5, jason=0.1, context=0.2
-          final = min(10, 6.08+3.0+0.8+0.5+0.1+0.2) = 10.0
-
-        NEW (v20.1):
-          base=6.08, confluence=3.0, msrf=0.0, serp=0.0, jason=0.1, context=0.2
-          final = min(10, 6.08+3.0+0.0+0.0+0.1+0.2) = 9.38
+        v20.19 weights: ai=0.25, research=0.35, esoteric=0.15, jarvis=0.25
+          base = 6.56*0.25 + 7.2*0.35 + 5.1*0.15 + 4.5*0.25 = 6.05
+          final = min(10, 6.05+3.0+0.0+0.0+0.1+0.2) = 9.35
         """
         r = compute_final_score_option_a(
             ai_score=6.56, research_score=7.2,
@@ -371,10 +367,10 @@ class TestProductionScenario:
             msrf_boost=0.8,   # passed but forced to 0.0
             serp_boost=0.5,   # passed but forced to 0.0
         )
-        assert abs(r["base_score_detail"]["base_score"] - 6.08) < 0.01
+        assert abs(r["base_score_detail"]["base_score"] - 6.05) < 0.01  # v20.19: updated for new weights
         assert r["terms"]["msrf_boost"] == 0.0
         assert r["terms"]["serp_boost"] == 0.0
-        assert abs(r["final_score"] - 9.38) < 0.02
+        assert abs(r["final_score"] - 9.35) < 0.02  # v20.19: 6.05+0.2+3.0+0.1 = 9.35
         assert r["reconciliation_pass"]
         assert r["tier"] == "EDGE_LEAN"  # Jarvis 4.5 < gate 6.0
 

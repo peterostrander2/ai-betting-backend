@@ -205,8 +205,8 @@ _best_bets_inner()
 ENGINE_WEIGHTS = {
     "ai": 0.25,        # Pillars 1-8
     "research": 0.35,  # Pillars 9-12, 16
-    "esoteric": 0.20,  # Pillar 17 + GLITCH
-    "jarvis": 0.20,    # Gematria triggers
+    "esoteric": 0.15,  # Pillar 17 + GLITCH (v20.19: reduced from 0.20)
+    "jarvis": 0.25,    # Gematria triggers (v20.19: increased from 0.20)
 }
 
 CONTEXT_MODIFIER_CAP = 0.35  # Context is a bounded modifier, not a weighted engine
