@@ -78,7 +78,7 @@
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (85 Total) - Key Categories
+### Lessons Learned (87 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -124,8 +124,9 @@
 | 84 | **v20.18 Engine 3 Behavior Creep** | Activated dormant signals during audit task — audit = observe, not modify; use hard weight assertions |
 | 85 | **ENGINE 4 v2.2.1 Scale Factor Calibration** | SF=4.0 showed 96% -bias; calibrate SF based on `mean(msrf)/mean(jarvis)` ratio; check side-balance not just saturation rate |
 | 86 | **v20.19 Engine Weight Rebalancing** | Weight changes required 16+ file updates due to duplicates — use single source of truth (scoring_contract.py), import don't duplicate |
+| 87 | **v20.19 Test Field Name Drift** | Test expected `ophis_normalized` but impl uses `ophis_score_norm` — copy field names from implementation output, don't invent them |
 
-### NEVER DO Sections (38 Categories)
+### NEVER DO Sections (39 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -166,6 +167,7 @@
 - v20.16.8 Hardcoded Sports Lists (rules 249-251)
 - v20.18.1 ENGINE 4 Calibration (rules 250-252)
 - v20.19 Engine Weight Management (rules 253-258)
+- v20.19 Test Field Name Contracts (rules 259-263)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -236,6 +238,12 @@
 - [ ] **Check actual data presence** — Count picks before deciding on error severity
 - [ ] **Handle off-season gracefully** — 0 picks is valid when no games scheduled
 - [ ] **Allow transient failures** — HTTP 502 during deploy is temporary; retry helps
+
+#### Tests & Schema (v20.19)
+- [ ] **Test field names match implementation** — Copy from actual output dict, never invent field names
+- [ ] **Check edge case behavior** — Test what `func(empty_inputs)` ACTUALLY returns, not assumed behavior
+- [ ] **Update tests with schema changes** — When output dict changes, update test assertions IMMEDIATELY
+- [ ] **Internal vars ≠ output fields** — Local variables like `jarvis_boost` are NOT in output dict
 
 ### Key Files Reference
 | File | Purpose |

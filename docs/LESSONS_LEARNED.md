@@ -3148,3 +3148,59 @@ git commit  # Hook checks docs == code
 **Fixed in:** v20.19 (Feb 12, 2026)
 
 ---
+
+### Lesson 87: Test Field Names Must Match Implementation Output (v20.19)
+
+**Problem:** Reconciliation tests failed because test assertions used outdated/incorrect field names that didn't match the v2.2 Jarvis implementation.
+
+**Root Cause:** Tests were written with assumed field names that:
+1. Were renamed during v2.2 implementation (`ophis_normalized` → `ophis_score_norm`)
+2. Were internal variables, never intended as output fields (`jarvis_boost`, `jarvis_scaled`)
+3. Had incorrect expected values for edge cases (`msrf_status` when inputs missing)
+
+**What Failed:**
+```python
+# Test expected (WRONG):
+required = [..., "ophis_normalized", "jarvis_boost", "jarvis_scaled", ...]
+assert r["msrf_status"] == "IN_JARVIS"  # When inputs empty
+
+# Implementation actually outputs (CORRECT):
+"ophis_score_norm": ...  # Not ophis_normalized
+# jarvis_boost/jarvis_scaled are internal vars, not in output
+"msrf_status": "INPUTS_MISSING"  # Correct when teams empty
+```
+
+**Prevention Rules:**
+1. **Read the implementation output** before writing test assertions
+2. **Copy field names from output dict**, don't invent them
+3. **Check edge case behavior** — what does the function ACTUALLY return for empty inputs?
+4. **When implementation changes, update tests immediately** — don't let them drift
+5. **Run tests after any schema change** to catch field name mismatches early
+
+**Test Verification Checklist:**
+```bash
+# 1. Check actual output fields (run in Python REPL)
+from core.jarvis_ophis_hybrid import calculate_hybrid_jarvis_score
+r = calculate_hybrid_jarvis_score("Lakers", "Celtics")
+print(sorted(r.keys()))  # See ACTUAL field names
+
+# 2. Check edge case output
+r_empty = calculate_hybrid_jarvis_score("", "")
+print(r_empty)  # See what empty inputs ACTUALLY return
+
+# 3. Compare test expectations to reality
+grep -A 10 "required = \[" tests/test_reconciliation.py
+# ^ Cross-check against actual output keys
+```
+
+**Test-Implementation Contract Rule:**
+- If test expects field `X`, that field MUST exist in implementation output dict
+- If implementation output uses field name `Y`, test MUST use `Y` (not a synonym)
+- Edge case tests (empty inputs, None values) should verify ACTUAL behavior, not assumed behavior
+
+**Commits:**
+- `177615a fix(tests): correct Jarvis v2.2 field names in reconciliation tests`
+
+**Fixed in:** v20.19 (Feb 12, 2026)
+
+---

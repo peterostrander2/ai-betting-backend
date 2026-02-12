@@ -837,3 +837,47 @@ ENGINE_WEIGHTS = {"ai": 0.25, "esoteric": 0.15, ...}  # DON'T DO THIS
 | Esoteric | 0.15 | v20.19: reduced from 0.20 |
 | Jarvis | 0.25 | v20.19: increased from 0.20 |
 
+---
+
+## 🚫 NEVER DO THESE (v20.19 - Test Field Name Contracts)
+
+259. **NEVER invent field names in test assertions** — copy field names directly from implementation output dict
+260. **NEVER assume internal variables are output fields** — `jarvis_boost` is internal, only `jarvis_rs` is output
+261. **NEVER write tests for renamed fields without checking implementation** — `ophis_normalized` was renamed to `ophis_score_norm` in v2.2
+262. **NEVER assume edge case behavior** — test what `func(empty_inputs)` ACTUALLY returns, not what seems logical
+263. **NEVER let tests drift from implementation** — when schema changes, update tests IMMEDIATELY
+
+**Test-Implementation Contract:**
+```python
+# ✅ CORRECT: Check actual output keys before writing test
+>>> from core.jarvis_ophis_hybrid import calculate_hybrid_jarvis_score
+>>> r = calculate_hybrid_jarvis_score("Lakers", "Celtics")
+>>> sorted(r.keys())  # SEE THE ACTUAL FIELD NAMES
+
+# ✅ CORRECT: Test uses exact field name from implementation
+assert "ophis_score_norm" in result  # matches impl output dict
+
+# ❌ WRONG: Test invents field name
+assert "ophis_normalized" in result  # DOESN'T EXIST - typo/rename
+
+# ❌ WRONG: Test expects internal variable
+assert "jarvis_boost" in result  # Internal var, not in output
+```
+
+**Test Verification Before Commit:**
+```bash
+# After ANY schema change to output dicts:
+1. python3 -c "from module import func; print(sorted(func('test').keys()))"  # Check actual output
+2. grep -n "required = \[" tests/test_*.py  # Find field assertions
+3. Compare actual output vs test expectations
+4. pytest -v  # Run ALL tests before commit
+```
+
+**Known Field Name Mappings (Jarvis v2.2):**
+| Test Used (WRONG) | Implementation Uses (CORRECT) |
+|-------------------|------------------------------|
+| `ophis_normalized` | `ophis_score_norm` |
+| `jarvis_boost` | *(internal variable, not output)* |
+| `jarvis_scaled` | *(internal variable, not output)* |
+| `msrf_status: "IN_JARVIS"` (empty inputs) | `msrf_status: "INPUTS_MISSING"` |
+
