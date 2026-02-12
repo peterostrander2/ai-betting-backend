@@ -123,8 +123,9 @@
 | 83 | **v20.17.3 Empty Dict Conditionals** | `if filter_telemetry:` is False for empty dict `{}` — training signatures not stored if passed as empty; check explicitly |
 | 84 | **v20.18 Engine 3 Behavior Creep** | Activated dormant signals during audit task — audit = observe, not modify; use hard weight assertions |
 | 85 | **ENGINE 4 v2.2.1 Scale Factor Calibration** | SF=4.0 showed 96% -bias; calibrate SF based on `mean(msrf)/mean(jarvis)` ratio; check side-balance not just saturation rate |
+| 86 | **v20.19 Engine Weight Rebalancing** | Weight changes required 16+ file updates due to duplicates — use single source of truth (scoring_contract.py), import don't duplicate |
 
-### NEVER DO Sections (37 Categories)
+### NEVER DO Sections (38 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -163,7 +164,8 @@
 - v20.16.5+ Engine 2 Research Anti-Conflation (rules 237-244)
 - v20.16.7 XGBoost Feature Consistency (rules 245-248)
 - v20.16.8 Hardcoded Sports Lists (rules 249-251)
-- v20.17.3 Training Telemetry (rules 252-257)
+- v20.18.1 ENGINE 4 Calibration (rules 250-252)
+- v20.19 Engine Weight Management (rules 253-258)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash

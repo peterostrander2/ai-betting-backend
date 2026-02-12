@@ -3072,3 +3072,79 @@ NEVER acceptable during audit:
 **Fixed in:** v2.2.1 (Feb 12, 2026)
 
 ---
+
+### Lesson 86: Engine Weight Rebalancing — Single Source of Truth Enforcement (v20.19)
+
+**Problem:** Engine weight changes required updating 16+ files across codebase due to duplicate weight definitions.
+
+**Root Cause:** ENGINE_WEIGHTS were defined in multiple locations:
+1. `core/scoring_contract.py` — Canonical source ✅
+2. `core/compute_final_score.py` — Duplicate (should import)
+3. `core/scoring_pipeline.py` — Fallback values (needed update)
+4. 10+ documentation files with hardcoded percentages
+
+**What Happened (v20.19):**
+- User requested: Jarvis 20% → 25%, Esoteric 20% → 15%
+- Initial commit updated scoring_contract.py and compute_final_score.py
+- Pre-commit hook caught mismatch: docs still had old values
+- Required second pass to update all documentation
+- Missed `scoring_pipeline.py` fallback values (caught in review)
+
+**Prevention Rules:**
+1. **Single source of truth:** `core/scoring_contract.py` is the ONLY place ENGINE_WEIGHTS should be defined
+2. **Import, don't duplicate:** Other modules should `from core.scoring_contract import ENGINE_WEIGHTS`
+3. **Fallback values must match:** If ImportError fallbacks exist, they MUST be updated when canonical changes
+4. **Pre-commit hook:** The scoring consistency hook catches doc↔code mismatches (keep it enabled)
+5. **Search for literals:** After weight changes, run: `grep -rn "0\.20\|20%" docs/ core/`
+
+**Weight Change Checklist:**
+```bash
+# 1. Update canonical source
+vim core/scoring_contract.py  # Edit ENGINE_WEIGHTS
+
+# 2. Find all references
+grep -rn "esoteric.*0\." core/ docs/ tests/ | grep -v ".pyc"
+grep -rn "jarvis.*0\." core/ docs/ tests/ | grep -v ".pyc"
+
+# 3. Update duplicates/fallbacks
+# - core/compute_final_score.py (if not importing)
+# - core/scoring_pipeline.py (fallback values)
+
+# 4. Update documentation
+# - CLAUDE.md (master index, formula sections)
+# - docs/NEVER_DO.md (weight rules)
+# - docs/ENDPOINT_CONTRACT.md
+# - docs/FRONTEND_INTEGRATION.md
+
+# 5. Run tests
+pytest tests/test_reconciliation.py::TestWeightsFrozen -v
+pytest tests/test_scoring_single_source.py -v
+
+# 6. Commit (pre-commit hook validates)
+git commit  # Hook checks docs == code
+```
+
+**Files That Reference Weights:**
+| File | Type | Update Method |
+|------|------|---------------|
+| `core/scoring_contract.py` | Canonical | Edit directly |
+| `core/compute_final_score.py` | Implementation | Should import from contract |
+| `core/scoring_pipeline.py:50-51` | Fallback | Must match canonical |
+| `CLAUDE.md` | Documentation | Update all formula refs |
+| `docs/NEVER_DO.md` | Rules | Update weight rules |
+| `docs/ENDPOINT_CONTRACT.md` | API contract | Update BASE_4 formula |
+| `docs/FRONTEND_INTEGRATION.md` | Frontend contract | Update percentages |
+| `docs/ML_REFERENCE.md` | ML docs | Update weights dict |
+| `docs/AUDIT_ENGINE3_ESOTERIC.md` | Audit docs | Update esoteric weight |
+| `docs/MASTER_INDEX.md` | Index | Update formula |
+| `SCORING_LOGIC.md` | JSON dump | Update engine_weights |
+
+**Key Insight:** The pre-commit hook that validates `docs == code` for scoring is critical. It caught the drift before production deploy.
+
+**Commits:**
+- `310340a feat(scoring): rebalance engine weights - Jarvis 25%, Esoteric 15%`
+- `96742c1 fix(scoring): update fallback weights in scoring_pipeline.py`
+
+**Fixed in:** v20.19 (Feb 12, 2026)
+
+---

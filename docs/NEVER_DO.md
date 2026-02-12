@@ -795,3 +795,45 @@ print("✅ Calibration OK")
 EOF
 ```
 
+---
+
+## 🚫 NEVER DO THESE (v20.19 - Engine Weight Management)
+
+253. **NEVER duplicate ENGINE_WEIGHTS in multiple files** — `core/scoring_contract.py` is the single source of truth
+254. **NEVER change weights without updating fallback values** — `core/scoring_pipeline.py:50-51` has ImportError fallbacks that MUST match
+255. **NEVER skip the weight grep after changes** — run: `grep -rn "esoteric.*0\." core/ docs/`
+256. **NEVER commit weight changes without running TestWeightsFrozen** — `pytest tests/test_reconciliation.py::TestWeightsFrozen`
+257. **NEVER disable the scoring consistency pre-commit hook** — it catches doc↔code drift before production
+258. **NEVER hardcode weight literals in formulas** — use `ENGINE_WEIGHTS["esoteric"]` not `0.15`
+
+**Engine Weight Single Source of Truth:**
+```python
+# ✅ CORRECT: Import from canonical source
+from core.scoring_contract import ENGINE_WEIGHTS
+base_4 = (ai * ENGINE_WEIGHTS["ai"] +
+          research * ENGINE_WEIGHTS["research"] +
+          esoteric * ENGINE_WEIGHTS["esoteric"] +
+          jarvis * ENGINE_WEIGHTS["jarvis"])
+
+# ❌ WRONG: Duplicate definition
+ENGINE_WEIGHTS = {"ai": 0.25, "esoteric": 0.15, ...}  # DON'T DO THIS
+```
+
+**Weight Change Verification:**
+```bash
+# After changing weights in scoring_contract.py:
+1. grep -rn "esoteric.*0\." core/ docs/ tests/  # Find all refs
+2. grep -rn "jarvis.*0\." core/ docs/ tests/    # Find all refs
+3. Update: scoring_pipeline.py fallbacks, all docs
+4. pytest tests/test_reconciliation.py::TestWeightsFrozen -v
+5. git commit  # Pre-commit hook validates docs == code
+```
+
+**Current Weights (v20.19):**
+| Engine | Weight | Notes |
+|--------|--------|-------|
+| AI | 0.25 | 8 AI models |
+| Research | 0.35 | Sharp money, splits, variance |
+| Esoteric | 0.15 | v20.19: reduced from 0.20 |
+| Jarvis | 0.25 | v20.19: increased from 0.20 |
+
