@@ -15,13 +15,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # =============================================================================
 
 class TestWeightContract:
-    """Verify Engine 3 weight is exactly 0.20 per Option A formula."""
+    """Verify Engine 3 weight is exactly 0.15 per Option A formula (v20.19)."""
 
-    def test_esoteric_weight_is_20_percent(self):
-        """Esoteric engine must be weighted at exactly 0.20 (20%)."""
+    def test_esoteric_weight_is_15_percent(self):
+        """Esoteric engine must be weighted at exactly 0.15 (15%) per v20.19 rebalancing."""
         from core.scoring_contract import ENGINE_WEIGHTS
-        assert ENGINE_WEIGHTS.get("esoteric") == 0.20, (
-            f"Esoteric weight must be 0.20, got {ENGINE_WEIGHTS.get('esoteric')}"
+        assert ENGINE_WEIGHTS.get("esoteric") == 0.15, (
+            f"Esoteric weight must be 0.15, got {ENGINE_WEIGHTS.get('esoteric')}"
         )
 
     def test_engine_weights_sum_to_100(self):
@@ -42,13 +42,13 @@ class TestWeightContract:
         )
 
     def test_esoteric_contributes_to_base4(self):
-        """Verify esoteric_score * 0.20 contributes to BASE_4."""
+        """Verify esoteric_score * 0.15 contributes to BASE_4 (v20.19)."""
         from core.scoring_contract import ENGINE_WEIGHTS
         esoteric_weight = ENGINE_WEIGHTS.get("esoteric", 0)
         # Sample esoteric score
         sample_score = 7.5
         contribution = sample_score * esoteric_weight
-        expected_contribution = 7.5 * 0.20  # 1.5
+        expected_contribution = 7.5 * 0.15  # 1.125 (v20.19)
         assert abs(contribution - expected_contribution) < 0.0001, (
             f"Esoteric contribution mismatch: {contribution} != {expected_contribution}"
         )
