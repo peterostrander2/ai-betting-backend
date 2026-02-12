@@ -9821,6 +9821,102 @@ async def debug_integrations(
         }
 
 
+@router.get("/debug/integration-rollup")
+async def debug_integration_rollup(
+    api_key: str = Depends(verify_api_key),
+    days: int = 7
+):
+    """
+    Get integration rollup metrics for the last N days.
+
+    Provides:
+    - Daily success/error counts per integration
+    - Success rates and latency stats
+    - Critical failures in last 24h
+    - Per-integration summary with criticality tiers
+
+    Args:
+        days: Number of days to include (default 7, max 30)
+
+    Returns:
+        Multi-day rollup data for trending and analysis.
+
+    Requires:
+        X-API-Key header
+    """
+    try:
+        from core.integration_rollup import get_rollup
+
+        # Cap at 30 days
+        days = min(max(1, days), 30)
+
+        result = get_rollup(days=days)
+        result["requested_days"] = days
+
+        return result
+
+    except ImportError as e:
+        return {
+            "error": "Integration rollup module not available",
+            "detail": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception("Error getting integration rollup: %s", e)
+        return {
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/debug/alerts")
+async def debug_alerts(
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Get active integration alerts.
+
+    Alert types:
+    - CRITICAL_INTEGRATION_DOWN: CRITICAL tier integration has errors
+    - CRITICAL_STALENESS: CRITICAL tier data is stale
+    - SUCCESS_RATE_DROP: Significant drop in success rate
+    - UNUSED_INTEGRATION: Configured but never used
+
+    Returns:
+        List of active alerts with severity levels (critical, warning, info)
+
+    Requires:
+        X-API-Key header
+    """
+    try:
+        from core.integration_rollup import get_alerts
+
+        result = get_alerts()
+
+        # Add health summary based on alerts
+        result["health_summary"] = {
+            "ok": result["critical_count"] == 0,
+            "status": "critical" if result["critical_count"] > 0 else
+                      "warning" if result["warning_count"] > 0 else "healthy",
+            "message": f"{result['critical_count']} critical, {result['warning_count']} warnings"
+        }
+
+        return result
+
+    except ImportError as e:
+        return {
+            "error": "Integration rollup module not available",
+            "detail": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.exception("Error getting alerts: %s", e)
+        return {
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 @router.get("/grader/weights/{sport}")
 async def grader_weights(sport: str):
     """Get current prediction weights for a sport."""

@@ -3,12 +3,22 @@
 
 import os
 import logging
+import time
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
 from core.log_sanitizer import sanitize_url, sanitize_dict
 
 logger = logging.getLogger(__name__)
+
+
+def _record_rollup_event(status: str, latency_ms: int, error_code: Optional[str] = None):
+    """Record integration event to rollup (fail-soft)."""
+    try:
+        from core.integration_rollup import record_integration_event
+        record_integration_event("playbook_api", status, latency_ms, error_code)
+    except Exception:
+        pass  # Fail-soft - don't break API calls if rollup fails
 
 PLAYBOOK_BASE_URL = os.getenv("PLAYBOOK_API_BASE", "https://api.playbook-api.com/v1")
 PLAYBOOK_API_KEY = os.getenv("PLAYBOOK_API_KEY", "")
@@ -207,6 +217,7 @@ async def playbook_fetch(
     if client is None:
         raise PlaybookAPIError("httpx client is required for playbook_fetch")
 
+    start_time = time.time()
     try:
         url, query_params = build_playbook_url(endpoint_name, params, api_key)
 
@@ -214,6 +225,7 @@ async def playbook_fetch(
         logger.debug("Playbook API request: %s params=%s", url, sanitize_dict(query_params))
 
         resp = await client.get(url, params=query_params, timeout=30.0)
+        latency_ms = int((time.time() - start_time) * 1000)
 
         if resp.status_code == 200:
             try:
@@ -221,18 +233,24 @@ async def playbook_fetch(
                 mark_integration_used("playbook_api")
             except Exception:
                 pass
+            # v20.20: Record success to rollup
+            _record_rollup_event("SUCCESS", latency_ms)
             return resp.json()
         elif resp.status_code == 429:
             logger.warning("Playbook API rate limited (429)")
+            _record_rollup_event("ERROR", latency_ms, "RATE_LIMITED")
             return None
         else:
             logger.warning("Playbook API returned %s: %s", resp.status_code, resp.text[:200])
+            _record_rollup_event("ERROR", latency_ms, f"HTTP_{resp.status_code}")
             return None
 
     except PlaybookAPIError:
         raise
     except Exception as e:
+        latency_ms = int((time.time() - start_time) * 1000)
         logger.exception("Playbook API fetch error for %s: %s", endpoint_name, e)
+        _record_rollup_event("ERROR", latency_ms, type(e).__name__)
         return None
 
 

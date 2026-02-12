@@ -230,18 +230,37 @@ async def health():
         integrations_health = {"status": "ERROR", "error": str(e)}
         degraded_reasons.append("integrations_check_exception")
 
+    # v20.20: Use criticality-aware integration health
+    integration_health_result = {"ok": True, "status": "healthy", "critical_errors": [], "degraded_reasons": []}
+    try:
+        from core.integration_rollup import get_integration_health_for_health_endpoint
+        integration_health_result = get_integration_health_for_health_endpoint()
+        # Only CRITICAL integrations can set ok=false
+        if not integration_health_result.get("ok", True):
+            errors.append("critical_integration_down")
+        if integration_health_result.get("status") == "degraded":
+            degraded_reasons.extend(integration_health_result.get("degraded_reasons", []))
+    except ImportError:
+        pass  # Rollup module not available, fall back to old behavior
+    except Exception as e:
+        degraded_reasons.append(f"integration_health_exception:{e}")
+
     # Compute overall status
+    # v20.20: Only CRITICAL errors set ok=false (not DEGRADED_OK or OPTIONAL)
     if errors:
         status = "critical"
-    elif degraded_reasons or integrations_health.get("status") in ["DEGRADED", "CRITICAL", "ERROR"]:
+        overall_ok = False
+    elif degraded_reasons:
         status = "degraded"
+        overall_ok = True  # Degraded but still operational
     else:
         status = "healthy"
+        overall_ok = True
 
     return {
         "status": status,
-        "ok": status == "healthy",
-        "version": "20.9",
+        "ok": overall_ok,
+        "version": "20.20",
         "build_sha": build_sha,
         "deploy_version": deploy_version,
         "database": database.DB_ENABLED,
