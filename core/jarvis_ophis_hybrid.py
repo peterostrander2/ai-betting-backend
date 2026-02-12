@@ -38,8 +38,17 @@ from datetime import date, datetime, timedelta
 from typing import Dict, Any, Optional, List
 import logging
 import math
+import os
 
 logger = logging.getLogger(__name__)
+
+# v2.2.1: Import MSRF_ENABLED to respect the feature flag
+# This ensures msrf_component = 0.0 when MSRF is disabled
+try:
+    from signals.msrf_resonance import MSRF_ENABLED
+except ImportError:
+    # Fallback: check env var directly if import fails
+    MSRF_ENABLED = os.getenv("MSRF_ENABLED", "true").lower() == "true"
 
 
 # =============================================================================
@@ -61,7 +70,8 @@ OPHIS_SCALE_FACTOR = 5.0   # Scales MSRF [0, 2.0] to [0, 10]
 JARVIS_MSRF_COMPONENT_CAP = 2.0
 
 # Version string
-VERSION = "JARVIS_OPHIS_HYBRID_v2.2"
+# v2.2.1: Added MSRF_ENABLED guard - msrf_component=0 when MSRF disabled
+VERSION = "JARVIS_OPHIS_HYBRID_v2.2.1"
 
 # Ophis mathematical constants
 OPH_PI = 3.141592653589793
@@ -132,21 +142,32 @@ def _ophis_flip(n: int) -> int:
 
 
 def _score_z_value(z: float) -> float:
-    """Score a Z-value against MSRF sacred number sets."""
+    """
+    Score a Z-value against MSRF sacred number sets.
+
+    v2.2.1 RECALIBRATION: Reduced per-hit scores to prevent 100% saturation
+    - IMPORTANT: 2.0 → 0.6 (70% reduction)
+    - NORMAL: 1.0 → 0.3 (70% reduction)
+    - Flipped scores scaled proportionally
+
+    With MSRF_NORMAL having 215 numbers and multiple z-value transformations,
+    the old scores (1.0/2.0) caused every pick to hit the 2.0 cap.
+    New scores allow more granular distribution and reduce saturation rate.
+    """
     z_int = int(_ophis_round(z))
 
-    # Check against sacred sets
+    # Check against sacred sets (v2.2.1: reduced scores)
     if z_int in MSRF_IMPORTANT:
-        return 2.0  # Important sacred number
+        return 0.6  # Important sacred number (was 2.0)
     if z_int in MSRF_NORMAL:
-        return 1.0  # Normal resonant number
+        return 0.3  # Normal resonant number (was 1.0)
 
-    # Check flipped value
+    # Check flipped value (proportionally scaled)
     z_flipped = _ophis_flip(z_int)
     if z_flipped in MSRF_IMPORTANT:
-        return 1.5
+        return 0.45  # Flipped important (was 1.5)
     if z_flipped in MSRF_NORMAL:
-        return 0.75
+        return 0.225  # Flipped normal (was 0.75)
 
     return 0.0
 
@@ -500,7 +521,7 @@ def calculate_hybrid_jarvis_score(
             "msrf_component": 0.0,
             "jarvis_msrf_component": 0.0,
             "jarvis_msrf_component_raw": 0.0,
-            "msrf_status": "IN_JARVIS",
+            "msrf_status": "INPUTS_MISSING",  # v2.2.1: MSRF needs team inputs
             "gematria": {},
         }
 
@@ -511,15 +532,32 @@ def calculate_hybrid_jarvis_score(
     # =========================================================================
     # OPHIS COMPONENT (Delta Modifier)
     # =========================================================================
-    # Generate Z-values and score against MSRF sets
-    z_values = generate_z_values_from_date(matchup_date, home_team, away_team)
-    msrf_result = score_msrf_from_z_values(z_values)
+    # v2.2.1 FIX: Check MSRF_ENABLED before computing MSRF
+    # INVARIANT: msrf_component == 0.0 whenever status ∈ {NOT_RELEVANT, INSUFFICIENT_DATA, ERROR}
+    # This ensures the hybrid respects the same feature flag as the post-base MSRF path
 
-    # MSRF component (raw and clamped)
-    msrf_component_raw = msrf_result["raw_score"]
-    msrf_component = msrf_result["clamped_score"]
+    if not MSRF_ENABLED:
+        # MSRF is disabled - no Ophis influence
+        z_values = []
+        msrf_result = {
+            "raw_score": 0.0,
+            "clamped_score": 0.0,
+            "hits": [],
+            "reason": "MSRF_DISABLED",
+        }
+        msrf_component_raw = 0.0
+        msrf_component = 0.0
+        msrf_status_internal = "NOT_RELEVANT"
+        logger.debug("MSRF disabled via MSRF_ENABLED=false, msrf_component=0.0")
+    else:
+        # MSRF enabled - compute normally
+        z_values = generate_z_values_from_date(matchup_date, home_team, away_team)
+        msrf_result = score_msrf_from_z_values(z_values)
+        msrf_component_raw = msrf_result["raw_score"]
+        msrf_component = msrf_result["clamped_score"]
+        msrf_status_internal = "IN_JARVIS"
 
-    # Ophis raw: JARVIS_BASELINE + MSRF component (range: [4.5, 6.5])
+    # Ophis raw: JARVIS_BASELINE + MSRF component (range: [4.5, 6.5] when enabled, 4.5 when disabled)
     ophis_raw = JARVIS_BASELINE + msrf_component
 
     # =========================================================================
@@ -664,7 +702,10 @@ def calculate_hybrid_jarvis_score(
         "msrf_component": round(msrf_component, 4),
         "jarvis_msrf_component": round(msrf_component, 4),  # Alias
         "jarvis_msrf_component_raw": round(msrf_component_raw, 4),
-        "msrf_status": "IN_JARVIS",  # MSRF is inside Jarvis, not post-base
+        # v2.2.1: msrf_status now reflects MSRF_ENABLED flag
+        # IN_JARVIS = MSRF active and computed
+        # NOT_RELEVANT = MSRF disabled (msrf_component == 0.0)
+        "msrf_status": msrf_status_internal,
 
         # Gematria details (simple values for debugging)
         "gematria": {
@@ -678,8 +719,8 @@ def calculate_hybrid_jarvis_score(
 
         # MSRF Z-scan details
         "msrf_z_values": z_values[:5] if z_values else [],
-        "msrf_hit_count": msrf_result["hit_count"],
-        "msrf_was_clamped": msrf_result["was_clamped"],
+        "msrf_hit_count": msrf_result.get("hit_count", 0),
+        "msrf_was_clamped": msrf_result.get("was_clamped", False),
     }
 
 

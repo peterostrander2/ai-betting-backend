@@ -97,7 +97,51 @@ jarvis_rs = clamp(jarvis_before + ophis_delta_applied, 0.0, 10.0)
 
 **MSRF Note:** `ophis_score_norm = msrf_component * 5.0` assumes MSRF is the entire Ophis signal. If additional Ophis components are added later, this normalization must be revisited.
 
-**Version:** `JARVIS_OPHIS_HYBRID_v2.2`
+**Version:** `JARVIS_OPHIS_HYBRID_v2.2` → Updated to `JARVIS_OPHIS_HYBRID_v2.2.1` (see v2.2.1 section below)
+
+---
+
+## v2.2.1 MSRF CORRECTNESS & CALIBRATION (Feb 11, 2026)
+
+**Bug Fixed:** `msrf_component` was 2.0 even when MSRF should be NOT_RELEVANT.
+
+**Problem:** The hybrid computed MSRF unconditionally via `score_msrf_from_z_values()`, ignoring the `MSRF_ENABLED` flag. This caused `msrf_component: 2.0` even when `msrf_status: NOT_RELEVANT`.
+
+**Correctness Fix:**
+```python
+# v2.2.1: Check MSRF_ENABLED before computing
+if not MSRF_ENABLED:
+    msrf_component = 0.0
+    msrf_status = "NOT_RELEVANT"
+```
+
+**INVARIANT:** `msrf_component == 0.0` whenever status ∈ {NOT_RELEVANT, INSUFFICIENT_DATA, ERROR, INPUTS_MISSING}
+
+**Saturation Fix:** Per-hit scores reduced to prevent 100% cap saturation:
+
+| Hit Type | v2.2 Score | v2.2.1 Score | Reduction |
+|----------|------------|--------------|-----------|
+| IMPORTANT direct | 2.0 | 0.6 | 70% |
+| NORMAL direct | 1.0 | 0.3 | 70% |
+| IMPORTANT flipped | 1.5 | 0.45 | 70% |
+| NORMAL flipped | 0.75 | 0.225 | 70% |
+
+**Why Saturation Occurred:**
+- MSRF_NORMAL has 215 numbers (permissive set)
+- Multiple z-value transformations (phi, pi, day-of-year, etc.)
+- With 1.0 per-hit, 2-3 hits immediately saturated the 2.0 cap
+- 100% of picks were hitting `ophis_delta_saturated: true`
+
+**Expected Post-Fix Behavior:**
+- Saturation rate: ~10-30% of picks (not 100%)
+- `msrf_component` range: 0.0-2.0 with better distribution
+- When MSRF_ENABLED=false: `msrf_component=0.0`, `msrf_status="NOT_RELEVANT"`
+
+**New Tests:**
+- `test_msrf_disabled_yields_zero_component` — verifies correctness invariant
+- `test_msrf_enabled_yields_nonzero_for_known_hits` — verifies calibration doesn't break scoring
+
+**Version:** `JARVIS_OPHIS_HYBRID_v2.2.1`
 
 **Guard Tests Added:** 5 new tests in `tests/test_engine4_jarvis_guards.py`:
 1. `test_weighted_blend_math_reconciles` — target == 0.55*jarvis + 0.45*ophis

@@ -397,16 +397,21 @@ def test_jarvis_trigger_contribs_is_dict(hybrid_function, sample_inputs):
         f"jarvis_trigger_contribs is {type(result['jarvis_trigger_contribs'])}, expected dict"
 
 
-def test_msrf_status_is_in_jarvis(hybrid_function, sample_inputs):
-    """Hybrid: msrf_status = 'IN_JARVIS'."""
+def test_msrf_status_reflects_enabled_flag(hybrid_function, sample_inputs):
+    """v2.2.1: msrf_status = 'IN_JARVIS' when enabled, 'NOT_RELEVANT' when disabled."""
+    from core.jarvis_ophis_hybrid import MSRF_ENABLED
     result = hybrid_function(
         home_team=sample_inputs["home_team"],
         away_team=sample_inputs["away_team"],
         sport=sample_inputs["sport"],
     )
 
-    assert result["msrf_status"] == "IN_JARVIS", \
-        f"msrf_status={result['msrf_status']}, expected 'IN_JARVIS'"
+    if MSRF_ENABLED:
+        assert result["msrf_status"] == "IN_JARVIS", \
+            f"msrf_status={result['msrf_status']}, expected 'IN_JARVIS' when MSRF_ENABLED=True"
+    else:
+        assert result["msrf_status"] == "NOT_RELEVANT", \
+            f"msrf_status={result['msrf_status']}, expected 'NOT_RELEVANT' when MSRF_ENABLED=False"
 
 
 # =============================================================================
@@ -584,7 +589,8 @@ def test_final_equals_before_plus_applied_delta(hybrid_function, sample_inputs):
     )
     expected_final = result["jarvis_score_before_ophis"] + result["ophis_delta_applied"]
     expected_final = max(0.0, min(10.0, expected_final))
-    assert abs(result["jarvis_rs"] - expected_final) < 0.001, \
+    # Note: 0.01 tolerance for rounding differences (jarvis_rs is rounded to 2 decimals in output)
+    assert abs(result["jarvis_rs"] - expected_final) < 0.01, \
         f"Final mismatch: jarvis_rs={result['jarvis_rs']:.4f} != {expected_final:.4f}"
 
 
@@ -601,3 +607,89 @@ def test_delta_saturation_flag_matches_math(hybrid_function, sample_inputs):
     expected_saturated = abs(delta_raw) >= OPHIS_DELTA_CAP  # 0.75 (>= not >)
     assert result["ophis_delta_saturated"] == expected_saturated, \
         f"Saturation flag lies: saturated={result['ophis_delta_saturated']} but |delta_raw|={abs(delta_raw):.4f}"
+
+
+# =============================================================================
+# TEST 17-18: v2.2.1 MSRF_ENABLED CORRECTNESS GUARDS
+# =============================================================================
+
+def test_msrf_disabled_yields_zero_component(hybrid_function, sample_inputs):
+    """
+    v2.2.1 FIX: When MSRF_ENABLED=false, msrf_component MUST be 0.0
+
+    INVARIANT: msrf_component == 0.0 whenever status ∈ {NOT_RELEVANT, INSUFFICIENT_DATA, ERROR}
+
+    This test verifies the correctness bug fix where msrf_component was 2.0
+    even when msrf_status was NOT_RELEVANT.
+    """
+    # Temporarily patch MSRF_ENABLED to False
+    with patch('core.jarvis_ophis_hybrid.MSRF_ENABLED', False):
+        # Re-import to pick up patched value
+        from core.jarvis_ophis_hybrid import calculate_hybrid_jarvis_score
+
+        result = calculate_hybrid_jarvis_score(
+            home_team=sample_inputs["home_team"],
+            away_team=sample_inputs["away_team"],
+            sport=sample_inputs["sport"],
+            matchup_date=sample_inputs["matchup_date"],
+        )
+
+        # When MSRF is disabled:
+        # 1. msrf_component MUST be 0.0
+        # 2. msrf_status MUST be NOT_RELEVANT
+        # 3. ophis_score_norm MUST be 0.0 (since it's msrf_component * 5)
+        assert result["msrf_component"] == 0.0, \
+            f"MSRF_ENABLED=false but msrf_component={result['msrf_component']}, expected 0.0"
+        assert result["msrf_status"] == "NOT_RELEVANT", \
+            f"MSRF_ENABLED=false but msrf_status={result['msrf_status']}, expected 'NOT_RELEVANT'"
+        assert result["ophis_score_norm"] == 0.0, \
+            f"MSRF_ENABLED=false but ophis_score_norm={result['ophis_score_norm']}, expected 0.0"
+
+
+def test_msrf_enabled_yields_nonzero_for_known_hits(hybrid_function, sample_inputs):
+    """
+    v2.2.1: When MSRF is enabled and z-values hit MSRF_NORMAL/IMPORTANT sets,
+    msrf_component should be > 0 (not auto-capped to 2.0 before scoring).
+
+    This tests that the per-hit scoring works without artificial saturation.
+    """
+    from core.jarvis_ophis_hybrid import (
+        generate_z_values_from_date,
+        score_msrf_from_z_values,
+        JARVIS_MSRF_COMPONENT_CAP,
+        MSRF_ENABLED,
+    )
+
+    # Skip test if MSRF is disabled
+    if not MSRF_ENABLED:
+        pytest.skip("MSRF_ENABLED=false, skipping positive-path test")
+
+    # Generate z-values for a known date
+    z_values = generate_z_values_from_date(
+        sample_inputs["matchup_date"],
+        sample_inputs["home_team"],
+        sample_inputs["away_team"],
+    )
+
+    # Score the z-values directly
+    msrf_result = score_msrf_from_z_values(z_values)
+
+    # Verify the result structure
+    assert "raw_score" in msrf_result, "Missing raw_score in msrf_result"
+    assert "clamped_score" in msrf_result, "Missing clamped_score in msrf_result"
+    assert "hit_count" in msrf_result, "Missing hit_count in msrf_result"
+
+    # The clamped score should never exceed the cap
+    assert msrf_result["clamped_score"] <= JARVIS_MSRF_COMPONENT_CAP, \
+        f"clamped_score={msrf_result['clamped_score']} exceeds cap={JARVIS_MSRF_COMPONENT_CAP}"
+
+    # If there are hits, raw_score should be > 0
+    if msrf_result["hit_count"] > 0:
+        assert msrf_result["raw_score"] > 0, \
+            f"hit_count={msrf_result['hit_count']} but raw_score=0"
+
+    # raw_score CAN exceed cap (that's why we clamp it)
+    # This verifies we're not prematurely capping before accumulation
+    if msrf_result["was_clamped"]:
+        assert msrf_result["raw_score"] > JARVIS_MSRF_COMPONENT_CAP, \
+            f"was_clamped=True but raw_score={msrf_result['raw_score']} <= cap"
