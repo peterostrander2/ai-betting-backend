@@ -485,6 +485,9 @@ python3 -c "from officials_data import get_database_stats; print(get_database_st
 | **Public payload sanitizer** | `utils/public_payload_sanitizer.py` + `live_data_router.py` | ET-only public payloads, strip UTC/telemetry |
 | **Props sanity check** | `scripts/props_sanity_check.sh` | Props pipeline verification (optional gate) |
 | CI sessions | `scripts/ci_sanity_check.sh` | Sessions 1–10 must pass |
+| **Scoring contract (v20.21)** | `docs/CONTRACT.md` | Canonical frozen contract reference (weights, tiers, thresholds) |
+| **CI Golden Gate (v20.21)** | `scripts/ci_golden_gate.sh` | 3-gate CI hard-gate (golden run, output boundary, integrations) |
+| **Structured logging (v20.21)** | `core/structured_logging.py` | JSON logging + request correlation middleware |
 
 ---
 
@@ -492,6 +495,10 @@ python3 -c "from officials_data import get_database_stats; print(get_database_st
 
 ### Required (must pass before any push)
 ```bash
+# v20.21: CI Golden Gate (runs all contract tests)
+./scripts/ci_golden_gate.sh
+
+# Full CI sanity check (all sessions)
 ./scripts/ci_sanity_check.sh
 ```
 
@@ -582,7 +589,8 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 
 - `docs/MASTER_INDEX.md` — this file (routing + policy)
 - `CLAUDE.md` — invariants + operational rules
-- `docs/LESSONS.md` — mistakes made and how to avoid repeating them (68 lessons as of v20.13)
+- `docs/LESSONS_LEARNED.md` — mistakes made and how to avoid repeating them (99 lessons as of v20.21)
+- `docs/CONTRACT.md` — canonical scoring contract reference (frozen values) — v20.21
 - `SCORING_LOGIC.md` — scoring details + contract representation
 - `PROJECT_MAP.md` — file/module responsibilities
 - `COMMIT_CHECKLIST.md` — code+docs commit discipline
@@ -590,6 +598,7 @@ curl -s "$BASE_URL/internal/storage/health" -H "X-API-Key: $API_KEY" | jq .
 - `docs/AUDIT_MAP.md` — integration/env var mapping table (canonical)
 - `docs/PICK_CONTRACT_V1.md` — pick output format specification (PickContract v1)
 - `scripts/prod_go_nogo.sh` — 12-check go/no-go gate (must pass before deploy)
+- `scripts/ci_golden_gate.sh` — 3-gate CI hard-gate (must pass before deploy) — v20.21
 - `tasks/lessons.md` — incident log with root causes and prevention rules
 
 ---
@@ -785,3 +794,54 @@ tail -20 ~/ai-betting-backend/logs/cron.log
 
 **Prevention Checklist Added to CLAUDE.md:**
 A new "🛡️ Prevention Checklist" section consolidates key prevention rules from all lessons for quick reference before writing code.
+
+---
+
+## v20.21 Updates (Feb 13, 2026)
+
+**Latest Enhancements — CI Golden Gate + Structured Logging + Output Boundary:**
+
+| Item | Enhancement | Description |
+|------|-------------|-------------|
+| 3 | Integration State Machine | `calls_last_15m()` rolling window for health tracking |
+| 4 | Output Boundary Hardening | Single choke point `_enforce_output_boundary()` for all filtering |
+| 5 | Structured Logging | JSON logs + request correlation via X-Request-ID |
+| 6 | CI Golden Gate | 3-gate CI script for all contract tests |
+| 7 | docs/CONTRACT.md | Canonical scoring contract reference (frozen) |
+
+**Key Files Added/Modified:**
+- `core/structured_logging.py` — JSON formatter + RequestCorrelationMiddleware
+- `docs/CONTRACT.md` — Canonical frozen contract values
+- `scripts/ci_golden_gate.sh` — 3-gate CI hard-gate
+- `.github/workflows/golden-gate.yml` — GitHub Actions CI
+- `tests/test_structured_logging.py` — 14 logging tests
+- `tests/test_debug_telemetry.py` — 12 output boundary tests
+- `tests/test_integration_validation.py` — 13 integration contract tests
+- `live_data_router.py` — Output boundary hardening
+- `integration_registry.py` — `calls_last_15m()` call tracking
+- `main.py` — Structured logging + correlation middleware
+
+**Lessons Added (94-99):**
+- 94: Output Boundary Single Choke Point Design
+- 95: Integration env_vars=[] Means No Config Needed
+- 96: Bash Arithmetic with set -e
+- 97: Logging configure_structured_logging() Idempotency
+- 98: Integration calls_last_15m() Rolling Window
+- 99: CI Golden Gate 3-Gate Structure
+
+**CI Golden Gate Structure:**
+```bash
+# Run before any deploy
+./scripts/ci_golden_gate.sh
+
+# Gate 1: tests/test_golden_run.py — Engine weights, tiers, thresholds
+# Gate 2: tests/test_debug_telemetry.py — Output boundary hardening
+# Gate 3: tests/test_integration_validation.py — Integration contract
+# Gate 4: Live validation (optional, requires API_KEY)
+```
+
+**Invariants Added (27-30):**
+- 27: Output Boundary Hardening (single choke point filters hidden tiers + thresholds)
+- 28: Request Correlation (all logs include request_id via X-Request-ID)
+- 29: Integration State Machine (calls_last_15m() rolling window)
+- 30: CI Golden Gate (all deploys must pass ci_golden_gate.sh)

@@ -3481,3 +3481,202 @@ jq '{
 **Added in:** v20.20 (Feb 13, 2026)
 
 ---
+
+### Lesson 94: Output Boundary Single Choke Point Design (v20.21)
+
+**Problem:** Pick filtering logic (score thresholds, hidden tiers) was scattered across multiple locations, making it hard to verify all picks were properly filtered and creating risk of upstream leaks.
+
+**The Anti-Pattern:**
+```python
+# ❌ SCATTERED FILTERING (hard to audit)
+# Location 1: In scoring loop
+if score < 6.5:
+    continue
+
+# Location 2: In response builder  
+picks = [p for p in picks if p["tier"] not in HIDDEN_TIERS]
+
+# Location 3: In normalizer
+# ... more filtering
+```
+
+**The Fix:** Single choke point `_enforce_output_boundary()` in `live_data_router.py`:
+```python
+# ✅ SINGLE CHOKE POINT
+def _enforce_output_boundary(payload: dict) -> dict:
+    """All output invariants enforced here - no upstream leaks possible."""
+    # 1. Score thresholds (props >= 6.5, games >= 7.0)
+    # 2. Hidden tier filter (MONITOR/PASS removed)
+    # 3. Valid tier check
+    # 4. Telemetry for violations
+    return filtered_payload
+```
+
+**Prevention:**
+1. All output filtering MUST go through single function
+2. Add telemetry to track what was filtered and why
+3. Unit tests with forced fixtures to verify filter logic
+4. Debug payload shows `boundary_violations` when active
+
+**Added in:** v20.21 (Feb 13, 2026)
+
+---
+
+### Lesson 95: Integration env_vars=[] Means No Config Needed (v20.21)
+
+**Problem:** `is_env_set()` was returning False for integrations with empty `env_vars=[]`, causing free APIs (NOAA, astronomy) to show as NOT_CONFIGURED even though they don't need API keys.
+
+**Root Cause:**
+```python
+# ❌ BUG: Loop never executes for empty list
+def is_env_set(*env_vars: str) -> bool:
+    for var in env_vars:
+        if os.getenv(var):
+            return True
+    return False  # Returns False for env_vars=[]
+```
+
+**The Fix:**
+```python
+# ✅ FIX: Empty env_vars means no config needed
+def is_env_set(*env_vars: str) -> bool:
+    if not env_vars:
+        return True  # No env vars needed = always configured
+    for var in env_vars:
+        value = os.getenv(var, "")
+        if value and value.strip() and value != "your_key_here":
+            return True
+    return False
+```
+
+**Prevention:**
+1. Free APIs (NOAA, astronomy) should have `env_vars=[]` in contract
+2. Test `is_env_set()` with empty tuple explicitly
+3. "No config required" is a valid state, not an error
+
+**Added in:** v20.21 (Feb 13, 2026)
+
+---
+
+### Lesson 96: Bash Arithmetic with set -e (v20.21)
+
+**Problem:** CI script failed on first test pass because `((PASSED++))` returns exit code 1 when PASSED=0.
+
+**Root Cause:** In bash with `set -e`, the expression `((0))` evaluates to false (exit 1), causing script termination:
+```bash
+set -euo pipefail
+PASSED=0
+((PASSED++))  # ❌ FAILS: ((0)) is falsy in bash
+```
+
+**The Fix:**
+```bash
+# ✅ CORRECT: Arithmetic expansion always succeeds
+PASSED=$((PASSED + 1))
+```
+
+**Prevention:**
+1. Never use `((VAR++))` in scripts with `set -e`
+2. Always use `VAR=$((VAR + 1))` for counter increments
+3. Test scripts with counters starting at 0
+
+**Added in:** v20.21 (Feb 13, 2026)
+
+---
+
+### Lesson 97: Logging configure_structured_logging() Idempotency (v20.21)
+
+**Problem:** If `configure_structured_logging()` is called multiple times (e.g., by multiple worker processes or hot reloads), it could add duplicate handlers and cause log spam.
+
+**The Pattern:**
+```python
+# ✅ IDEMPOTENT: Remove existing handlers before adding new one
+def configure_structured_logging(...):
+    root_logger = logging.getLogger()
+    
+    # Remove existing handlers first
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # Then add the new handler
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JSONFormatter())
+    root_logger.addHandler(handler)
+```
+
+**Prevention:**
+1. Always remove existing handlers before adding new ones
+2. Add unit test: "no duplicate handlers on second call"
+3. Safe to call at import time if module is entry point
+
+**Added in:** v20.21 (Feb 13, 2026)
+
+---
+
+### Lesson 98: Integration calls_last_15m() Rolling Window (v20.21)
+
+**Problem:** Need to track recent API call counts for integration health without storing unbounded history.
+
+**The Pattern:**
+```python
+from collections import deque
+import time
+
+class IntegrationTracker:
+    def __init__(self):
+        self._call_times: deque = deque()
+        self._window_seconds = 900  # 15 minutes
+    
+    def record_call(self):
+        self._call_times.append(time.time())
+        self._prune_old()
+    
+    def calls_last_15m(self) -> int:
+        self._prune_old()
+        return len(self._call_times)
+    
+    def _prune_old(self):
+        cutoff = time.time() - self._window_seconds
+        while self._call_times and self._call_times[0] < cutoff:
+            self._call_times.popleft()  # O(1)
+```
+
+**Why deque:** 
+- O(1) append and popleft operations
+- Natural FIFO ordering by time
+- Memory bounded by window size
+
+**Prevention:**
+1. Always prune on access, not just on write
+2. Use `time.time()` for timestamps (not datetime)
+3. Document window size in code
+
+**Added in:** v20.21 (Feb 13, 2026)
+
+---
+
+### Lesson 99: CI Golden Gate 3-Gate Structure (v20.21)
+
+**Problem:** Multiple test suites for different contract aspects were run separately, making it unclear what constitutes a "passing" CI check.
+
+**The Solution:** Single `ci_golden_gate.sh` script with 3 gates + optional live validation:
+
+| Gate | Test File | Purpose |
+|------|-----------|---------|
+| 1 | `tests/test_golden_run.py` | Engine weights, tiers, thresholds |
+| 2 | `tests/test_debug_telemetry.py` | Output boundary hardening |
+| 3 | `tests/test_integration_validation.py` | Integration contract |
+| 4 (optional) | `scripts/golden_run.py validate` | Live API validation |
+
+**Exit Codes:**
+- 0 = All gates pass (safe to deploy)
+- 1 = Any gate fails (BLOCK DEPLOY)
+
+**Prevention:**
+1. Run `./scripts/ci_golden_gate.sh` before ANY deploy
+2. GitHub Actions runs on every push/PR
+3. Live validation only on main branch (requires API_KEY)
+
+**Added in:** v20.21 (Feb 13, 2026)
+
+---
