@@ -34,8 +34,15 @@ echo "$health" | jq '{status: .status, version: .version, build_sha: .build_sha}
 echo ""
 
 echo "=== 2. CRITICAL INTEGRATIONS ==="
+# Critical integrations per core/integration_contract.py: odds_api, playbook_api, balldontlie, railway_storage, database
 curl -s "$BASE/live/debug/integrations" -H "X-API-Key: $API_KEY" | \
-  jq '[to_entries[] | select(.value.criticality == "CRITICAL") | {name: .key, status: .value.status_category}]'
+  jq '{
+    odds_api: .odds_api.status_category,
+    playbook_api: .playbook_api.status_category,
+    balldontlie: .balldontlie.status_category,
+    railway_storage: .railway_storage.status_category,
+    database: .database.status_category
+  }'
 echo ""
 
 echo "=== 3. CONTRACT VERIFICATION ($SPORT) ==="
