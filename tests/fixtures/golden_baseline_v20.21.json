@@ -1,11 +1,11 @@
 {
-  "baseline_version": "20.20",
+  "baseline_version": "20.21",
   "baseline_created": "2026-02-13",
   "baseline_type": "contract",
   "description": "Deterministic contract baseline - validates schema and invariants, not volatile data",
 
   "contracts": {
-    "version": "20.20",
+    "version": "20.21",
     "engine_weights": {
       "ai": 0.25,
       "research": 0.35,

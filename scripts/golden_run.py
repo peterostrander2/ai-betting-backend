@@ -34,7 +34,7 @@ from typing import Dict, Any, List, Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Deterministic baseline (committed to repo, never auto-generated during validation)
-GOLDEN_BASELINE = Path(__file__).parent.parent / "tests" / "fixtures" / "golden_baseline_v20.20.json"
+GOLDEN_BASELINE = Path(__file__).parent.parent / "tests" / "fixtures" / "golden_baseline_v20.21.json"
 # Legacy capture file (for ad-hoc snapshots, NOT used in CI validation)
 GOLDEN_CAPTURE = Path(__file__).parent.parent / "tests" / "fixtures" / "golden_run.json"
 API_BASE = os.getenv("API_BASE", "https://web-production-7b2a.up.railway.app")
@@ -45,7 +45,7 @@ API_KEY = os.getenv("API_KEY", "")
 # =============================================================================
 
 EXPECTED = {
-    "version": "20.20",
+    "version": "20.21",
     "engine_weights": {
         "ai": 0.25,
         "research": 0.35,
