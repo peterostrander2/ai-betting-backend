@@ -1090,3 +1090,104 @@ pytest tests/test_golden_run.py::TestTitaniumContract -v
 pytest tests/test_golden_run.py::TestHiddenTierFilter -v
 ```
 
+---
+
+## v20.21 CI Golden Gate & Full System Audit (rules 276-290)
+
+**Rule 276: Run CI Golden Gate Before Deploy**
+```bash
+# ❌ WRONG: Deploy without running CI tests
+git push origin main  # Railway auto-deploys without verification
+
+# ✅ CORRECT: Run CI Golden Gate first
+./scripts/ci_golden_gate.sh && git push origin main
+```
+
+**Rule 277: Full System Audit Before Frontend Integration**
+```bash
+# ❌ WRONG: Start frontend work without verifying backend
+cd ../bookie-member-app  # Jump to frontend without proving backend ready
+
+# ✅ CORRECT: Run full system audit first
+API_KEY=your_key ./scripts/full_system_audit.sh
+# Must see: "46/46 PASSED - BACKEND READY FOR FRONTEND"
+```
+
+**Rule 278: Output Boundary is Single Choke Point**
+```python
+# ❌ WRONG: Filter picks at multiple locations
+if pick["final_score"] < 6.5:
+    continue  # Scattered filtering
+
+# ✅ CORRECT: All filtering in _enforce_output_boundary()
+picks = _enforce_output_boundary(picks, is_props=False)  # Single location
+```
+
+**Rule 279: Free APIs Use Empty env_vars**
+```python
+# ❌ WRONG: Free API with env_vars requiring key
+NOAA_INTEGRATION = Integration(env_vars=["NOAA_API_KEY"])  # NOAA is free!
+
+# ✅ CORRECT: Free APIs have empty env_vars list
+NOAA_INTEGRATION = Integration(env_vars=[])  # No key needed
+```
+
+**Rule 280: Bash Arithmetic with set -e**
+```bash
+# ❌ WRONG: ((PASSED++)) when PASSED=0 returns false → script exits
+set -e
+PASSED=0
+((PASSED++))  # Exit code 1, script terminates
+
+# ✅ CORRECT: Use safe arithmetic
+PASSED=$((PASSED + 1))  # Always returns 0
+```
+
+**Rule 281: Structured Logging is Idempotent**
+```python
+# ❌ WRONG: Multiple handlers accumulate
+configure_structured_logging()  # Handler 1
+configure_structured_logging()  # Handler 2 (duplicate)
+
+# ✅ CORRECT: Remove existing handlers first
+def configure_structured_logging():
+    root = logging.getLogger()
+    root.handlers.clear()  # Remove existing
+    root.addHandler(new_handler)  # Add fresh
+```
+
+**Rule 282: Integration calls_last_15m Uses Rolling Window**
+```python
+# ❌ WRONG: Store all calls forever
+self.all_calls.append(time.time())  # Memory leak
+
+# ✅ CORRECT: Use deque with pruning
+self._call_times = deque()  # O(1) operations
+def calls_last_15m(self):
+    self._prune_old()  # Remove entries > 15 min
+    return len(self._call_times)
+```
+
+---
+
+## v20.21 Full System Audit — 11 Hard Gates
+
+| Gate | Verifies | Failure Means |
+|------|----------|---------------|
+| 1. CI Golden Gate | Contract tests pass | Code doesn't match spec |
+| 2. Health & Build | `/health` returns healthy | App not running properly |
+| 3. Storage | Volume mounted | Data will be lost |
+| 4. Integrations | APIs reachable | No data sources |
+| 5. Scheduler | Jobs registered | No training/grading |
+| 6. Training | HEALTHY status | Models not trained |
+| 7. Autograder | Weights loaded | Learning loop broken |
+| 8. 4-Engine | All engines fire | Picks won't score correctly |
+| 9. Output Boundary | Valid tiers | Invalid tiers returned |
+| 10. Pick Contract | All fields present | Frontend will break |
+| 11. Headers | Correlation headers | Debugging impossible |
+
+**Exit Codes:**
+- `0` = BACKEND READY FOR FRONTEND
+- `1` = BLOCK FRONTEND WORK
+
+---

@@ -487,6 +487,7 @@ python3 -c "from officials_data import get_database_stats; print(get_database_st
 | CI sessions | `scripts/ci_sanity_check.sh` | Sessions 1–10 must pass |
 | **Scoring contract (v20.21)** | `docs/CONTRACT.md` | Canonical frozen contract reference (weights, tiers, thresholds) |
 | **CI Golden Gate (v20.21)** | `scripts/ci_golden_gate.sh` | 3-gate CI hard-gate (golden run, output boundary, integrations) |
+| **Full System Audit (v20.21)** | `scripts/full_system_audit.sh` | 11-gate backend readiness audit for frontend integration |
 | **Structured logging (v20.21)** | `core/structured_logging.py` | JSON logging + request correlation middleware |
 
 ---
@@ -500,6 +501,12 @@ python3 -c "from officials_data import get_database_stats; print(get_database_st
 
 # Full CI sanity check (all sessions)
 ./scripts/ci_sanity_check.sh
+```
+
+### Before frontend integration
+```bash
+# v20.21: Full System Audit (11 hard gates - proves backend ready)
+API_KEY=your_key ./scripts/full_system_audit.sh
 ```
 
 ### Helpful production verification (read-only)

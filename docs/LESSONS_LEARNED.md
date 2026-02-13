@@ -3680,3 +3680,43 @@ class IntegrationTracker:
 **Added in:** v20.21 (Feb 13, 2026)
 
 ---
+
+### Lesson 100: Full System Audit for Frontend Readiness (v20.21)
+
+**Problem:** No single, deterministic command to prove the backend is ready for frontend integration. Multiple manual checks were required across health, storage, integrations, training, grader, engines, and pick contracts.
+
+**The Solution:** `scripts/full_system_audit.sh` with 11 hard gates:
+
+| Gate | What It Verifies |
+|------|------------------|
+| 1. CI Golden Gate | Contract tests pass locally |
+| 2. Health & Build | `/health` returns healthy, build_sha present |
+| 3. Storage | Railway volume mounted, predictions exist |
+| 4. Integrations | Critical integrations VALIDATED |
+| 5. Scheduler | Required jobs registered |
+| 6. Training | HEALTHY status, all modules TRAINED |
+| 7. Autograder | Available, weights loaded |
+| 8. 4-Engine | All engines fire with numeric scores |
+| 9. Output Boundary | Valid tiers, thresholds enforced |
+| 10. Pick Contract | All frontend fields present |
+| 11. Headers | X-Request-ID, Cache-Control present |
+
+**Usage:**
+```bash
+API_KEY=your_key ./scripts/full_system_audit.sh
+```
+
+**Exit Codes:**
+- 0 = BACKEND READY FOR FRONTEND
+- 1 = BLOCK FRONTEND WORK
+
+**Security:** API key from environment only, no secrets in logs.
+
+**Prevention:**
+1. Run full system audit BEFORE starting any frontend integration work
+2. Use as final gate after CI Golden Gate passes
+3. All 11 gates documented in `docs/CONTRACT.md`
+
+**Added in:** v20.21 (Feb 13, 2026)
+
+---
