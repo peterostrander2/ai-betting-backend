@@ -3368,3 +3368,116 @@ filtered_games = [p for p in games if p["final_score"] >= MIN_FINAL_SCORE]  # 7.
 **Added in:** v20.20 (Feb 13, 2026)
 
 ---
+
+### Lesson 91: Pre-filter vs Post-filter Metrics for Engine Cleanliness (v20.20)
+
+**Problem:** After adding HIDDEN_TIERS filter, we claimed "engines are clean" but only had post-filter metrics. This doesn't prove engines never produce MONITOR/PASS — only that none leaked to output.
+
+**Key Distinction:**
+| Metric | What It Proves | What It Doesn't Prove |
+|--------|----------------|----------------------|
+| `hidden_tier_filtered_total = 0` | No MONITOR/PASS above score threshold | Engines never produce MONITOR/PASS anywhere |
+| `hidden_tier_filtered_total > 0` | Filter caught MONITOR/PASS above threshold | (same) |
+| Pre-threshold tier counts | Full tier distribution in candidate pool | N/A — this is the complete picture |
+
+**Root Cause:** Post-filter metrics only count what was *removed* by a filter. If score threshold removes everything first, hidden-tier filter sees nothing.
+
+**Debug Telemetry Added (v20.20):**
+```python
+# live_data_router.py debug output
+"hidden_tier_filtered_props": _props_tier_filtered,
+"hidden_tier_filtered_games": _games_tier_filtered,
+"hidden_tier_filtered_total": _props_tier_filtered + _games_tier_filtered,
+```
+
+**Interpretation Table:**
+| hidden_tier_filtered_total | num_picks_returned | Meaning |
+|----------------------------|-------------------|---------|
+| 0 | > 0 | Engines clean above threshold |
+| 0 | 0 | Can't determine (no data) |
+| > 0 | any | Engines produce MONITOR/PASS above threshold |
+
+**Prevention:**
+1. When claiming "engines are clean," specify the scope (above threshold vs everywhere)
+2. Add pre-filter tier counts if full visibility needed
+3. Debug telemetry should capture BOTH what was kept AND what was removed
+
+**Added in:** v20.20 (Feb 13, 2026)
+
+---
+
+### Lesson 92: Verification Logic Completeness — Non-Empty Set Requirement (v20.20)
+
+**Problem:** Claiming "no X exists in set S" requires proving the set is non-empty. If S is empty, the claim is vacuously true but meaningless.
+
+**The Logical Trap:**
+```python
+# ❌ INCOMPLETE VERIFICATION
+hidden_tier_filtered_total = 0
+# Conclusion: "No MONITOR/PASS above threshold"
+# BUT: If no picks exist above threshold, this is trivially true
+
+# ✅ COMPLETE VERIFICATION
+hidden_tier_filtered_total = 0 AND num_picks_returned > 0
+# Conclusion: "Among non-empty set of picks above threshold, none are MONITOR/PASS"
+```
+
+**Root Cause:** Filter metrics only measure removals. Zero removals from an empty set proves nothing.
+
+**Prevention:**
+1. Always pair filter metrics with set cardinality checks
+2. Document both conditions in verification claims
+3. Log "set was empty" as a distinct state from "filter removed nothing"
+
+**Verification Pattern:**
+```bash
+# Complete verification requires BOTH:
+jq '{
+  filter_removed: .debug.hidden_tier_filtered_total,
+  set_non_empty: (.game_picks.count + .props.count) > 0
+}'
+
+# Claim "engines clean above threshold" iff:
+#   filter_removed == 0 AND set_non_empty == true
+```
+
+**Added in:** v20.20 (Feb 13, 2026)
+
+---
+
+### Lesson 93: Deployment Gate Verification Must Be Airtight (v20.20)
+
+**Problem:** During v20.20 verification, multiple precision gaps were identified:
+1. TITANIUM 3-of-4 rule wasn't exercised on live data (no TITANIUM picks during test)
+2. "Engines are clean" claim was initially overstated
+3. Build SHA verification didn't initially confirm new fields were deployed
+
+**The Verification Checklist That Emerged:**
+
+| Step | Check | Required Evidence |
+|------|-------|-------------------|
+| 1 | Build SHA matches commit | `/health` returns expected SHA |
+| 2 | New code is exercised | Debug fields exist AND return values |
+| 3 | Filter logic works | `hidden_tier_filtered_total` present + interpretable |
+| 4 | Set is non-empty | `num_picks_returned > 0` |
+| 5 | Unit tests cover edge cases | TITANIUM 2-of-4 → False, 3-of-4 → True |
+
+**Root Cause:** Verification claims were made without exhaustive logical analysis. Each claim needs precise conditions stated.
+
+**Prevention:**
+1. State verification claims with explicit logical conditions
+2. Acknowledge what is NOT proven (and whether it matters)
+3. Unit tests must cover forced fixtures for rules that may not fire naturally
+4. Always run unit tests even if live data doesn't exercise the rule
+
+**Example Precise Claims:**
+```markdown
+✅ Proven: No MONITOR/PASS in API output
+✅ Proven: Among picks above threshold (set non-empty), none are MONITOR/PASS
+⚪ Not proven: MONITOR/PASS never produced anywhere (not required for contract)
+⚪ Not proven on live: TITANIUM 3-of-4 rule (covered by unit test)
+```
+
+**Added in:** v20.20 (Feb 13, 2026)
+
+---

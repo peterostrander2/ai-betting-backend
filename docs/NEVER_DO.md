@@ -1023,3 +1023,70 @@ filtered = [p for p in picks if p["total_score"] >= MIN_FINAL_SCORE]
 filtered = [p for p in picks if p["final_score"] >= MIN_FINAL_SCORE]
 ```
 
+**Rule 273: Specify Scope When Claiming "Clean"**
+```python
+# ❌ WRONG: Overstated claim
+"Engines are clean"  # Ambiguous — clean WHERE?
+
+# ✅ CORRECT: Precise scope
+"No MONITOR/PASS above score threshold"  # Specific, verifiable
+"No MONITOR/PASS in API output"          # What contract requires
+
+# The distinction matters:
+# - hidden_tier_filtered_total=0 proves: none above threshold
+# - Pre-threshold tier counts prove: none anywhere in candidate pool
+```
+
+**Rule 274: Non-Empty Set Before Claiming "None Exist"**
+```python
+# ❌ WRONG: Vacuously true if set is empty
+if hidden_tier_filtered_total == 0:
+    print("No MONITOR/PASS exist")  # False if no picks at all!
+
+# ✅ CORRECT: Check set is non-empty first
+if hidden_tier_filtered_total == 0 and num_picks_returned > 0:
+    print("Among returned picks, none are MONITOR/PASS")
+```
+
+**Rule 275: Unit Tests Must Cover Forced Fixtures**
+```python
+# ❌ WRONG: Only test with live data (may not exercise edge cases)
+def test_titanium_rule():
+    response = api.get("/live/best-bets/NBA")
+    # If no TITANIUM picks exist today, test proves nothing
+
+# ✅ CORRECT: Forced fixture covers edge case
+def test_titanium_requires_3_of_4():
+    # 2 of 4 should NOT trigger
+    triggered, _ = compute_titanium_flag(8.0, 8.0, 5.0, 5.0)
+    assert triggered is False
+
+    # 3 of 4 SHOULD trigger
+    triggered, _ = compute_titanium_flag(8.0, 8.0, 8.0, 5.0)
+    assert triggered is True
+```
+
+---
+
+## v20.20 Verification Commands (Golden Run Gate)
+
+```bash
+# 1. Confirm build SHA
+curl -s "$BASE/health" | jq '{build_sha, version}'
+
+# 2. Verify hidden_tier debug fields exist
+curl -s "$BASE/live/best-bets/NBA?debug=1" -H "X-API-Key: $KEY" | \
+  jq '.debug | {hidden_tier_filtered_props, hidden_tier_filtered_games, hidden_tier_filtered_total}'
+
+# 3. Complete verification (both conditions)
+curl -s "$BASE/live/best-bets/NBA?debug=1" -H "X-API-Key: $KEY" | jq '{
+  filter_removed: .debug.hidden_tier_filtered_total,
+  picks_returned: (.game_picks.count + .props.count),
+  claim_valid: ((.debug.hidden_tier_filtered_total == 0) and ((.game_picks.count + .props.count) > 0))
+}'
+
+# 4. Run unit tests for forced fixtures
+pytest tests/test_golden_run.py::TestTitaniumContract -v
+pytest tests/test_golden_run.py::TestHiddenTierFilter -v
+```
+

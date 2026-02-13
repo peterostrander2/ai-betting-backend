@@ -78,7 +78,7 @@
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
 
-### Lessons Learned (87 Total) - Key Categories
+### Lessons Learned (93 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -128,8 +128,11 @@
 | 88 | **v20.20 Never Loosen Regression Gates** | Gate failed on MONITOR tier — fix production (add HIDDEN_TIERS filter), don't add MONITOR to valid_tiers |
 | 89 | **v20.20 Golden Run Gate Design** | Validate contracts not volatile data; separate thresholds (props 6.5, games 7.0); unit + live tests |
 | 90 | **v20.20 Two Threshold Systems** | Internal tier assignment (EDGE_LEAN ≥6.5) vs API output (games 7.0, props 6.5); use canonical field name `final_score` |
+| 91 | **v20.20 Pre-filter vs Post-filter Metrics** | `hidden_tier_filtered_total=0` proves none above threshold, NOT that engines never produce MONITOR/PASS anywhere |
+| 92 | **v20.20 Non-Empty Set Verification** | Claiming "none exist" requires set non-empty; `filter=0 AND count>0` needed for valid claim |
+| 93 | **v20.20 Airtight Verification Claims** | State precise conditions; acknowledge what is NOT proven; unit tests cover forced fixtures |
 
-### NEVER DO Sections (39 Categories)
+### NEVER DO Sections (40 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -172,6 +175,7 @@
 - v20.19 Engine Weight Management (rules 253-258)
 - v20.19 Test Field Name Contracts (rules 259-263)
 - v20.20 Golden Run Regression Gates (rules 264-272)
+- v20.20 Verification Logic & Debug Telemetry (rules 273-275)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
