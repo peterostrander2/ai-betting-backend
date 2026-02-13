@@ -40,7 +40,7 @@ import os
 import logging
 import asyncio
 from typing import Dict, Any, List, Optional, Callable
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 
@@ -76,10 +76,54 @@ class IntegrationHealth:
     error_count: int = 0
     success_count: int = 0
     consecutive_failures: int = 0
+    # v20.21: Rolling window of call timestamps for calls_last_15m metric
+    call_timestamps: List[str] = field(default_factory=list)
 
 
 # Global health tracking (in-memory)
 _health_tracker: Dict[str, IntegrationHealth] = {}
+
+
+def _prune_old_timestamps(health: IntegrationHealth, max_age_minutes: int = 60):
+    """Remove timestamps older than max_age_minutes to prevent unbounded growth."""
+    if not health.call_timestamps:
+        return
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+    cutoff_iso = cutoff.isoformat()
+
+    # Keep only timestamps newer than cutoff
+    health.call_timestamps = [ts for ts in health.call_timestamps if ts >= cutoff_iso]
+
+
+def calls_last_15m(integration_name: str) -> int:
+    """Return count of calls in the last 15 minutes for an integration."""
+    health = _health_tracker.get(integration_name)
+    if not health or not health.call_timestamps:
+        return 0
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    cutoff_iso = cutoff.isoformat()
+
+    return sum(1 for ts in health.call_timestamps if ts >= cutoff_iso)
+
+
+def get_service_uptime_minutes() -> float:
+    """Return how long the service has been running (in minutes)."""
+    global _service_start_time
+    if _service_start_time is None:
+        return 0.0
+    return (datetime.now(timezone.utc) - _service_start_time).total_seconds() / 60.0
+
+
+# Service start time for uptime tracking
+_service_start_time: Optional[datetime] = None
+
+
+def mark_service_started():
+    """Mark the service as started (call once at startup)."""
+    global _service_start_time
+    _service_start_time = datetime.now(timezone.utc)
 
 
 def record_success(integration_name: str):
@@ -93,6 +137,11 @@ def record_success(integration_name: str):
     health.last_ok = now
     health.success_count += 1
     health.consecutive_failures = 0
+
+    # v20.21: Track call timestamps for rolling window metrics
+    health.call_timestamps.append(now)
+    # Prune timestamps older than 1 hour to prevent unbounded growth
+    _prune_old_timestamps(health, max_age_minutes=60)
 
 
 def record_failure(integration_name: str, error: str):
@@ -735,6 +784,8 @@ async def check_integration_health(name: str) -> Dict[str, Any]:
     result["success_count"] = health.success_count
     result["error_count"] = health.error_count
     result["consecutive_failures"] = health.consecutive_failures
+    # v20.21: Rolling window call count for deterministic "0 calls" warnings
+    result["calls_last_15m"] = calls_last_15m(name)
 
     # Run validation if available
     if integration.validate_fn and integration.validate_fn in VALIDATORS:

@@ -45,7 +45,7 @@ API_KEY = os.getenv("API_KEY", "")
 # =============================================================================
 
 EXPECTED = {
-    "version": "20.21",
+    "version": "20.20",  # Update to 20.21 after deployment
     "engine_weights": {
         "ai": 0.25,
         "research": 0.35,
@@ -120,6 +120,11 @@ def fetch_health() -> Optional[Dict[str, Any]]:
 def fetch_integration_rollup() -> Optional[Dict[str, Any]]:
     """Fetch integration rollup."""
     return fetch_json("/live/debug/integration-rollup?days=1")
+
+
+def fetch_integrations_status() -> Optional[Dict[str, Any]]:
+    """Fetch integrations status (includes calls_last_15m for v20.21 state machine)."""
+    return fetch_json("/live/debug/integrations")
 
 
 # =============================================================================
@@ -386,32 +391,68 @@ def validate_debug_fields(debug: Dict[str, Any], sport: str, result: ValidationR
         result.add_fail(f"{sport}.et_gating", "No ET filter date")
 
 
-def validate_integrations(rollup: Dict[str, Any], result: ValidationResult):
-    """Validate critical integrations are being called."""
+def validate_integrations(rollup: Dict[str, Any], result: ValidationResult,
+                          integrations_status: Optional[Dict[str, Any]] = None):
+    """Validate critical integrations are being called.
+
+    v20.21: Uses deterministic state machine for "0 calls" warnings:
+    - calls_last_15m: rolling window of recent calls (from integrations_status)
+    - If calls_last_15m is None/missing, falls back to total_calls heuristic
+    - Only warns if calls_last_15m == 0 AND integration is expected for validated sports
+    """
     if not rollup:
         result.add_fail("integrations.rollup", "Could not fetch rollup")
         return
 
     summary = rollup.get("integration_summary", {})
 
+    # v20.21: Get detailed status for calls_last_15m
+    detailed_status = {}
+    if integrations_status:
+        detailed_status = integrations_status.get("integrations", {})
+
+    # Integrations expected for NBA/NCAAB (what we validate against)
+    # Per core/integration_contract.py SPORT_INTEGRATION_RELEVANCE
+    expected_integrations = {
+        "odds_api", "playbook_api", "railway_storage", "database",  # ALL sports
+        "balldontlie",  # NBA
+    }
+
     for integration in EXPECTED["critical_integrations"]:
         info = summary.get(integration, {})
         criticality = info.get("criticality", "UNKNOWN")
         total_calls = info.get("total_calls", 0)
+
+        # v20.21: Get calls_last_15m from detailed status
+        detail = detailed_status.get(integration, {})
+        calls_15m = detail.get("calls_last_15m")  # May be None if not deployed
 
         if criticality != "CRITICAL":
             result.add_fail(
                 f"integrations.{integration}",
                 f"Criticality should be CRITICAL, got {criticality}"
             )
-        elif total_calls == 0:
-            # Warning, not fail - might just be fresh restart
+        elif calls_15m is not None and calls_15m > 0:
+            # v20.21: Deterministic pass - recent calls confirmed
+            result.add_pass(f"integrations.{integration}", f"{calls_15m} calls/15m, {criticality}")
+        elif calls_15m == 0 and integration in expected_integrations:
+            # v20.21: Deterministic warning - expected but no recent calls
             result.add_warning(
                 f"integrations.{integration}",
-                f"CRITICAL integration has 0 calls (fresh restart?)"
+                f"0 calls in last 15m (expected for validated sports)"
             )
+        elif calls_15m == 0:
+            # Not expected for validated sports - just note it
+            result.add_pass(f"integrations.{integration}", f"0 calls/15m (not expected for sport)")
+        elif total_calls > 0:
+            # Fallback: calls_last_15m not available, use total_calls
+            result.add_pass(f"integrations.{integration}", f"{total_calls} total calls, {criticality}")
         else:
-            result.add_pass(f"integrations.{integration}", f"{total_calls} calls, {criticality}")
+            # Fallback: no calls at all
+            result.add_warning(
+                f"integrations.{integration}",
+                f"0 total calls (calls_last_15m not available)"
+            )
 
 
 # =============================================================================
@@ -572,7 +613,8 @@ def cmd_validate():
     # Validate integrations
     print("  Checking integrations...")
     rollup = fetch_integration_rollup()
-    validate_integrations(rollup, result)
+    integrations_status = fetch_integrations_status()  # v20.21: for calls_last_15m
+    validate_integrations(rollup, result, integrations_status)
 
     # Print results
     print("\n" + "=" * 60)
@@ -634,8 +676,9 @@ def cmd_check():
 
     # Integration check
     rollup = fetch_integration_rollup()
+    integrations_status = fetch_integrations_status()  # v20.21: for calls_last_15m
     if rollup:
-        validate_integrations(rollup, result)
+        validate_integrations(rollup, result, integrations_status)
 
     # Print summary
     print("\n" + "=" * 60)

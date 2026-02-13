@@ -265,6 +265,34 @@ HEALTH_POLICY = {
     },
 }
 
+# =============================================================================
+# SPORT RELEVANCE MAPPING (v20.21)
+# =============================================================================
+# Defines which integrations are expected to be called for each sport.
+# Used by golden-run validation to make "0 calls" warnings deterministic.
+# If an integration is NOT expected for a sport, "0 calls" is not a warning.
+
+SPORT_INTEGRATION_RELEVANCE = {
+    # Core integrations expected for ALL sports
+    "ALL": ["odds_api", "playbook_api", "railway_storage", "database"],
+
+    # Sport-specific integrations
+    "NBA": ["balldontlie"],  # NBA grading requires balldontlie
+    "NCAAB": [],             # No sport-specific integrations beyond ALL
+    "NFL": ["weather_api"],  # Outdoor sport
+    "MLB": ["weather_api"],  # Outdoor sport
+    "NHL": [],               # Indoor
+    "NCAAF": ["weather_api"],  # Outdoor sport
+}
+
+
+def integrations_expected_for_sport(sport: str) -> set:
+    """Return set of integrations expected to be called for a given sport."""
+    expected = set(SPORT_INTEGRATION_RELEVANCE.get("ALL", []))
+    expected.update(SPORT_INTEGRATION_RELEVANCE.get(sport.upper(), []))
+    return expected
+
+
 # Export canonical contract for validation
 INTEGRATION_CONTRACT = {
     "integrations": INTEGRATIONS,
@@ -280,5 +308,6 @@ INTEGRATION_CONTRACT = {
         "banned_statuses": WEATHER_BANNED_STATUSES,
         "relevance_gated": True
     },
-    "version": "2.0.0"  # v2.0.0: Added criticality tiers (v20.19)
+    "sport_integration_relevance": SPORT_INTEGRATION_RELEVANCE,
+    "version": "2.1.0"  # v2.1.0: Added sport integration relevance (v20.21)
 }

@@ -80,6 +80,11 @@ async def lifespan(app: FastAPI):
     scheduler = init_scheduler(auto_grader=grader)
     scheduler.start()
 
+    # v20.21: Mark service started for integration uptime tracking
+    from integration_registry import mark_service_started
+    mark_service_started()
+    _logger.info("✓ Service start time recorded for integration tracking")
+
     yield  # App runs here
 
     # ========== SHUTDOWN ==========
