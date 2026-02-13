@@ -424,7 +424,12 @@ register_integration(
 # =============================================================================
 
 def is_env_set(*env_vars: str) -> bool:
-    """Check if any of the given env vars are set and non-empty."""
+    """Check if any of the given env vars are set and non-empty.
+
+    If no env_vars provided, returns True (no config needed = always configured).
+    """
+    if not env_vars:
+        return True  # No env vars needed = always configured
     for var in env_vars:
         value = os.getenv(var, "")
         if value and value.strip() and value != "your_key_here":
