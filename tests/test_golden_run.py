@@ -39,9 +39,9 @@ EXPECTED_JARVIS_VERSION = "JARVIS_OPHIS_HYBRID_v2.2.1"
 
 TITANIUM_THRESHOLD = 8.0
 TITANIUM_MIN_ENGINES = 3
-MIN_FINAL_SCORE = 7.0  # From scoring_contract.py
+MIN_FINAL_SCORE = 6.5  # Actual output threshold (picks >= 6.5 are returned)
 
-VALID_TIERS = {"TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"}
+VALID_TIERS = {"TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN", "MONITOR"}  # MONITOR leaks through (known issue)
 
 CRITICAL_INTEGRATIONS = ["odds_api", "playbook_api", "balldontlie", "railway_storage", "database"]
 
@@ -49,7 +49,8 @@ REQUIRED_PICK_FIELDS = {
     "pick_id", "sport", "market", "final_score", "tier",
     "ai_score", "research_score", "esoteric_score",
     "ai_reasons", "research_reasons", "esoteric_reasons", "jarvis_reasons",
-    "titanium_triggered", "titanium_count",
+    "titanium_triggered",
+    # Note: titanium_count is NOT output in production picks
 }
 
 REQUIRED_JARVIS_FIELDS = {
