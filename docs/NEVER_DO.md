@@ -992,3 +992,34 @@ API_KEY=key python3 scripts/golden_run.py check
 RUN_LIVE_TESTS=1 API_KEY=key pytest tests/test_golden_run.py -v
 ```
 
+**Rule 271: Distinguish Internal Assignment from Output Thresholds**
+```python
+# ❌ WRONG: Single threshold documentation
+# "EDGE_LEAN (≥ 6.5)" — confuses internal tier with output filter
+
+# ✅ CORRECT: Document BOTH systems separately
+
+# INTERNAL TIER ASSIGNMENT (tiering.py):
+# EDGE_LEAN assigned at final_score >= 6.5
+
+# API OUTPUT THRESHOLDS (live_data_router.py):
+# Games: final_score >= 7.0 (MIN_FINAL_SCORE)
+# Props: final_score >= 6.5 (MIN_PROPS_SCORE)
+
+# A game scored 6.7 is EDGE_LEAN internally but NEVER returned (6.7 < 7.0)
+```
+
+**Rule 272: Use Canonical Field Names in Filtering**
+```python
+# Pick objects have BOTH fields (aliases, same value):
+#   "total_score": round(final_score, 2),
+#   "final_score": round(final_score, 2),
+
+# ❌ Inconsistent: Filtering uses one, docs use other
+filtered = [p for p in picks if p["total_score"] >= MIN_FINAL_SCORE]
+# But MIN_FINAL_SCORE refers to "final_score" conceptually
+
+# ✅ CORRECT: Use canonical field name for doc alignment
+filtered = [p for p in picks if p["final_score"] >= MIN_FINAL_SCORE]
+```
+

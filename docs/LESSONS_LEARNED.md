@@ -3327,3 +3327,44 @@ RUN_LIVE_TESTS=1 API_KEY=your_key pytest tests/test_golden_run.py -v
 **Added in:** v20.20 (Feb 13, 2026)
 
 ---
+
+### Lesson 90: Internal Tier Assignment vs API Output Thresholds (v20.20)
+
+**Problem:** Documentation said "EDGE_LEAN (≥ 6.5)" which confused internal tier assignment with API output thresholds. A game pick scored 6.7 would be internally tiered as EDGE_LEAN but never returned because games require 7.0.
+
+**Key Distinction:**
+| Concept | Purpose | Values |
+|---------|---------|--------|
+| **Internal Tier Assignment** | Classify picks by quality | EDGE_LEAN at ≥6.5 |
+| **API Output Threshold** | Filter what reaches API | Games ≥7.0, Props ≥6.5 |
+
+**Root Cause:** Single "6.5 threshold" language masked that games have a higher output bar (7.0) than props (6.5 due to SERP disabled for props).
+
+**The Two Systems:**
+```python
+# 1. INTERNAL TIER ASSIGNMENT (tiering.py)
+# Runs first, classifies all picks
+if final_score >= 7.5 and passes_all_gates: tier = "GOLD_STAR"
+elif final_score >= 6.5: tier = "EDGE_LEAN"
+elif final_score >= 5.5: tier = "MONITOR"
+else: tier = "PASS"
+
+# 2. API OUTPUT FILTERING (live_data_router.py)
+# Runs after, filters what gets returned
+filtered_props = [p for p in props if p["final_score"] >= MIN_PROPS_SCORE]  # 6.5
+filtered_games = [p for p in games if p["final_score"] >= MIN_FINAL_SCORE]  # 7.0
+```
+
+**Field Name Consistency:**
+- `total_score` and `final_score` are aliases (same value)
+- Contract uses `MIN_FINAL_SCORE`, so filtering should reference `final_score`
+- Both work identically in runtime, but docs should use `final_score` for consistency
+
+**Prevention:**
+1. Always clarify whether threshold is "internal assignment" or "API output"
+2. Document props vs games thresholds separately (they differ by 0.5)
+3. Use canonical field name (`final_score`) in filtering code for doc alignment
+
+**Added in:** v20.20 (Feb 13, 2026)
+
+---

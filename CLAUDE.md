@@ -127,6 +127,7 @@
 | 87 | **v20.19 Test Field Name Drift** | Test expected `ophis_normalized` but impl uses `ophis_score_norm` — copy field names from implementation output, don't invent them |
 | 88 | **v20.20 Never Loosen Regression Gates** | Gate failed on MONITOR tier — fix production (add HIDDEN_TIERS filter), don't add MONITOR to valid_tiers |
 | 89 | **v20.20 Golden Run Gate Design** | Validate contracts not volatile data; separate thresholds (props 6.5, games 7.0); unit + live tests |
+| 90 | **v20.20 Two Threshold Systems** | Internal tier assignment (EDGE_LEAN ≥6.5) vs API output (games 7.0, props 6.5); use canonical field name `final_score` |
 
 ### NEVER DO Sections (39 Categories)
 - ML & GLITCH (rules 1-10)
@@ -170,7 +171,7 @@
 - v20.18.1 ENGINE 4 Calibration (rules 250-252)
 - v20.19 Engine Weight Management (rules 253-258)
 - v20.19 Test Field Name Contracts (rules 259-263)
-- v20.20 Golden Run Regression Gates (rules 264-270)
+- v20.20 Golden Run Regression Gates (rules 264-272)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -896,7 +897,16 @@ RUN_LIVE_TESTS=1 API_KEY=your_key pytest tests/test_pick_data_contract.py -v
 
 **RULE:** NEVER return picks below thresholds OR with internal-only tiers
 
-**Score Thresholds (v20.20):**
+**⚠️ IMPORTANT: Two Different Threshold Systems**
+
+| Type | Internal Tier Assignment | API Output Threshold |
+|------|--------------------------|---------------------|
+| Games | EDGE_LEAN at ≥6.5 | **7.0** (MIN_FINAL_SCORE) |
+| Props | EDGE_LEAN at ≥6.5 | **6.5** (MIN_PROPS_SCORE) |
+
+A game pick scored 6.7 is internally tiered as EDGE_LEAN but **never returned** because 6.7 < 7.0.
+
+**API Output Thresholds (v20.20):**
 - **Games:** `final_score >= 7.0` (MIN_FINAL_SCORE)
 - **Props:** `final_score >= 6.5` (MIN_PROPS_SCORE - lower because SERP disabled)
 
@@ -911,9 +921,10 @@ HIDDEN_TIERS = {"MONITOR", "PASS"}
 # 1. Deduplicate by pick_id (same bet, different books)
 deduplicated = _dedupe_picks(all_picks)
 
-# 2. Filter to score thresholds (props=6.5, games=7.0)
-filtered_props = [p for p in props if p["total_score"] >= MIN_PROPS_SCORE]  # 6.5
-filtered_games = [p for p in games if p["total_score"] >= MIN_FINAL_SCORE]  # 7.0
+# 2. Filter to API output thresholds (props=6.5, games=7.0)
+# Note: total_score == final_score (aliases), contract uses final_score
+filtered_props = [p for p in props if p["final_score"] >= MIN_PROPS_SCORE]  # 6.5
+filtered_games = [p for p in games if p["final_score"] >= MIN_FINAL_SCORE]  # 7.0
 
 # 3. Filter out HIDDEN_TIERS (MONITOR/PASS are internal only)
 HIDDEN_TIERS = {"MONITOR", "PASS"}
@@ -936,10 +947,10 @@ top_picks = no_contradictions[:max_picks]
   - context gate removed (context is a bounded modifier)
 - If ANY gate fails, downgrade to "EDGE_LEAN" → may further downgrade to "MONITOR"
 
-**Tier Hierarchy:**
+**Internal Tier Assignment (NOT the same as output):**
 1. TITANIUM_SMASH (3/4 engines ≥ 8.0) - Overrides all others
 2. GOLD_STAR (≥ 7.5 + passes all gates)
-3. EDGE_LEAN (≥ 6.5)
+3. EDGE_LEAN (≥ 6.5) - **Note: Games need 7.0 to be returned, props need 6.5**
 4. MONITOR (≥ 5.5) - **HIDDEN (never returned to API)**
 5. PASS (< 5.5) - **HIDDEN (never returned to API)**
 
