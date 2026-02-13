@@ -7824,6 +7824,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "contradiction_blocked_props": contradiction_debug["props_dropped"],
             "contradiction_blocked_games": contradiction_debug["games_dropped"],
             "contradiction_blocked_total": contradiction_debug["total_dropped"],
+            # v20.20: Hidden tier filter telemetry (MONITOR/PASS filtered at output)
+            # Shows how many picks passed score threshold but were filtered due to tier downgrade
+            "hidden_tier_filtered_props": _props_tier_filtered,
+            "hidden_tier_filtered_games": _games_tier_filtered,
+            "hidden_tier_filtered_total": _props_tier_filtered + _games_tier_filtered,
             # v20.18: Suppressed candidates with full breakdown for semantic audit
             # These are picks that failed the 6.5 threshold
             "suppressed_candidates": [
