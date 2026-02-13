@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# v20.20 Freeze Verification Script
+# Validates contract compliance after deployment
+#
+# Usage:
+#   API_KEY=your_key ./scripts/freeze_verify.sh
+#   API_KEY=your_key EXPECTED_SHA=abc1234 ./scripts/freeze_verify.sh
+#   API_KEY=your_key SPORT=NBA ./scripts/freeze_verify.sh
+
+set -euo pipefail
+
+API_KEY="${API_KEY:-}"
+BASE="${API_BASE:-https://web-production-7b2a.up.railway.app}"
+EXPECTED_SHA="${EXPECTED_SHA:-}"
+SPORT="${SPORT:-NCAAB}"
+
+if [[ -z "$API_KEY" ]]; then
+  echo "ERROR: API_KEY required"
+  echo "Usage: API_KEY=your_key ./scripts/freeze_verify.sh"
+  exit 1
+fi
+
+echo "================================================"
+echo "v20.20 FREEZE VERIFICATION"
+echo "================================================"
+echo "Base URL: $BASE"
+echo "Sport: $SPORT"
+echo "Expected SHA: ${EXPECTED_SHA:-'(not set)'}"
+echo ""
+
+echo "=== 1. HEALTH CHECK ==="
+health=$(curl -s "$BASE/health")
+echo "$health" | jq '{status: .status, version: .version, build_sha: .build_sha}'
+echo ""
+
+echo "=== 2. CRITICAL INTEGRATIONS ==="
+curl -s "$BASE/live/debug/integrations" -H "X-API-Key: $API_KEY" | \
+  jq '[to_entries[] | select(.value.criticality == "CRITICAL") | {name: .key, status: .value.status_category}]'
+echo ""
+
+echo "=== 3. CONTRACT VERIFICATION ($SPORT) ==="
+result=$(curl -s "$BASE/live/best-bets/$SPORT?debug=1" -H "X-API-Key: $API_KEY" | jq --arg expected_sha "$EXPECTED_SHA" '
+  # Extract values
+  .debug as $d |
+  .build_sha as $build |
+  ($d.returned_pick_count_games // 0) as $games |
+  ($d.returned_pick_count_props // 0) as $props |
+  ($d.min_returned_final_score_games) as $min_games |
+  ($d.min_returned_final_score_props) as $min_props |
+  ($d.invariant_violations_dropped // 0) as $violations |
+  ($d.hidden_tier_filtered_total // 0) as $hidden |
+  [.game_picks.picks[].tier, .props.picks[].tier] as $tiers |
+
+  # Hard gates
+  ($violations == 0) as $gate_invariants |
+  ($tiers | all(. == "TITANIUM_SMASH" or . == "GOLD_STAR" or . == "EDGE_LEAN")) as $gate_tiers |
+  (if $games > 0 then ($min_games != null and $min_games >= 7.0) else true end) as $gate_games_score |
+  (if $props > 0 then ($min_props != null and $min_props >= 6.5) else true end) as $gate_props_score |
+  ($games + $props >= 1) as $smoke_non_empty |
+  (if $expected_sha == "" then true else ($build | startswith($expected_sha)) end) as $gate_build_sha |
+
+  # Diagnostic signal
+  (if $hidden == 0 then "clean_upstream" else "filter_active_investigate" end) as $hidden_signal |
+
+  {
+    build_sha: $build,
+    returned_games: $games,
+    returned_props: $props,
+    min_score_games: $min_games,
+    min_score_props: $min_props,
+    invariant_violations: $violations,
+    hidden_tier_filtered: $hidden,
+    tiers_returned: ($tiers | unique),
+
+    gates: {
+      invariants_ok: $gate_invariants,
+      tiers_valid: $gate_tiers,
+      games_score_ok: $gate_games_score,
+      props_score_ok: $gate_props_score,
+      smoke_valid: $smoke_non_empty,
+      build_sha_ok: $gate_build_sha
+    },
+
+    hidden_tier_signal: $hidden_signal,
+
+    PASS: ($gate_invariants and $gate_tiers and $gate_games_score and $gate_props_score and $smoke_non_empty and $gate_build_sha)
+  }
+')
+
+echo "$result" | jq .
+echo ""
+
+# Extract PASS value and exit accordingly
+pass=$(echo "$result" | jq -r '.PASS')
+
+echo "================================================"
+if [[ "$pass" == "true" ]]; then
+  echo "✅ FREEZE VERIFICATION PASSED"
+  echo "================================================"
+  exit 0
+else
+  echo "❌ FREEZE VERIFICATION FAILED"
+  echo "================================================"
+  echo ""
+  echo "Failed gates:"
+  echo "$result" | jq '.gates | to_entries[] | select(.value == false) | "  - \(.key)"' -r
+  exit 1
+fi

@@ -199,7 +199,12 @@ API_KEY=your_key python3 scripts/golden_run.py check
 
 # 7. Post-deploy: Verify grader routes (run from Railway shell)
 ./scripts/verify_grader_routes.sh
+
+# 8. Post-deploy: Freeze verification (v20.20+)
+API_KEY=your_key EXPECTED_SHA=abc1234 ./scripts/freeze_verify.sh
 ```
+
+**Freeze Baseline:** `git tag v20.20-frozen` — rollback target if regressions occur
 
 ### 🛡️ Prevention Checklist (BEFORE WRITING CODE)
 

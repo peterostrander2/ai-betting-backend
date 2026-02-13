@@ -195,14 +195,84 @@ railway logs | grep -i "skipped\|no data"
 1. **MONITOR/PASS filtered at output boundary** — Internal tiers never returned to API
 2. **Dual thresholds: games 7.0, props 6.5** — Separate output thresholds by pick type
 3. **Golden-run asserts contract, does not normalize known bugs** — Gate tests validate behavior, not mask bugs
+4. **Runtime invariant check** — Belt-and-suspenders safety at output boundary
+5. **Freeze baseline tagged** — `git tag v20.20-frozen` for rollback
 
 **Validation Completed:**
-- ✅ Build SHA `25666f1a` deployed and verified
+- ✅ Build SHA `200d189` deployed and verified
 - ✅ `/health` returns v20.20
 - ✅ `/live/debug/integrations` shows 5 CRITICAL + 2 NOT_CONFIGURED (optional)
-- ✅ `pytest tests/test_golden_run.py -v` — 26/26 tests pass
+- ✅ `pytest tests/test_golden_run.py -v` — 27/27 tests pass
 - ✅ Live endpoint spot-check: no MONITOR/PASS tiers, all games ≥7.0, valid tiers only
 - ✅ Regression trap test: MONITOR tier picks correctly filtered
+- ✅ Freeze verification script passes all hard gates
+
+---
+
+## Freeze Verification (v20.20-frozen)
+
+**Run this after any deploy to verify contract compliance:**
+
+```bash
+# Quick version (uses script)
+./scripts/freeze_verify.sh
+
+# Or inline:
+API_KEY="your-key"
+BASE="https://web-production-7b2a.up.railway.app"
+EXPECTED_SHA="200d189"  # Update to current deploy SHA
+
+curl -s "$BASE/live/best-bets/NCAAB?debug=1" -H "X-API-Key: $API_KEY" | jq --arg expected_sha "$EXPECTED_SHA" '
+  .debug as $d | .build_sha as $build |
+  ($d.returned_pick_count_games // 0) as $games |
+  ($d.returned_pick_count_props // 0) as $props |
+  ($d.min_returned_final_score_games) as $min_games |
+  ($d.min_returned_final_score_props) as $min_props |
+  ($d.invariant_violations_dropped // 0) as $violations |
+  ($d.hidden_tier_filtered_total // 0) as $hidden |
+  [.game_picks.picks[].tier, .props.picks[].tier] as $tiers |
+  ($violations == 0) as $gate_invariants |
+  ($tiers | all(. == "TITANIUM_SMASH" or . == "GOLD_STAR" or . == "EDGE_LEAN")) as $gate_tiers |
+  (if $games > 0 then ($min_games != null and $min_games >= 7.0) else true end) as $gate_games_score |
+  (if $props > 0 then ($min_props != null and $min_props >= 6.5) else true end) as $gate_props_score |
+  ($games + $props >= 1) as $smoke_non_empty |
+  (if $expected_sha == "" then true else ($build | startswith($expected_sha)) end) as $gate_build_sha |
+  {
+    build_sha: $build,
+    returned_games: $games, returned_props: $props,
+    min_score_games: $min_games, min_score_props: $min_props,
+    invariant_violations: $violations, hidden_tier_filtered: $hidden,
+    tiers_returned: ($tiers | unique),
+    gates: {
+      invariants_ok: $gate_invariants, tiers_valid: $gate_tiers,
+      games_score_ok: $gate_games_score, props_score_ok: $gate_props_score,
+      smoke_valid: $smoke_non_empty, build_sha_ok: $gate_build_sha
+    },
+    hidden_tier_signal: (if $hidden == 0 then "clean_upstream" else "filter_active_investigate" end),
+    PASS: ($gate_invariants and $gate_tiers and $gate_games_score and $gate_props_score and $smoke_non_empty and $gate_build_sha)
+  }
+'
+```
+
+**Hard Gates (all must be true for PASS):**
+
+| Gate | Condition |
+|------|-----------|
+| `invariants_ok` | `invariant_violations_dropped == 0` |
+| `tiers_valid` | every tier ∈ `{TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN}` |
+| `games_score_ok` | if games > 0: `min_games != null AND >= 7.0` |
+| `props_score_ok` | if props > 0: `min_props != null AND >= 6.5` |
+| `smoke_valid` | `games + props >= 1` |
+| `build_sha_ok` | if `EXPECTED_SHA` set: build matches |
+
+**Diagnostic Signal (not a gate):**
+
+| Signal | Meaning |
+|--------|---------|
+| `clean_upstream` | `hidden_tier_filtered_total == 0` — no hidden tiers above threshold |
+| `filter_active_investigate` | `hidden_tier_filtered_total > 0` — filter working; investigate upstream |
+
+**Rollback:** `git checkout v20.20-frozen`
 
 ---
 
