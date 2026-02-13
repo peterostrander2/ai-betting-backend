@@ -7312,6 +7312,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     filtered_props = [p for p in deduplicated_props if p["total_score"] >= MIN_PROPS_SCORE]
     filtered_below_6_5_props = len(deduplicated_props) - len(filtered_props)
 
+    # v20.20: Filter out MONITOR/PASS tiers (quality gate downgrades should not be returned)
+    # Even if score >= threshold, picks downgraded by quality gates must be excluded
+    HIDDEN_TIERS = {"MONITOR", "PASS"}
+    _props_before_tier_filter = len(filtered_props)
+    filtered_props = [p for p in filtered_props if p.get("tier") not in HIDDEN_TIERS]
+    _props_tier_filtered = _props_before_tier_filter - len(filtered_props)
+
     # v15.3: Deduplicate game picks too
     deduplicated_games, _dupe_dropped_games, _dupe_groups_games = _dedupe_picks(game_picks)
     deduplicated_games.sort(key=_stable_pick_sort_key)
@@ -7319,6 +7326,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     filtered_game_picks = [p for p in deduplicated_games if p["total_score"] >= COMMUNITY_MIN_SCORE]
     filtered_below_6_5_games = len(deduplicated_games) - len(filtered_game_picks)
+
+    # v20.20: Filter out MONITOR/PASS tiers for game picks too
+    _games_before_tier_filter = len(filtered_game_picks)
+    filtered_game_picks = [p for p in filtered_game_picks if p.get("tier") not in HIDDEN_TIERS]
+    _games_tier_filtered = _games_before_tier_filter - len(filtered_game_picks)
 
     # v15.0: Apply contradiction gate to prevent both sides of same bet
     contradiction_debug = {"total_dropped": 0, "props_dropped": 0, "games_dropped": 0}

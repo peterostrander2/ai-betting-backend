@@ -54,8 +54,8 @@ EXPECTED = {
     "jarvis_version": "JARVIS_OPHIS_HYBRID_v2.2.1",
     "titanium_threshold": 8.0,
     "titanium_min_engines": 3,
-    "min_final_score": 6.5,  # Actual output threshold (picks >= 6.5 are returned)
-    "valid_tiers": ["TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN", "MONITOR"],  # MONITOR leaks through (known issue)
+    "min_final_score": 7.0,  # From scoring_contract.py (props use 6.5)
+    "valid_tiers": ["TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"],  # MONITOR/PASS are hidden
     "critical_integrations": ["odds_api", "playbook_api", "balldontlie", "railway_storage", "database"],
 }
 
