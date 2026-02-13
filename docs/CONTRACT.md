@@ -276,6 +276,48 @@ API_KEY=xxx ./scripts/ci_golden_gate.sh
 
 ---
 
+## Full System Audit
+
+Before moving to frontend integration, run the Full System Audit to verify all backend systems are operational:
+
+```bash
+# Required: API key from environment
+API_KEY=your_key ./scripts/full_system_audit.sh
+
+# Optional: Override base URL or sport
+API_KEY=your_key BASE_URL=https://custom.url ./scripts/full_system_audit.sh
+API_KEY=your_key AUDIT_SPORT=NBA ./scripts/full_system_audit.sh
+```
+
+### What It Verifies (11 Hard Gates)
+
+| Gate | Description |
+|------|-------------|
+| 1. CI Golden Gate | Contract tests pass locally |
+| 2. Health & Build | `/health` returns healthy, build_sha present |
+| 3. Storage | Railway volume mounted, predictions exist |
+| 4. Integrations | Critical integrations VALIDATED |
+| 5. Scheduler | Required jobs registered |
+| 6. Training | HEALTHY status, all modules TRAINED |
+| 7. Autograder | Available, weights loaded |
+| 8. 4-Engine | All engines fire with numeric scores |
+| 9. Output Boundary | Valid tiers, thresholds enforced |
+| 10. Pick Contract | All frontend fields present |
+| 11. Headers | X-Request-ID, Cache-Control present |
+
+### Exit Codes
+
+- `0` = **BACKEND READY FOR FRONTEND** - All gates passed
+- `1` = **BLOCK FRONTEND WORK** - One or more failures
+
+### Security
+
+- API key read from environment only (never in process list)
+- No secrets printed to stdout/stderr
+- Safe for CI pipelines
+
+---
+
 ## References
 
 - **Scoring Contract Source:** `core/scoring_contract.py`
@@ -283,3 +325,4 @@ API_KEY=xxx ./scripts/ci_golden_gate.sh
 - **Tier Logic:** `tiering.py`
 - **Output Boundary:** `live_data_router.py:_enforce_output_boundary()`
 - **Golden Run Tests:** `tests/test_golden_run.py`
+- **Full System Audit:** `scripts/full_system_audit.sh`

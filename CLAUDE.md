@@ -215,6 +215,9 @@ API_KEY=your_key python3 scripts/golden_run.py check
 
 # 8. Post-deploy: Freeze verification (v20.20+)
 API_KEY=your_key EXPECTED_SHA=abc1234 ./scripts/freeze_verify.sh
+
+# 9. Full System Audit (before frontend integration)
+API_KEY=your_key ./scripts/full_system_audit.sh
 ```
 
 **CI Golden Gate Structure (v20.21):**
@@ -349,6 +352,7 @@ API_KEY=your_key EXPECTED_SHA=abc1234 ./scripts/freeze_verify.sh
 | `tests/test_integration_validation.py` | Integration contract tests (13 tests) — v20.21 |
 | `docs/CONTRACT.md` | Canonical scoring contract reference (frozen values) — v20.21 |
 | `.github/workflows/golden-gate.yml` | GitHub Actions CI: golden-gate, contract-tests, freeze-verify jobs — v20.21 |
+| `scripts/full_system_audit.sh` | Full backend audit for frontend readiness (11 hard gates) — v20.21 |
 
 ### Current Version: v20.21 (Feb 13, 2026)
 **Latest Change (v20.21) — CI Golden Gate + Structured Logging + docs/CONTRACT.md:**
