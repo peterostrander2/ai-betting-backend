@@ -30,6 +30,13 @@ MIN_PROPS_SCORE = 6.5
 # Tier thresholds
 GOLD_STAR_THRESHOLD = 7.5
 
+# v20.20: Tier classification constants (single source of truth)
+# VALID_OUTPUT_TIERS: Only these tiers are returned to API consumers
+# HIDDEN_TIERS: Internal workflow states, filtered at output boundary
+VALID_OUTPUT_TIERS = {"TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"}
+HIDDEN_TIERS = {"MONITOR", "PASS"}
+ALL_TIERS = VALID_OUTPUT_TIERS | HIDDEN_TIERS
+
 # Titanium Rule (hard invariant)
 TITANIUM_RULE = {
     "min_engines_ge_threshold": 3,

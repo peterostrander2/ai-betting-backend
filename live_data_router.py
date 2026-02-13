@@ -138,7 +138,7 @@ except ImportError:
     logger.warning("tiering module not available - using legacy tier logic")
 
 # Import Scoring Contract - SINGLE SOURCE OF TRUTH for scoring constants
-from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, MIN_PROPS_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, SPORT_TOTALS_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS, CONFLUENCE_LEVELS, PERSIST_TIERS
+from core.scoring_contract import ENGINE_WEIGHTS, MIN_FINAL_SCORE, MIN_PROPS_SCORE, GOLD_STAR_THRESHOLD, GOLD_STAR_GATES, HARMONIC_CONVERGENCE_THRESHOLD, MSRF_BOOST_CAP, SERP_BOOST_CAP_TOTAL, TOTALS_SIDE_CALIBRATION, SPORT_TOTALS_CALIBRATION, ENSEMBLE_ADJUSTMENT_STEP, ODDS_STALENESS_THRESHOLD_SECONDS, CONFLUENCE_LEVELS, PERSIST_TIERS, HIDDEN_TIERS, VALID_OUTPUT_TIERS
 from core.scoring_pipeline import compute_final_score_option_a, compute_harmonic_boost
 from core.telemetry import apply_used_integrations_debug, attach_integration_telemetry_debug, record_daily_integration_rollup
 from core.jarvis_score_api import calculate_jarvis_engine_score  # v2.2: SINGLE SOURCE OF TRUTH for Jarvis scoring
@@ -7314,7 +7314,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     # v20.20: Filter out MONITOR/PASS tiers (quality gate downgrades should not be returned)
     # Even if score >= threshold, picks downgraded by quality gates must be excluded
-    HIDDEN_TIERS = {"MONITOR", "PASS"}
+    # HIDDEN_TIERS imported from core/scoring_contract.py (single source of truth)
     _props_before_tier_filter = len(filtered_props)
     filtered_props = [p for p in filtered_props if p.get("tier") not in HIDDEN_TIERS]
     _props_tier_filtered = _props_before_tier_filter - len(filtered_props)
@@ -7552,6 +7552,52 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # Normalize picks to enforce frontend contract fields
     top_props = [_normalize_pick(p) for p in top_props]
     top_game_picks = [_normalize_pick(p) for p in top_game_picks]
+
+    # ============================================
+    # v20.20: RUNTIME INVARIANT CHECK (belt-and-suspenders)
+    # Even if upstream filters fail, output stays correct
+    # ============================================
+    _invariant_dropped_props = 0
+    _invariant_dropped_games = 0
+
+    def _check_output_invariants(picks, pick_type: str, min_score: float):
+        """Final safety check: drop picks that violate output invariants."""
+        safe_picks = []
+        dropped = 0
+        for p in picks:
+            tier = p.get("tier")
+            score = p.get("final_score") or p.get("total_score") or 0
+
+            # Check 1: Hidden tier should never reach output
+            if tier in HIDDEN_TIERS:
+                logger.error("INVARIANT_VIOLATION: %s pick with hidden tier '%s' reached output boundary (pick_id=%s)",
+                            pick_type, tier, p.get("pick_id", "unknown"))
+                dropped += 1
+                continue
+
+            # Check 2: Score below threshold should never reach output
+            if score < min_score:
+                logger.error("INVARIANT_VIOLATION: %s pick with score %.2f < %.2f reached output boundary (pick_id=%s)",
+                            pick_type, score, min_score, p.get("pick_id", "unknown"))
+                dropped += 1
+                continue
+
+            # Check 3: Tier must be in valid output set
+            if tier not in VALID_OUTPUT_TIERS:
+                logger.error("INVARIANT_VIOLATION: %s pick with unknown tier '%s' reached output boundary (pick_id=%s)",
+                            pick_type, tier, p.get("pick_id", "unknown"))
+                dropped += 1
+                continue
+
+            safe_picks.append(p)
+        return safe_picks, dropped
+
+    top_props, _invariant_dropped_props = _check_output_invariants(top_props, "prop", MIN_PROPS_SCORE)
+    top_game_picks, _invariant_dropped_games = _check_output_invariants(top_game_picks, "game", MIN_FINAL_SCORE)
+
+    if _invariant_dropped_props + _invariant_dropped_games > 0:
+        logger.warning("INVARIANT_CHECK: Dropped %d props, %d games at output boundary",
+                      _invariant_dropped_props, _invariant_dropped_games)
 
     # ============================================
     # BUILD FINAL RESPONSE
@@ -7829,6 +7875,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "hidden_tier_filtered_props": _props_tier_filtered,
             "hidden_tier_filtered_games": _games_tier_filtered,
             "hidden_tier_filtered_total": _props_tier_filtered + _games_tier_filtered,
+            # v20.20: Drift detection telemetry (for monitoring output invariants)
+            "returned_pick_count_props": len(top_props),
+            "returned_pick_count_games": len(top_game_picks),
+            "min_returned_final_score_props": min((p.get("final_score") or p.get("total_score") or 0 for p in top_props), default=None),
+            "min_returned_final_score_games": min((p.get("final_score") or p.get("total_score") or 0 for p in top_game_picks), default=None),
+            "tier_counts_returned": {
+                tier: sum(1 for p in top_props + top_game_picks if p.get("tier") == tier)
+                for tier in VALID_OUTPUT_TIERS
+            },
+            "invariant_violations_dropped": _invariant_dropped_props + _invariant_dropped_games,
             # v20.18: Suppressed candidates with full breakdown for semantic audit
             # These are picks that failed the 6.5 threshold
             "suppressed_candidates": [

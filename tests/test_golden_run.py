@@ -37,12 +37,16 @@ EXPECTED_ENGINE_WEIGHTS = {
 EXPECTED_JARVIS_BLEND_TYPE = "JARVIS_WEIGHTED_BLEND_CAPPED_DELTA"
 EXPECTED_JARVIS_VERSION = "JARVIS_OPHIS_HYBRID_v2.2.1"
 
+# Import thresholds from single source of truth (prevents local constant drift)
+from core.scoring_contract import (
+    MIN_FINAL_SCORE as MIN_FINAL_SCORE_GAMES,
+    MIN_PROPS_SCORE as MIN_FINAL_SCORE_PROPS,
+    VALID_OUTPUT_TIERS as VALID_TIERS,
+    HIDDEN_TIERS,
+)
+
 TITANIUM_THRESHOLD = 8.0
 TITANIUM_MIN_ENGINES = 3
-MIN_FINAL_SCORE_GAMES = 7.0  # From scoring_contract.py MIN_FINAL_SCORE
-MIN_FINAL_SCORE_PROPS = 6.5  # From scoring_contract.py MIN_PROPS_SCORE
-
-VALID_TIERS = {"TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"}  # MONITOR/PASS are hidden (internal only)
 
 CRITICAL_INTEGRATIONS = ["odds_api", "playbook_api", "balldontlie", "railway_storage", "database"]
 
@@ -255,21 +259,28 @@ class TestTierValues:
 class TestHiddenTierFilter:
     """Verify MONITOR/PASS tiers are filtered from output."""
 
-    def test_hidden_tiers_defined(self):
-        """MONITOR and PASS are internal-only tiers."""
-        # These should NOT appear in output
-        HIDDEN_TIERS = {"MONITOR", "PASS"}
-        assert "MONITOR" in HIDDEN_TIERS
-        assert "PASS" in HIDDEN_TIERS
+    def test_hidden_tiers_from_contract(self):
+        """HIDDEN_TIERS imported from scoring_contract.py contains MONITOR and PASS."""
+        # Uses imported HIDDEN_TIERS from scoring_contract.py (single source of truth)
+        assert "MONITOR" in HIDDEN_TIERS, "MONITOR must be in HIDDEN_TIERS"
+        assert "PASS" in HIDDEN_TIERS, "PASS must be in HIDDEN_TIERS"
+        assert len(HIDDEN_TIERS) == 2, f"HIDDEN_TIERS should have exactly 2 items, got {len(HIDDEN_TIERS)}"
 
-        # Valid output tiers
+    def test_valid_tiers_excludes_hidden(self):
+        """VALID_TIERS (from scoring_contract.py) must NOT contain any hidden tiers."""
+        # This test FAILS if someone tries to add MONITOR/PASS to VALID_OUTPUT_TIERS
         for tier in VALID_TIERS:
-            assert tier not in HIDDEN_TIERS, f"{tier} should not be hidden"
+            assert tier not in HIDDEN_TIERS, \
+                f"FREEZE VIOLATION: '{tier}' in VALID_TIERS but also in HIDDEN_TIERS"
+
+    def test_valid_tiers_exact_set(self):
+        """VALID_TIERS must be exactly {TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN}."""
+        expected = {"TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"}
+        assert VALID_TIERS == expected, \
+            f"FREEZE VIOLATION: VALID_TIERS changed from {expected} to {VALID_TIERS}"
 
     def test_monitor_tier_should_be_filtered(self):
         """A pick with MONITOR tier should be excluded from output."""
-        HIDDEN_TIERS = {"MONITOR", "PASS"}
-
         # Simulate picks before filtering
         picks = [
             {"pick_id": "1", "tier": "GOLD_STAR", "total_score": 8.0},
