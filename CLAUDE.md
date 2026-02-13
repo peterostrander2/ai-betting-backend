@@ -24,6 +24,7 @@
 | `docs/NEVER_DO.md` | 33 consolidated rule sets | Before modifying that subsystem |
 | `docs/CHECKLISTS.md` | 17 verification checklists | Before deploying changes |
 | `docs/SESSION_NOTES.md` | Codex DNS & troubleshooting | If hitting infra issues |
+| `docs/CONTRACT.md` | Canonical scoring contract reference (v20.21) | When verifying frozen contract values |
 
 **How to use:** When working on ML models, run `cat docs/NEVER_DO.md | grep -A 20 "ML & GLITCH"` to load just that section.
 
@@ -77,6 +78,10 @@
 | 24 | Trap Learning Loop | Daily trap evaluation and weight adjustment |
 | 25 | Complete Learning | End-to-end grading → bias → weight updates |
 | 26 | Total Boost Cap | Sum of confluence+msrf+jason+serp capped at 1.5 |
+| 27 | Output Boundary Hardening | Single choke point filters hidden tiers + score thresholds (v20.21) |
+| 28 | Request Correlation | All logs include `request_id` via X-Request-ID header (v20.21) |
+| 29 | Integration State Machine | Integrations track `calls_last_15m()` for health (v20.21) |
+| 30 | CI Golden Gate | All deploys must pass `ci_golden_gate.sh` (v20.21) |
 
 ### Lessons Learned (93 Total) - Key Categories
 | Range | Category | Examples |
@@ -131,6 +136,12 @@
 | 91 | **v20.20 Pre-filter vs Post-filter Metrics** | `hidden_tier_filtered_total=0` proves none above threshold, NOT that engines never produce MONITOR/PASS anywhere |
 | 92 | **v20.20 Non-Empty Set Verification** | Claiming "none exist" requires set non-empty; `filter=0 AND count>0` needed for valid claim |
 | 93 | **v20.20 Airtight Verification Claims** | State precise conditions; acknowledge what is NOT proven; unit tests cover forced fixtures |
+| 94 | **v20.21 Output Boundary Single Choke Point** | All pick filtering (score thresholds + hidden tiers) at `_enforce_output_boundary()` — no upstream leaks |
+| 95 | **v20.21 Integration env_vars=[] Means No Config Needed** | `is_env_set()` returns True for empty env_vars list (free APIs like NOAA don't need keys) |
+| 96 | **v20.21 Bash Arithmetic with set -e** | `((PASSED++))` when PASSED=0 returns false (exit 1); use `PASSED=$((PASSED + 1))` instead |
+| 97 | **v20.21 Logging configure_structured_logging() Idempotency** | Must remove existing handlers before adding new one; safe to call multiple times (worker processes) |
+| 98 | **v20.21 Integration calls_last_15m() Rolling Window** | Use `time.time()` timestamps + deque for O(1) call tracking; prune old entries on access |
+| 99 | **v20.21 CI Golden Gate 3-Gate Structure** | Gate 1: Golden Run unit tests, Gate 2: Output boundary tests, Gate 3: Integration contract tests |
 
 ### NEVER DO Sections (40 Categories)
 - ML & GLITCH (rules 1-10)
@@ -176,23 +187,25 @@
 - v20.19 Test Field Name Contracts (rules 259-263)
 - v20.20 Golden Run Regression Gates (rules 264-272)
 - v20.20 Verification Logic & Debug Telemetry (rules 273-275)
+- v20.21 Output Boundary & CI Golden Gate (rules 276-282)
+- v20.21 Structured Logging & Request Correlation (rules 283-288)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
-# 1. Option A drift scan (blocks BASE_5, context-weighted patterns)
+# 1. CI Golden Gate (v20.21) - REQUIRED: Runs all contract tests
+./scripts/ci_golden_gate.sh
+
+# 2. Option A drift scan (blocks BASE_5, context-weighted patterns)
 ./scripts/option_a_drift_scan.sh
 
-# 2. Audit drift scan (verifies scoring formula)
+# 3. Audit drift scan (verifies scoring formula)
 ./scripts/audit_drift_scan.sh
 
-# 3. Full CI sanity check
+# 4. Full CI sanity check
 ./scripts/ci_sanity_check.sh
 
-# 4. Production Go/No-Go
+# 5. Production Go/No-Go
 ./scripts/prod_go_nogo.sh
-
-# 5. Golden Run regression gate (unit tests)
-pytest tests/test_golden_run.py -v
 
 # 6. Post-deploy: Golden Run live validation
 API_KEY=your_key python3 scripts/golden_run.py check
@@ -203,6 +216,12 @@ API_KEY=your_key python3 scripts/golden_run.py check
 # 8. Post-deploy: Freeze verification (v20.20+)
 API_KEY=your_key EXPECTED_SHA=abc1234 ./scripts/freeze_verify.sh
 ```
+
+**CI Golden Gate Structure (v20.21):**
+- **Gate 1:** `tests/test_golden_run.py` — Engine weights, tiers, thresholds
+- **Gate 2:** `tests/test_debug_telemetry.py` — Output boundary hardening
+- **Gate 3:** `tests/test_integration_validation.py` — Integration contract
+- **Gate 4:** Live validation (optional, requires API_KEY)
 
 **Freeze Baseline:** `git tag v20.20-frozen` — rollback target if regressions occur
 
@@ -271,6 +290,19 @@ API_KEY=your_key EXPECTED_SHA=abc1234 ./scripts/freeze_verify.sh
 - [ ] **Valid output tiers only** — `{TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN}`, nothing else
 - [ ] **Run golden run after changes** — `pytest tests/test_golden_run.py -v` before deploy
 
+#### CI & Output Boundary (v20.21)
+- [ ] **Run CI Golden Gate** — `./scripts/ci_golden_gate.sh` must pass all 3 gates before deploy
+- [ ] **Output boundary is single choke point** — All filtering in `_enforce_output_boundary()`, not scattered
+- [ ] **Boundary telemetry on violations** — Debug payload shows `boundary_violations` when picks filtered
+- [ ] **Integration env_vars empty = no config needed** — Free APIs (NOAA, astronomy) use `env_vars=[]`
+- [ ] **Bash arithmetic safe** — Use `VAR=$((VAR + 1))` not `((VAR++))` with `set -e`
+
+#### Structured Logging (v20.21)
+- [ ] **Request correlation everywhere** — Use `get_request_id()` from `core.structured_logging`
+- [ ] **JSON logs in production** — `LOG_FORMAT=json` (default), `LOG_FORMAT=text` for local dev
+- [ ] **Secrets redacted** — Sensitive keys auto-redacted via `log_sanitizer` integration
+- [ ] **configure_structured_logging() is idempotent** — Safe to call multiple times (worker processes)
+
 ### Key Files Reference
 | File | Purpose |
 |------|---------|
@@ -310,9 +342,52 @@ API_KEY=your_key EXPECTED_SHA=abc1234 ./scripts/freeze_verify.sh
 | `core/integration_contract.py` | Integration definitions with criticality tiers — v2.0.0 (v20.19) |
 | `scripts/integration_gate.sh` | Production wire-level verification for integrations — v20.19 |
 | `tests/test_pick_data_contract.py` | Pick schema validation tests (boundary contract tests) — v20.19 |
+| `scripts/ci_golden_gate.sh` | CI hard-gate: runs all 3 contract test suites — v20.21 |
+| `core/structured_logging.py` | JSON logging + request correlation middleware — v20.21 |
+| `tests/test_structured_logging.py` | Logging tests (14 tests): JSON format, correlation, idempotency — v20.21 |
+| `tests/test_debug_telemetry.py` | Output boundary hardening tests (12 tests) — v20.21 |
+| `tests/test_integration_validation.py` | Integration contract tests (13 tests) — v20.21 |
+| `docs/CONTRACT.md` | Canonical scoring contract reference (frozen values) — v20.21 |
+| `.github/workflows/golden-gate.yml` | GitHub Actions CI: golden-gate, contract-tests, freeze-verify jobs — v20.21 |
 
-### Current Version: v20.20 (Feb 13, 2026)
-**Latest Change (v20.20) — Golden Run Regression Gate + Hidden Tier Filter:**
+### Current Version: v20.21 (Feb 13, 2026)
+**Latest Change (v20.21) — CI Golden Gate + Structured Logging + docs/CONTRACT.md:**
+
+**Item 3: Integration State Machine**
+- Added `calls_last_15m()` rolling window call tracking to `integration_registry.py`
+- Fixed `is_env_set()` to return True when `env_vars=[]` (free APIs need no config)
+- Integration health now tracks actual API usage, not just env var presence
+
+**Item 4: Output Boundary Hardening**
+- Added `_enforce_output_boundary()` as single choke point for all pick filtering
+- Enforces score thresholds (props ≥6.5, games ≥7.0) and hidden tier filter
+- Adds `boundary_violations` telemetry to debug payload when picks filtered
+- 6 new tests in `tests/test_debug_telemetry.py`
+
+**Item 5: Structured Logging + Request Correlation**
+- Added `core/structured_logging.py` with JSON formatter and `RequestCorrelationMiddleware`
+- Auto-generates `X-Request-ID` if not provided by client
+- Integrates with `log_sanitizer` for secret redaction
+- `configure_structured_logging()` is idempotent (safe for worker processes)
+- 14 tests in `tests/test_structured_logging.py`
+
+**Item 6: CI Golden Gate Packaging**
+- Added `scripts/ci_golden_gate.sh` — single script for all regression gates
+- Added `.github/workflows/golden-gate.yml` — GitHub Actions CI
+- 3 jobs: golden-gate, contract-tests, freeze-verify
+
+**Item 7: docs/CONTRACT.md Canonical Reference**
+- Consolidated all frozen contract values in one document
+- Engine weights, score thresholds, tier classification, boost caps
+- Jarvis hybrid config, required integrations, required fields
+
+**Key Lessons (94-99):** Output boundary choke point, env_vars=[] for free APIs, bash arithmetic with set -e, logging idempotency, rolling window call tracking, CI 3-gate structure
+
+**Files:** `core/structured_logging.py`, `docs/CONTRACT.md`, `scripts/ci_golden_gate.sh`, `.github/workflows/golden-gate.yml`, `integration_registry.py`, `live_data_router.py`, `main.py`
+
+**Commits:** `a7eba25`, `6675c09`
+
+**Previous Change (v20.20) — Golden Run Regression Gate + Hidden Tier Filter:**
 - **Golden Run Gate:** New deployment gate validates contracts haven't drifted (tiers, thresholds, weights, Jarvis blend)
 - **HIDDEN_TIERS Filter:** Added output filter `{"MONITOR", "PASS"}` in `live_data_router.py` — internal tiers never returned to API
 - **Separate Thresholds:** Props use 6.5 (MIN_PROPS_SCORE), games use 7.0 (MIN_FINAL_SCORE)
