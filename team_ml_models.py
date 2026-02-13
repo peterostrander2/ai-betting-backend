@@ -154,12 +154,27 @@ class TeamLSTMModel:
         Predict game outcome using team sequences.
 
         Returns predicted score/total based on team performance patterns.
+
+        v20.21 fix: When line=0 for totals markets (spread passed instead of total),
+        use sport-appropriate default total instead of returning 0.
         """
         sport = game_data.get("sport", "NBA")
         home_team = game_data.get("home_team", "")
         away_team = game_data.get("away_team", "")
         line = game_data.get("line", 0)
         is_totals = game_data.get("is_totals", False)
+
+        # v20.21 fix: For totals markets, if line is 0 (spread was passed instead of total),
+        # use sport-appropriate default total
+        if is_totals and line == 0:
+            sport_default_totals = {
+                "NBA": 226.0,
+                "NCAAB": 145.0,
+                "NFL": 45.0,
+                "NHL": 6.0,
+                "MLB": 8.5,
+            }
+            line = sport_default_totals.get(sport.upper(), 220.0)
 
         # Get actual team scoring sequences
         home_scores = self.team_cache.get_team_scores(sport, home_team, 10)

@@ -195,11 +195,13 @@ class TestLSTMInputHandling:
 class TestInjuryImpactCap:
     """Tests for injury impact capping."""
 
-    def test_injury_impact_capped_at_10(self):
+    def test_injury_impact_capped_at_5(self):
         """
         Guard: injury_impact from InjuryImpactModel must be capped.
+
+        v20.21: Cap reduced from 10.0 to 5.0 to prevent excessive negative swings.
         """
-        INJURY_IMPACT_CAP = 10.0
+        INJURY_IMPACT_CAP = 5.0  # v20.21: reduced from 10.0
 
         # Simulate many injuries (35 starters)
         injuries = [
@@ -214,10 +216,10 @@ class TestInjuryImpactCap:
                 uncapped_impact += 2.0
         assert uncapped_impact == 70.0, "Setup: 35 starters = 70.0"
 
-        # New behavior (FIXED): capped at -10.0
+        # New behavior (FIXED v20.21): capped at -5.0
         capped_impact = min(uncapped_impact, INJURY_IMPACT_CAP)
         result = -capped_impact
-        assert result == -10.0, f"Injury impact should be capped at -10.0, got {result}"
+        assert result == -5.0, f"Injury impact should be capped at -5.0, got {result}"
 
     def test_injury_depth_default_not_starter(self):
         """

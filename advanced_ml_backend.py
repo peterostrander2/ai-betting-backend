@@ -799,8 +799,11 @@ class InjuryImpactModel:
     v20.16 fix: Added INJURY_IMPACT_CAP and fixed depth default.
     Previously: depth defaulted to 1 (starter), causing ALL players to be counted.
     Now: depth defaults to 99 (unknown), only explicit starters counted.
+
+    v20.21 fix: Reduced INJURY_IMPACT_CAP from 10.0 to 5.0 to prevent
+    excessive negative swings (±100 points was possible before).
     """
-    INJURY_IMPACT_CAP = 10.0  # Max negative impact
+    INJURY_IMPACT_CAP = 5.0  # Max negative impact (v20.21: reduced from 10.0)
 
     def calculate_impact(self, injuries, depth_chart):
         total_impact = 0
@@ -812,7 +815,7 @@ class InjuryImpactModel:
                 total_impact += 2.0
             elif depth == 2:
                 total_impact += 0.5
-        # v20.16: Cap the impact to prevent runaway negative values
+        # v20.21: Cap the impact to prevent runaway negative values
         total_impact = min(total_impact, self.INJURY_IMPACT_CAP)
         return -total_impact
 
