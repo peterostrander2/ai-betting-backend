@@ -184,9 +184,25 @@ railway logs | grep -i "skipped\|no data"
 
 | Version | Date | Deployer | Changes | Status |
 |---------|------|----------|---------|--------|
-| v17.7 | 2026-02-02 | - | Hurst & Fib wiring | Pending |
-| v17.6 | 2026-01-xx | - | Benford, line_snapshots | Active |
+| v20.20 | 2026-02-13 | - | Golden Run Gate + Hidden Tier Filter | Active |
+| v17.7 | 2026-02-02 | - | Hurst & Fib wiring | Superseded |
+| v17.6 | 2026-01-xx | - | Benford, line_snapshots | Superseded |
 | v17.5 | 2026-01-xx | - | GLITCH foundation | Superseded |
+
+### v20.20 Deploy Notes (Feb 13, 2026)
+
+**Key Changes:**
+1. **MONITOR/PASS filtered at output boundary** — Internal tiers never returned to API
+2. **Dual thresholds: games 7.0, props 6.5** — Separate output thresholds by pick type
+3. **Golden-run asserts contract, does not normalize known bugs** — Gate tests validate behavior, not mask bugs
+
+**Validation Completed:**
+- ✅ Build SHA `25666f1a` deployed and verified
+- ✅ `/health` returns v20.20
+- ✅ `/live/debug/integrations` shows 5 CRITICAL + 2 NOT_CONFIGURED (optional)
+- ✅ `pytest tests/test_golden_run.py -v` — 26/26 tests pass
+- ✅ Live endpoint spot-check: no MONITOR/PASS tiers, all games ≥7.0, valid tiers only
+- ✅ Regression trap test: MONITOR tier picks correctly filtered
 
 ---
 
