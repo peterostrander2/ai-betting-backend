@@ -242,3 +242,16 @@ class TestConfigureLogging:
         logger = logging.getLogger("test_config_text")
         # Should not raise
         logger.info("Test message")
+
+    def test_configure_is_idempotent(self):
+        """Calling configure multiple times should not add duplicate handlers."""
+        # Call configure multiple times
+        configure_structured_logging(level="INFO", format_type="json")
+        configure_structured_logging(level="INFO", format_type="json")
+        configure_structured_logging(level="DEBUG", format_type="text")
+
+        root_logger = logging.getLogger()
+
+        # Should only have one handler (not three)
+        assert len(root_logger.handlers) == 1, \
+            f"Expected 1 handler, got {len(root_logger.handlers)} (duplicate handlers on reconfigure)"
