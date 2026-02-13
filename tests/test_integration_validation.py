@@ -309,14 +309,16 @@ class TestIntegrationValidation:
             assert name in VALIDATORS, f"Missing validator for integration: {name}"
 
     def test_required_integrations_count(self):
-        """Should have exactly 14 required integrations."""
+        """Should have exactly 12 required integrations."""
         required = [i for i in INTEGRATIONS.values() if i.required]
-        assert len(required) == 14, f"Expected 14 required integrations, got {len(required)}"
+        assert len(required) == 12, f"Expected 12 required integrations, got {len(required)}"
 
     def test_optional_integrations_count(self):
-        """Should have exactly 0 optional integrations (all are required)."""
+        """Should have exactly 2 optional integrations (astronomy_api, noaa_space_weather)."""
         optional = [i for i in INTEGRATIONS.values() if not i.required]
-        assert len(optional) == 0, f"Expected 0 optional integrations, got {len(optional)}"
+        assert len(optional) == 2, f"Expected 2 optional integrations, got {len(optional)}"
+        optional_names = {i.name for i in optional}
+        assert optional_names == {"astronomy_api", "noaa_space_weather"}
 
 
 @pytest.mark.skipif(not REGISTRY_AVAILABLE, reason="Integration registry not available")

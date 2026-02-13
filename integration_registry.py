@@ -284,21 +284,21 @@ register_integration(
 
 register_integration(
     name="astronomy_api",
-    description="AstronomyAPI - Moon phases, astro data for esoteric engine (25% of esoteric)",
-    env_vars=["ASTRONOMY_API_ID", "ASTRONOMY_API_SECRET"],
-    required=True,  # REQUIRED - Feeds esoteric scoring engine (20% weight)
-    modules=["esoteric_engine.py", "live_data_router.py"],
+    description="Astronomical calculations - Moon phases, void-of-course for esoteric engine",
+    env_vars=[],  # Uses free USNO + mathematical ephemeris - no API key needed
+    required=False,  # OPTIONAL - Has calculated fallback
+    modules=["astronomical_api.py", "esoteric_engine.py"],
     endpoints=["/live/esoteric-edge", "/esoteric/today-energy", "/live/best-bets/{sport}"],
-    jobs=["daily_astro_update"],
-    validate_fn="validate_astronomy_api",
-    notes="Moon phase alignment contributes to esoteric score."
+    jobs=[],
+    validate_fn=None,  # No external validation needed - uses local calculations
+    notes="Uses astronomical_api.py with USNO data + ephemeris calculations. No paid API required."
 )
 
 register_integration(
     name="noaa_space_weather",
     description="NOAA Space Weather - Solar activity, geomagnetic data for esoteric",
-    env_vars=["NOAA_BASE_URL"],
-    required=True,  # REQUIRED - Feeds esoteric engine
+    env_vars=[],  # Free public API with hardcoded URL - no env vars needed
+    required=False,  # OPTIONAL - Esoteric feature, graceful fallback
     modules=["esoteric_engine.py"],
     endpoints=["/live/esoteric-edge", "/esoteric/today-energy", "/live/best-bets/{sport}"],
     jobs=[],

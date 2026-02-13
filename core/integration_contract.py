@@ -168,20 +168,20 @@ INTEGRATIONS = {
     
     "astronomy_api": {
         "required": False,  # Esoteric feature, not critical for core betting
-        "criticality": "OPTIONAL",  # Esoteric only, graceful fallback
-        "env_vars": ["ASTRONOMY_API_ID", "ASTRONOMY_API_SECRET"],
-        "owner_modules": ["astronomy_api.py"],
-        "debug_name": "Astronomy API",
-        "description": "Lunar phases and celestial data",
+        "criticality": "OPTIONAL",  # Uses local calculations, no external API needed
+        "env_vars": [],  # Uses free USNO + mathematical ephemeris - no API key needed
+        "owner_modules": ["astronomical_api.py"],
+        "debug_name": "Astronomical Calculations",
+        "description": "Lunar phases and celestial data via ephemeris calculations",
         "feeds_engine": "esoteric",
-        "allowed_status_categories": ["VALIDATED", "CONFIGURED", "ERROR", "MISSING"],
+        "allowed_status_categories": ["VALIDATED", "CONFIGURED"],  # Always works (local calc)
         "connectivity_test": None
     },
 
     "noaa_space_weather": {
         "required": False,  # Esoteric feature, not critical for core betting
         "criticality": "OPTIONAL",  # Esoteric only, graceful fallback
-        "env_vars": ["NOAA_BASE_URL"],
+        "env_vars": [],  # Free public API with hardcoded URL - no env vars needed
         "owner_modules": ["noaa_api.py"],
         "debug_name": "NOAA Space Weather",
         "description": "Space weather and geomagnetic data",
