@@ -45,6 +45,15 @@ from integration_registry import (
     get_health_check_loud,
 )
 from core.integration_contract import INTEGRATIONS as CONTRACT_INTEGRATIONS, ALL_ENV_VARS
+from core.structured_logging import (
+    configure_structured_logging,
+    RequestCorrelationMiddleware,
+    get_request_id,
+)
+
+# v20.21: Configure structured JSON logging with request correlation
+# Must be done before any logging occurs
+configure_structured_logging()
 
 _logger = logging.getLogger(__name__)
 
@@ -120,6 +129,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# v20.21: Request correlation middleware for distributed tracing
+app.add_middleware(RequestCorrelationMiddleware)
 
 
 # =============================================================================
