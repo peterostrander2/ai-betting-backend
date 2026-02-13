@@ -7324,6 +7324,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     deduplicated_games.sort(key=_stable_pick_sort_key)
     _all_game_candidates = deduplicated_games  # Keep ref for debug output
 
+    # v20.21: Pre-threshold tier telemetry (diagnostic only)
+    # Captures tier distribution BEFORE any score/hidden-tier filtering
+    # Enables detection of upstream tier drift without affecting output
+    def _count_tiers(picks):
+        counts = {}
+        for p in picks:
+            tier = p.get("tier", "UNKNOWN")
+            counts[tier] = counts.get(tier, 0) + 1
+        return counts
+
+    _pre_threshold_tier_counts_props = _count_tiers(_all_prop_candidates)
+    _pre_threshold_tier_counts_games = _count_tiers(_all_game_candidates)
+
     filtered_game_picks = [p for p in deduplicated_games if p["total_score"] >= COMMUNITY_MIN_SCORE]
     filtered_below_6_5_games = len(deduplicated_games) - len(filtered_game_picks)
 
@@ -7884,6 +7897,16 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 tier: sum(1 for p in top_props + top_game_picks if p.get("tier") == tier)
                 for tier in VALID_OUTPUT_TIERS
             },
+            # v20.21: Pre-threshold tier telemetry (diagnostic - detects upstream tier drift)
+            # Shows tier distribution in raw candidate pool BEFORE any score/hidden-tier filtering
+            # Use to detect if upstream scoring/tiering logic has drifted
+            "pre_threshold_tier_counts_props": _pre_threshold_tier_counts_props,
+            "pre_threshold_tier_counts_games": _pre_threshold_tier_counts_games,
+            "pre_threshold_tier_counts_total": {
+                tier: _pre_threshold_tier_counts_props.get(tier, 0) + _pre_threshold_tier_counts_games.get(tier, 0)
+                for tier in set(_pre_threshold_tier_counts_props.keys()) | set(_pre_threshold_tier_counts_games.keys())
+            },
+            "pre_threshold_count_total": len(_all_prop_candidates) + len(_all_game_candidates),
             "invariant_violations_dropped": _invariant_dropped_props + _invariant_dropped_games,
             # v20.18: Suppressed candidates with full breakdown for semantic audit
             # These are picks that failed the 6.5 threshold

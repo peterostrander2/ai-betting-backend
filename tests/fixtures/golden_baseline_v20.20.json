@@ -55,7 +55,11 @@
     "hidden_tier_filtered_total",
     "returned_pick_count_props",
     "returned_pick_count_games",
-    "invariant_violations_dropped"
+    "invariant_violations_dropped",
+    "pre_threshold_tier_counts_props",
+    "pre_threshold_tier_counts_games",
+    "pre_threshold_tier_counts_total",
+    "pre_threshold_count_total"
   ],
 
   "schema_assertions": {
