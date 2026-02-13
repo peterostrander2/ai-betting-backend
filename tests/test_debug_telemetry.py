@@ -126,6 +126,134 @@ class TestPreThresholdTierTelemetry:
         assert sum(counts.values()) == len(picks)
 
 
+try:
+    from live_data_router import _enforce_output_boundary
+    LIVE_DATA_ROUTER_AVAILABLE = True
+except ImportError:
+    LIVE_DATA_ROUTER_AVAILABLE = False
+
+
+@pytest.mark.skipif(not LIVE_DATA_ROUTER_AVAILABLE, reason="live_data_router requires FastAPI")
+class TestOutputBoundaryHardening:
+    """Tests for v20.21 output boundary hardening."""
+
+    def test_filters_picks_below_props_threshold(self):
+        """Picks below 6.5 for props should be filtered at boundary."""
+
+        payload = {
+            "props": {
+                "count": 3,
+                "picks": [
+                    {"pick_id": "a", "final_score": 7.0, "tier": "GOLD_STAR"},
+                    {"pick_id": "b", "final_score": 6.0, "tier": "EDGE_LEAN"},  # Below threshold
+                    {"pick_id": "c", "final_score": 6.5, "tier": "EDGE_LEAN"},  # At threshold
+                ]
+            }
+        }
+
+        result = _enforce_output_boundary(payload)
+
+        assert result["props"]["count"] == 2
+        assert len(result["props"]["picks"]) == 2
+        pick_ids = [p["pick_id"] for p in result["props"]["picks"]]
+        assert "a" in pick_ids
+        assert "c" in pick_ids
+        assert "b" not in pick_ids  # Filtered
+
+    def test_filters_picks_below_games_threshold(self):
+        """Picks below 7.0 for games should be filtered at boundary."""
+        payload = {
+            "game_picks": {
+                "count": 3,
+                "picks": [
+                    {"pick_id": "a", "final_score": 7.5, "tier": "GOLD_STAR"},
+                    {"pick_id": "b", "final_score": 6.8, "tier": "EDGE_LEAN"},  # Below 7.0
+                    {"pick_id": "c", "final_score": 7.0, "tier": "EDGE_LEAN"},  # At threshold
+                ]
+            }
+        }
+
+        result = _enforce_output_boundary(payload)
+
+        assert result["game_picks"]["count"] == 2
+        assert len(result["game_picks"]["picks"]) == 2
+        pick_ids = [p["pick_id"] for p in result["game_picks"]["picks"]]
+        assert "a" in pick_ids
+        assert "c" in pick_ids
+        assert "b" not in pick_ids  # Filtered
+
+    def test_filters_hidden_tiers(self):
+        """Picks with MONITOR or PASS tier should be filtered at boundary."""
+        payload = {
+            "props": {
+                "count": 4,
+                "picks": [
+                    {"pick_id": "a", "final_score": 7.0, "tier": "GOLD_STAR"},
+                    {"pick_id": "b", "final_score": 7.0, "tier": "MONITOR"},  # Hidden
+                    {"pick_id": "c", "final_score": 7.0, "tier": "PASS"},  # Hidden
+                    {"pick_id": "d", "final_score": 7.0, "tier": "EDGE_LEAN"},
+                ]
+            }
+        }
+
+        result = _enforce_output_boundary(payload)
+
+        assert result["props"]["count"] == 2
+        pick_ids = [p["pick_id"] for p in result["props"]["picks"]]
+        assert "a" in pick_ids
+        assert "d" in pick_ids
+        assert "b" not in pick_ids
+        assert "c" not in pick_ids
+
+    def test_adds_boundary_telemetry_on_violations(self):
+        """Debug payload should include boundary violation telemetry."""
+        payload = {
+            "props": {
+                "count": 2,
+                "picks": [
+                    {"pick_id": "a", "final_score": 7.0, "tier": "GOLD_STAR"},
+                    {"pick_id": "b", "final_score": 5.0, "tier": "EDGE_LEAN"},  # Filtered
+                ]
+            }
+        }
+
+        result = _enforce_output_boundary(payload)
+
+        assert "debug" in result
+        assert "boundary_violations" in result["debug"]
+        assert result["debug"]["boundary_filtered_total"] == 1
+        assert result["debug"]["boundary_violations"]["props_below_threshold"] == 1
+
+    def test_no_telemetry_when_no_violations(self):
+        """No boundary telemetry added when all picks pass validation."""
+        payload = {
+            "props": {
+                "count": 2,
+                "picks": [
+                    {"pick_id": "a", "final_score": 7.0, "tier": "GOLD_STAR"},
+                    {"pick_id": "b", "final_score": 7.5, "tier": "GOLD_STAR"},
+                ]
+            }
+        }
+
+        result = _enforce_output_boundary(payload)
+
+        # No debug added because no violations
+        assert "boundary_violations" not in result.get("debug", {})
+
+    def test_handles_empty_picks(self):
+        """Empty picks arrays should be handled gracefully."""
+        payload = {
+            "props": {"count": 0, "picks": []},
+            "game_picks": {"count": 0, "picks": []}
+        }
+
+        result = _enforce_output_boundary(payload)
+
+        assert result["props"]["count"] == 0
+        assert result["game_picks"]["count"] == 0
+
+
 class TestDebugPayloadStructure:
     """Tests for required debug payload fields."""
 

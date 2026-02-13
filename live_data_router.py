@@ -75,6 +75,133 @@ def _sanitize_public(payload: dict) -> dict:
         return sanitize_public_payload(payload)
     return payload
 
+
+# =============================================================================
+# OUTPUT BOUNDARY HARDENING (v20.21)
+# =============================================================================
+# Single enforcement point for ALL output invariants. This catches any bugs
+# where upstream filters are bypassed. Fail-soft: log violations, filter picks.
+
+# Required fields that every pick MUST have (from golden baseline)
+_REQUIRED_PICK_FIELDS = {
+    "pick_id", "sport", "market", "final_score", "tier",
+    "ai_score", "research_score", "esoteric_score", "jarvis_rs",
+    "titanium_triggered"
+}
+
+
+def _enforce_output_boundary(payload: dict) -> dict:
+    """
+    Enforce output invariants at the single output boundary.
+
+    Invariants enforced:
+    1. No picks with final_score below threshold (6.5 props, 7.0 games)
+    2. No picks with hidden tiers (MONITOR, PASS)
+    3. All picks have required fields
+
+    This is a DEFENSIVE check - upstream filters should already handle this,
+    but this catches any bugs where filters are bypassed.
+
+    Returns:
+        Modified payload with violating picks filtered and telemetry added.
+    """
+    # Import here to avoid circular import at module load
+    from core.scoring_contract import (
+        MIN_FINAL_SCORE,
+        MIN_PROPS_SCORE,
+        HIDDEN_TIERS,
+        VALID_OUTPUT_TIERS,
+    )
+
+    violations = {
+        "props_below_threshold": 0,
+        "props_hidden_tier": 0,
+        "props_missing_fields": 0,
+        "games_below_threshold": 0,
+        "games_hidden_tier": 0,
+        "games_missing_fields": 0,
+        "total_filtered": 0,
+    }
+
+    def _validate_pick(pick: dict, min_score: float, pick_type: str) -> bool:
+        """Validate a single pick against output invariants."""
+        # Check 1: Score threshold
+        score = pick.get("final_score") or pick.get("total_score") or 0
+        if score < min_score:
+            violations[f"{pick_type}_below_threshold"] += 1
+            logger.warning(
+                "BOUNDARY: %s pick below threshold: score=%.2f < %.2f, pick_id=%s",
+                pick_type, score, min_score, pick.get("pick_id", "?")
+            )
+            return False
+
+        # Check 2: Hidden tier filter
+        tier = pick.get("tier", "")
+        if tier in HIDDEN_TIERS:
+            violations[f"{pick_type}_hidden_tier"] += 1
+            logger.warning(
+                "BOUNDARY: %s pick has hidden tier: tier=%s, pick_id=%s",
+                pick_type, tier, pick.get("pick_id", "?")
+            )
+            return False
+
+        # Check 3: Tier must be in valid set (if present)
+        if tier and tier not in VALID_OUTPUT_TIERS:
+            violations[f"{pick_type}_hidden_tier"] += 1
+            logger.warning(
+                "BOUNDARY: %s pick has invalid tier: tier=%s, pick_id=%s",
+                pick_type, tier, pick.get("pick_id", "?")
+            )
+            return False
+
+        # Check 4: Required fields (log warning but don't filter)
+        missing = _REQUIRED_PICK_FIELDS - set(pick.keys())
+        if missing:
+            violations[f"{pick_type}_missing_fields"] += 1
+            logger.warning(
+                "BOUNDARY: %s pick missing fields: %s, pick_id=%s",
+                pick_type, missing, pick.get("pick_id", "?")
+            )
+            # Don't filter - just log (missing fields may be added by normalizer)
+
+        return True
+
+    # Filter props picks
+    if "props" in payload and isinstance(payload["props"], dict):
+        props = payload["props"]
+        picks = props.get("picks", [])
+        if picks:
+            original_count = len(picks)
+            filtered = [p for p in picks if _validate_pick(p, MIN_PROPS_SCORE, "props")]
+            props["picks"] = filtered
+            props["count"] = len(filtered)
+            violations["total_filtered"] += (original_count - len(filtered))
+
+    # Filter game picks
+    if "game_picks" in payload and isinstance(payload["game_picks"], dict):
+        game_picks = payload["game_picks"]
+        picks = game_picks.get("picks", [])
+        if picks:
+            original_count = len(picks)
+            filtered = [p for p in picks if _validate_pick(p, MIN_FINAL_SCORE, "games")]
+            game_picks["picks"] = filtered
+            game_picks["count"] = len(filtered)
+            violations["total_filtered"] += (original_count - len(filtered))
+
+    # Add boundary telemetry to debug (will be stripped by sanitizer for non-debug)
+    if violations["total_filtered"] > 0:
+        logger.warning(
+            "BOUNDARY: Filtered %d picks that violated output invariants: %s",
+            violations["total_filtered"], violations
+        )
+        if "debug" not in payload:
+            payload["debug"] = {}
+        payload["debug"]["boundary_violations"] = violations
+        payload["debug"]["boundary_filtered_total"] = violations["total_filtered"]
+
+    return payload
+
+
 # Import grader_store - SINGLE SOURCE OF TRUTH for persistence
 try:
     import grader_store
@@ -1300,6 +1427,8 @@ def _ensure_live_contract_payload(payload, status_code: int):
     # Normalize best-bets response picks with guaranteed fields
     if "props" in payload or "game_picks" in payload:
         payload = _normalize_best_bets_response(payload)
+        # v20.21: Output boundary hardening - enforce invariants at single choke point
+        payload = _enforce_output_boundary(payload)
 
     return payload
 
