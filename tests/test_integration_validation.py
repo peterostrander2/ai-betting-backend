@@ -421,6 +421,10 @@ class TestStorageValidation:
         if not path:
             pytest.skip("RAILWAY_VOLUME_MOUNT_PATH not set")
 
+        # Skip mount point check for local dev/CI fallback paths
+        if path in ("/tmp", "./grader_data", "/app/grader_data"):
+            pytest.skip(f"Skipping mount point check for fallback path: {path}")
+
         if os.path.exists(path):
             assert os.path.ismount(path), f"{path} should be a mount point"
 
