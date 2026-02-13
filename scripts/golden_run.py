@@ -54,7 +54,8 @@ EXPECTED = {
     "jarvis_version": "JARVIS_OPHIS_HYBRID_v2.2.1",
     "titanium_threshold": 8.0,
     "titanium_min_engines": 3,
-    "min_final_score": 7.0,  # From scoring_contract.py (props use 6.5)
+    "min_final_score_games": 7.0,  # From scoring_contract.py MIN_FINAL_SCORE
+    "min_final_score_props": 6.5,  # From scoring_contract.py MIN_PROPS_SCORE
     "valid_tiers": ["TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"],  # MONITOR/PASS are hidden
     "critical_integrations": ["odds_api", "playbook_api", "balldontlie", "railway_storage", "database"],
 }
@@ -233,8 +234,17 @@ def validate_health(health: Dict[str, Any], result: ValidationResult):
         result.add_warning("health.status", f"Status: {health.get('status')}")
 
 
-def validate_picks(picks: List[Dict], sport: str, result: ValidationResult):
-    """Validate pick structure and scoring."""
+def validate_picks(picks: List[Dict], sport: str, result: ValidationResult,
+                   props_picks: List[Dict] = None, game_picks: List[Dict] = None):
+    """Validate pick structure and scoring.
+
+    Args:
+        picks: All picks (props + games combined) for field validation
+        sport: Sport code (NBA, NCAAB, etc.)
+        result: ValidationResult to add pass/fail to
+        props_picks: Props picks only (for threshold validation)
+        game_picks: Game picks only (for threshold validation)
+    """
     if not picks:
         result.add_warning(f"{sport}.picks", "No picks returned (may be off-season)")
         return
@@ -251,12 +261,25 @@ def validate_picks(picks: List[Dict], sport: str, result: ValidationResult):
     else:
         result.add_pass(f"{sport}.required_fields", f"All {len(REQUIRED_PICK_FIELDS)} fields present")
 
-    # Score threshold check
-    below_threshold = [p for p in picks if p.get("final_score", 0) < EXPECTED["min_final_score"]]
-    if below_threshold:
-        result.add_fail(f"{sport}.score_threshold", f"{len(below_threshold)} picks below {EXPECTED['min_final_score']}")
+    # Score threshold check - different thresholds for props vs games
+    props_picks = props_picks or []
+    game_picks = game_picks or []
+
+    # Props: MIN_PROPS_SCORE = 6.5
+    props_below = [p for p in props_picks if p.get("final_score", 0) < EXPECTED["min_final_score_props"]]
+    # Games: MIN_FINAL_SCORE = 7.0
+    games_below = [p for p in game_picks if p.get("final_score", 0) < EXPECTED["min_final_score_games"]]
+
+    if props_below or games_below:
+        issues = []
+        if props_below:
+            issues.append(f"{len(props_below)} props below {EXPECTED['min_final_score_props']}")
+        if games_below:
+            issues.append(f"{len(games_below)} games below {EXPECTED['min_final_score_games']}")
+        result.add_fail(f"{sport}.score_threshold", "; ".join(issues))
     else:
-        result.add_pass(f"{sport}.score_threshold", f"All picks >= {EXPECTED['min_final_score']}")
+        result.add_pass(f"{sport}.score_threshold",
+                       f"Props >= {EXPECTED['min_final_score_props']}, Games >= {EXPECTED['min_final_score_games']}")
 
     # Tier validation
     invalid_tiers = [p.get("tier") for p in picks if p.get("tier") not in EXPECTED["valid_tiers"]]
@@ -487,7 +510,7 @@ def cmd_validate():
             games = data.get("game_picks", {}).get("picks", [])
             all_picks = props + games
 
-            validate_picks(all_picks, sport, result)
+            validate_picks(all_picks, sport, result, props_picks=props, game_picks=games)
             validate_jarvis_fields(all_picks, sport, result)
             validate_debug_fields(data.get("debug", {}), sport, result)
 
@@ -556,8 +579,10 @@ def cmd_check():
     # Best-bets check (just one sport)
     data = fetch_best_bets("NBA")
     if data:
-        all_picks = data.get("props", {}).get("picks", []) + data.get("game_picks", {}).get("picks", [])
-        validate_picks(all_picks, "NBA", result)
+        props = data.get("props", {}).get("picks", [])
+        games = data.get("game_picks", {}).get("picks", [])
+        all_picks = props + games
+        validate_picks(all_picks, "NBA", result, props_picks=props, game_picks=games)
         validate_jarvis_fields(all_picks, "NBA", result)
     else:
         result.add_fail("NBA", "Could not fetch best-bets")

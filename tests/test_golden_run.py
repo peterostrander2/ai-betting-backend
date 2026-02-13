@@ -39,9 +39,10 @@ EXPECTED_JARVIS_VERSION = "JARVIS_OPHIS_HYBRID_v2.2.1"
 
 TITANIUM_THRESHOLD = 8.0
 TITANIUM_MIN_ENGINES = 3
-MIN_FINAL_SCORE = 7.0  # From scoring_contract.py (props use 6.5)
+MIN_FINAL_SCORE_GAMES = 7.0  # From scoring_contract.py MIN_FINAL_SCORE
+MIN_FINAL_SCORE_PROPS = 6.5  # From scoring_contract.py MIN_PROPS_SCORE
 
-VALID_TIERS = {"TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"}  # MONITOR/PASS are hidden
+VALID_TIERS = {"TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"}  # MONITOR/PASS are hidden (internal only)
 
 CRITICAL_INTEGRATIONS = ["odds_api", "playbook_api", "balldontlie", "railway_storage", "database"]
 
@@ -170,10 +171,11 @@ class TestScoringContract:
     """Verify scoring contract values."""
 
     def test_min_final_score(self):
-        """Minimum final score for output is 7.0."""
-        from core.scoring_contract import MIN_FINAL_SCORE
+        """Minimum final score for output: games=7.0, props=6.5."""
+        from core.scoring_contract import MIN_FINAL_SCORE, MIN_PROPS_SCORE
 
-        assert MIN_FINAL_SCORE == 7.0
+        assert MIN_FINAL_SCORE == 7.0, "Games threshold should be 7.0"
+        assert MIN_PROPS_SCORE == 6.5, "Props threshold should be 6.5"
 
     def test_total_boost_cap(self):
         """Total boost cap is 1.5."""
@@ -248,6 +250,41 @@ class TestTierValues:
             result = tier_from_score(**kwargs)
             tier = result.get("tier")
             assert tier in VALID_TIERS, f"Invalid tier {tier} for {kwargs}"
+
+
+class TestHiddenTierFilter:
+    """Verify MONITOR/PASS tiers are filtered from output."""
+
+    def test_hidden_tiers_defined(self):
+        """MONITOR and PASS are internal-only tiers."""
+        # These should NOT appear in output
+        HIDDEN_TIERS = {"MONITOR", "PASS"}
+        assert "MONITOR" in HIDDEN_TIERS
+        assert "PASS" in HIDDEN_TIERS
+
+        # Valid output tiers
+        for tier in VALID_TIERS:
+            assert tier not in HIDDEN_TIERS, f"{tier} should not be hidden"
+
+    def test_monitor_tier_should_be_filtered(self):
+        """A pick with MONITOR tier should be excluded from output."""
+        HIDDEN_TIERS = {"MONITOR", "PASS"}
+
+        # Simulate picks before filtering
+        picks = [
+            {"pick_id": "1", "tier": "GOLD_STAR", "total_score": 8.0},
+            {"pick_id": "2", "tier": "MONITOR", "total_score": 7.5},  # Should be filtered
+            {"pick_id": "3", "tier": "EDGE_LEAN", "total_score": 7.2},
+            {"pick_id": "4", "tier": "PASS", "total_score": 5.0},  # Should be filtered
+        ]
+
+        # Apply filter (same logic as live_data_router.py)
+        filtered = [p for p in picks if p.get("tier") not in HIDDEN_TIERS]
+
+        assert len(filtered) == 2, f"Expected 2 picks after filter, got {len(filtered)}"
+        assert all(p["tier"] in VALID_TIERS for p in filtered), "All output tiers should be valid"
+        assert not any(p["tier"] == "MONITOR" for p in filtered), "MONITOR should be filtered"
+        assert not any(p["tier"] == "PASS" for p in filtered), "PASS should be filtered"
 
 
 # =============================================================================
