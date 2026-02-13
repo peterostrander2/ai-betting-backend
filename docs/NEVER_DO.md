@@ -881,3 +881,114 @@ assert "jarvis_boost" in result  # Internal var, not in output
 | `jarvis_scaled` | *(internal variable, not output)* |
 | `msrf_status: "IN_JARVIS"` (empty inputs) | `msrf_status: "INPUTS_MISSING"` |
 
+---
+
+## v20.20 Golden Run Regression Gates (Rules 264-270)
+
+**CRITICAL: Regression gates exist to catch production bugs, not to document them.**
+
+**Rule 264: Never Loosen a Gate to Match Production**
+```python
+# ❌ WRONG: Gate fails, so add the failing value to valid set
+# "Production returns MONITOR, so MONITOR must be valid"
+valid_tiers = ["TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN", "MONITOR"]  # NO!
+
+# ✅ CORRECT: Gate fails, so fix production
+# "Production returns MONITOR but shouldn't — find and fix the leak"
+HIDDEN_TIERS = {"MONITOR", "PASS"}
+filtered = [p for p in picks if p.get("tier") not in HIDDEN_TIERS]
+```
+
+**Rule 265: Separate Thresholds by Pick Type**
+```python
+# ❌ WRONG: Single threshold for all picks
+min_score = 6.5  # Games should be 7.0!
+
+# ✅ CORRECT: Different thresholds per pick type
+MIN_FINAL_SCORE_GAMES = 7.0  # Games
+MIN_FINAL_SCORE_PROPS = 6.5  # Props (SERP disabled, lower ceiling)
+```
+
+**Rule 266: Internal States Are Not Output Values**
+```python
+# Tier assignment progression (INTERNAL):
+TITANIUM_SMASH → GOLD_STAR → EDGE_LEAN → MONITOR → PASS
+
+# Output contract (EXTERNAL):
+VALID_TIERS = {"TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"}
+HIDDEN_TIERS = {"MONITOR", "PASS"}  # Never returned to API
+
+# MONITOR/PASS are internal workflow states, not output tiers
+```
+
+**Rule 267: HIDDEN_TIERS Filter Placement**
+```python
+# Filter MUST be at output stage, AFTER all processing
+# In live_data_router.py, near response building:
+
+HIDDEN_TIERS = {"MONITOR", "PASS"}
+
+# Filter props
+filtered_props = [p for p in props if p.get("tier") not in HIDDEN_TIERS]
+
+# Filter games (SAME filter, both places)
+filtered_games = [p for p in games if p.get("tier") not in HIDDEN_TIERS]
+```
+
+**Rule 268: Gate Failures Require Investigation, Not Accommodation**
+```bash
+# Golden run fails with: "Invalid tier: MONITOR"
+
+# ❌ WRONG response:
+#   "MONITOR must be a valid tier now" → add to valid_tiers
+
+# ✅ CORRECT response:
+#   "Why is production returning MONITOR?" → investigate
+#   "MONITOR should be filtered" → add HIDDEN_TIERS filter
+#   "Gate stays strict" → keeps catching future bugs
+```
+
+**Rule 269: Document Intended Behavior First**
+```python
+# Write the contract BEFORE writing the code:
+EXPECTED = {
+    "valid_tiers": ["TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"],
+    "min_final_score_games": 7.0,
+    "min_final_score_props": 6.5,
+}
+
+# Then write code to ACHIEVE the contract, not document current bugs
+```
+
+**Rule 270: Test Both Contract AND Filter**
+```python
+# Unit test: Contract is defined correctly
+class TestHiddenTierFilter:
+    def test_hidden_tiers_defined(self):
+        HIDDEN_TIERS = {"MONITOR", "PASS"}
+        assert "MONITOR" in HIDDEN_TIERS
+        assert "PASS" in HIDDEN_TIERS
+
+    def test_monitor_filtered_from_output(self):
+        picks = [
+            {"tier": "GOLD_STAR"},
+            {"tier": "MONITOR"},  # Should be filtered
+        ]
+        HIDDEN_TIERS = {"MONITOR", "PASS"}
+        filtered = [p for p in picks if p.get("tier") not in HIDDEN_TIERS]
+        assert len(filtered) == 1
+        assert filtered[0]["tier"] == "GOLD_STAR"
+```
+
+**Golden Run Gate Commands:**
+```bash
+# Unit tests (no network)
+pytest tests/test_golden_run.py -v
+
+# Live validation
+API_KEY=key python3 scripts/golden_run.py check
+
+# Full regression with live tests
+RUN_LIVE_TESTS=1 API_KEY=key pytest tests/test_golden_run.py -v
+```
+

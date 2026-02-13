@@ -125,6 +125,8 @@
 | 85 | **ENGINE 4 v2.2.1 Scale Factor Calibration** | SF=4.0 showed 96% -bias; calibrate SF based on `mean(msrf)/mean(jarvis)` ratio; check side-balance not just saturation rate |
 | 86 | **v20.19 Engine Weight Rebalancing** | Weight changes required 16+ file updates due to duplicates — use single source of truth (scoring_contract.py), import don't duplicate |
 | 87 | **v20.19 Test Field Name Drift** | Test expected `ophis_normalized` but impl uses `ophis_score_norm` — copy field names from implementation output, don't invent them |
+| 88 | **v20.20 Never Loosen Regression Gates** | Gate failed on MONITOR tier — fix production (add HIDDEN_TIERS filter), don't add MONITOR to valid_tiers |
+| 89 | **v20.20 Golden Run Gate Design** | Validate contracts not volatile data; separate thresholds (props 6.5, games 7.0); unit + live tests |
 
 ### NEVER DO Sections (39 Categories)
 - ML & GLITCH (rules 1-10)
@@ -168,6 +170,7 @@
 - v20.18.1 ENGINE 4 Calibration (rules 250-252)
 - v20.19 Engine Weight Management (rules 253-258)
 - v20.19 Test Field Name Contracts (rules 259-263)
+- v20.20 Golden Run Regression Gates (rules 264-270)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -183,7 +186,13 @@
 # 4. Production Go/No-Go
 ./scripts/prod_go_nogo.sh
 
-# 5. Post-deploy: Verify grader routes (run from Railway shell)
+# 5. Golden Run regression gate (unit tests)
+pytest tests/test_golden_run.py -v
+
+# 6. Post-deploy: Golden Run live validation
+API_KEY=your_key python3 scripts/golden_run.py check
+
+# 7. Post-deploy: Verify grader routes (run from Railway shell)
 ./scripts/verify_grader_routes.sh
 ```
 
@@ -245,6 +254,13 @@
 - [ ] **Update tests with schema changes** — When output dict changes, update test assertions IMMEDIATELY
 - [ ] **Internal vars ≠ output fields** — Local variables like `jarvis_boost` are NOT in output dict
 
+#### Regression Gates (v20.20)
+- [ ] **Never loosen gate to match bug** — Gate fails → fix production, don't add failing value to valid set
+- [ ] **HIDDEN_TIERS filter at output** — MONITOR/PASS are internal, never returned to API
+- [ ] **Separate thresholds by type** — Props use 6.5, games use 7.0 (don't collapse)
+- [ ] **Valid output tiers only** — `{TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN}`, nothing else
+- [ ] **Run golden run after changes** — `pytest tests/test_golden_run.py -v` before deploy
+
 ### Key Files Reference
 | File | Purpose |
 |------|---------|
@@ -279,12 +295,23 @@
 | `core/jarvis_score_api.py` | Shared Jarvis scoring module (single source of truth for savant + hybrid) — v2.1 |
 | `docs/JARVIS_TRUTH_TABLE.md` | ENGINE 4 contract: blend formula, calibration table, invariants — v2.2.1 |
 | `tests/test_engine4_jarvis_guards.py` | 34 guard tests: blend math, saturation flag, delta bounds — v2.2.1 |
+| `tests/test_golden_run.py` | Golden run contract tests: weights, tiers, thresholds, hidden tier filter — v20.20 |
+| `scripts/golden_run.py` | Golden run live validation script: capture, validate, check commands — v20.20 |
 | `core/integration_contract.py` | Integration definitions with criticality tiers — v2.0.0 (v20.19) |
 | `scripts/integration_gate.sh` | Production wire-level verification for integrations — v20.19 |
 | `tests/test_pick_data_contract.py` | Pick schema validation tests (boundary contract tests) — v20.19 |
 
-### Current Version: v20.20 (Feb 12, 2026)
-**Latest Change (v20.19) — Engine Weight Rebalancing:**
+### Current Version: v20.20 (Feb 13, 2026)
+**Latest Change (v20.20) — Golden Run Regression Gate + Hidden Tier Filter:**
+- **Golden Run Gate:** New deployment gate validates contracts haven't drifted (tiers, thresholds, weights, Jarvis blend)
+- **HIDDEN_TIERS Filter:** Added output filter `{"MONITOR", "PASS"}` in `live_data_router.py` — internal tiers never returned to API
+- **Separate Thresholds:** Props use 6.5 (MIN_PROPS_SCORE), games use 7.0 (MIN_FINAL_SCORE)
+- **Valid Output Tiers:** `{TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN}` only — MONITOR/PASS are internal workflow states
+- **Key Lesson (88):** Never loosen regression gates to match production bugs — fix production instead
+- **Files:** `live_data_router.py`, `scripts/golden_run.py`, `tests/test_golden_run.py`
+- **Commits:** `8be10e7`, `ca6309a`
+
+**Previous Change (v20.19) — Engine Weight Rebalancing:**
 - **Jarvis (Engine 4):** 20% → 25% (increased to reflect calibrated hybrid blend value)
 - **Esoteric (Engine 3):** 20% → 15% (reduced to compensate)
 - **Total remains 100%:** AI 25% + Research 35% + Esoteric 15% + Jarvis 25% = 100%
@@ -865,40 +892,58 @@ RUN_LIVE_TESTS=1 API_KEY=your_key pytest tests/test_pick_data_contract.py -v
 
 ---
 
-### INVARIANT 6: Output Filtering (6.5 MINIMUM)
+### INVARIANT 6: Output Filtering (Score + Tier Gates)
 
-**RULE:** NEVER return any pick with `final_score < 6.5` to frontend
+**RULE:** NEVER return picks below thresholds OR with internal-only tiers
+
+**Score Thresholds (v20.20):**
+- **Games:** `final_score >= 7.0` (MIN_FINAL_SCORE)
+- **Props:** `final_score >= 6.5` (MIN_PROPS_SCORE - lower because SERP disabled)
+
+**Hidden Tier Filter (v20.20 - CRITICAL):**
+```python
+# MONITOR/PASS are internal workflow states, NOT output tiers
+HIDDEN_TIERS = {"MONITOR", "PASS"}
+```
 
 **Filter Pipeline (in order):**
 ```python
 # 1. Deduplicate by pick_id (same bet, different books)
 deduplicated = _dedupe_picks(all_picks)
 
-# 2. Filter to 6.5 minimum score
-filtered = [p for p in deduplicated if p["final_score"] >= 6.5]
+# 2. Filter to score thresholds (props=6.5, games=7.0)
+filtered_props = [p for p in props if p["total_score"] >= MIN_PROPS_SCORE]  # 6.5
+filtered_games = [p for p in games if p["total_score"] >= MIN_FINAL_SCORE]  # 7.0
 
-# 3. Apply contradiction gate (prevent opposite sides)
-no_contradictions = apply_contradiction_gate(filtered)
+# 3. Filter out HIDDEN_TIERS (MONITOR/PASS are internal only)
+HIDDEN_TIERS = {"MONITOR", "PASS"}
+filtered_props = [p for p in filtered_props if p.get("tier") not in HIDDEN_TIERS]
+filtered_games = [p for p in filtered_games if p.get("tier") not in HIDDEN_TIERS]
 
-# 4. Take top N picks
+# 4. Apply contradiction gate (prevent opposite sides)
+no_contradictions = apply_contradiction_gate(filtered_props, filtered_games)
+
+# 5. Take top N picks
 top_picks = no_contradictions[:max_picks]
 ```
 
 **GOLD_STAR Hard Gates (Option A):**
 - If tier == "GOLD_STAR", MUST pass ALL gates:
   - `ai_score >= 6.8`
-  - `research_score >= 5.5`
+  - `research_score >= 6.5`
   - `jarvis_score >= 6.5`
-  - `esoteric_score >= 4.0`
+  - `esoteric_score >= 5.5`
   - context gate removed (context is a bounded modifier)
-- If ANY gate fails, downgrade to "EDGE_LEAN"
+- If ANY gate fails, downgrade to "EDGE_LEAN" → may further downgrade to "MONITOR"
 
 **Tier Hierarchy:**
 1. TITANIUM_SMASH (3/4 engines ≥ 8.0) - Overrides all others
 2. GOLD_STAR (≥ 7.5 + passes all gates)
 3. EDGE_LEAN (≥ 6.5)
-4. MONITOR (≥ 5.5) - HIDDEN (not returned)
-5. PASS (< 5.5) - HIDDEN (not returned)
+4. MONITOR (≥ 5.5) - **HIDDEN (never returned to API)**
+5. PASS (< 5.5) - **HIDDEN (never returned to API)**
+
+**Valid Output Tiers:** `{TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN}` only
 
 ---
 

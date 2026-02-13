@@ -3204,3 +3204,126 @@ grep -A 10 "required = \[" tests/test_reconciliation.py
 **Fixed in:** v20.19 (Feb 12, 2026)
 
 ---
+
+### Lesson 88: Never Loosen Regression Gates to Match Production Bugs (v20.20)
+
+**Problem:** Golden run regression gate failed because production was returning MONITOR tier picks that should have been filtered. The initial "fix" was to add MONITOR to valid_tiers in the gate, which defeated the entire purpose.
+
+**Root Cause:** Quality gate downgrades in tiering.py correctly downgrade picks from GOLD_STAR → EDGE_LEAN → MONITOR based on engine alignment. But the HIDDEN_TIERS filter was missing at the output stage, so MONITOR picks leaked to API responses.
+
+**The WRONG Fix (What Was Initially Done):**
+```python
+# ❌ WRONG: Loosening the gate to accept the bug
+EXPECTED = {
+    "valid_tiers": ["TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN", "MONITOR"],  # Added MONITOR
+    "min_final_score": 6.5,  # Lowered from 7.0
+}
+# This normalizes the production bug instead of catching it
+```
+
+**The CORRECT Fix (What Should Always Be Done):**
+```python
+# ✅ CORRECT: Fix production to match the intended contract
+# In live_data_router.py (output stage):
+HIDDEN_TIERS = {"MONITOR", "PASS"}
+filtered_props = [p for p in props if p.get("tier") not in HIDDEN_TIERS]
+filtered_games = [p for p in games if p.get("tier") not in HIDDEN_TIERS]
+
+# Gate stays strict - enforces the intended contract
+EXPECTED = {
+    "valid_tiers": ["TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"],  # MONITOR/PASS are internal
+}
+```
+
+**Key Insight:** A regression gate's purpose is to **catch when production violates the intended contract**. If you loosen the gate to match a production bug, the gate becomes useless.
+
+**Prevention Rules:**
+1. **Gate fails → investigate production, not the gate** — ask "why is production returning this?"
+2. **Never add internal-only values to output contracts** — MONITOR/PASS are internal tier states
+3. **Document intended behavior first** — the gate enforces what SHOULD happen, not what IS happening
+4. **Separate thresholds per pick type** — props use 6.5, games use 7.0 (don't collapse to single threshold)
+
+**Hidden Tier Architecture:**
+```
+Tier Assignment (tiering.py):
+  TITANIUM_SMASH → GOLD_STAR → EDGE_LEAN → MONITOR → PASS
+                   ↓ downgrade gates      ↓ internal only
+
+Output Filter (live_data_router.py):
+  HIDDEN_TIERS = {"MONITOR", "PASS"}
+  filtered = [p for p in picks if p.get("tier") not in HIDDEN_TIERS]
+
+API Response:
+  Only returns: TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN
+```
+
+**Commits:**
+- `8be10e7 fix(production): add HIDDEN_TIERS filter to prevent MONITOR/PASS tier leakage`
+- `ca6309a fix(golden-run): separate thresholds for props (6.5) vs games (7.0), add tier filter tests`
+
+**Fixed in:** v20.20 (Feb 13, 2026)
+
+---
+
+### Lesson 89: Golden Run Regression Gate Design Principles (v20.20)
+
+**Problem:** Need a deployment gate that catches system drift without being fragile or requiring constant updates.
+
+**What Golden Run Validates:**
+1. **Version consistency** — health.version matches expected
+2. **Engine weights** — scoring_contract.py weights haven't drifted
+3. **Tier contract** — only valid tiers returned (TITANIUM_SMASH, GOLD_STAR, EDGE_LEAN)
+4. **Score thresholds** — props ≥ 6.5, games ≥ 7.0
+5. **Titanium rule** — 3-of-4 engines ≥ 8.0 when titanium_triggered=true
+6. **Required fields** — all pick schema fields present
+7. **Jarvis blend** — correct blend_type and version
+8. **Critical integrations** — odds_api, playbook_api, etc. have CRITICAL tier
+
+**Design Principles:**
+1. **Validate contracts, not volatile data** — check field presence, not field values
+2. **Separate by pick type** — props and games have different thresholds
+3. **Unit tests + live tests** — contract tests run locally, live tests require API_KEY
+4. **Fail fast, fail loud** — exit 1 on any violation, list all failures
+
+**Test Structure:**
+```
+tests/test_golden_run.py (unit tests - no network):
+  - TestEngineWeights: verify scoring_contract.py weights
+  - TestTitaniumContract: verify 3-of-4 rule
+  - TestJarvisContract: verify blend type, version, delta cap
+  - TestScoringContract: verify thresholds
+  - TestHiddenTierFilter: verify MONITOR/PASS filtering
+  - TestPickSchema: verify required fields
+
+scripts/golden_run.py (live validation):
+  - capture: snapshot current state as golden baseline
+  - validate: compare against golden baseline
+  - check: quick health check without baseline
+```
+
+**Running the Gate:**
+```bash
+# Unit tests (no network)
+pytest tests/test_golden_run.py -v
+
+# Live validation (requires API_KEY)
+API_KEY=your_key python3 scripts/golden_run.py check
+
+# Full regression test
+RUN_LIVE_TESTS=1 API_KEY=your_key pytest tests/test_golden_run.py -v
+```
+
+**When Gate Fails:**
+1. **Read the failure message** — it tells you exactly what violated the contract
+2. **Check if production bug or intended change** — is the new value correct?
+3. **If production bug:** fix production, not the gate
+4. **If intended change:** update EXPECTED values AND document the change
+
+**Files:**
+- `tests/test_golden_run.py` — Unit tests for contracts
+- `scripts/golden_run.py` — Live validation script
+- `tests/fixtures/golden_run.json` — Captured baseline (optional)
+
+**Added in:** v20.20 (Feb 13, 2026)
+
+---
