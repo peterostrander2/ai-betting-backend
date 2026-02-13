@@ -1,0 +1,75 @@
+{
+  "baseline_version": "20.20",
+  "baseline_created": "2026-02-13",
+  "baseline_type": "contract",
+  "description": "Deterministic contract baseline - validates schema and invariants, not volatile data",
+
+  "contracts": {
+    "version": "20.20",
+    "engine_weights": {
+      "ai": 0.25,
+      "research": 0.35,
+      "esoteric": 0.15,
+      "jarvis": 0.25
+    },
+    "jarvis": {
+      "impl": "hybrid",
+      "blend_type": "JARVIS_WEIGHTED_BLEND_CAPPED_DELTA",
+      "version": "JARVIS_OPHIS_HYBRID_v2.2.1",
+      "jarvis_weight": 0.55,
+      "ophis_weight": 0.45,
+      "ophis_delta_cap": 0.75
+    },
+    "titanium": {
+      "threshold": 8.0,
+      "min_engines": 3
+    },
+    "thresholds": {
+      "min_final_score_games": 7.0,
+      "min_final_score_props": 6.5
+    },
+    "tiers": {
+      "valid_output": ["TITANIUM_SMASH", "GOLD_STAR", "EDGE_LEAN"],
+      "hidden": ["MONITOR", "PASS"]
+    },
+    "critical_integrations": ["odds_api", "playbook_api", "balldontlie", "railway_storage", "database"],
+    "total_boost_cap": 1.5,
+    "context_modifier_cap": 0.35
+  },
+
+  "required_pick_fields": [
+    "pick_id", "sport", "market", "final_score", "tier",
+    "ai_score", "research_score", "esoteric_score", "jarvis_rs",
+    "ai_reasons", "research_reasons", "esoteric_reasons", "jarvis_reasons",
+    "titanium_triggered"
+  ],
+
+  "required_jarvis_fields": [
+    "jarvis_rs", "jarvis_active", "jarvis_blend_type", "ophis_delta",
+    "jarvis_impl", "jarvis_version"
+  ],
+
+  "required_debug_fields": [
+    "date_window_et",
+    "filtered_below_6_5_total",
+    "hidden_tier_filtered_total",
+    "returned_pick_count_props",
+    "returned_pick_count_games",
+    "invariant_violations_dropped"
+  ],
+
+  "schema_assertions": {
+    "pick_field_types": {
+      "pick_id": "str",
+      "sport": "str",
+      "market": "str",
+      "final_score": "float",
+      "tier": "str",
+      "ai_score": "float",
+      "research_score": "float",
+      "esoteric_score": "float",
+      "jarvis_rs": "float",
+      "titanium_triggered": "bool"
+    }
+  }
+}

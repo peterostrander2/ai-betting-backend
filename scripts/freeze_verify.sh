@@ -35,14 +35,50 @@ echo ""
 
 echo "=== 2. CRITICAL INTEGRATIONS ==="
 # Critical integrations per core/integration_contract.py: odds_api, playbook_api, balldontlie, railway_storage, database
-curl -s "$BASE/live/debug/integrations" -H "X-API-Key: $API_KEY" | \
-  jq '{
-    odds_api: .odds_api.status_category,
-    playbook_api: .playbook_api.status_category,
-    balldontlie: .balldontlie.status_category,
-    railway_storage: .railway_storage.status_category,
-    database: .database.status_category
-  }'
+# Policy: odds_api, playbook_api, balldontlie, railway_storage must be VALIDATED
+#         database may be VALIDATED or CONFIGURED (DB connection tested at startup, not per-request)
+
+integrations_json=$(curl -s "$BASE/live/debug/integrations" -H "X-API-Key: $API_KEY")
+
+# Display statuses (integrations are nested under .integrations key)
+echo "$integrations_json" | jq '{
+  odds_api: .integrations.odds_api.status_category,
+  playbook_api: .integrations.playbook_api.status_category,
+  balldontlie: .integrations.balldontlie.status_category,
+  railway_storage: .integrations.railway_storage.status_category,
+  database: .integrations.database.status_category
+}'
+
+# Hard gate: verify all 5 critical integrations exist and have acceptable status
+integrations_pass=$(echo "$integrations_json" | jq '
+  .integrations as $i |
+  (($i.odds_api.status_category // "MISSING") == "VALIDATED") and
+  (($i.playbook_api.status_category // "MISSING") == "VALIDATED") and
+  (($i.balldontlie.status_category // "MISSING") == "VALIDATED") and
+  (($i.railway_storage.status_category // "MISSING") == "VALIDATED") and
+  ((($i.database.status_category // "MISSING") == "VALIDATED") or (($i.database.status_category // "MISSING") == "CONFIGURED"))
+')
+
+if [[ "$integrations_pass" != "true" ]]; then
+  echo ""
+  echo "❌ CRITICAL INTEGRATIONS GATE FAILED"
+  echo "Required: odds_api, playbook_api, balldontlie, railway_storage = VALIDATED"
+  echo "Required: database = VALIDATED or CONFIGURED"
+  echo ""
+  echo "Failed integrations:"
+  echo "$integrations_json" | jq -r '
+    .integrations as $i |
+    [
+      (if ($i.odds_api.status_category // "MISSING") != "VALIDATED" then "  - odds_api: \($i.odds_api.status_category // "MISSING")" else empty end),
+      (if ($i.playbook_api.status_category // "MISSING") != "VALIDATED" then "  - playbook_api: \($i.playbook_api.status_category // "MISSING")" else empty end),
+      (if ($i.balldontlie.status_category // "MISSING") != "VALIDATED" then "  - balldontlie: \($i.balldontlie.status_category // "MISSING")" else empty end),
+      (if ($i.railway_storage.status_category // "MISSING") != "VALIDATED" then "  - railway_storage: \($i.railway_storage.status_category // "MISSING")" else empty end),
+      (if (($i.database.status_category // "MISSING") != "VALIDATED") and (($i.database.status_category // "MISSING") != "CONFIGURED") then "  - database: \($i.database.status_category // "MISSING")" else empty end)
+    ] | .[]
+  '
+  exit 1
+fi
+echo "✓ All critical integrations OK"
 echo ""
 
 echo "=== 3. CONTRACT VERIFICATION ($SPORT) ==="

@@ -33,7 +33,10 @@ from typing import Dict, Any, List, Optional, Tuple
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-GOLDEN_FILE = Path(__file__).parent.parent / "tests" / "fixtures" / "golden_run.json"
+# Deterministic baseline (committed to repo, never auto-generated during validation)
+GOLDEN_BASELINE = Path(__file__).parent.parent / "tests" / "fixtures" / "golden_baseline_v20.20.json"
+# Legacy capture file (for ad-hoc snapshots, NOT used in CI validation)
+GOLDEN_CAPTURE = Path(__file__).parent.parent / "tests" / "fixtures" / "golden_run.json"
 API_BASE = os.getenv("API_BASE", "https://web-production-7b2a.up.railway.app")
 API_KEY = os.getenv("API_KEY", "")
 
@@ -416,8 +419,10 @@ def validate_integrations(rollup: Dict[str, Any], result: ValidationResult):
 # =============================================================================
 
 def cmd_capture():
-    """Capture golden baseline."""
-    print("Capturing golden baseline...")
+    """Capture ad-hoc snapshot (NOT used for CI validation - use golden_baseline_v20.20.json instead)."""
+    print("Capturing ad-hoc snapshot...")
+    print("NOTE: This creates a snapshot for debugging. CI validation uses golden_baseline_v20.20.json")
+    print("")
 
     if not API_KEY:
         print("ERROR: API_KEY environment variable required")
@@ -463,43 +468,86 @@ def cmd_capture():
             "summary": {k: v.get("criticality") for k, v in rollup.get("integration_summary", {}).items()},
         }
 
-    # Save
-    GOLDEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(GOLDEN_FILE, "w") as f:
+    # Save to capture file (NOT the deterministic baseline)
+    GOLDEN_CAPTURE.parent.mkdir(parents=True, exist_ok=True)
+    with open(GOLDEN_CAPTURE, "w") as f:
         json.dump(golden, f, indent=2)
 
-    print(f"\nGolden baseline saved to: {GOLDEN_FILE}")
+    print(f"\nSnapshot saved to: {GOLDEN_CAPTURE}")
     print(f"Snapshots: {list(golden['snapshots'].keys())}")
+    print("")
+    print("To update the deterministic baseline, manually edit:")
+    print(f"  {GOLDEN_BASELINE}")
 
 
 def cmd_validate():
-    """Validate against golden baseline."""
-    print("Validating against golden baseline...")
+    """Validate against deterministic baseline (committed to repo).
 
-    if not GOLDEN_FILE.exists():
-        print(f"ERROR: Golden file not found: {GOLDEN_FILE}")
-        print("Run 'python3 scripts/golden_run.py capture' first")
+    IMPORTANT: This command uses the committed golden_baseline_v20.20.json file.
+    It will HARD-FAIL if the baseline is missing - never auto-capture during validation.
+    This ensures CI catches regressions against a known-good contract state.
+    """
+    print("Validating against deterministic baseline...")
+    print(f"Baseline: {GOLDEN_BASELINE}")
+    print("")
+
+    if not GOLDEN_BASELINE.exists():
+        print("=" * 60)
+        print("FATAL ERROR: Deterministic baseline not found!")
+        print("=" * 60)
+        print(f"Expected: {GOLDEN_BASELINE}")
+        print("")
+        print("The baseline must be committed to the repo.")
+        print("DO NOT auto-generate baselines during CI validation.")
+        print("")
+        print("To create a new baseline after intentional contract changes:")
+        print("  1. Update tests/fixtures/golden_baseline_v20.20.json manually")
+        print("  2. Commit the baseline with the contract change")
+        print("=" * 60)
         sys.exit(1)
 
     if not API_KEY:
         print("ERROR: API_KEY environment variable required")
         sys.exit(1)
 
-    with open(GOLDEN_FILE) as f:
-        golden = json.load(f)
+    with open(GOLDEN_BASELINE) as f:
+        baseline = json.load(f)
+
+    # Extract contracts from deterministic baseline
+    contracts = baseline.get("contracts", {})
+
+    # Override EXPECTED with baseline values for validation
+    global EXPECTED
+    EXPECTED = {
+        "version": contracts.get("version", EXPECTED["version"]),
+        "engine_weights": contracts.get("engine_weights", EXPECTED["engine_weights"]),
+        "jarvis_impl": contracts.get("jarvis", {}).get("impl", EXPECTED["jarvis_impl"]),
+        "jarvis_blend_type": contracts.get("jarvis", {}).get("blend_type", EXPECTED["jarvis_blend_type"]),
+        "jarvis_version": contracts.get("jarvis", {}).get("version", EXPECTED["jarvis_version"]),
+        "titanium_threshold": contracts.get("titanium", {}).get("threshold", EXPECTED["titanium_threshold"]),
+        "titanium_min_engines": contracts.get("titanium", {}).get("min_engines", EXPECTED["titanium_min_engines"]),
+        "min_final_score_games": contracts.get("thresholds", {}).get("min_final_score_games", EXPECTED["min_final_score_games"]),
+        "min_final_score_props": contracts.get("thresholds", {}).get("min_final_score_props", EXPECTED["min_final_score_props"]),
+        "valid_tiers": contracts.get("tiers", {}).get("valid_output", EXPECTED["valid_tiers"]),
+        "critical_integrations": contracts.get("critical_integrations", EXPECTED["critical_integrations"]),
+    }
+
+    print(f"Baseline version: {baseline.get('baseline_version')}")
+    print(f"Baseline type: {baseline.get('baseline_type')}")
+    print("")
 
     result = ValidationResult()
+
+    # Get required fields from baseline
+    required_pick_fields = set(baseline.get("required_pick_fields", REQUIRED_PICK_FIELDS))
+    required_jarvis_fields = set(baseline.get("required_jarvis_fields", REQUIRED_JARVIS_FIELDS))
+    required_debug_fields = set(baseline.get("required_debug_fields", REQUIRED_DEBUG_FIELDS))
 
     # Validate health
     print("  Checking /health...")
     health = fetch_health()
     if health:
         validate_health(health, result)
-
-        # Compare version to golden
-        golden_version = golden.get("snapshots", {}).get("health", {}).get("version")
-        if golden_version and health.get("version") != golden_version:
-            result.add_warning("golden.version_drift", f"Version changed: {golden_version} -> {health.get('version')}")
 
     # Validate best-bets
     for sport in ["NBA", "NCAAB"]:
@@ -514,15 +562,12 @@ def cmd_validate():
             validate_jarvis_fields(all_picks, sport, result)
             validate_debug_fields(data.get("debug", {}), sport, result)
 
-            # Compare schema to golden
-            golden_sport = golden.get("snapshots", {}).get(sport, {})
-            if golden_sport:
-                golden_fields = set(golden_sport.get("props_schema", {}).get("fields", []))
-                current_fields = set(extract_schema_signature(props).get("fields", []))
-
-                missing = golden_fields - current_fields
+            # Validate required fields from baseline are present
+            if all_picks:
+                pick_fields = set(all_picks[0].keys())
+                missing = required_pick_fields - pick_fields
                 if missing:
-                    result.add_fail(f"golden.{sport}.schema_drift", f"Fields removed: {missing}")
+                    result.add_fail(f"baseline.{sport}.required_fields", f"Missing baseline-required fields: {missing}")
 
     # Validate integrations
     print("  Checking integrations...")
