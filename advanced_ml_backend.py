@@ -467,7 +467,26 @@ class EnsembleStackingModel:
 
     v20.16.1: Added _ensemble_pipeline_trained flag to prevent calling
     .predict() on unfitted sklearn models (hard safety rule).
+
+    v20.22: Added save_models()/load_models() for sklearn regressor persistence.
+    Training script runs at 7:15 AM ET to fit regressors from graded picks.
+
+    IMPORTANT: Sklearn regressors are in SHADOW MODE by default.
+    Set ENSEMBLE_SKLEARN_ENABLED=true to use them for live predictions.
+    Otherwise they are loaded for telemetry only (no scoring change).
     """
+
+    # Path for persisting trained sklearn models
+    SKLEARN_MODELS_PATH = os.path.join(
+        os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/data"),
+        "models",
+        "ensemble_sklearn_regressors.joblib"
+    )
+
+    # SHADOW MODE: Only use sklearn regressors if explicitly enabled
+    # This prevents accidental scoring drift when models are loaded
+    SKLEARN_ENABLED = os.environ.get("ENSEMBLE_SKLEARN_ENABLED", "false").lower() == "true"
+
     def __init__(self):
         self.base_models = {
             'xgboost': XGBRegressor(n_estimators=200, learning_rate=0.05, max_depth=6, random_state=42),
@@ -475,9 +494,24 @@ class EnsembleStackingModel:
             'random_forest': RandomForestRegressor(n_estimators=200, max_depth=8, random_state=42, n_jobs=-1)
         }
         self.meta_model = GradientBoostingRegressor(n_estimators=50, random_state=42)
+        self.scaler = None  # Optional StandardScaler for features
         self.is_trained = False
         self._ensemble_pipeline_trained = False  # HARD RULE: Only True after train() completes
+        self._sklearn_loaded_for_telemetry = False  # True if models loaded but in shadow mode
+        self._last_train_time = None  # Track when models were trained
+        self._training_samples_count = 0  # Track training sample count
         self._game_ensemble = None
+
+        # Try to load trained sklearn models from disk (for telemetry)
+        # NOTE: Does NOT enable them for prediction unless SKLEARN_ENABLED=true
+        if self._load_models_shadow():
+            if self.SKLEARN_ENABLED:
+                logger.info("EnsembleStackingModel: Loaded sklearn regressors (LIVE MODE)")
+            else:
+                logger.info("EnsembleStackingModel: Loaded sklearn regressors (SHADOW MODE - telemetry only)")
+        else:
+            logger.info("EnsembleStackingModel: No trained sklearn regressors found")
+
         self._init_game_ensemble()
 
     def _init_game_ensemble(self):
@@ -506,7 +540,154 @@ class EnsembleStackingModel:
         self.meta_model.fit(stacked_features, y_val)
         self._ensemble_pipeline_trained = True  # ONLY set after sklearn models are fitted
         self.is_trained = True
+        self._last_train_time = datetime.now().isoformat()
+        self._training_samples_count = len(y_train)
         logger.info("Ensemble model trained successfully")
+
+    def save_models(self) -> bool:
+        """Save trained sklearn models to disk.
+
+        v20.22: Persists base models + meta model + scaler to joblib file.
+        Called by train_ensemble_regressors.py after training completes.
+
+        Returns:
+            True if saved successfully, False otherwise.
+        """
+        if not self._ensemble_pipeline_trained:
+            logger.warning("Cannot save models - not trained yet")
+            return False
+
+        try:
+            # Ensure directory exists
+            model_dir = os.path.dirname(self.SKLEARN_MODELS_PATH)
+            os.makedirs(model_dir, exist_ok=True)
+
+            # Save all models and metadata
+            data = {
+                'base_models': self.base_models,
+                'meta_model': self.meta_model,
+                'scaler': self.scaler,
+                'trained_at': self._last_train_time or datetime.now().isoformat(),
+                'training_samples': self._training_samples_count,
+                'version': '1.0'
+            }
+
+            joblib.dump(data, self.SKLEARN_MODELS_PATH)
+            logger.info("Saved sklearn ensemble models to %s", self.SKLEARN_MODELS_PATH)
+            return True
+
+        except Exception as e:
+            logger.error("Failed to save sklearn models: %s", e)
+            return False
+
+    def _load_models_shadow(self) -> bool:
+        """Load trained sklearn models from disk in SHADOW MODE.
+
+        v20.22: Loads models for telemetry purposes. Does NOT enable them
+        for live predictions unless ENSEMBLE_SKLEARN_ENABLED=true.
+
+        This prevents accidental scoring drift when backend is "frozen".
+
+        Returns:
+            True if loaded successfully, False otherwise.
+        """
+        if not os.path.exists(self.SKLEARN_MODELS_PATH):
+            return False
+
+        try:
+            data = joblib.load(self.SKLEARN_MODELS_PATH)
+
+            # Validate the loaded data structure
+            if not isinstance(data, dict):
+                logger.warning("Invalid sklearn models file format")
+                return False
+
+            if 'base_models' not in data or 'meta_model' not in data:
+                logger.warning("Missing required keys in sklearn models file")
+                return False
+
+            # Restore models (for telemetry at minimum)
+            self.base_models = data['base_models']
+            self.meta_model = data['meta_model']
+            self.scaler = data.get('scaler')
+            self._last_train_time = data.get('trained_at')
+            self._training_samples_count = data.get('training_samples', 0)
+            self._sklearn_loaded_for_telemetry = True
+
+            # ONLY enable for live predictions if explicitly enabled
+            # This is the SHADOW MODE gate - models loaded but not used
+            if self.SKLEARN_ENABLED:
+                self._ensemble_pipeline_trained = True
+                self.is_trained = True
+            # else: _ensemble_pipeline_trained stays False, predict() uses fallback
+
+            logger.info(
+                "Loaded sklearn ensemble models (trained at: %s, samples: %d, enabled: %s)",
+                self._last_train_time,
+                self._training_samples_count,
+                self.SKLEARN_ENABLED
+            )
+            return True
+
+        except Exception as e:
+            logger.error("Failed to load sklearn models: %s", e)
+            return False
+
+    def load_models(self) -> bool:
+        """Load trained sklearn models and ENABLE them for predictions.
+
+        Use this only when you explicitly want to enable sklearn predictions.
+        For shadow mode loading, use _load_models_shadow() instead.
+
+        Returns:
+            True if loaded successfully, False otherwise.
+        """
+        if not os.path.exists(self.SKLEARN_MODELS_PATH):
+            return False
+
+        try:
+            data = joblib.load(self.SKLEARN_MODELS_PATH)
+
+            if not isinstance(data, dict):
+                return False
+            if 'base_models' not in data or 'meta_model' not in data:
+                return False
+
+            self.base_models = data['base_models']
+            self.meta_model = data['meta_model']
+            self.scaler = data.get('scaler')
+            self._last_train_time = data.get('trained_at')
+            self._training_samples_count = data.get('training_samples', 0)
+
+            # Enable for predictions
+            self._ensemble_pipeline_trained = True
+            self.is_trained = True
+            self._sklearn_loaded_for_telemetry = True
+
+            return True
+
+        except Exception as e:
+            logger.error("Failed to load sklearn models: %s", e)
+            return False
+
+    def get_training_status(self) -> dict:
+        """Get training status for telemetry/debugging.
+
+        v20.22: Returns detailed status including trained state,
+        sample counts, and shadow mode status.
+        """
+        return {
+            'sklearn_trained': self._ensemble_pipeline_trained,
+            'sklearn_enabled': self.SKLEARN_ENABLED,
+            'sklearn_loaded_for_telemetry': self._sklearn_loaded_for_telemetry,
+            'sklearn_mode': 'LIVE' if self.SKLEARN_ENABLED and self._ensemble_pipeline_trained else 'SHADOW',
+            'is_trained': self.is_trained,
+            'has_game_ensemble': self._game_ensemble is not None,
+            'last_train_time': self._last_train_time,
+            'training_samples': self._training_samples_count,
+            'models_path': self.SKLEARN_MODELS_PATH,
+            'models_exist': os.path.exists(self.SKLEARN_MODELS_PATH),
+        }
 
     def _is_base_model_fitted(self, model, model_name: str) -> bool:
         """Best-effort check if a sklearn model has been fitted.

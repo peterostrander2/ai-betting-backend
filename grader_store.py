@@ -448,18 +448,32 @@ def get_storage_stats() -> Dict[str, Any]:
         }
 
 
-def mark_graded(pick_id: str, result: str, actual_value: float, graded_at: str) -> bool:
+def mark_graded(
+    pick_id: str,
+    result: str,
+    actual_value: float,
+    graded_at: str,
+    actual_home_score: Optional[int] = None,
+    actual_away_score: Optional[int] = None,
+    total_score: Optional[int] = None
+) -> bool:
     """
     Mark a prediction as graded by appending a grade record to graded_picks.jsonl.
 
     This is append-only: predictions.jsonl is NEVER rewritten. Grade records
     are stored separately and merged at read time by load_predictions().
 
+    v20.22: Added actual_home_score, actual_away_score, total_score for
+    matchup model training. These scores come from result_fetcher.py.
+
     Args:
         pick_id: Pick identifier
         result: WIN/LOSS/PUSH
         actual_value: Actual stat value
         graded_at: ISO timestamp
+        actual_home_score: Final home team score (for game picks)
+        actual_away_score: Final away team score (for game picks)
+        total_score: Combined total score
 
     Returns:
         True if grade record appended successfully
@@ -472,6 +486,14 @@ def mark_graded(pick_id: str, result: str, actual_value: float, graded_at: str) 
             "actual_value": actual_value,
             "graded_at": graded_at,
         }
+
+        # v20.22: Add actual game scores for matchup training
+        if actual_home_score is not None:
+            record["actual_home_score"] = actual_home_score
+        if actual_away_score is not None:
+            record["actual_away_score"] = actual_away_score
+        if total_score is not None:
+            record["total_score"] = total_score
 
         with open(GRADED_PICKS_FILE, 'a') as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)

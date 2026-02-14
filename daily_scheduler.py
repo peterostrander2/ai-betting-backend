@@ -28,7 +28,8 @@ import json
 import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-from loguru import logger
+import logging
+logger = logging.getLogger(__name__)
 import threading
 import time
 from core.time_et import now_et
@@ -666,6 +667,19 @@ class DailyScheduler:
         except Exception as e:
             logger.warning("Failed to schedule team model training: %s", e)
 
+        # v20.22: Ensemble sklearn regressor training (7:15 AM ET, after team models)
+        # Trains XGBoost/LightGBM/RandomForest regressors from graded picks
+        try:
+            self.scheduler.add_job(
+                self._run_ensemble_regressor_train,
+                CronTrigger(hour=7, minute=15, timezone="America/New_York"),
+                id="ensemble_regressor_train",
+                name="Ensemble Sklearn Regressor Training"
+            )
+            logger.info("Ensemble sklearn regressor training enabled: runs daily at 7:15 AM ET")
+        except Exception as e:
+            logger.warning("Failed to schedule ensemble regressor training: %s", e)
+
         # v20.16.4: Training verification (7:30 AM ET, verifies 7 AM training ran)
         # Checks training_telemetry and logs WARNING if training didn't execute
         try:
@@ -736,6 +750,57 @@ class DailyScheduler:
                 logger.error(f"Team model training fallback failed: {inner_e}")
         except Exception as e:
             logger.error(f"Team model training failed: {e}")
+
+    def _run_ensemble_regressor_train(self):
+        """
+        v20.22: Train sklearn ensemble regressors from graded picks.
+
+        Trains XGBoost, LightGBM, and RandomForest regressors on:
+        - 12 features: ai_score, research_score, esoteric_score, jarvis_score,
+          context_modifier, confluence_boost, jason_sim_boost, msrf_boost,
+          line, odds_american, rest_factor, injury_impact
+        - Target: binary hit classification (WIN=1, LOSS=0)
+
+        Saves trained models to /data/models/ensemble_sklearn_regressors.joblib
+        for EnsembleStackingModel to load on next restart.
+
+        NOTE: Models are trained in SHADOW MODE by default (telemetry only).
+        Set ENSEMBLE_SKLEARN_ENABLED=true to use for live predictions.
+
+        Runs daily at 7:15 AM ET (after team model training at 7 AM).
+        """
+        logger.info("🎯 Starting ensemble sklearn regressor training...")
+        try:
+            # Try standard import first
+            try:
+                from scripts.train_ensemble_regressors import train_all
+            except ImportError:
+                # Fallback: add repo root to path for scripts.* imports
+                import sys
+                repo_root = os.path.dirname(__file__)
+                if repo_root not in sys.path:
+                    sys.path.insert(0, repo_root)
+                from scripts.train_ensemble_regressors import train_all
+
+            result = train_all(days=7, min_samples=50)
+
+            status = result.get('status', 'unknown')
+            logger.info(f"Ensemble regressor training complete: {status}")
+
+            if status == 'SKIPPED_MISSING_DEPS':
+                # Non-fatal - log once and continue
+                logger.warning("   Skipped due to missing deps: %s", result.get('missing_deps', []))
+            elif status == 'success' and result.get('training_metrics'):
+                meta_acc = result['training_metrics'].get('meta_accuracy', 0)
+                logger.info(f"   Meta model accuracy: {meta_acc:.2%}")
+                logger.info("   NOTE: Models in SHADOW MODE (telemetry only)")
+            elif result.get('error'):
+                logger.warning("   Error: %s", result.get('error'))
+
+        except ImportError as e:
+            logger.warning("train_ensemble_regressors script not available: %s", e)
+        except Exception as e:
+            logger.error(f"Ensemble regressor training failed: {e}")
 
     def _run_training_verification(self):
         """

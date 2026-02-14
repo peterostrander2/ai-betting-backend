@@ -205,6 +205,9 @@ def _compute_schema_hash(feature_names: list) -> str:
 def update_team_cache(picks: list) -> dict:
     """Update team scoring cache from graded game picks.
 
+    v20.22: Now uses actual_home_score/actual_away_score when available
+    (captured during grading), falls back to estimates only when missing.
+
     Returns training signature for audit.
     """
     from team_ml_models import get_team_cache
@@ -213,6 +216,8 @@ def update_team_cache(picks: list) -> dict:
     updated = 0
     teams_seen = set()
     sports_seen = set()
+    real_scores_used = 0
+    estimated_scores_used = 0
 
     for pick in picks:
         # Only process game picks (spreads, totals, moneyline)
@@ -231,36 +236,47 @@ def update_team_cache(picks: list) -> dict:
         teams_seen.add(f"{sport}_{home_team}")
         teams_seen.add(f"{sport}_{away_team}")
 
-        # Try to extract actual scores from the pick
-        home_score = pick.get('home_score') or pick.get('actual_home_score')
-        away_score = pick.get('away_score') or pick.get('actual_away_score')
+        # v20.22: Prefer actual scores from grading (captured from result_fetcher.py)
+        home_score = pick.get('actual_home_score') or pick.get('home_score')
+        away_score = pick.get('actual_away_score') or pick.get('away_score')
 
-        # If we don't have scores, estimate from line and result
-        if home_score is None or away_score is None:
+        if home_score is not None and away_score is not None:
+            real_scores_used += 1
+        else:
+            # Fallback: Estimate from line and result (less accurate)
+            estimated_scores_used += 1
             line = pick.get('line', 0)
             result = pick.get('result', '').upper()
 
-            # Rough estimation based on typical game scores
-            base_score = 105 if sport == 'NBA' else 100
+            # Sport-specific base scores
+            if sport == 'NBA':
+                base_score = 105
+            elif sport == 'NFL':
+                base_score = 22
+            elif sport == 'MLB':
+                base_score = 4
+            elif sport == 'NHL':
+                base_score = 3
+            else:
+                base_score = 100
+
             margin = abs(line) if line else 5
 
             if result == 'WIN':
-                # Pick was right - assume margin was covered
                 home_score = base_score + margin / 2
                 away_score = base_score - margin / 2
             else:
-                # Pick was wrong
                 home_score = base_score - margin / 2
                 away_score = base_score + margin / 2
 
         # Update cache
         cache.update_team(sport, home_team, {
-            'score': home_score,
+            'score': float(home_score),
             'is_home': True,
             'won': home_score > away_score
         })
         cache.update_team(sport, away_team, {
-            'score': away_score,
+            'score': float(away_score),
             'is_home': False,
             'won': away_score > home_score
         })
@@ -268,7 +284,10 @@ def update_team_cache(picks: list) -> dict:
 
     # Save cache
     cache._save_cache()
-    logger.info(f"Updated team cache with {updated} game results")
+    logger.info(
+        "Updated team cache: %d games (%d real scores, %d estimated)",
+        updated, real_scores_used, estimated_scores_used
+    )
 
     # Compute training signature
     all_teams = cache.data.get("teams", {})
@@ -276,6 +295,8 @@ def update_team_cache(picks: list) -> dict:
 
     return {
         'games_processed': updated,
+        'real_scores_used': real_scores_used,
+        'estimated_scores_used': estimated_scores_used,
         'teams_updated_this_run': len(teams_seen),
         'sports_included': sorted(list(sports_seen)),
         'teams_cached_total': len(all_teams),
@@ -287,6 +308,9 @@ def update_team_cache(picks: list) -> dict:
 def update_matchup_matrix(picks: list) -> dict:
     """Update matchup matrix from graded game picks.
 
+    v20.22: Now uses actual_home_score/actual_away_score when available
+    (captured during grading), falls back to estimates only when missing.
+
     Returns training signature for audit.
     """
     from team_ml_models import get_team_matchup
@@ -294,6 +318,8 @@ def update_matchup_matrix(picks: list) -> dict:
     matchup = get_team_matchup()
     updated = 0
     sports_seen = set()
+    real_scores_used = 0
+    estimated_scores_used = 0
 
     for pick in picks:
         pick_type = pick.get('pick_type', '').upper()
@@ -309,23 +335,48 @@ def update_matchup_matrix(picks: list) -> dict:
 
         sports_seen.add(sport)
 
-        # Get or estimate scores
-        home_score = pick.get('home_score') or pick.get('actual_home_score')
-        away_score = pick.get('away_score') or pick.get('actual_away_score')
+        # v20.22: Prefer actual scores from grading (captured from result_fetcher.py)
+        home_score = pick.get('actual_home_score') or pick.get('home_score')
+        away_score = pick.get('actual_away_score') or pick.get('away_score')
 
-        if home_score is None or away_score is None:
-            # Estimate from line
+        if home_score is not None and away_score is not None:
+            real_scores_used += 1
+        else:
+            # Fallback: Estimate from line and result (less accurate)
+            estimated_scores_used += 1
             line = pick.get('line', 0)
-            base = 105 if sport == 'NBA' else 100
-            home_score = base + line / 2 if line else base + 3
-            away_score = base - line / 2 if line else base - 3
+            result = pick.get('result', '').upper()
 
-        matchup.record_matchup(sport, home_team, away_team, home_score, away_score)
+            # Sport-specific base scores
+            if sport == 'NBA':
+                base = 105
+            elif sport == 'NFL':
+                base = 22
+            elif sport == 'MLB':
+                base = 4
+            elif sport == 'NHL':
+                base = 3
+            else:
+                base = 100
+
+            margin = abs(line) if line else 5
+
+            if result == 'WIN':
+                home_score = base + margin / 2
+                away_score = base - margin / 2
+            else:
+                home_score = base - margin / 2
+                away_score = base + margin / 2
+
+        matchup.record_matchup(sport, home_team, away_team, float(home_score), float(away_score))
         updated += 1
 
     # Save matchups
     matchup._save_matchups()
-    logger.info(f"Updated matchup matrix with {updated} game results")
+    logger.info(
+        "Updated matchup matrix: %d games (%d real scores, %d estimated)",
+        updated, real_scores_used, estimated_scores_used
+    )
 
     # Compute training signature
     all_matchups = matchup.matchups
@@ -333,6 +384,8 @@ def update_matchup_matrix(picks: list) -> dict:
 
     return {
         'games_processed': updated,
+        'real_scores_used': real_scores_used,
+        'estimated_scores_used': estimated_scores_used,
         'sports_included': sorted(list(sports_seen)),
         'matchups_tracked_total': len(all_matchups),
         'games_per_matchup_avg': round(sum(games_per_matchup) / len(games_per_matchup), 2) if games_per_matchup else 0,

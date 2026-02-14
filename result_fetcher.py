@@ -279,6 +279,80 @@ async def fetch_completed_games(sport: str, days_back: int = 1) -> List[GameResu
 
 
 # =============================================================================
+# GAME SCORES LOOKUP - v20.22
+# =============================================================================
+
+async def build_game_scores_lookup(
+    sport: str,
+    days_back: int = 2
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Build a lookup dictionary of game scores by event_id.
+
+    v20.22: Used by auto_grader to populate actual_home_score and actual_away_score
+    in graded picks for matchup model training.
+
+    Args:
+        sport: Sport code (NBA, NFL, etc.)
+        days_back: How many days back to check
+
+    Returns:
+        Dict mapping event_id -> {home_team, away_team, home_score, away_score, total}
+    """
+    games = await fetch_completed_games(sport, days_back)
+    lookup = {}
+
+    for game in games:
+        lookup[game.game_id] = {
+            'home_team': game.home_team,
+            'away_team': game.away_team,
+            'home_score': game.home_score,
+            'away_score': game.away_score,
+            'total': game.home_score + game.away_score,
+            'sport': game.sport,
+            'completed': game.completed,
+            'commence_time': game.commence_time,
+        }
+
+    logger.info("Built scores lookup for %d %s games", len(lookup), sport)
+    return lookup
+
+
+def get_game_scores_for_pick(
+    pick: Dict,
+    scores_lookup: Dict[str, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Get actual game scores for a pick from the scores lookup.
+
+    v20.22: Matches pick to game by event_id or team names.
+
+    Args:
+        pick: Pick dictionary with event_id or team names
+        scores_lookup: Lookup from build_game_scores_lookup()
+
+    Returns:
+        Dict with home_score, away_score, total, or empty dict if not found
+    """
+    # Try exact match by event_id
+    event_id = pick.get('event_id', '')
+    if event_id and event_id in scores_lookup:
+        return scores_lookup[event_id]
+
+    # Fallback: match by team names
+    home_team = pick.get('home_team', '').lower()
+    away_team = pick.get('away_team', '').lower()
+
+    if home_team and away_team:
+        for game_scores in scores_lookup.values():
+            if (game_scores['home_team'].lower() == home_team and
+                game_scores['away_team'].lower() == away_team):
+                return game_scores
+
+    return {}
+
+
+# =============================================================================
 # CLOSING LINE VALUE (CLV) - v14.10
 # =============================================================================
 
@@ -1225,11 +1299,24 @@ async def auto_grade_picks(
 
             # Update the pick in grader_store (SINGLE SOURCE OF TRUTH)
             from core.time_et import now_et
+
+            # v20.22: Pass actual game scores for matchup model training
+            home_score = None
+            away_score = None
+            total_score = None
+            if matched_game:
+                home_score = matched_game.home_score
+                away_score = matched_game.away_score
+                total_score = home_score + away_score
+
             grade_result = grader_store.mark_graded(
                 pick_id=pick.get("pick_id"),
                 result=result,
                 actual_value=actual_value,
-                graded_at=now_et().isoformat()
+                graded_at=now_et().isoformat(),
+                actual_home_score=home_score,
+                actual_away_score=away_score,
+                total_score=total_score
             )
 
             if grade_result:
