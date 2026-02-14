@@ -4666,3 +4666,45 @@ Deploy verified ✅
 **Added in:** v20.28.1 (Feb 14, 2026)
 
 ---
+
+### Lesson 122: Paid APIs First — Always Prioritize Paid Features (v20.28.2)
+**Problem:** Live scores were fetched from ESPN (free API) even though we pay for Odds API which has a `/scores` endpoint that includes in-progress games.
+
+**Root Cause:** Historical implementation choice. The Odds API `/scores` endpoint was being used only for completed games (filtered with `if game.get("completed")`). Live scores for display were fetched from ESPN scoreboard instead.
+
+**Solution:**
+1. **Modified Odds API usage** — Now fetches ALL games (completed + in-progress) not just completed
+2. **Added `is_live` field** — `GameResult` dataclass now distinguishes in-progress games
+3. **Prioritize paid APIs** — Odds API is primary source, ESPN is fallback only
+
+**New Functions (result_fetcher.py):**
+- `fetch_live_scores(sport)` — Returns in-progress games only from Odds API
+- `fetch_all_game_scores(sport, days_back)` — Returns ALL games (completed + in-progress)
+- `build_live_scores_lookup(sport)` — Builds lookup dict for quick team matching
+
+**API Priority Order:**
+| Priority | API | Purpose | Cost |
+|----------|-----|---------|------|
+| 1 | **Odds API** | Live scores, odds, props, historical | Paid |
+| 2 | **Playbook API** | Sharp money, splits, injuries | Paid |
+| 3 | **BallDontLie** | NBA player stats for grading | Paid |
+| 4 | **ESPN** | Fallback for officials, venue, scores | Free |
+
+**Debug Telemetry:**
+- `live_scores_source`: "odds_api" | "espn" | "none"
+- `live_scores_count`: Number of games with live score data
+
+**Prevention Rules:**
+1. **Paid APIs first** — Always check if paid API has the feature before using free APIs
+2. **Free APIs are fallbacks** — ESPN, NOAA, etc. should only be used when paid APIs unavailable
+3. **Track data source** — Include `source` field in response data for auditability
+4. **Document API capabilities** — Know what each paid API can do
+
+**Files Modified:**
+- `result_fetcher.py` — Added 3 new functions for Odds API live scores
+- `live_data_router.py` — Use Odds API as primary, ESPN as fallback
+- `GameResult` dataclass — Added `is_live: bool` field
+
+**Added in:** v20.28.2 (Feb 14, 2026)
+
+---

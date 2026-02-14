@@ -157,7 +157,7 @@ STAT_TYPE_MAP = {
 
 @dataclass
 class GameResult:
-    """Completed game result."""
+    """Game result (completed or in-progress)."""
     game_id: str
     sport: str
     home_team: str
@@ -167,6 +167,8 @@ class GameResult:
     completed: bool
     commence_time: str
     last_update: str
+    # v20.28.2: Added for live betting support
+    is_live: bool = False  # True if game is in-progress (not completed, has started)
 
 
 @dataclass
@@ -276,6 +278,218 @@ async def fetch_completed_games(sport: str, days_back: int = 1) -> List[GameResu
     except Exception as e:
         logger.error("Error fetching scores: %s", e)
         return []
+
+
+# =============================================================================
+# v20.28.2: ODDS API - LIVE SCORES (In-Progress Games)
+# =============================================================================
+
+async def fetch_live_scores(sport: str) -> List[GameResult]:
+    """
+    Fetch live (in-progress) game scores from Odds API.
+
+    v20.28.2: New function to get real-time scores for live betting display.
+    Uses paid Odds API instead of ESPN for live scores.
+
+    Args:
+        sport: Sport code (NBA, NFL, etc.)
+
+    Returns:
+        List of GameResult objects for in-progress games only
+    """
+    if not ODDS_API_KEY:
+        logger.warning("ODDS_API_KEY not set - cannot fetch live scores")
+        return []
+
+    sport_key = ODDS_API_SPORTS.get(sport.upper())
+    if not sport_key:
+        logger.warning("Unknown sport for live scores: %s", sport)
+        return []
+
+    url = f"{ODDS_API_BASE}/sports/{sport_key}/scores"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "daysFrom": 1  # Today's games
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, params=params)
+
+            if resp.status_code == 401:
+                logger.error("Odds API auth failed for live scores")
+                return []
+
+            if resp.status_code != 200:
+                logger.error("Odds API live scores error: %d", resp.status_code)
+                return []
+
+            data = resp.json()
+
+            results = []
+            for game in data:
+                # Include in-progress games (not completed but have started)
+                if not game.get("completed") and game.get("scores"):
+                    scores = game.get("scores", [])
+                    home_score = 0
+                    away_score = 0
+
+                    for score in scores:
+                        if score.get("name") == game.get("home_team"):
+                            home_score = int(score.get("score", 0) or 0)
+                        elif score.get("name") == game.get("away_team"):
+                            away_score = int(score.get("score", 0) or 0)
+
+                    results.append(GameResult(
+                        game_id=game.get("id", ""),
+                        sport=sport.upper(),
+                        home_team=game.get("home_team", ""),
+                        away_team=game.get("away_team", ""),
+                        home_score=home_score,
+                        away_score=away_score,
+                        completed=False,
+                        is_live=True,
+                        commence_time=game.get("commence_time", ""),
+                        last_update=game.get("last_update", "")
+                    ))
+
+            logger.info("Fetched %d live %s games from Odds API", len(results), sport)
+            return results
+
+    except Exception as e:
+        logger.error("Error fetching live scores: %s", e)
+        return []
+
+
+async def fetch_all_game_scores(sport: str, days_back: int = 1) -> List[GameResult]:
+    """
+    Fetch ALL game scores (completed + in-progress) from Odds API.
+
+    v20.28.2: Comprehensive function for live betting that includes both
+    completed games and in-progress games with current scores.
+
+    Args:
+        sport: Sport code (NBA, NFL, etc.)
+        days_back: How many days back to check
+
+    Returns:
+        List of GameResult objects for all games (completed and in-progress)
+    """
+    if not ODDS_API_KEY:
+        logger.warning("ODDS_API_KEY not set - cannot fetch scores")
+        return []
+
+    sport_key = ODDS_API_SPORTS.get(sport.upper())
+    if not sport_key:
+        logger.warning("Unknown sport for scores: %s", sport)
+        return []
+
+    url = f"{ODDS_API_BASE}/sports/{sport_key}/scores"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "daysFrom": days_back
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, params=params)
+
+            if resp.status_code == 401:
+                logger.error("Odds API auth failed")
+                return []
+
+            if resp.status_code != 200:
+                logger.error("Odds API scores error: %d", resp.status_code)
+                return []
+
+            data = resp.json()
+
+            results = []
+            for game in data:
+                scores = game.get("scores", [])
+                home_score = 0
+                away_score = 0
+
+                for score in scores:
+                    if score.get("name") == game.get("home_team"):
+                        home_score = int(score.get("score", 0) or 0)
+                    elif score.get("name") == game.get("away_team"):
+                        away_score = int(score.get("score", 0) or 0)
+
+                is_completed = game.get("completed", False)
+                # Game is live if not completed but has scores
+                is_live = not is_completed and bool(scores) and (home_score > 0 or away_score > 0)
+
+                results.append(GameResult(
+                    game_id=game.get("id", ""),
+                    sport=sport.upper(),
+                    home_team=game.get("home_team", ""),
+                    away_team=game.get("away_team", ""),
+                    home_score=home_score,
+                    away_score=away_score,
+                    completed=is_completed,
+                    is_live=is_live,
+                    commence_time=game.get("commence_time", ""),
+                    last_update=game.get("last_update", "")
+                ))
+
+            live_count = sum(1 for g in results if g.is_live)
+            completed_count = sum(1 for g in results if g.completed)
+            logger.info("Fetched %d %s games (%d live, %d completed) from Odds API",
+                       len(results), sport, live_count, completed_count)
+            return results
+
+    except Exception as e:
+        logger.error("Error fetching all scores: %s", e)
+        return []
+
+
+async def build_live_scores_lookup(sport: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Build a lookup dictionary of live game scores by team name normalization.
+
+    v20.28.2: Primary source for live betting display. Uses Odds API.
+
+    Args:
+        sport: Sport code (NBA, NFL, etc.)
+
+    Returns:
+        Dict mapping normalized team keys -> {home_team, away_team, home_score, away_score, is_live}
+    """
+    games = await fetch_all_game_scores(sport, days_back=1)
+    lookup = {}
+
+    def normalize_team(name: str) -> str:
+        """Normalize team name for matching."""
+        return name.lower().strip().replace(" ", "").replace("-", "")
+
+    for game in games:
+        # Create multiple lookup keys for flexible matching
+        home_key = normalize_team(game.home_team)
+        away_key = normalize_team(game.away_team)
+        combined_key = f"{home_key}_{away_key}"
+
+        game_data = {
+            "home_team": game.home_team,
+            "away_team": game.away_team,
+            "home_score": game.home_score,
+            "away_score": game.away_score,
+            "total": game.home_score + game.away_score,
+            "is_live": game.is_live,
+            "completed": game.completed,
+            "game_id": game.game_id,
+            "commence_time": game.commence_time,
+            "last_update": game.last_update,
+            "source": "odds_api",  # v20.28.2: Mark data source
+        }
+
+        # Index by home team, away team, and combined
+        lookup[home_key] = game_data
+        lookup[away_key] = game_data
+        lookup[combined_key] = game_data
+
+    logger.info("Built live scores lookup with %d entries for %s from Odds API", len(lookup), sport)
+    return lookup
 
 
 # =============================================================================

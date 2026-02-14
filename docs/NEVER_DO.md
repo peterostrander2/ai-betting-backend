@@ -1812,3 +1812,13 @@ live-api-audit:        # Live audit after deploy
 - `scripts/live_betting_audit_all_sports.sh` — Cross-sport live audit
 
 ---
+
+## v20.28.2 Paid APIs First (rules 331-335)
+
+331. **NEVER** use ESPN for data that Odds API provides — live scores, odds, lines are all available from paid API
+332. **NEVER** default to free API when paid API has the same feature — check paid APIs first
+333. **NEVER** add new ESPN integrations without confirming paid APIs dont have the data
+334. **ALWAYS** include `source` field in data to track which API provided it (auditability)
+335. **ALWAYS** document API priority in comments when choosing between paid and free sources
+
+---

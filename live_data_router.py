@@ -347,11 +347,17 @@ try:
         auto_grade_picks,
         fetch_completed_games,
         fetch_nba_player_stats,
-        scheduled_auto_grade
+        scheduled_auto_grade,
+        # v20.28.2: Live scores from Odds API (paid API prioritized)
+        fetch_live_scores,
+        fetch_all_game_scores,
+        build_live_scores_lookup,
     )
     RESULT_FETCHER_AVAILABLE = True
+    ODDS_API_LIVE_SCORES_AVAILABLE = True
 except ImportError:
     RESULT_FETCHER_AVAILABLE = False
+    ODDS_API_LIVE_SCORES_AVAILABLE = False
     logger.warning("result_fetcher module not available - auto-grading disabled")
 
 # Import Unified Player Identity Resolver (v14.9 - CRITICAL for prop accuracy)
@@ -6700,10 +6706,46 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     logger.info("ESPN EVENTS LOOKUP: %d games mapped", len(_espn_events_by_teams))
 
-    # v20.11: Build live scores lookup from ESPN scoreboard for live signals (Enhancement 2)
+    # v20.28.2: Build live scores lookup - Odds API FIRST (paid), ESPN fallback (free)
     # Maps (home_team_lower, away_team_lower) -> {home_score, away_score, period, status}
     _live_scores_by_teams = {}
-    if espn_scoreboard and isinstance(espn_scoreboard, dict):
+    _live_scores_source = "none"
+
+    # PRIMARY: Use Odds API for live scores (paid API - prioritized)
+    if ODDS_API_LIVE_SCORES_AVAILABLE:
+        try:
+            _odds_api_scores = await build_live_scores_lookup(sport)
+            if _odds_api_scores:
+                # Convert Odds API format to expected tuple-keyed format
+                for key_str, game_data in _odds_api_scores.items():
+                    if "_" in key_str:  # This is a combined key (home_away)
+                        parts = key_str.split("_")
+                        if len(parts) >= 2:
+                            home_key = parts[0]
+                            away_key = parts[1]
+                            tuple_key = (home_key, away_key)
+                            # Determine game status from is_live and completed flags
+                            if game_data.get("completed"):
+                                game_status = "post"
+                            elif game_data.get("is_live"):
+                                game_status = "in"
+                            else:
+                                game_status = "pre"
+                            _live_scores_by_teams[tuple_key] = {
+                                "home_score": game_data.get("home_score", 0),
+                                "away_score": game_data.get("away_score", 0),
+                                "period": 0,  # Odds API doesn't provide period
+                                "status": game_status,
+                                "source": "odds_api",  # Track data source
+                            }
+                _live_scores_source = "odds_api"
+                logger.info("LIVE SCORES LOOKUP: %d games from Odds API (paid)", len(_live_scores_by_teams))
+        except Exception as e:
+            logger.warning("Odds API live scores failed, will try ESPN fallback: %s", e)
+
+    # FALLBACK: Use ESPN scoreboard only if Odds API unavailable or failed
+    if not _live_scores_by_teams and espn_scoreboard and isinstance(espn_scoreboard, dict):
+        logger.info("Using ESPN scoreboard as fallback for live scores (free API)")
         for event in espn_scoreboard.get("events", []):
             competitions = event.get("competitions", [])
             if not competitions:
@@ -6745,9 +6787,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "away_score": away_score,
                     "period": period,
                     "status": game_status,  # "pre", "in", "post"
+                    "source": "espn",  # Track data source
                 }
+        _live_scores_source = "espn"
+        logger.info("LIVE SCORES LOOKUP: %d games from ESPN (fallback)", len(_live_scores_by_teams))
 
-    logger.info("LIVE SCORES LOOKUP: %d games with scores", len(_live_scores_by_teams))
+    logger.info("LIVE SCORES: %d total games, source=%s", len(_live_scores_by_teams), _live_scores_source)
 
     # v17.9: REST DAYS from ESPN schedule (lookback window)
     _rest_days_by_team = {}
@@ -8659,6 +8704,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "sharp_lookup_size": len(sharp_lookup),
             "sharp_source": sharp_data.get("source", "unknown"),
             "game_context_size": len(game_context),
+            # v20.28.2: Live scores data source (Odds API paid first, ESPN fallback)
+            "live_scores_source": _live_scores_source,
+            "live_scores_count": len(_live_scores_by_teams),
             "splits_present_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("research_breakdown", {}).get("sharp_boost", 0) > 0),
             "jarvis_active_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("jarvis_hits_count", 0) > 0),
             "jason_ran_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("jason_ran", False)),

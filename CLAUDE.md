@@ -116,6 +116,7 @@
 | 114-119 | **v20.27 AI Score Variance** | MPS model_std units, NCAAB defaults, heuristic fallback, moneyline odds-implied, variance gates |
 | 120 | **v20.28 Cross-Sport Testing** | Fixture-based CI, sport-parametric tests, NO_SLATE handling |
 | 121 | **v20.28.1 CI Hardening** | Tests in repo ≠ tests in CI, wire them to GitHub Actions, hard gate classes |
+| 122 | **v20.28.2 Paid APIs First** | Use Odds API for live scores (paid), ESPN as fallback (free). Always prioritize paid API features |
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
@@ -400,7 +401,32 @@ API_KEY=your_key SPORT=NCAAB ./scripts/live_betting_audit.sh
 | `scripts/live_betting_audit_all_sports.sh` | Cross-sport audit for NBA/NCAAB/NFL/MLB/NHL with NO_SLATE handling — v20.28 |
 | `time_filters.py` | Game status derivation: `get_game_status(commence_time, completed)` returns PRE_GAME/IN_PROGRESS/FINAL/NOT_TODAY — v20.26 |
 
-### Current Version: v20.28.1 (Feb 14, 2026)
+### Current Version: v20.28.2 (Feb 14, 2026)
+
+**v20.28.2 (Feb 14, 2026) — Paid APIs First: Odds API Live Scores:**
+
+**Problem:** Live scores were fetched from ESPN (free API) even though we pay for Odds API which has `/scores` endpoint.
+
+**Solution:** Prioritize paid APIs (Odds API, Playbook API) over free APIs (ESPN).
+
+**Changes:**
+- `result_fetcher.py` — Added `fetch_live_scores()`, `fetch_all_game_scores()`, `build_live_scores_lookup()` functions
+- `live_data_router.py` — Use Odds API for live scores as primary source, ESPN as fallback only
+- `GameResult` dataclass — Added `is_live: bool` field to distinguish in-progress games
+
+**API Priority Order:**
+1. **Odds API** (paid) — Live scores, odds, props, historical data
+2. **Playbook API** (paid) — Sharp money, splits, injuries, game logs
+3. **BallDontLie** (paid) — NBA player stats for grading
+4. **ESPN** (free) — Fallback for: officials, venue info, scores when paid APIs unavailable
+
+**Debug Telemetry:**
+- `live_scores_source`: "odds_api" | "espn" | "none" — Shows which API provided live scores
+- `live_scores_count`: Number of games with live score data
+
+**Lesson 122:** Always prioritize paid API features over free APIs. Use free APIs only as fallback.
+
+---
 
 **v20.28.1 (Feb 14, 2026) — CI Hardening: Tests Wired to GitHub Actions:**
 
