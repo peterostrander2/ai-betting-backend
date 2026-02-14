@@ -600,6 +600,66 @@ SPORT_MAPPINGS = {
 }
 
 # ============================================================================
+# v20.22: SHADOW CONFLUENCE LOGGING
+# ============================================================================
+# Log shadow confluence telemetry to JSONL file for later analysis.
+# Path: /data/shadow/math_glitch_confluence.jsonl
+
+SHADOW_LOG_PATH = os.path.join(
+    os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/data"),
+    "shadow",
+    "math_glitch_confluence.jsonl"
+)
+
+
+def log_shadow_confluence(pick_data: dict, shadow_confluence: dict):
+    """
+    Log shadow confluence telemetry for later analysis.
+
+    Writes one JSONL entry per pick to track:
+    - would_apply: True if ≥2 math signals fired
+    - signals: list of which math signals triggered
+    - boost: what the boost WOULD have been
+    - final_score/tier: for outcome correlation analysis
+
+    Args:
+        pick_data: The pick result dict
+        shadow_confluence: The shadow_confluence dict from the pick
+    """
+    try:
+        # Skip if no shadow_confluence data
+        if not shadow_confluence or not shadow_confluence.get("math_glitch_confluence"):
+            return
+
+        math_conf = shadow_confluence["math_glitch_confluence"]
+
+        # Build telemetry entry
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "sport": pick_data.get("sport"),
+            "league": pick_data.get("league"),
+            "pick_id": pick_data.get("pick_id"),
+            "would_apply": math_conf.get("would_apply", False),
+            "signals": math_conf.get("signals", []),
+            "count": math_conf.get("count", 0),
+            "boost": math_conf.get("boost", 0.0),
+            "final_score": pick_data.get("final_score"),
+            "tier": pick_data.get("tier"),
+        }
+
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(SHADOW_LOG_PATH), exist_ok=True)
+
+        # Append to JSONL file
+        with open(SHADOW_LOG_PATH, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+
+    except Exception as e:
+        # Fail silently - shadow logging should never break picks
+        logger.debug("Shadow confluence logging error (non-fatal): %s", e)
+
+
+# ============================================================================
 # SHARED HTTP CLIENT
 # ============================================================================
 
@@ -5575,6 +5635,33 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "_error": str(e)
             }
 
+        # =================================================================
+        # v20.22: SHADOW CONFLUENCE - Math Glitch Confluence (compute but do NOT apply)
+        # This tracks if ≥2 math signals fire, which would trigger MATH_GLITCH_CONFLUENCE
+        # boost in v21+. For now we just record telemetry.
+        # =================================================================
+        _math_signals_fired = 0
+        _math_fired_names = []
+        if _glitch_signals:
+            if _glitch_signals.get("golden_ratio", {}).get("triggered"):
+                _math_signals_fired += 1
+                _math_fired_names.append("golden_ratio")
+            if _glitch_signals.get("prime_resonance", {}).get("triggered"):
+                _math_signals_fired += 1
+                _math_fired_names.append("prime_resonance")
+            if _glitch_signals.get("numerical_symmetry", {}).get("triggered"):
+                _math_signals_fired += 1
+                _math_fired_names.append("numerical_symmetry")
+
+        _shadow_confluence = {
+            "math_glitch_confluence": {
+                "would_apply": _math_signals_fired >= 2,
+                "signals": _math_fired_names,
+                "count": _math_signals_fired,
+                "boost": 0.5 if _math_signals_fired >= 2 else 0.0
+            }
+        }
+
         return {
             "total_score": round(final_score, 2),
             "final_score": round(final_score, 2),  # Alias for frontend
@@ -5669,6 +5756,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             },
             # v20.18 Esoteric breakdown with per-signal provenance (Engine 3 semantic audit)
             "esoteric_breakdown": _esoteric_breakdown_full,
+            # v20.22 Shadow confluence (telemetry only - does NOT affect scoring)
+            "shadow_confluence": _shadow_confluence,
             # v20.16 AI breakdown (Engine 1 transparency - anti-fake-confidence audit)
             "ai_breakdown": {
                 "ai_mode": _ai_telemetry.get("ai_mode", "UNKNOWN"),
@@ -7663,6 +7752,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # Persist (idempotent by pick_id)
             if grader_store.persist_pick(pick, date_et_for_store):
                 _grader_store_persisted += 1
+                # v20.22: Log shadow confluence telemetry for math glitch analysis
+                if pick.get("shadow_confluence"):
+                    log_shadow_confluence(pick, pick.get("shadow_confluence"))
             else:
                 _grader_store_duplicates += 1
 

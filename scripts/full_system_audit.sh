@@ -513,6 +513,41 @@ else
 fi
 
 # ============================================================
+# [INFORMATIONAL] Math Glitch Shadow Confluence (v20.22)
+# ============================================================
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo -e "${CYAN}[INFORMATIONAL] Math Glitch Shadow Confluence${NC}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Check shadow_confluence exists in debug output (non-gating)
+if [[ "$GAME_COUNT" -gt 0 ]]; then
+    SHADOW_CHECK=$(echo "$BESTBETS_JSON" | jq -r '.game_picks.picks[0].shadow_confluence.math_glitch_confluence // "MISSING"')
+
+    if [[ "$SHADOW_CHECK" != "MISSING" && "$SHADOW_CHECK" != "null" ]]; then
+        echo "  ✓ shadow_confluence.math_glitch_confluence present in picks"
+
+        # Count would_apply picks
+        WOULD_APPLY=$(echo "$BESTBETS_JSON" | jq '[.game_picks.picks[] | select(.shadow_confluence.math_glitch_confluence.would_apply == true)] | length')
+        TOTAL_GAME_PICKS=$(echo "$BESTBETS_JSON" | jq '.game_picks.picks | length')
+
+        echo "  Shadow fire rate: $WOULD_APPLY / $TOTAL_GAME_PICKS game picks"
+
+        # Show sample if any fired
+        if [[ "$WOULD_APPLY" -gt 0 ]]; then
+            echo "  Sample signals that would fire:"
+            echo "$BESTBETS_JSON" | jq -r '[.game_picks.picks[] | select(.shadow_confluence.math_glitch_confluence.would_apply == true) | .shadow_confluence.math_glitch_confluence.signals] | .[0] // ["none"]'
+        fi
+    else
+        echo "  ⚠ shadow_confluence not found in picks (may be 0 picks with data)"
+    fi
+else
+    echo "  ⚠ No game picks to check for shadow_confluence"
+fi
+echo ""
+# Do NOT fail audit - this is informational only
+
+# ============================================================
 # DIAGNOSTICS
 # ============================================================
 if [[ ${#DIAGNOSTICS[@]} -gt 0 ]]; then

@@ -1242,13 +1242,18 @@ def get_glitch_aggregate(
     """
     Calculate aggregate GLITCH Protocol score from all orphaned signals.
 
-    Combines:
-    - Chrome Resonance (if birth_date provided) - weight 0.25
+    Combines (v20.22 weights - normalized by total_weight):
+    - Chrome Resonance (if birth_date provided) - weight 0.20
     - Void Moon (always) - weight 0.20
-    - Noosphere Velocity (if SerpAPI enabled) - weight 0.15
+    - Noosphere Velocity (if SerpAPI enabled) - weight 0.15 (DISABLED by default)
     - Hurst Exponent (if line_history provided) - weight 0.25
     - Kp-Index / Schumann (always) - weight 0.25
-    - Benford Anomaly (if value_for_benford provided) - weight 0.10
+    - Golden Ratio (if primary_value provided) - weight 0.04
+    - Prime Resonance (if primary_value provided) - weight 0.03
+    - Numerical Symmetry (if primary_value provided) - weight 0.03
+
+    v20.22: Replaced benford_anomaly (0.10) with 3 math signals (0.04 + 0.03 + 0.03).
+    Total weights sum to ~1.00 and are normalized by dividing by total_weight.
 
     Returns aggregated score and breakdown for esoteric engine integration.
     """
@@ -1258,11 +1263,11 @@ def get_glitch_aggregate(
     triggered_signals = []
     reasons = []
 
-    # 1. Chrome Resonance (weight: 0.25)
+    # 1. Chrome Resonance (weight: 0.20) - v20.22: reduced from 0.25 to accommodate math signals
     if birth_date_str:
         chrome = calculate_chrome_resonance(birth_date_str, game_date)
         results["chrome_resonance"] = chrome
-        weight = 0.25
+        weight = 0.20
         weighted_score += chrome["score"] * weight
         total_weight += weight
         if chrome["triggered"]:
@@ -1354,24 +1359,51 @@ def get_glitch_aggregate(
         total_weight += weight
         reasons.append(f"SCHUMANN: {schumann['status']} ({schumann['current_hz']}Hz)")
 
-    # 5. Benford Anomaly (weight: 0.10) - detect statistical manipulation in lines
-    if value_for_benford and len(value_for_benford) >= 10:
-        try:
-            from signals.math_glitch import check_benford_anomaly
-            benford = check_benford_anomaly(value_for_benford)
-            results["benford"] = benford
-            weight = 0.10
-            benford_score = benford.get("score", 0.5)
-            weighted_score += benford_score * weight
-            total_weight += weight
-            if benford.get("triggered"):
-                triggered_signals.append(f"benford_anomaly_{benford.get('deviation', 0):.2f}")
-            reasons.append(f"BENFORD: {benford.get('reason', 'UNKNOWN')}")
-        except ImportError:
-            pass  # signals module not available
+    # 5. Math Glitch Signals (v20.22: replaced benford_anomaly with 3 math signals)
+    # Total weight: 0.10 (golden_ratio 0.04 + prime_resonance 0.03 + numerical_symmetry 0.03)
+    try:
+        from signals.math_glitch import check_golden_ratio, check_prime_resonance, check_numerical_symmetry
 
-    # NOTE: golden_ratio, prime_resonance, phoenix_resonance exist in codebase
-    # but are NOT wired into scoring (present but not wired - see ESOTERIC_TRUTH_TABLE.md)
+        # 5a. Golden Ratio (weight: 0.04)
+        if primary_value is not None:
+            golden = check_golden_ratio(primary_value)
+            results["golden_ratio"] = golden
+            weight = 0.04
+            golden_score = golden.get("score", 0.5)
+            weighted_score += golden_score * weight
+            total_weight += weight
+            if golden.get("triggered"):
+                triggered_signals.append("golden_ratio")
+            reasons.append(f"GOLDEN_RATIO: {golden.get('reason', 'NO_DATA')}")
+
+        # 5b. Prime Resonance (weight: 0.03)
+        if primary_value is not None:
+            prime = check_prime_resonance(primary_value)
+            results["prime_resonance"] = prime
+            weight = 0.03
+            prime_score = prime.get("score", 0.5)
+            weighted_score += prime_score * weight
+            total_weight += weight
+            if prime.get("triggered"):
+                triggered_signals.append("prime_resonance")
+            reasons.append(f"PRIME_RESONANCE: {prime.get('reason', 'NO_DATA')}")
+
+        # 5c. Numerical Symmetry (weight: 0.03)
+        if primary_value is not None:
+            symmetry = check_numerical_symmetry(primary_value)
+            results["numerical_symmetry"] = symmetry
+            weight = 0.03
+            symmetry_score = symmetry.get("score", 0.5)
+            weighted_score += symmetry_score * weight
+            total_weight += weight
+            if symmetry.get("triggered"):
+                triggered_signals.append("numerical_symmetry")
+            reasons.append(f"NUMERICAL_SYMMETRY: {symmetry.get('reason', 'NO_DATA')}")
+
+    except ImportError:
+        pass  # signals module not available
+
+    # NOTE: benford_anomaly removed in v20.22 (triggers <2% of picks, replaced with math signals)
 
     # NOTE: FRED and Finnhub API clients exist in alt_data_sources/ but are NOT
     # wired into scoring. They are available for future use but adding them here

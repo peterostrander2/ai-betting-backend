@@ -1,8 +1,24 @@
 # Engine 3 (Esoteric) Truth Table
 
-**Version:** v20.18
-**Last Updated:** 2026-02-10
+**Version:** v20.22
+**Last Updated:** 2026-02-14
 **Status:** SEMANTICALLY AUDITABLE
+
+---
+
+## v20.22 Changes
+
+**GLITCH Protocol Weight Rebalancing:**
+- **REMOVED:** `benford` (0.10 weight) - triggers <2% of picks
+- **ADDED:** `golden_ratio` (0.04 weight) - phi alignment detection
+- **ADDED:** `prime_resonance` (0.03 weight) - prime number patterns
+- **ADDED:** `numerical_symmetry` (0.03 weight) - palindrome/pattern detection
+- **MODIFIED:** `chrome_resonance` weight reduced from 0.25 to 0.20
+
+**Shadow Confluence (MONITORING):**
+- `shadow_confluence.math_glitch_confluence` computed but NOT applied
+- Tracks when >=2 math signals fire
+- Will be promoted to scoring in v21+ if criteria met
 
 ---
 
@@ -55,18 +71,22 @@ This document defines the **single source of truth** for Engine 3 (Esoteric) sig
 
 ## Wired Signals (23 Total)
 
-### GLITCH Protocol (6 signals)
+### GLITCH Protocol (8 signals - v20.22)
 
 Called via `get_glitch_aggregate()` in esoteric_engine.py (lines 1234-1450)
 
 | Signal | Source Type | Source API | Required Inputs | Failure Behavior | Max Contribution |
 |--------|-------------|------------|-----------------|------------------|------------------|
-| `chrome_resonance` | INTERNAL | null | birth_date, game_date | NO_DATA if birth_date missing | 0.25 weight |
+| `chrome_resonance` | INTERNAL | null | birth_date, game_date | NO_DATA if birth_date missing | 0.20 weight |
 | `void_moon` | INTERNAL | null | game_date | Uses astronomical_api fallback | 0.20 weight |
 | `noosphere` | EXTERNAL | serpapi | teams, player | DISABLED if SERPAPI_KEY absent | 0.15 weight |
 | `hurst` | INTERNAL | null | line_history (10+ values) | NO_DATA if insufficient history | 0.25 weight |
 | `kp_index` | EXTERNAL | noaa | none | Fallback to schumann simulation | 0.25 weight |
-| `benford` | INTERNAL | null | value_for_benford (10+ values) | NO_DATA if insufficient values | 0.10 weight |
+| `golden_ratio` | INTERNAL | null | primary_value | Returns 0.5 if no data | 0.04 weight |
+| `prime_resonance` | INTERNAL | null | primary_value | Returns 0.5 if no data | 0.03 weight |
+| `numerical_symmetry` | INTERNAL | null | primary_value | Returns 0.5 if no data | 0.03 weight |
+
+**v20.22 Note:** `benford` signal removed (triggered <2% of picks). Math signals (golden_ratio, prime_resonance, numerical_symmetry) added with combined weight 0.10.
 
 ### Phase 8 (5 signals)
 
@@ -104,18 +124,20 @@ Called via `get_phase8_esoteric_signals()` in esoteric_engine.py (lines 2053-218
 
 ---
 
-## Present But Not Wired (6 signals)
+## Present But Not Wired (4 signals - v20.22)
 
 **WARNING**: These signals have code but are NEVER CALLED in the production path. They MUST NOT appear in `esoteric_breakdown`.
 
 | Signal | Location | Status | Why Not Wired |
 |--------|----------|--------|---------------|
-| `golden_ratio` | signals/math_glitch.py | DORMANT | Code exists but not called from get_glitch_aggregate() |
-| `prime_resonance` | signals/math_glitch.py | DORMANT | Code exists but not called from get_glitch_aggregate() |
 | `phoenix_resonance` | esoteric_engine.py | DORMANT | calculate_phoenix_resonance() exists but not called |
 | `planetary_hour` | jarvis_savant_engine.py | DORMANT | VedicAstroEngine.calculate_planetary_hour() exists but not used in scoring |
-| `symmetry_analysis` | signals/math_glitch.py | ORPHANED | Not called from get_glitch_aggregate() |
+| `benford_anomaly` | signals/math_glitch.py | REMOVED v20.22 | Triggered <2% of picks, replaced with math signals |
 | `parlay_correlations` | esoteric_engine.py | ORPHANED | Only for parlay endpoint |
+
+**v20.22 Changes:**
+- `golden_ratio`, `prime_resonance`, `numerical_symmetry` moved to ACTIVE (now in GLITCH protocol)
+- `benford_anomaly` removed from active, marked as REMOVED
 
 ### Fallback Signals (not counted in total)
 
@@ -243,18 +265,20 @@ curl /debug/esoteric-candidates/NBA?limit=50 -H "X-API-Key: KEY" | \
 ## Machine-Readable Signal Lists
 
 ```yaml
-# Machine-readable signal lists for test assertions
+# Machine-readable signal lists for test assertions (v20.22)
 # Tests assert: breakdown signals ⊆ wired_signals
 # Tests assert: present_not_wired signals NOT in breakdown
 
 wired_signals:
-  # GLITCH Protocol (6)
+  # GLITCH Protocol (8 - v20.22)
   - chrome_resonance
   - void_moon
   - noosphere  # DISABLED but wired
   - hurst
   - kp_index
-  - benford
+  - golden_ratio     # v20.22: NEW
+  - prime_resonance  # v20.22: NEW
+  - numerical_symmetry  # v20.22: NEW
   # Phase 8 (5)
   - lunar_phase
   - mercury_retrograde
@@ -277,11 +301,10 @@ wired_signals:
   - trap_mod
 
 present_not_wired:
-  - golden_ratio       # Code exists but not called
-  - prime_resonance    # Code exists but not called
+  # v20.22: golden_ratio, prime_resonance, numerical_symmetry moved to ACTIVE
   - phoenix_resonance  # Code exists but not called
   - planetary_hour     # Code exists but not called
-  - symmetry_analysis
+  - benford_anomaly    # REMOVED v20.22 - triggered <2%
   - parlay_correlations
 
 # Fallback signals (not in wired count)
@@ -299,7 +322,9 @@ internal_signals:
   - chrome_resonance
   - void_moon
   - hurst
-  - benford
+  - golden_ratio      # v20.22: NEW
+  - prime_resonance   # v20.22: NEW
+  - numerical_symmetry  # v20.22: NEW
   - lunar_phase
   - mercury_retrograde
   - rivalry_intensity
@@ -329,8 +354,12 @@ required_inputs_by_signal:
   hurst:
     - line_history
   kp_index: []  # External API, no local inputs
-  benford:
-    - value_for_benford
+  golden_ratio:  # v20.22
+    - primary_value
+  prime_resonance:  # v20.22
+    - primary_value
+  numerical_symmetry:  # v20.22
+    - primary_value
   lunar_phase:
     - game_datetime
   mercury_retrograde:

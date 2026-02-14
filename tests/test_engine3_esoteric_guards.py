@@ -101,22 +101,31 @@ class TestNoHiddenTerms:
 class TestSignalInventory:
     """Verify signal counts match documentation."""
 
-    def test_glitch_protocol_has_6_signals(self):
-        """GLITCH protocol defines 6 signals (5 active + 1 disabled)."""
-        glitch_signals = [
-            "chrome_resonance",  # ACTIVE
-            "void_moon",         # ACTIVE
-            "noosphere",         # DISABLED (SERP cancelled)
-            "hurst",             # ACTIVE
-            "kp_index",          # ACTIVE
-            "benford",           # ACTIVE
-        ]
-        assert len(glitch_signals) == 6, f"Expected 6 GLITCH signals, got {len(glitch_signals)}"
+    def test_glitch_protocol_has_8_signals(self):
+        """GLITCH protocol defines 8 signals (7 active + 1 disabled) after v20.22.
 
-    def test_glitch_active_signals_is_5(self):
-        """5 GLITCH signals are active (noosphere disabled)."""
-        active_glitch = ["chrome_resonance", "void_moon", "hurst", "kp_index", "benford"]
-        assert len(active_glitch) == 5
+        v20.22: Replaced benford (0.10) with golden_ratio (0.04), prime_resonance (0.03),
+        numerical_symmetry (0.03) for better signal coverage.
+        """
+        glitch_signals = [
+            "chrome_resonance",     # ACTIVE (0.20)
+            "void_moon",            # ACTIVE (0.20)
+            "noosphere",            # DISABLED (SERP cancelled)
+            "hurst",                # ACTIVE (0.25)
+            "kp_index",             # ACTIVE (0.25)
+            "golden_ratio",         # ACTIVE (0.04) - v20.22
+            "prime_resonance",      # ACTIVE (0.03) - v20.22
+            "numerical_symmetry",   # ACTIVE (0.03) - v20.22
+        ]
+        assert len(glitch_signals) == 8, f"Expected 8 GLITCH signals, got {len(glitch_signals)}"
+
+    def test_glitch_active_signals_is_7(self):
+        """7 GLITCH signals are active after v20.22 (noosphere disabled)."""
+        active_glitch = [
+            "chrome_resonance", "void_moon", "hurst", "kp_index",
+            "golden_ratio", "prime_resonance", "numerical_symmetry"
+        ]
+        assert len(active_glitch) == 7
 
     def test_phase8_has_5_signals(self):
         """Phase 8 defines exactly 5 signals."""
@@ -129,30 +138,33 @@ class TestSignalInventory:
         ]
         assert len(phase8_signals) == 5, f"Expected 5 Phase 8 signals, got {len(phase8_signals)}"
 
-    def test_total_signal_count_is_29(self):
-        """Total esoteric signals = 29 (23 active + 4 dormant + 1 disabled + 1 weather)."""
-        # From AUDIT_ENGINE3_ESOTERIC.md boundary map
-        active_signals = 23
-        dormant_signals = 4  # golden_ratio, prime, symmetry, schumann
-        disabled_signals = 1  # noosphere
-        # Note: Weather is part of the 23 active
-        total = active_signals + dormant_signals + disabled_signals
-        # Wait - the doc says 29 total but 23+4+1=28. Let me check...
-        # Actually the doc counts weather_boost as part of the 23 active
-        # But we also have 29 entries in the table. Let me recount:
-        # The exact count from the table in the plan is 29.
-        assert total >= 28, f"Expected at least 28 signals, got {total}"
+    def test_total_signal_count_is_27(self):
+        """Total esoteric signals = 27 after v20.22.
 
-    def test_active_signals_count_is_23(self):
-        """23 signals are ACTIVE in production."""
-        # From docs/AUDIT_ENGINE3_ESOTERIC.md
-        active_count = 23
-        assert active_count == 23
+        v20.22 changes:
+        - Removed: benford (triggers <2%)
+        - Added: golden_ratio, prime_resonance, numerical_symmetry (net +2)
+        - Total: 25 active + 2 dormant = 27
+        """
+        active_signals = 25  # 23 - 1 (benford) + 3 (math signals)
+        dormant_signals = 2  # phoenix_resonance, schumann_resonance
+        total = active_signals + dormant_signals
+        assert total == 27, f"Expected 27 signals, got {total}"
 
-    def test_dormant_signals_count_is_4(self):
-        """4 signals are DORMANT (code exists but not wired)."""
-        dormant = ["golden_ratio", "prime_detection", "symmetry_analysis", "schumann_resonance"]
-        assert len(dormant) == 4
+    def test_active_signals_count_is_25(self):
+        """25 signals are ACTIVE in production after v20.22."""
+        # v20.22: 23 original - 1 (benford) + 3 (math signals) = 25
+        active_count = 25
+        assert active_count == 25
+
+    def test_dormant_signals_count_is_2(self):
+        """2 signals are DORMANT after v20.22 (code exists but not wired).
+
+        v20.22: golden_ratio, prime_resonance, numerical_symmetry moved to ACTIVE.
+        benford removed (triggers <2% of picks).
+        """
+        dormant = ["phoenix_resonance", "schumann_resonance"]
+        assert len(dormant) == 2
 
 
 # =============================================================================
@@ -162,20 +174,26 @@ class TestSignalInventory:
 class TestGlitchWeights:
     """Verify GLITCH protocol weights and normalization behavior."""
 
-    def test_active_glitch_weights_sum_to_105(self):
-        """Active GLITCH signal weights (excluding disabled noosphere) sum to 1.05."""
+    def test_active_glitch_weights_sum_to_100(self):
+        """Active GLITCH signal weights (excluding disabled noosphere) sum to 1.00 after v20.22.
+
+        v20.22: Rebalanced weights - chrome reduced from 0.25 to 0.20 to accommodate
+        3 math signals (golden_ratio 0.04, prime_resonance 0.03, numerical_symmetry 0.03).
+        """
         # Raw weights as defined in get_glitch_aggregate()
         active_weights = {
-            "chrome_resonance": 0.25,
+            "chrome_resonance": 0.20,   # v20.22: reduced from 0.25
             "void_moon": 0.20,
             "hurst": 0.25,
             "kp_index": 0.25,
-            "benford": 0.10,
+            "golden_ratio": 0.04,       # v20.22: NEW (replaces benford)
+            "prime_resonance": 0.03,    # v20.22: NEW
+            "numerical_symmetry": 0.03, # v20.22: NEW
         }
         # noosphere is disabled (SERPAPI_KEY absent), so not included in active
         total = sum(active_weights.values())
-        assert abs(total - 1.05) < 0.001, \
-            f"Active GLITCH weights should sum to 1.05, got {total}"
+        assert abs(total - 1.00) < 0.001, \
+            f"Active GLITCH weights should sum to 1.00, got {total}"
 
     def test_glitch_aggregate_normalizes_to_1(self):
         """Engine normalizes by dividing weighted_score by total_weight."""
