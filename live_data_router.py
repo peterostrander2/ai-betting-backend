@@ -277,6 +277,8 @@ try:
         et_day_bounds,
         is_in_et_day,
         filter_events_et,
+        format_as_of_et,
+        format_et_day,
     )
     TIME_ET_AVAILABLE = True
 except ImportError:
