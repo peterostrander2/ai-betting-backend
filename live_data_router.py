@@ -279,6 +279,7 @@ try:
         filter_events_et,
         format_as_of_et,
         format_et_day,
+        data_age_ms,
     )
     TIME_ET_AVAILABLE = True
 except ImportError:
@@ -8156,6 +8157,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "odds_fetched_at": _odds_fetched_at,
             "as_of_et": format_as_of_et(),
             "et_day": format_et_day(),
+            "data_age_ms": data_age_ms(_odds_fetched_at) if _odds_fetched_at and TIME_ET_AVAILABLE else None,
         },
         "esoteric": {
             "daily_energy": daily_energy,
