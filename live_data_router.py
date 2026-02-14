@@ -6706,11 +6706,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
     logger.info("ESPN EVENTS LOOKUP: %d games mapped", len(_espn_events_by_teams))
 
-    # v20.28.2: Build live scores lookup - Odds API FIRST (paid), ESPN fallback (free)
+    # v20.28.2: Build live scores lookup - Paid APIs FIRST, ESPN fallback (free)
+    # Hierarchy: Odds API -> BallDontLie (NBA only) -> ESPN
     # Maps (home_team_lower, away_team_lower) -> {home_score, away_score, period, status}
     _live_scores_by_teams = {}
     _live_scores_source = "none"
     _odds_api_scores_raw_count = 0  # v20.28.3: Telemetry for diagnosing fallback
+    _bdl_scores_raw_count = 0  # v20.28.4: BallDontLie telemetry
 
     # PRIMARY: Use Odds API for live scores (paid API - prioritized)
     if ODDS_API_LIVE_SCORES_AVAILABLE:
@@ -6744,9 +6746,49 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 _live_scores_source = "odds_api"
                 logger.info("LIVE SCORES LOOKUP: %d games from Odds API (paid)", len(_live_scores_by_teams))
         except Exception as e:
-            logger.warning("Odds API live scores failed, will try ESPN fallback: %s", e)
+            logger.warning("Odds API live scores failed, will try BallDontLie/ESPN fallback: %s", e)
 
-    # FALLBACK: Use ESPN scoreboard only if Odds API unavailable or failed
+    # SECONDARY: Use BallDontLie for NBA live scores (paid API - NBA only)
+    # v20.28.4: Added as secondary fallback before ESPN
+    if not _live_scores_by_teams and sport_lower == "nba":
+        try:
+            from alt_data_sources.balldontlie import get_live_games, is_balldontlie_configured
+            if is_balldontlie_configured():
+                bdl_games = await get_live_games()
+                _bdl_scores_raw_count = len(bdl_games) if bdl_games else 0
+                logger.info("BALLDONTLIE SCORES RAW: %d games returned for NBA", _bdl_scores_raw_count)
+                if bdl_games:
+                    for game in bdl_games:
+                        # Normalize team names for matching
+                        home_full = game.get("home_team_full", "").lower()
+                        away_full = game.get("away_team_full", "").lower()
+                        home_key = _normalize_team_name(home_full)
+                        away_key = _normalize_team_name(away_full)
+                        tuple_key = (home_key, away_key)
+
+                        # Determine game status
+                        if game.get("is_final"):
+                            game_status = "post"
+                        elif game.get("is_live"):
+                            game_status = "in"
+                        else:
+                            game_status = "pre"
+
+                        _live_scores_by_teams[tuple_key] = {
+                            "home_score": game.get("home_score", 0),
+                            "away_score": game.get("away_score", 0),
+                            "period": game.get("period", 0),
+                            "status": game_status,
+                            "source": "balldontlie",  # Track data source
+                        }
+                    _live_scores_source = "balldontlie"
+                    logger.info("LIVE SCORES LOOKUP: %d games from BallDontLie (paid)", len(_live_scores_by_teams))
+        except ImportError:
+            logger.debug("BallDontLie module not available for live scores")
+        except Exception as e:
+            logger.warning("BallDontLie live scores failed, will try ESPN fallback: %s", e)
+
+    # FALLBACK: Use ESPN scoreboard only if paid APIs unavailable or failed
     if not _live_scores_by_teams and espn_scoreboard and isinstance(espn_scoreboard, dict):
         logger.info("Using ESPN scoreboard as fallback for live scores (free API)")
         for event in espn_scoreboard.get("events", []):
@@ -8707,10 +8749,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "sharp_lookup_size": len(sharp_lookup),
             "sharp_source": sharp_data.get("source", "unknown"),
             "game_context_size": len(game_context),
-            # v20.28.2: Live scores data source (Odds API paid first, ESPN fallback)
+            # v20.28.2: Live scores data source (Paid APIs first, ESPN fallback)
+            # Hierarchy: Odds API -> BallDontLie (NBA) -> ESPN
             "live_scores_source": _live_scores_source,
             "live_scores_count": len(_live_scores_by_teams),
             "odds_api_scores_raw_count": _odds_api_scores_raw_count,  # v20.28.3: Diagnostic
+            "bdl_scores_raw_count": _bdl_scores_raw_count,  # v20.28.4: BallDontLie diagnostic
             "splits_present_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("research_breakdown", {}).get("sharp_boost", 0) > 0),
             "jarvis_active_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("jarvis_hits_count", 0) > 0),
             "jason_ran_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("jason_ran", False)),
