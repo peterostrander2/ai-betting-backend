@@ -134,6 +134,40 @@ else
     echo "  WARN: Missing et_day or date_et field"
 fi
 
+# Check 6: AI score variance (v20.27 - prevent constant AI scores)
+echo ""
+echo "[6/6] Checking AI score variance..."
+
+# Get ai_variance_stats from debug response
+AI_VARIANCE=$(echo "$RESPONSE" | jq -r '.debug.ai_variance_stats // empty')
+if [[ -n "$AI_VARIANCE" ]] && [[ "$AI_VARIANCE" != "null" ]]; then
+    GAMES_COUNT=$(echo "$AI_VARIANCE" | jq -r '.games.count // 0')
+    UNIQUE_AI_SCORES=$(echo "$AI_VARIANCE" | jq -r '.games.unique_ai_scores // 0')
+    AI_STDDEV=$(echo "$AI_VARIANCE" | jq -r '.games.ai_score_stddev // 0')
+    HEURISTIC_COUNT=$(echo "$AI_VARIANCE" | jq -r '.games.heuristic_fallback_count // 0')
+    MPS_DEGENERATE=$(echo "$AI_VARIANCE" | jq -r '.games.mps_degenerate_count // 0')
+
+    if [[ "$GAMES_COUNT" -ge 5 ]]; then
+        # For >= 5 game candidates, require >= 4 unique scores and stddev >= 0.15
+        if [[ "$UNIQUE_AI_SCORES" -lt 4 ]]; then
+            echo "  FAIL: AI scores are degenerate (only $UNIQUE_AI_SCORES unique values for $GAMES_COUNT candidates)"
+            echo "        Expected >= 4 unique AI scores for >= 5 candidates"
+            FAILED=$((FAILED + 1))
+        elif [[ $(echo "$AI_STDDEV < 0.15" | bc -l) -eq 1 ]]; then
+            echo "  FAIL: AI score variance too low (stddev=$AI_STDDEV, expected >= 0.15)"
+            FAILED=$((FAILED + 1))
+        else
+            echo "  PASS: AI score variance OK (unique=$UNIQUE_AI_SCORES, stddev=$AI_STDDEV)"
+            echo "        Heuristic fallback: $HEURISTIC_COUNT, MPS degenerate: $MPS_DEGENERATE"
+            PASSED=$((PASSED + 1))
+        fi
+    else
+        echo "  SKIP: Not enough game candidates ($GAMES_COUNT < 5) to check variance"
+    fi
+else
+    echo "  WARN: ai_variance_stats not present in debug response"
+fi
+
 # Summary
 echo ""
 echo "=============================================="
