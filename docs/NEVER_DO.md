@@ -1286,3 +1286,80 @@ EXPECTED_VERSION = "20.24"  # Updated in same commit as production
 ```
 
 ---
+
+## 🚫 NEVER DO THESE (v20.25 ET Canonical Clock)
+
+**Rule 299: Update Import Statements When Adding Exports**
+```python
+# ❌ WRONG: Add function to __all__ but not to import sites
+# core/time_et.py
+__all__ = [..., 'format_as_of_et', 'format_et_day']  # Added
+
+# live_data_router.py - FORGOT TO UPDATE
+from core.time_et import (now_et, et_day_bounds, ...)  # Missing new functions!
+# Runtime: NameError: name 'format_as_of_et' is not defined
+
+# ✅ CORRECT: Grep and update all import sites
+grep -rn "from core.time_et import" --include="*.py"
+# Update EVERY file that needs the new functions
+```
+
+**Rule 300: ISO 8601 Regex Must Handle Microseconds**
+```bash
+# ❌ WRONG: Regex rejects Python's default isoformat() output
+'^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$'
+# Fails: 2026-02-14T13:09:33.828134-05:00 (has microseconds)
+
+# ✅ CORRECT: Allow optional fractional seconds
+'^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?[+-][0-9]{2}:[0-9]{2}$'
+```
+
+**Rule 301: ET Canonical Clock Single Source of Truth**
+```python
+# ❌ WRONG: Multiple ET formatting functions scattered across codebase
+def my_format_et():  # In some random file
+    return datetime.now(ET).isoformat()
+
+# ✅ CORRECT: Use core/time_et.py functions ONLY
+from core.time_et import format_as_of_et, format_et_day
+# format_as_of_et() -> "2026-02-14T13:09:33.828134-05:00"
+# format_et_day()   -> "2026-02-14"
+```
+
+**Rule 302: Response Meta Must Include ET Fields (v20.25+)**
+```python
+# ❌ WRONG: Meta block missing canonical ET fields
+"meta": {
+    "sport": "NBA",
+    "generated_at": "..."  # NO! This is UTC/internal telemetry
+}
+
+# ✅ CORRECT: Include as_of_et and et_day
+"meta": {
+    "sport": "NBA",
+    "as_of_et": "2026-02-14T13:09:33.828134-05:00",  # Canonical ET timestamp
+    "et_day": "2026-02-14",                          # Canonical ET date
+}
+```
+
+**Rule 303: Integration Telemetry Must Use fetched_at_et**
+```python
+# ❌ WRONG: Integration calls record in UTC
+integration_calls[name] = {"fetched_at": datetime.utcnow().isoformat(), ...}
+
+# ✅ CORRECT: Use ET for all timestamps
+from core.time_et import format_as_of_et
+integration_calls[name] = {"fetched_at_et": format_as_of_et(), ...}
+```
+
+**Rule 304: Test Regex Against Real Output Before Deploy**
+```bash
+# ❌ WRONG: Write regex, deploy, discover failure in production
+
+# ✅ CORRECT: Test against actual output first
+ACTUAL=$(curl -s "$URL" | jq -r '.meta.as_of_et')
+echo "$ACTUAL" | grep -qE 'YOUR_REGEX' && echo PASS || echo FAIL
+# Only deploy after PASS
+```
+
+---

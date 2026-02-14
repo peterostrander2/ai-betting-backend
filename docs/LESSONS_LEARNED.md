@@ -3867,3 +3867,89 @@ grep -rn '"20\.' --include="*.py" --include="*.json" | grep -E "(version|VERSION
 **Added in:** v20.24 (Feb 14, 2026)
 
 ---
+
+### Lesson 105: New Exported Functions Require Import Updates (v20.25)
+
+**Problem:** After adding `format_as_of_et()` and `format_et_day()` to `core/time_et.py` and calling them in `live_data_router.py`, production crashed with `NameError: name 'format_as_of_et' is not defined`.
+
+**Root Cause:** The new functions were added to `core/time_et.py` and exported via `__all__`, but the import statement in `live_data_router.py` wasn't updated to include them. The file had:
+```python
+from core.time_et import (
+    now_et,
+    et_day_bounds,
+    is_in_et_day,
+    filter_events_et,
+)
+```
+
+But needed:
+```python
+from core.time_et import (
+    now_et,
+    et_day_bounds,
+    is_in_et_day,
+    filter_events_et,
+    format_as_of_et,  # NEW
+    format_et_day,     # NEW
+)
+```
+
+**The Fix:** Added `format_as_of_et` and `format_et_day` to the import statement.
+
+**Prevention Pattern:**
+1. When adding new functions to a module's `__all__`, grep for all import sites:
+   ```bash
+   grep -rn "from core.time_et import" --include="*.py"
+   ```
+2. Update EVERY import statement that needs the new functions
+3. Run the application locally before pushing to verify no NameErrors
+4. Consider a pre-commit hook that checks for undefined names
+
+**Verification:**
+```bash
+# Check all imports of the module
+grep -rn "from core.time_et import" --include="*.py"
+
+# Verify no NameErrors by running the app
+python -c "from live_data_router import *"
+```
+
+**Added in:** v20.25 (Feb 14, 2026)
+
+---
+
+### Lesson 106: ISO 8601 Regex Must Handle Fractional Seconds (v20.25)
+
+**Problem:** Audit drift scan failed with `meta.as_of_et format invalid` even though the timestamp `2026-02-14T13:09:33.828134-05:00` was valid ISO 8601.
+
+**Root Cause:** The validation regex didn't account for optional fractional seconds (microseconds):
+```bash
+# BAD - rejects fractional seconds
+'^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$'
+
+# GOOD - allows optional fractional seconds
+'^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?[+-][0-9]{2}:[0-9]{2}$'
+```
+
+Python's `datetime.isoformat()` includes microseconds by default, so any regex validating ISO 8601 timestamps from Python must handle them.
+
+**The Fix:** Updated the regex in `scripts/audit_drift_scan.sh` to include `(\.[0-9]+)?` for optional fractional seconds.
+
+**Prevention Pattern:**
+1. When validating ISO 8601 timestamps, ALWAYS account for:
+   - Optional fractional seconds: `(\.[0-9]+)?`
+   - Optional timezone: `([+-][0-9]{2}:[0-9]{2}|Z)?`
+2. Test regex against actual output before deploying:
+   ```bash
+   echo "2026-02-14T13:09:33.828134-05:00" | grep -qE 'YOUR_REGEX' && echo PASS
+   ```
+3. Python's `datetime.isoformat()` outputs: `YYYY-MM-DDTHH:MM:SS.ffffff±HH:MM`
+
+**Standard ISO 8601 regex for Python timestamps:**
+```regex
+^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?([+-][0-9]{2}:[0-9]{2}|Z)?$
+```
+
+**Added in:** v20.25 (Feb 14, 2026)
+
+---

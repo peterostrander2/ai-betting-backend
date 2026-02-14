@@ -97,7 +97,7 @@
 | 29 | Integration State Machine | Integrations track `calls_last_15m()` for health (v20.21) |
 | 30 | CI Golden Gate | All deploys must pass `ci_golden_gate.sh` (v20.21) |
 
-### Lessons Learned (104 Total) - Key Categories
+### Lessons Learned (106 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -161,8 +161,10 @@
 | 102 | **v20.22 Breakdown Builder Must Match Signal Changes** | Signal changes require THREE places: computation function, truth table, AND breakdown builder. Missing breakdown builder caused benford to appear in output despite being removed from GLITCH. |
 | 103 | **v20.24 Telemetry Fields Must Use Canonical Sources** | `used_integrations` was manually tracked, missing Playbook calls; DERIVE aggregates from `integration_calls` dict, don't maintain two tracking systems |
 | 104 | **v20.24 Version Strings Must Update Together** | Version hardcoded in 5+ places; when bumping, grep ALL occurrences and update in single commit; run golden gate before push |
+| 105 | **v20.25 New Exports Require Import Updates** | Added functions to `__all__` but forgot import sites; grep all `from module import` statements before pushing |
+| 106 | **v20.25 ISO 8601 Regex Must Handle Fractional Seconds** | Python's isoformat() includes microseconds; regex needs `(\.[0-9]+)?` for optional fractional seconds |
 
-### NEVER DO Sections (40 Categories)
+### NEVER DO Sections (41 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -208,6 +210,8 @@
 - v20.20 Verification Logic & Debug Telemetry (rules 273-275)
 - v20.21 Output Boundary & CI Golden Gate (rules 276-282)
 - v20.21 Structured Logging & Request Correlation (rules 283-288)
+- v20.24 Telemetry & Version Management (rules 289-298)
+- v20.25 ET Canonical Clock (rules 299-304)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -373,7 +377,43 @@ API_KEY=your_key ./scripts/full_system_audit.sh
 | `.github/workflows/golden-gate.yml` | GitHub Actions CI: golden-gate, contract-tests, freeze-verify jobs — v20.21 |
 | `scripts/full_system_audit.sh` | Full backend audit for frontend readiness (11 hard gates) — v20.21 |
 
-### Current Version: v20.24 (Feb 14, 2026)
+### Current Version: v20.25 (Feb 14, 2026)
+
+**v20.25 (Feb 14, 2026) — ET Canonical Clock Standardization:**
+
+**New core/time_et.py Functions:**
+- `format_as_of_et()` — Returns ISO 8601 timestamp with ET offset (e.g., `2026-02-14T13:09:33.828134-05:00`)
+- `format_et_day()` — Returns YYYY-MM-DD string in ET (e.g., `2026-02-14`)
+- `data_age_ms(fetched_at_iso)` — Calculate milliseconds since data was fetched
+- `get_build_sha()` — Get 8-char build SHA from `RAILWAY_GIT_COMMIT_SHA` env var
+
+**Response Meta Fields (v20.25+):**
+- `meta.as_of_et` — Canonical ET timestamp when response was generated
+- `meta.et_day` — Canonical ET date (YYYY-MM-DD)
+
+**Integration Telemetry:**
+- `fetched_at_et` — ET timestamp when integration data was fetched
+
+**JSONL Artifact Fields:**
+- `run_started_at_et`, `run_finished_at_et` — Job execution timestamps
+- `et_day` — Canonical date for the run
+- `build_sha` — Git commit SHA for traceability
+
+**Audit Drift Scan (check #5):**
+- Validates `meta.as_of_et` format (ISO 8601 with optional fractional seconds)
+- Validates `meta.et_day` format (YYYY-MM-DD)
+
+**Scheduler:**
+- Explicit `TZ=America/New_York` in cron expressions
+
+**Key Lessons:**
+- Lesson 105: New exports require import statement updates (grep all import sites)
+- Lesson 106: ISO 8601 regex must handle optional fractional seconds `(\.[0-9]+)?`
+
+**Files Modified:** `core/time_et.py`, `live_data_router.py`, `daily_scheduler.py`, `grader_store.py`, `integration_registry.py`, `scripts/audit_drift_scan.sh`
+**Commits:** `1687418`, `d88f174`, `7f17a17`
+
+---
 
 **v20.24 (Feb 14, 2026) — Context Multipliers LIVE + Telemetry Fix:**
 
@@ -2598,10 +2638,20 @@ curl "https://web-production-7b2a.up.railway.app/live/api-usage" -H "X-API-Key: 
 ### Single Source of Truth: `core/time_et.py`
 
 **ONLY use these functions - NO other date helpers allowed:**
+
+**Filtering (existing):**
 - `now_et()` - UTC to ET conversion
-- `et_day_bounds(date_str=None)` - Returns (start_et, end_et, et_date)
+- `et_day_bounds(date_str=None)` - Returns (start_et, end_et, start_utc, end_utc)
 - `is_in_et_day(event_time, date_str=None)` - Boolean check
 - `filter_events_et(events, date_str=None)` - Filter to ET day
+
+**Formatting (v20.25):**
+- `format_as_of_et()` - ISO 8601 timestamp with ET offset (e.g., `2026-02-14T13:09:33.828134-05:00`)
+- `format_et_day()` - YYYY-MM-DD string in ET (e.g., `2026-02-14`)
+
+**Telemetry (v20.25):**
+- `data_age_ms(fetched_at_iso)` - Milliseconds since ISO timestamp
+- `get_build_sha()` - 8-char build SHA from `RAILWAY_GIT_COMMIT_SHA`
 
 **Server clock is UTC. All app logic enforces ET (America/New_York).**
 
@@ -2620,8 +2670,11 @@ Without the gate, `get_props()` returns ALL upcoming events from Odds API (could
 - Score distribution skewed by tomorrow's games
 
 ### Where it lives
-- **`core/time_et.py`**: SINGLE SOURCE OF TRUTH - `now_et()`, `et_day_bounds()`, `is_in_et_day()`, `filter_events_et()`
-- `live_data_router.py` `_best_bets_inner()`: applied to both props loop (~line 3018) and game picks (~line 3042)
+- **`core/time_et.py`**: SINGLE SOURCE OF TRUTH
+  - Filtering: `now_et()`, `et_day_bounds()`, `is_in_et_day()`, `filter_events_et()`
+  - Formatting (v20.25): `format_as_of_et()`, `format_et_day()`, `data_age_ms()`, `get_build_sha()`
+- `live_data_router.py` `_best_bets_inner()`: ET filtering at props loop (~line 3018) and game picks (~line 3042)
+- `live_data_router.py` response meta: `as_of_et`, `et_day` fields (v20.25)
 - `main.py` `/ops/score-distribution`: passes `date=date` to `get_best_bets()`
 
 ### Debug Endpoint
