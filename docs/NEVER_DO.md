@@ -1456,3 +1456,130 @@ curl -s "$URL/live/debug/integrations" | jq '.integrations[] | {name, calls_last
 ```
 
 ---
+
+## v20.26 Live Betting Correctness (rules 311-318)
+
+**Context:** Live betting requires airtight data staleness tracking and correct game status derivation. These rules ensure users see accurate, timely information.
+
+**Rule 311: NEVER Use MISSED_START Status**
+```python
+# ❌ WRONG: MISSED_START is deprecated
+if is_game_started(commence_time):
+    return "MISSED_START"  # Confuses frontend, breaks live betting
+
+# ✅ CORRECT: Use IN_PROGRESS for started games
+if is_game_started(commence_time):
+    return "IN_PROGRESS"  # Enables live betting
+```
+
+**Rule 312: data_age_ms Must Be MAX Across CRITICAL Integrations**
+```python
+# ❌ WRONG: Using single integration age
+data_age_ms = age_ms_from_odds_api  # Ignores stale playbook data
+
+# ✅ CORRECT: Use MAX across ALL critical integrations
+max_age_ms = None
+for name, entry in integration_calls.items():
+    if entry.get("criticality") == "CRITICAL":
+        age = data_age_ms(entry.get("fetched_at_et"))
+        if max_age_ms is None or age > max_age_ms:
+            max_age_ms = age
+# data_age_ms = max_age_ms (conservative - worst case)
+```
+
+**Rule 313: data_age_ms Must NEVER Be Null When Picks > 0**
+```python
+# ❌ WRONG: Returning null data_age_ms with picks
+{
+    "picks": [pick1, pick2],  # picks > 0
+    "meta": {"data_age_ms": null}  # VIOLATION
+}
+
+# ✅ CORRECT: Always compute data_age_ms when picks present
+if len(picks) > 0:
+    assert meta["data_age_ms"] is not None, "data_age_ms required when picks > 0"
+```
+
+**Rule 314: Every Integration Call Must Record fetched_at_et**
+```python
+# ❌ WRONG: Recording call without timestamp
+_record_integration_call("odds_api", status="SUCCESS")
+
+# ✅ CORRECT: Include fetched_at_et and criticality
+_record_integration_call(
+    "odds_api",
+    status="SUCCESS",
+    fetched_at_et=format_as_of_et(),  # When data was fetched
+    criticality="CRITICAL"             # Integration tier
+)
+```
+
+**Rule 315: Game Status Must Use Canonical Values Only**
+```python
+# ❌ WRONG: Non-canonical status values
+game_status = "STARTED"     # Not canonical
+game_status = "UPCOMING"    # Deprecated, use PRE_GAME
+game_status = "MISSED_START"  # Deprecated, use IN_PROGRESS
+
+# ✅ CORRECT: Only these 4 canonical values
+VALID_STATUSES = {"PRE_GAME", "IN_PROGRESS", "FINAL", "NOT_TODAY"}
+assert game_status in VALID_STATUSES
+```
+
+**Rule 316: get_game_status() Requires completed Parameter**
+```python
+# ❌ WRONG: Ignoring completion state
+status = get_game_status(commence_time)  # Doesn't know if game is final
+
+# ✅ CORRECT: Pass completed flag from API data
+status = get_game_status(commence_time, completed=game_data.get("completed", False))
+```
+
+**Rule 317: Audit Scripts Must Normalize Date Formats**
+```bash
+# ❌ WRONG: Direct string comparison of different formats
+if [[ "$ET_DAY" == "$DATE_ET" ]]; then  # "2026-02-14" != "February 14, 2026"
+
+# ✅ CORRECT: Normalize before comparing
+DATE_ET_NORMALIZED=$(date -j -f "%B %d, %Y" "$DATE_ET" "+%Y-%m-%d" 2>/dev/null || echo "$DATE_ET")
+if [[ "$ET_DAY" == "$DATE_ET_NORMALIZED" ]]; then  # Both YYYY-MM-DD now
+```
+
+**Rule 318: Live Betting Audit Must Run Post-Deploy**
+```bash
+# ❌ WRONG: Deploying without live betting audit
+git push origin main
+# No validation!
+
+# ✅ CORRECT: Run audit after deploy
+git push origin main
+sleep 120  # Wait for Railway deploy
+API_KEY=your_key ./scripts/live_betting_audit.sh
+API_KEY=your_key SPORT=NCAAB ./scripts/live_betting_audit.sh
+```
+
+**Live Betting Correctness Verification Commands (v20.26):**
+```bash
+# 1. Run full live betting audit
+API_KEY=your_key ./scripts/live_betting_audit.sh
+
+# 2. Verify no MISSED_START status in picks
+curl -s "$URL/live/best-bets/NCAAB?debug=1" -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[] | select(.game_status == "MISSED_START")] | length'
+# Must be 0
+
+# 3. Verify data_age_ms is conservative (MAX)
+curl -s "$URL/live/best-bets/NBA?debug=1" -H "X-API-Key: KEY" | jq '{
+  data_age_ms: .meta.data_age_ms,
+  odds_api: .meta.integrations_age_ms.odds_api,
+  playbook_api: .meta.integrations_age_ms.playbook_api
+}'
+# data_age_ms should equal max(odds_api, playbook_api)
+
+# 4. Verify IN_PROGRESS games are present during live games
+curl -s "$URL/live/best-bets/NCAAB?debug=1" -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[] | .game_status] | group_by(.) | map({status: .[0], count: length})'
+# Should show IN_PROGRESS during game hours
+```
+
+---

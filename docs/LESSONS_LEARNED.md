@@ -4092,3 +4092,180 @@ curl -s "$URL/live/debug/integrations" -H "X-API-Key: KEY" | jq '.integrations[]
 **Added in:** v20.26 (Feb 14, 2026)
 
 ---
+
+### Lesson 110: Conservative data_age_ms Calculation (v20.26)
+
+**Problem:** Live betting picks showed stale data but `data_age_ms` reported fresh timestamps. Users could be betting on outdated information without knowing.
+
+**Root Cause:** `data_age_ms` was computed from a single integration (odds_api) or the first available timestamp. If playbook_api data was older (e.g., cached longer), the reported age was misleadingly low.
+
+**The Fix:**
+```python
+def _compute_conservative_data_age() -> tuple[int | None, dict[str, int | None]]:
+    """Compute conservative data_age_ms across all CRITICAL integrations."""
+    integrations_age: dict[str, int | None] = {}
+    max_age_ms: int | None = None
+    for name, entry in integration_calls.items():
+        if entry.get("called", 0) == 0:
+            continue
+        fetched_at = entry.get("fetched_at_et")
+        if fetched_at:
+            age_ms = data_age_ms(fetched_at)
+            if age_ms >= 0:
+                integrations_age[name] = age_ms
+                if entry.get("criticality") == "CRITICAL":
+                    if max_age_ms is None or age_ms > max_age_ms:
+                        max_age_ms = age_ms
+    return max_age_ms, integrations_age
+```
+
+**Key Rules:**
+1. **data_age_ms = MAX across CRITICAL integrations** — not average, not first
+2. **CRITICAL integrations:** odds_api, playbook_api, balldontlie (for NBA)
+3. **If picks > 0, data_age_ms must NEVER be null** — hard contract
+4. **meta.integrations_age_ms for debug** — shows per-integration ages
+
+**Prevention:**
+1. **Always use conservative (MAX) for staleness** — worst case, not best case
+2. **Track fetched_at_et per integration** — `_record_integration_call()` requires it
+3. **Integration criticality tiers matter** — CRITICAL affects user-facing data
+
+**Verification:**
+```bash
+# data_age_ms should be MAX of individual integrations
+curl -s "$URL/live/best-bets/NBA?debug=1" -H "X-API-Key: KEY" | jq '{
+  data_age_ms: .meta.data_age_ms,
+  integrations: .meta.integrations_age_ms
+}'
+# data_age_ms >= max(odds_api, playbook_api)
+```
+
+**Added in:** v20.26 (Feb 14, 2026)
+
+---
+
+### Lesson 111: MISSED_START Status is Deprecated (v20.26)
+
+**Problem:** Games that had started but weren't final showed `MISSED_START` status, confusing the frontend and breaking live betting logic.
+
+**Root Cause:** Legacy status enum from early development. `MISSED_START` was intended for "we missed the start and can't bet" but live betting SHOULD allow in-progress bets.
+
+**The Fix:**
+```python
+def get_game_status(commence_time: str, completed: bool = False) -> str:
+    """
+    Get game status based on start time and completion state.
+    Returns: "PRE_GAME" | "IN_PROGRESS" | "FINAL" | "NOT_TODAY"
+
+    NEVER returns MISSED_START - that status is deprecated.
+    """
+    if not is_game_today(commence_time):
+        return "NOT_TODAY"
+    if completed:
+        return "FINAL"
+    if is_game_started(commence_time):
+        return "IN_PROGRESS"  # NOT "MISSED_START"
+    return "PRE_GAME"
+```
+
+**Status Definitions:**
+| Status | Condition | Betting Allowed |
+|--------|-----------|-----------------|
+| `PRE_GAME` | `now_et < start_time_et` | Yes (pre-game) |
+| `IN_PROGRESS` | `now_et >= start_time_et AND not completed` | Yes (live) |
+| `FINAL` | `completed=True` | No |
+| `NOT_TODAY` | Game not in today's ET slate | No |
+
+**Prevention:**
+1. **grep for MISSED_START before any game status work** — ensure it's not reintroduced
+2. **Test with mocked time** — verify status transitions work correctly
+3. **Audit script checks for MISSED_START** — `scripts/live_betting_audit.sh` fails if found
+
+**Verification:**
+```bash
+# No picks should have MISSED_START
+curl -s "$URL/live/best-bets/NCAAB?debug=1" -H "X-API-Key: KEY" | \
+  jq '[.game_picks.picks[] | select(.game_status == "MISSED_START")] | length'
+# Must be 0
+```
+
+**Added in:** v20.26 (Feb 14, 2026)
+
+---
+
+### Lesson 112: Integration fetched_at_et Tracking (v20.26)
+
+**Problem:** Could not determine when integration data was actually fetched, making staleness calculation impossible.
+
+**Root Cause:** `_record_integration_call()` only tracked call count and latency, not the timestamp when data was fetched.
+
+**The Fix:**
+```python
+def _ensure_integration_entry(name: str) -> Dict[str, Any]:
+    entry = integration_calls.get(name)
+    if entry is None:
+        entry = {
+            "called": 0,
+            "status": None,
+            "latency_total_ms": 0.0,
+            "latency_samples": 0,
+            "cache_hit": None,
+            "cache_hits": 0,
+            "cache_samples": 0,
+            "fetched_at_et": None,      # NEW: Track when data was fetched
+            "criticality": None,         # NEW: CRITICAL/DEGRADED_OK/OPTIONAL
+        }
+        integration_calls[name] = entry
+    return entry
+
+def _record_integration_call(name: str, ..., fetched_at_et: str | None = None, criticality: str | None = None):
+    entry = _ensure_integration_entry(name)
+    entry["called"] += 1
+    if fetched_at_et:
+        entry["fetched_at_et"] = fetched_at_et
+    if criticality:
+        entry["criticality"] = criticality
+```
+
+**Key Rules:**
+1. **Every integration call must record fetched_at_et** — use `format_as_of_et()` from `core/time_et.py`
+2. **Set criticality tier** — CRITICAL, DEGRADED_OK, OPTIONAL, RELEVANCE_GATED
+3. **fetched_at_et used for data_age_ms** — `_compute_conservative_data_age()` reads it
+
+**Prevention:**
+1. **Add fetched_at_et to ALL _record_integration_call() sites** — grep and verify
+2. **Use canonical format_as_of_et()** — ISO 8601 with ET offset
+3. **Criticality must match integration_contract.py** — single source of truth
+
+**Added in:** v20.26 (Feb 14, 2026)
+
+---
+
+### Lesson 113: Date Format Normalization in Audit Scripts (v20.26)
+
+**Problem:** Live betting audit failed check #5 (ET day consistency) even though dates matched semantically.
+
+**Root Cause:** `meta.et_day` returns `YYYY-MM-DD` format while `date_et` returns human-readable `"February 14, 2026"` format. String comparison failed.
+
+**The Fix:**
+```bash
+# Convert human-readable date to YYYY-MM-DD for comparison
+DATE_ET_NORMALIZED=$(date -j -f "%B %d, %Y" "$DATE_ET" "+%Y-%m-%d" 2>/dev/null || echo "$DATE_ET")
+if [[ "$ET_DAY" == "$DATE_ET_NORMALIZED" ]]; then
+    echo "  PASS: meta.et_day ($ET_DAY) matches date_et ($DATE_ET)"
+fi
+```
+
+**Key Rules:**
+1. **Always normalize dates before comparison** — don't assume formats match
+2. **macOS uses `date -j -f`** — Linux uses `date -d`
+3. **Fallback on parse failure** — `|| echo "$DATE_ET"` prevents script crash
+
+**Prevention:**
+1. **Document API date formats** — `date_et` is human-readable, `et_day` is YYYY-MM-DD
+2. **Consider standardizing API output** — both should use same format
+3. **Audit scripts must handle format differences** — normalize before compare
+
+**Added in:** v20.26 (Feb 14, 2026)
+
+---

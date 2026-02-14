@@ -166,8 +166,12 @@
 | 107 | **v20.26 Deterministic inputs_hash** | Round floats to fixed precision, use sort_keys=True, exclude time-varying values; hash changes IFF inputs change |
 | 108 | **v20.26 market_phase Canonical Values** | Normalize game_status to PRE_GAME, IN_PLAY, HALFTIME, FINAL using substring matching; default to PRE_GAME |
 | 109 | **v20.26 Integration calls_last_60s** | 60-second rolling window for burst detection; cache_hit tracking infrastructure added |
+| 110 | **v20.26 Conservative data_age_ms** | `data_age_ms` MUST be MAX age across ALL CRITICAL integrations (odds_api, playbook_api), not just first or average; if picks > 0, data_age_ms must NEVER be null |
+| 111 | **v20.26 MISSED_START is Deprecated** | Never use MISSED_START status; use IN_PROGRESS for games that have started but aren't final; valid statuses: PRE_GAME, IN_PROGRESS, FINAL, NOT_TODAY |
+| 112 | **v20.26 Integration fetched_at_et Tracking** | Every integration call must record `fetched_at_et` timestamp for staleness calculation; `_record_integration_call()` now requires this parameter |
+| 113 | **v20.26 Date Format Normalization in Audits** | API returns dates in different formats (YYYY-MM-DD vs "February 14, 2026"); audit scripts must normalize before comparison; use `date -j -f` on macOS |
 
-### NEVER DO Sections (42 Categories)
+### NEVER DO Sections (43 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -216,6 +220,7 @@
 - v20.24 Telemetry & Version Management (rules 289-298)
 - v20.25 ET Canonical Clock (rules 299-304)
 - v20.26 Live Audit & Determinism (rules 305-310)
+- v20.26 Live Betting Correctness (rules 311-318)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -245,6 +250,10 @@ API_KEY=your_key EXPECTED_SHA=abc1234 ./scripts/freeze_verify.sh
 
 # 9. Full System Audit (before frontend integration)
 API_KEY=your_key ./scripts/full_system_audit.sh
+
+# 10. Post-deploy: Live Betting Correctness Audit (v20.26)
+API_KEY=your_key ./scripts/live_betting_audit.sh
+API_KEY=your_key SPORT=NCAAB ./scripts/live_betting_audit.sh
 ```
 
 **CI Golden Gate Structure (v20.21):**
@@ -380,6 +389,9 @@ API_KEY=your_key ./scripts/full_system_audit.sh
 | `docs/CONTRACT.md` | Canonical scoring contract reference (frozen values) — v20.21 |
 | `.github/workflows/golden-gate.yml` | GitHub Actions CI: golden-gate, contract-tests, freeze-verify jobs — v20.21 |
 | `scripts/full_system_audit.sh` | Full backend audit for frontend readiness (11 hard gates) — v20.21 |
+| `tests/test_live_betting_correctness.py` | Live betting correctness tests (19 tests): game status, data_age_ms, integration tracking — v20.26 |
+| `scripts/live_betting_audit.sh` | Live betting correctness audit: meta.as_of_et, data_age_ms, game_status, ET consistency — v20.26 |
+| `time_filters.py` | Game status derivation: `get_game_status(commence_time, completed)` returns PRE_GAME/IN_PROGRESS/FINAL/NOT_TODAY — v20.26 |
 
 ### Current Version: v20.26 (Feb 14, 2026)
 
