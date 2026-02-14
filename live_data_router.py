@@ -1478,7 +1478,7 @@ def _ensure_live_contract_payload(payload, status_code: int):
     if "source" not in payload:
         payload["source"] = "unknown"
     if "generated_at" not in payload:
-        payload["generated_at"] = datetime.now(timezone.utc).isoformat()
+        payload["generated_at"] = now_et().isoformat() if TIME_ET_AVAILABLE else datetime.now(timezone.utc).isoformat()
     if "errors" not in payload or payload["errors"] is None:
         payload["errors"] = []
 
@@ -3244,12 +3244,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
         try:
             _dt = datetime.fromisoformat(commence_time_iso.replace("Z", "+00:00"))
-            if _ET:
-                now_local = datetime.now(_ET)
-                game_local = _dt.astimezone(_ET)
+            # Always use ET timezone (single source of truth)
+            if TIME_ET_AVAILABLE:
+                now_local = now_et()
+                game_local = _dt.astimezone(_ET) if _ET else _dt
             else:
-                now_local = datetime.now(timezone.utc)
-                game_local = _dt.astimezone(timezone.utc)
+                now_local = datetime.now(_ET) if _ET else datetime.now(timezone.utc)
+                game_local = _dt.astimezone(_ET) if _ET else _dt
             minutes_to_start = int((game_local - now_local).total_seconds() / 60)
         except Exception:
             return {"confirmed": False, "status": "UNKNOWN", "minutes_to_start": None, "penalty": 0.0, "reason": "Commence_time parse error"}
@@ -6454,7 +6455,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             if _filter_date:
                 _target_date_et = datetime.fromisoformat(_filter_date).date()
             else:
-                _target_date_et = datetime.now(_ET).date() if _ET else datetime.now(timezone.utc).date()
+                _target_date_et = now_et().date() if TIME_ET_AVAILABLE else (datetime.now(_ET).date() if _ET else datetime.now(timezone.utc).date())
 
             _lookback_days = 7
             _dates = [(_target_date_et - timedelta(days=i)) for i in range(1, _lookback_days + 1)]
@@ -9997,9 +9998,9 @@ async def debug_system_health(api_key: str = Depends(verify_api_key)):
     # Playbook API
     try:
         if PLAYBOOK_UTIL_AVAILABLE:
-            test_url = build_playbook_url("health", {})
+            test_url, test_params = build_playbook_url("health", {})
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(test_url)
+                resp = await client.get(test_url, params=test_params)
                 api_checks["playbook"] = {
                     "ok": resp.status_code == 200,
                     "status_code": resp.status_code
@@ -10037,13 +10038,13 @@ async def debug_system_health(api_key: str = Depends(verify_api_key)):
 
     # BallDontLie
     try:
-        from alt_data_sources.balldontlie import BALLDONTLIE_API_KEY
-        if BALLDONTLIE_API_KEY:
+        from alt_data_sources.balldontlie import BDL_API_KEY
+        if BDL_API_KEY:
             test_url = "https://api.balldontlie.io/v1/players?per_page=1"
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
                     test_url,
-                    headers={"Authorization": BALLDONTLIE_API_KEY}
+                    headers={"Authorization": BDL_API_KEY}
                 )
                 api_checks["balldontlie"] = {
                     "ok": resp.status_code == 200,
@@ -10052,7 +10053,7 @@ async def debug_system_health(api_key: str = Depends(verify_api_key)):
                 if resp.status_code != 200:
                     errors.append(f"BallDontLie API returned {resp.status_code}")
         else:
-            api_checks["balldontlie"] = {"ok": False, "error": "BALLDONTLIE_API_KEY not set"}
+            api_checks["balldontlie"] = {"ok": False, "error": "BDL_API_KEY not set"}
     except Exception as e:
         api_checks["balldontlie"] = {"ok": False, "error": str(e)}
 
@@ -15222,7 +15223,7 @@ async def get_sport_dashboard(sport: str, auth: bool = Depends(verify_api_key)):
                 "injuries": injuries.get("data", [])
             },
             "daily_energy": best_bets.get("daily_energy", get_daily_energy()),
-            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "timestamp": now_et().isoformat() if TIME_ET_AVAILABLE else datetime.now(tz=timezone.utc).isoformat(),
             "cache_info": {"hit": False, "sources": cache_sources}
         }
 
@@ -15349,7 +15350,7 @@ async def get_game_details(sport: str, game_id: str, auth: bool = Depends(verify
             "sharp_signals": game_sharp,
             "injuries": game_injuries,
             "ai_pick": ai_pick,
-            "timestamp": datetime.now(tz=timezone.utc).isoformat()
+            "timestamp": now_et().isoformat() if TIME_ET_AVAILABLE else datetime.now(tz=timezone.utc).isoformat()
         }
 
         # Cache for 2 minutes
@@ -15459,7 +15460,7 @@ async def get_parlay_builder_init(
         "correlations": correlations,
         "current_parlay": current_parlay,
         "user_history": user_history,
-        "timestamp": datetime.now(tz=timezone.utc).isoformat()
+        "timestamp": now_et().isoformat() if TIME_ET_AVAILABLE else datetime.now(tz=timezone.utc).isoformat()
     }
 
     return result

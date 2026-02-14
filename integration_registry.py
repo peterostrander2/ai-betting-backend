@@ -44,8 +44,8 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 
-# v20.12: ET canonical clock helpers
-from core.time_et import format_as_of_et, data_age_ms
+# v20.12: ET canonical clock helpers - single source of truth
+from core.time_et import format_as_of_et, data_age_ms, now_et
 
 # Import from canonical contract - ensures registry stays in sync
 from core.integration_contract import (
@@ -92,7 +92,7 @@ def _prune_old_timestamps(health: IntegrationHealth, max_age_minutes: int = 60):
     if not health.call_timestamps:
         return
 
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+    cutoff = now_et() - timedelta(minutes=max_age_minutes)
     cutoff_iso = cutoff.isoformat()
 
     # Keep only timestamps newer than cutoff
@@ -105,7 +105,7 @@ def calls_last_15m(integration_name: str) -> int:
     if not health or not health.call_timestamps:
         return 0
 
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    cutoff = now_et() - timedelta(minutes=15)
     cutoff_iso = cutoff.isoformat()
 
     return sum(1 for ts in health.call_timestamps if ts >= cutoff_iso)
@@ -116,7 +116,7 @@ def get_service_uptime_minutes() -> float:
     global _service_start_time
     if _service_start_time is None:
         return 0.0
-    return (datetime.now(timezone.utc) - _service_start_time).total_seconds() / 60.0
+    return (now_et() - _service_start_time).total_seconds() / 60.0
 
 
 # Service start time for uptime tracking
@@ -126,7 +126,7 @@ _service_start_time: Optional[datetime] = None
 def mark_service_started():
     """Mark the service as started (call once at startup)."""
     global _service_start_time
-    _service_start_time = datetime.now(timezone.utc)
+    _service_start_time = now_et()
 
 
 def record_success(integration_name: str):
@@ -135,14 +135,14 @@ def record_success(integration_name: str):
         _health_tracker[integration_name] = IntegrationHealth()
 
     health = _health_tracker[integration_name]
-    now_et = format_as_of_et()
-    health.last_check = now_et
-    health.last_ok = now_et
+    now_str = format_as_of_et()
+    health.last_check = now_str
+    health.last_ok = now_str
     health.success_count += 1
     health.consecutive_failures = 0
 
     # v20.21: Track call timestamps for rolling window metrics
-    health.call_timestamps.append(now)
+    health.call_timestamps.append(now_str)
     # Prune timestamps older than 1 hour to prevent unbounded growth
     _prune_old_timestamps(health, max_age_minutes=60)
 
@@ -153,9 +153,9 @@ def record_failure(integration_name: str, error: str):
         _health_tracker[integration_name] = IntegrationHealth()
 
     health = _health_tracker[integration_name]
-    now_et = format_as_of_et()
-    health.last_check = now_et
-    health.last_error = f"{now_et}: {error}"
+    now_str = format_as_of_et()
+    health.last_check = now_str
+    health.last_error = f"{now_str}: {error}"
     health.error_count += 1
     health.consecutive_failures += 1
 
@@ -881,7 +881,7 @@ async def get_all_integrations_status() -> Dict[str, Any]:
         overall_message = "All integrations operational"
 
     return {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_et().isoformat(),
         "overall_status": overall_status,
         "overall_message": overall_message,
         "total_integrations": len(INTEGRATIONS),
@@ -921,7 +921,7 @@ def get_integrations_summary() -> Dict[str, Any]:
             not_configured.append(name)
 
     return {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_et().isoformat(),
         "total": len(INTEGRATIONS),
         "configured": configured,
         "not_configured": not_configured,
@@ -948,7 +948,7 @@ def mark_integration_used(name: str):
     _ensure_usage_registry()
     if name not in INTEGRATION_USAGE:
         INTEGRATION_USAGE[name] = {"last_used_at": None, "used_count": 0}
-    INTEGRATION_USAGE[name]["last_used_at"] = datetime.now(timezone.utc).isoformat()
+    INTEGRATION_USAGE[name]["last_used_at"] = now_et().isoformat()
     INTEGRATION_USAGE[name]["used_count"] = INTEGRATION_USAGE[name].get("used_count", 0) + 1
 
 
@@ -1015,7 +1015,7 @@ def get_health_check_loud() -> Dict[str, Any]:
         "missing_integrations": missing,
         "errors": errors,
         "message": message,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_et().isoformat(),
     }
 
 
