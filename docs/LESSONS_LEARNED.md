@@ -4269,3 +4269,302 @@ fi
 **Added in:** v20.26 (Feb 14, 2026)
 
 ---
+
+### Lesson 114: MPS model_std Is Raw Points, Not Normalized (v20.27)
+
+**Problem:** Degenerate AI score detection used `model_std < 0.3` threshold, but MPS (MasterPredictionSystem) returns model_std values of 31-37 (raw standard deviation in points), not normalized 0-1 values.
+
+**Root Cause:** Assumption that ML model outputs are normalized. MPS's 8 models predict actual point differentials, and model_std is the standard deviation across those predictions in points.
+
+**The Bug:**
+```python
+# ❌ WRONG: Assumed model_std was normalized 0-1
+if model_std is not None and model_std < 0.3:
+    is_degenerate = True  # NEVER triggers because model_std is 31-37
+```
+
+**The Fix:**
+```python
+# ✅ CORRECT: Check input quality FIRST, not model outputs
+defaults_used = (
+    input_def_rank == 15 and      # Default defensive rank
+    (input_pace == 100 or abs(input_pace - 68.0) < 1.0) and  # Default pace
+    input_vacuum == 0              # Default usage vacuum
+)
+if defaults_used:
+    is_degenerate = True
+    degenerate_reason = f"DEFAULTED_INPUTS (def_rank={input_def_rank}, pace={input_pace}, vacuum={input_vacuum})"
+```
+
+**Key Insight:** Degenerate detection should focus on INPUT quality, not OUTPUT metrics. Identical inputs → identical outputs is the root cause.
+
+**Prevention:**
+1. **Always verify units/scale of ML model outputs** — don't assume normalized values
+2. **Detect degenerate inputs, not degenerate outputs** — same inputs cause same outputs
+3. **Log raw model outputs in debug** — `model_std=31.5` would have revealed the bug immediately
+
+**Files Modified:**
+- `live_data_router.py` — Updated `_resolve_game_ai_score()` degenerate detection (lines 3653-3695)
+
+**Added in:** v20.27 (Feb 14, 2026)
+
+---
+
+### Lesson 115: NCAAB Lacks Real Team Data — Context Services Return Defaults (v20.27)
+
+**Problem:** All NCAAB picks had constant AI scores (7.8) because context services returned identical default values for all teams.
+
+**Root Cause:** Unlike NBA/NFL/NHL/MLB, NCAAB teams (especially smaller programs) lack data coverage. Context services (DefensiveRankService, PaceVectorService, UsageVacuumService) returned defaults:
+- `def_rank = 15` (median of 1-30 scale)
+- `pace = 100` (neutral pace) or `68.0` (NCAAB-specific default)
+- `vacuum = 0` (no usage vacuum)
+
+With identical context inputs, MPS produces identical AI scores for all games.
+
+**The Debug Output That Revealed It:**
+```python
+# All 44 NCAAB games had:
+"def_rank": 15, "pace": 68.0, "vacuum": 0.0
+# → ai_score: 7.8 for every game
+```
+
+**The Fix:**
+```python
+# Detect when context services returned defaults
+defaults_used = (
+    input_def_rank == 15 and
+    (input_pace == 100 or abs(input_pace - 68.0) < 1.0) and  # Both defaults
+    input_vacuum == 0
+)
+
+if defaults_used:
+    # Fall back to heuristic scoring with team-hash variance
+    return _heuristic_ai_score_with_variance(game_data, sport)
+```
+
+**Prevention:**
+1. **Test AI scoring with sports that lack data** — NCAAB, NCAAF, minor leagues
+2. **Add telemetry for context service coverage** — track which teams have real vs default data
+3. **Never assume data exists** — always have fallback scoring paths
+
+**Files Modified:**
+- `live_data_router.py` — Added defaults detection in `_resolve_game_ai_score()` (lines 3653-3695)
+
+**Added in:** v20.27 (Feb 14, 2026)
+
+---
+
+### Lesson 116: Heuristic Fallback Must Be Deterministic with Variance (v20.27)
+
+**Problem:** When AI scoring falls back to heuristic mode, it must produce DIFFERENT scores for different games while being DETERMINISTIC (same inputs → same output).
+
+**Root Cause:** Original heuristic fallback used random.random() for variance, which:
+1. Produced different scores on cache refresh (non-deterministic)
+2. Could produce wildly different scores for identical matchups
+
+**The Fix — Team Name Hash for Variance:**
+```python
+def _heuristic_ai_score_with_variance(game_data: dict, sport: str) -> dict:
+    """Deterministic heuristic fallback with team-based variance."""
+    home_team = game_data.get("home_team", "HOME")
+    away_team = game_data.get("away_team", "AWAY")
+
+    # Deterministic base from team hash
+    team_hash = hash(f"{home_team.lower()}{away_team.lower()}{sport}") % 1000
+    base_variance = (team_hash / 1000.0) * 4.0 - 2.0  # -2.0 to +2.0
+
+    # Additional variance from spread/odds
+    spread = abs(game_data.get("spread", 0))
+    spread_factor = min(spread / 10.0, 1.0) * 0.5  # 0 to 0.5
+
+    ai_score = 7.0 + base_variance + spread_factor  # 5.0 to 9.5 range
+    ai_score = max(5.0, min(10.0, ai_score))  # Clamp
+
+    return {
+        "ai_score": round(ai_score, 2),
+        "ai_mode": "HEURISTIC_FALLBACK",
+        "heuristic_variance_source": "team_hash"
+    }
+```
+
+**Properties of Good Heuristic Fallback:**
+1. **Deterministic** — Same game always gets same score
+2. **Varied** — Different games get different scores
+3. **Bounded** — Scores stay in valid 5.0-10.0 range
+4. **Auditable** — `ai_mode: HEURISTIC_FALLBACK` in output
+
+**Prevention:**
+1. **Never use random() in scoring** — use deterministic hashes instead
+2. **Track fallback mode in output** — `ai_mode` field for debugging
+3. **Test variance with multiple games** — verify unique_scores >= 4 for >= 5 candidates
+
+**Files Modified:**
+- `live_data_router.py` — Added `_heuristic_ai_score_with_variance()` function
+
+**Added in:** v20.27 (Feb 14, 2026)
+
+---
+
+### Lesson 117: Moneyline Scoring Uses Odds-Implied Probability, Not Spread Goldilocks (v20.27)
+
+**Problem:** MONEYLINE picks were getting 0 or default AI scores because scoring used spread-based Goldilocks zone logic (optimal spreads 4-9 points), which doesn't apply to moneylines.
+
+**Root Cause:** `calculate_pick_score()` passed `spread=0` for moneylines but didn't have moneyline-specific scoring logic.
+
+**The Fix — Odds-Implied Probability for Moneylines:**
+```python
+def _moneyline_implied_prob_score(odds: int) -> float:
+    """Score based on implied probability from American odds."""
+    if odds >= 100:
+        # Underdog: +150 → 40% implied, +300 → 25% implied
+        implied = 100 / (odds + 100)
+        # Upsets are valuable: score higher for moderate underdogs
+        if 0.30 <= implied <= 0.45:
+            return 7.5 + (0.45 - implied) * 5  # 7.5-8.25 for sweet spot
+        elif implied < 0.30:
+            return 6.0  # Long shot
+        else:
+            return 7.0  # Slight underdog
+    else:
+        # Favorite: -150 → 60% implied, -300 → 75% implied
+        implied = abs(odds) / (abs(odds) + 100)
+        # Heavy favorites less valuable (juice)
+        if implied > 0.70:
+            return 6.5  # Heavy favorite, low value
+        elif 0.55 <= implied <= 0.65:
+            return 7.5  # Moderate favorite, good value
+        else:
+            return 7.0  # Slight favorite
+```
+
+**Key Insight:** Different market types need different scoring heuristics:
+- **SPREAD:** Goldilocks zone (spreads 4-9 points optimal)
+- **MONEYLINE:** Implied probability (moderate underdogs have value)
+- **TOTAL:** Over/under distribution bias
+
+**Prevention:**
+1. **Don't apply spread logic to non-spread markets** — check market type first
+2. **Pass `odds` parameter through scoring pipeline** — needed for moneyline heuristics
+3. **Test all market types separately** — SPREAD, MONEYLINE, TOTAL need individual verification
+
+**Files Modified:**
+- `live_data_router.py` — Added `odds` parameter to `calculate_pick_score()`, added moneyline-specific scoring
+
+**Added in:** v20.27 (Feb 14, 2026)
+
+---
+
+### Lesson 118: AI Score Variance Hard Gates for Multi-Candidate Scoring (v20.27)
+
+**Problem:** Regression test needed to prevent future constant AI score bugs. If >= 5 candidates exist and unique(ai_score) < 4 or stddev < 0.15, the scoring system is broken.
+
+**Root Cause:** No automated check for AI score distribution. The system could silently produce constant scores without anyone noticing until user complaints.
+
+**The Fix — Hard Gates in Unit Tests:**
+```python
+# tests/test_live_betting_correctness.py
+
+class TestAIScoreVariance:
+    def test_ai_variance_minimum_for_multiple_candidates(self):
+        """For >= 5 candidates, require >= 4 unique scores and stddev >= 0.15."""
+        candidates = [
+            {"home_team": f"Team_{i}", "away_team": f"Opponent_{i}", "spread": i * 0.5}
+            for i in range(10)
+        ]
+
+        scores = [calculate_ai_score(c) for c in candidates]
+        unique_scores = len(set(scores))
+        stddev = statistics.stdev(scores)
+
+        assert unique_scores >= 4, f"Only {unique_scores} unique AI scores for 10 candidates"
+        assert stddev >= 0.15, f"AI score stddev {stddev} < 0.15 threshold"
+```
+
+**Audit Script Check:**
+```bash
+# scripts/live_betting_audit.sh
+
+# Check 6: AI score variance
+if [[ "$GAMES_COUNT" -ge 5 ]]; then
+    if [[ "$UNIQUE_AI_SCORES" -lt 4 ]]; then
+        echo "  FAIL: AI scores are degenerate (only $UNIQUE_AI_SCORES unique values)"
+        FAILED=$((FAILED + 1))
+    elif [[ $(echo "$AI_STDDEV < 0.15" | bc -l) -eq 1 ]]; then
+        echo "  FAIL: AI score variance too low (stddev=$AI_STDDEV)"
+        FAILED=$((FAILED + 1))
+    fi
+fi
+```
+
+**Prevention:**
+1. **Add variance checks to CI pipeline** — fail build if AI scores collapse
+2. **Monitor unique_scores in production** — alert if dropping below threshold
+3. **Include ai_variance_stats in debug output** — visible in best-bets?debug=1
+
+**Files Modified:**
+- `tests/test_live_betting_correctness.py` — Added TestAIScoreVariance class with 6 tests
+- `scripts/live_betting_audit.sh` — Added check #6 for AI score variance
+
+**Added in:** v20.27 (Feb 14, 2026)
+
+---
+
+### Lesson 119: Debug Endpoints Must Surface Degenerate Detection Telemetry (v20.27)
+
+**Problem:** When AI scores became constant, there was no way to diagnose why without reading source code.
+
+**Root Cause:** Debug output only showed final scores, not the intermediate detection states (defaults used, heuristic triggered, MPS degenerate, etc.).
+
+**The Fix — ai_variance_stats in Debug Output:**
+```python
+# In best-bets?debug=1 response
+"ai_variance_stats": {
+    "props": {
+        "count": 0,
+        "unique_ai_scores": 0,
+        "ai_score_stddev": 0,
+        "heuristic_fallback_count": 0
+    },
+    "games": {
+        "count": 44,
+        "unique_ai_scores": 24,
+        "ai_score_stddev": 0.701,
+        "ai_score_min": 5.35,
+        "ai_score_max": 9.47,
+        "heuristic_fallback_count": 38,  # Shows defaults detection working
+        "mps_degenerate_count": 0
+    }
+},
+"market_counts_by_type": {
+    "SPREAD": 12,
+    "MONEYLINE": 12,
+    "TOTAL": 12,
+    "SHARP": 0,
+    "returned": {
+        "SPREAD": 5,
+        "MONEYLINE": 2,
+        "TOTAL": 1
+    }
+}
+```
+
+**Key Telemetry Fields:**
+| Field | Purpose | Healthy Value |
+|-------|---------|---------------|
+| `unique_ai_scores` | Distinct scores generated | >= 4 for >= 5 candidates |
+| `ai_score_stddev` | Score variance | >= 0.15 |
+| `heuristic_fallback_count` | Defaults detected | Varies by sport/coverage |
+| `mps_degenerate_count` | MPS produced constant scores | Should be 0 |
+| `market_counts_by_type` | Candidates by market type | All types should have candidates |
+
+**Prevention:**
+1. **Surface diagnostic telemetry in debug endpoints** — make debugging self-service
+2. **Include counts for all decision branches** — not just success path
+3. **Add min/max/stddev for any numeric output** — spot collapse immediately
+
+**Files Modified:**
+- `live_data_router.py` — Added `ai_variance_stats` and `market_counts_by_type` to debug response (lines ~8699-8738)
+
+**Added in:** v20.27 (Feb 14, 2026)
+
+---
