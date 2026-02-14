@@ -211,7 +211,7 @@ def create_snapshot(sport: str, response: Dict[str, Any]) -> Dict[str, Any]:
             "date_et": date_et,
             "captured_at": timestamp,
             "build_sha": build_sha,
-            "version": "20.20",
+            "version": "20.24",
         },
         "validation": {
             "all_passed": (

@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # EXPECTED VALUES (single source of truth)
 # =============================================================================
 
-EXPECTED_VERSION = "20.20"
+EXPECTED_VERSION = "20.24"
 
 EXPECTED_ENGINE_WEIGHTS = {
     "ai": 0.25,

@@ -45,7 +45,7 @@ API_KEY = os.getenv("API_KEY", "")
 # =============================================================================
 
 EXPECTED = {
-    "version": "20.20",  # Update to 20.21 after deployment
+    "version": "20.24",  # v20.24: Context multipliers now LIVE
     "engine_weights": {
         "ai": 0.25,
         "research": 0.35,
