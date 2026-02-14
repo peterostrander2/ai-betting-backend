@@ -101,7 +101,7 @@ fi
 AS_OF_ET=$(echo "$RESP" | jq -r '.meta.as_of_et' 2>/dev/null || echo "")
 ET_DAY=$(echo "$RESP" | jq -r '.meta.et_day' 2>/dev/null || echo "")
 
-if ! echo "$AS_OF_ET" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$'; then
+if ! echo "$AS_OF_ET" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?[+-][0-9]{2}:[0-9]{2}$'; then
   fail "meta.as_of_et format invalid (expected ISO 8601 with offset): $AS_OF_ET"
 fi
 
