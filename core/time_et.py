@@ -358,6 +358,90 @@ def get_et_debug_info() -> Dict[str, Any]:
     }
 
 
+def format_as_of_et() -> str:
+    """
+    Return ISO 8601 timestamp with ET offset for API responses.
+
+    This is the canonical format for all user-facing timestamps.
+
+    Returns:
+        ISO 8601 timestamp string with ET offset
+
+    Example:
+        >>> format_as_of_et()
+        '2026-02-14T13:05:12-05:00'
+    """
+    return now_et().isoformat()
+
+
+def format_et_day() -> str:
+    """
+    Return YYYY-MM-DD string in ET timezone.
+
+    This is the canonical format for date-only fields.
+
+    Returns:
+        Date string in YYYY-MM-DD format
+
+    Example:
+        >>> format_et_day()
+        '2026-02-14'
+    """
+    return now_et().date().isoformat()
+
+
+def data_age_ms(fetched_at_iso: str) -> int:
+    """
+    Calculate milliseconds since data was fetched.
+
+    Handles both Z-suffix UTC timestamps and offset-aware ISO timestamps.
+
+    Args:
+        fetched_at_iso: ISO 8601 timestamp string (e.g., "2026-02-14T13:00:00Z")
+
+    Returns:
+        Milliseconds since fetch, or -1 if parsing fails
+
+    Example:
+        >>> data_age_ms("2026-02-14T13:00:00Z")
+        18400  # ~18 seconds ago
+    """
+    try:
+        if not fetched_at_iso:
+            return -1
+        # Handle Z suffix (UTC)
+        if fetched_at_iso.endswith('Z'):
+            fetched_at_iso = fetched_at_iso[:-1] + '+00:00'
+        fetched = datetime.fromisoformat(fetched_at_iso)
+        # If naive, assume UTC
+        if fetched.tzinfo is None:
+            fetched = fetched.replace(tzinfo=timezone.utc)
+        # Calculate delta from current UTC time
+        delta = datetime.now(timezone.utc) - fetched.astimezone(timezone.utc)
+        return int(delta.total_seconds() * 1000)
+    except Exception:
+        return -1
+
+
+def get_build_sha() -> str:
+    """
+    Get build SHA from environment.
+
+    Returns first 8 characters of RAILWAY_GIT_COMMIT_SHA,
+    or "local" if not deployed on Railway.
+
+    Returns:
+        8-character build SHA or "local"
+
+    Example:
+        >>> get_build_sha()
+        'dcf22cf'
+    """
+    import os
+    sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "")
+    return sha[:8] if sha else "local"
+
+
 # Export only these functions - no other date helpers allowed
 __all__ = [
     'ET',
@@ -370,4 +454,9 @@ __all__ = [
     'filter_events_et',
     'assert_et_bounds',
     'get_et_debug_info',
+    # v20.12: ET canonical clock helpers
+    'format_as_of_et',
+    'format_et_day',
+    'data_age_ms',
+    'get_build_sha',
 ]

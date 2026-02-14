@@ -8111,6 +8111,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         },
         "meta": {
             "odds_fetched_at": _odds_fetched_at,
+            "as_of_et": format_as_of_et(),
+            "et_day": format_et_day(),
         },
         "esoteric": {
             "daily_energy": daily_energy,

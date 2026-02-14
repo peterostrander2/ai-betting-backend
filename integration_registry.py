@@ -44,6 +44,9 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 
+# v20.12: ET canonical clock helpers
+from core.time_et import format_as_of_et, data_age_ms
+
 # Import from canonical contract - ensures registry stays in sync
 from core.integration_contract import (
     INTEGRATIONS as CONTRACT_INTEGRATIONS,
@@ -132,9 +135,9 @@ def record_success(integration_name: str):
         _health_tracker[integration_name] = IntegrationHealth()
 
     health = _health_tracker[integration_name]
-    now = datetime.now(timezone.utc).isoformat()
-    health.last_check = now
-    health.last_ok = now
+    now_et = format_as_of_et()
+    health.last_check = now_et
+    health.last_ok = now_et
     health.success_count += 1
     health.consecutive_failures = 0
 
@@ -150,9 +153,9 @@ def record_failure(integration_name: str, error: str):
         _health_tracker[integration_name] = IntegrationHealth()
 
     health = _health_tracker[integration_name]
-    now = datetime.now(timezone.utc).isoformat()
-    health.last_check = now
-    health.last_error = f"{now}: {error}"
+    now_et = format_as_of_et()
+    health.last_check = now_et
+    health.last_error = f"{now_et}: {error}"
     health.error_count += 1
     health.consecutive_failures += 1
 

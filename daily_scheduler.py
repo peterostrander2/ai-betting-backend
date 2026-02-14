@@ -34,6 +34,10 @@ import threading
 import time
 from core.time_et import now_et
 
+# v20.12: Set TZ environment variable fallback for ET canonical clock
+if not os.getenv("TZ"):
+    os.environ["TZ"] = "America/New_York"
+
 # APScheduler for cron-like scheduling
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
@@ -204,12 +208,18 @@ class DailyAuditJob:
         """Execute daily audit for all sports."""
         logger.info("=" * 50)
         logger.info("⏰ DAILY AUDIT STARTING")
-        logger.info(f"   Time: {datetime.now().isoformat()}")
+        logger.info(f"   Time: {now_et().isoformat()}")
         logger.info("=" * 50)
-        
-        self.last_run = datetime.now()
+
+        self.last_run = now_et()
+
+        # Get build SHA from environment or git
+        _build_sha = os.getenv("BUILD_SHA", os.getenv("RAILWAY_GIT_COMMIT_SHA", ""))[:7] or "unknown"
+
         results = {
-            "timestamp": self.last_run.isoformat(),
+            "run_started_at_et": self.last_run.isoformat(),
+            "et_day": now_et().date().isoformat(),
+            "build_sha": _build_sha,
             "sports": {}
         }
         
@@ -222,7 +232,10 @@ class DailyAuditJob:
             except Exception as e:
                 logger.error(f"[{sport}] Audit failed: {e}")
                 results["sports"][sport] = {"error": str(e)}
-        
+
+        # Record when run finished
+        results["run_finished_at_et"] = now_et().isoformat()
+
         # Save results
         self.last_results = results
         self._save_audit_log(results)
@@ -537,18 +550,18 @@ class DailyScheduler:
         """Start using APScheduler."""
         self.scheduler = BackgroundScheduler()
 
-        # Daily audit at 6 AM
+        # Daily audit at 6 AM ET
         self.scheduler.add_job(
             self.audit_job.run,
-            CronTrigger(hour=SchedulerConfig.AUDIT_HOUR, minute=SchedulerConfig.AUDIT_MINUTE),
+            CronTrigger(hour=SchedulerConfig.AUDIT_HOUR, minute=SchedulerConfig.AUDIT_MINUTE, timezone="America/New_York"),
             id="daily_audit",
             name="Daily Audit"
         )
 
-        # Weekly cleanup on Sunday at 3 AM
+        # Weekly cleanup on Sunday at 3 AM ET
         self.scheduler.add_job(
             self.cleanup_job.run,
-            CronTrigger(day_of_week="sun", hour=3, minute=0),
+            CronTrigger(day_of_week="sun", hour=3, minute=0, timezone="America/New_York"),
             id="weekly_cleanup",
             name="Weekly Cleanup"
         )

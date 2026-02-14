@@ -91,6 +91,24 @@ if [ "$HAS_SHAPE" != "true" ]; then
   fail "Best-bets payload missing props/game_picks/meta or picks arrays"
 fi
 
+# 5) Required ET canonical clock fields in meta block (v20.12)
+HAS_ET_FIELDS=$(echo "$RESP" | jq -r '.meta | has("as_of_et") and has("et_day")' 2>/dev/null || echo false)
+if [ "$HAS_ET_FIELDS" != "true" ]; then
+  fail "Best-bets meta block missing required ET fields (as_of_et, et_day)"
+fi
+
+# Validate ET field formats (ISO 8601 with offset, YYYY-MM-DD)
+AS_OF_ET=$(echo "$RESP" | jq -r '.meta.as_of_et' 2>/dev/null || echo "")
+ET_DAY=$(echo "$RESP" | jq -r '.meta.et_day' 2>/dev/null || echo "")
+
+if ! echo "$AS_OF_ET" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$'; then
+  fail "meta.as_of_et format invalid (expected ISO 8601 with offset): $AS_OF_ET"
+fi
+
+if ! echo "$ET_DAY" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+  fail "meta.et_day format invalid (expected YYYY-MM-DD): $ET_DAY"
+fi
+
 REQUIRED_FIELDS='["base_4_score","context_modifier","confluence_boost","msrf_boost","jason_sim_boost","serp_boost","final_score","serp_status","msrf_status","context_reasons","confluence_reasons"]'
 
 # Check first game pick if present

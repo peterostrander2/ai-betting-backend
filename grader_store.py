@@ -17,6 +17,8 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 import logging
 
+from core.time_et import format_as_of_et
+
 logger = logging.getLogger(__name__)
 
 # Import storage_paths - SINGLE SOURCE OF TRUTH for Railway volume
@@ -103,7 +105,7 @@ def persist_pick(pick: Dict[str, Any], date_et: str) -> bool:
         pick["date_et"] = date_et
         pick_id = _make_pick_id(pick)
         pick["pick_id"] = pick_id
-        pick["persisted_at"] = datetime.now(timezone.utc).isoformat()
+        pick["persisted_at_et"] = format_as_of_et()
 
         # Load existing picks to check for duplicates
         existing_ids = set()
