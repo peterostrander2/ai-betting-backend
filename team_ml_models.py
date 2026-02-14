@@ -617,6 +617,25 @@ def get_game_ensemble() -> GameEnsembleModel:
     return _game_ensemble
 
 
+def _get_sklearn_status() -> Dict:
+    """Get sklearn regressor status from EnsembleStackingModel.
+
+    v20.22: Returns shadow mode status for sklearn regressors.
+    Safe to call even if advanced_ml_backend is not available.
+    """
+    try:
+        from advanced_ml_backend import EnsembleStackingModel
+        model = EnsembleStackingModel()
+        return model.get_training_status()
+    except Exception as e:
+        return {
+            'sklearn_trained': False,
+            'sklearn_enabled': False,
+            'sklearn_mode': 'UNAVAILABLE',
+            'error': str(e),
+        }
+
+
 def get_model_status() -> Dict:
     """Get status of all team models with diagnostic proof fields.
 
@@ -686,6 +705,8 @@ def get_model_status() -> Dict:
             "weights": {k: round(v, 4) for k, v in ensemble.weights.items() if not k.startswith("_")},
             # v20.17.0: Training signature for this model
             "training_signature": training_signatures.get("ensemble", {}),
+            # v20.22: Sklearn regressor status (shadow mode by default)
+            "sklearn_status": _get_sklearn_status(),
         },
         # v20.17.0: Mechanically checkable training telemetry
         "training_telemetry": {

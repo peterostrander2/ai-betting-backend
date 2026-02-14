@@ -355,7 +355,15 @@ API_KEY=your_key ./scripts/full_system_audit.sh
 | `.github/workflows/golden-gate.yml` | GitHub Actions CI: golden-gate, contract-tests, freeze-verify jobs — v20.21 |
 | `scripts/full_system_audit.sh` | Full backend audit for frontend readiness (11 hard gates) — v20.21 |
 
-### Current Version: v20.21 (Feb 13, 2026)
+### Current Version: v20.21 (Feb 13, 2026) + v20.22 Shadow Scaffolding
+
+**v20.22 Shadow Scaffolding (Feb 14, 2026):**
+- Added sklearn ensemble regressor training pipeline (`scripts/train_ensemble_regressors.py`)
+- Training runs at 7:15 AM ET but models are **SHADOW MODE by default**
+- No scoring behavior change unless `ENSEMBLE_SKLEARN_ENABLED=true` explicitly set
+- Added game score capture in grader for matchup model training
+- Wired sklearn status to `/live/debug/training-status` endpoint
+
 **Latest Change (v20.21) — CI Golden Gate + Structured Logging + docs/CONTRACT.md:**
 
 **Item 3: Integration State Machine**
