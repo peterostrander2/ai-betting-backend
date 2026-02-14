@@ -35,7 +35,7 @@
 |------|----------|--------------|
 | `docs/ML_REFERENCE.md` | LSTM models, GLITCH protocol, file index | When working on ML/scoring |
 | `docs/LESSONS_LEARNED.md` | 50+ historical bugs & fixes | When debugging a similar issue |
-| `docs/NEVER_DO.md` | 33 consolidated rule sets | Before modifying that subsystem |
+| `docs/NEVER_DO.md` | 35 consolidated rule sets (v20.24) | Before modifying that subsystem |
 | `docs/CHECKLISTS.md` | 17 verification checklists | Before deploying changes |
 | `docs/SESSION_NOTES.md` | Codex DNS & troubleshooting | If hitting infra issues |
 | `docs/CONTRACT.md` | Canonical scoring contract reference (v20.21) | When verifying frozen contract values |
@@ -97,7 +97,7 @@
 | 29 | Integration State Machine | Integrations track `calls_last_15m()` for health (v20.21) |
 | 30 | CI Golden Gate | All deploys must pass `ci_golden_gate.sh` (v20.21) |
 
-### Lessons Learned (102 Total) - Key Categories
+### Lessons Learned (104 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -159,6 +159,8 @@
 | 100 | **v20.21 Full System Audit for Frontend Readiness** | 11-gate audit script proves backend ready for frontend integration — `scripts/full_system_audit.sh` |
 | 101 | **v20.22 Scoring Drift vs Contract Stability** | Replacing signals changes internal behavior even if weights match. Two freeze definitions: strict (byte-identical) vs contract (external behavior). Shadow mode for internal changes, golden run to verify. |
 | 102 | **v20.22 Breakdown Builder Must Match Signal Changes** | Signal changes require THREE places: computation function, truth table, AND breakdown builder. Missing breakdown builder caused benford to appear in output despite being removed from GLITCH. |
+| 103 | **v20.24 Telemetry Fields Must Use Canonical Sources** | `used_integrations` was manually tracked, missing Playbook calls; DERIVE aggregates from `integration_calls` dict, don't maintain two tracking systems |
+| 104 | **v20.24 Version Strings Must Update Together** | Version hardcoded in 5+ places; when bumping, grep ALL occurrences and update in single commit; run golden gate before push |
 
 ### NEVER DO Sections (40 Categories)
 - ML & GLITCH (rules 1-10)
@@ -371,7 +373,33 @@ API_KEY=your_key ./scripts/full_system_audit.sh
 | `.github/workflows/golden-gate.yml` | GitHub Actions CI: golden-gate, contract-tests, freeze-verify jobs — v20.21 |
 | `scripts/full_system_audit.sh` | Full backend audit for frontend readiness (11 hard gates) — v20.21 |
 
-### Current Version: v20.22 (Feb 14, 2026)
+### Current Version: v20.24 (Feb 14, 2026)
+
+**v20.24 (Feb 14, 2026) — Context Multipliers LIVE + Telemetry Fix:**
+
+**Context Multipliers Now LIVE (No Longer Shadow):**
+- `lineup_confidence_multiplier`: 10% AI score reduction when key player OUT (ESPN data)
+- `line_difficulty_adj`: ±0.5 research score adjustment for NBA props vs season average
+- `kp_confidence_multiplier`: 5-10% final_score reduction during geomagnetic storms (Kp ≥ 5)
+
+**Single Application Points (No Double-Application):**
+- AI multiplier: `live_data_router.py:3838` ONLY
+- Research adjustment: `live_data_router.py:4051` ONLY
+- Kp multiplier: `live_data_router.py:5594` ONLY
+
+**Telemetry Fix (Lesson 103):**
+- `used_integrations` now derived from `integration_calls` dict (canonical source)
+- Fixes bug where Playbook API calls were invisible in rollup endpoints
+- Code at `live_data_router.py:~8403`
+
+**Version Sync Fix (Lesson 104):**
+- All version strings updated to "20.24" across 5 files
+- `/health` endpoint now returns correct version
+
+**Key Files:** `live_data_router.py`, `main.py`, `core/scoring_contract.py`
+**Commits:** `053b164d`, `f774305c`, `6a09316a`, `6b1f1ce6`
+
+---
 
 **v20.22 (Feb 14, 2026) — Math Signal Activation + Shadow Confluence:**
 

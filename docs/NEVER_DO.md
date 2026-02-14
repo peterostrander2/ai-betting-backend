@@ -1191,3 +1191,98 @@ def calls_last_15m(self):
 - `1` = BLOCK FRONTEND WORK
 
 ---
+
+## v20.24 Telemetry Tracking & Version Management (rules 291-300)
+
+**Rule 291: Derive Telemetry Aggregates from Canonical Source**
+```python
+# ❌ WRONG: Two separate tracking mechanisms
+used_integrations: Set = set()  # Manual tracking
+integration_calls: Dict = {}    # Detailed tracking
+
+def call_playbook():
+    _record_integration_call("playbook_api", ...)  # Updates integration_calls
+    # BUG: forgot to call _mark_integration_used("playbook_api")
+
+# ✅ CORRECT: Single canonical source, derive aggregates
+def finalize_request():
+    # Derive used_integrations from integration_calls (the canonical source)
+    used_integrations = {name for name, meta in integration_calls.items() if meta.get("called", 0) > 0}
+```
+
+**Rule 292: NEVER Maintain Two Tracking Systems for Same Concept**
+```python
+# ❌ WRONG: Two methods that should always be called together
+_record_integration_call(name, ...)   # Method 1
+_mark_integration_used(name)           # Method 2 (easily forgotten)
+
+# ✅ CORRECT: Single method OR derive at read time
+_record_integration_call(name, ...)   # Write to canonical source
+used_integrations = derive_from(integration_calls)  # Read-time derivation
+```
+
+**Rule 293: Verify Telemetry Fields Match After API Calls**
+```bash
+# After any API call, verify derived fields match source:
+curl -s "$BASE/live/best-bets/NBA?debug=1" -H "X-API-Key: KEY" | \
+  jq '{used: .debug.used_integrations, calls: [.debug.integration_calls | keys[]]}'
+# Both arrays should match
+```
+
+**Rule 294: Version Strings Must Update Together**
+```bash
+# ❌ WRONG: Update one file, forget others
+# Updated core/scoring_contract.py:CONTRACT_VERSION
+# But forgot: main.py, golden_run.py, golden_snapshot.py, test_golden_run.py
+
+# ✅ CORRECT: Grep and update ALL version locations
+grep -rn "20\\.2[0-9]" --include="*.py" --include="*.json" | grep -E "(version|VERSION)"
+# Update ALL matches in single commit
+```
+
+**Rule 295: Run CI Golden Gate After Version Bump**
+```bash
+# ❌ WRONG: Bump version and push without testing
+sed -i 's/20.23/20.24/' core/scoring_contract.py
+git commit -m "bump version" && git push  # May break golden gate!
+
+# ✅ CORRECT: Test locally first
+# Update all version locations
+./scripts/ci_golden_gate.sh  # Verify tests pass
+git commit -m "chore: bump version to 20.24" && git push
+```
+
+**Rule 296: Version Bump Checklist (mandatory files)**
+```
+□ core/scoring_contract.py (CONTRACT_VERSION)
+□ main.py (/health response)
+□ scripts/golden_run.py
+□ scripts/golden_snapshot.py
+□ tests/test_golden_run.py (EXPECTED_VERSION)
+□ tests/fixtures/golden_baseline_*.json
+□ CLAUDE.md (Current Version section)
+```
+
+**Rule 297: /health Must Return CONTRACT_VERSION**
+```python
+# ❌ WRONG: Hardcoded version in health endpoint
+@app.get("/health")
+async def health():
+    return {"version": "20.20", ...}  # Hardcoded, drifts from contract
+
+# ✅ CORRECT: Import from canonical source (or update together)
+from core.scoring_contract import CONTRACT_VERSION
+# If main.py can't import (circular), ensure version bump updates both
+```
+
+**Rule 298: Test Expected Version Must Match Production**
+```python
+# tests/test_golden_run.py
+# ❌ WRONG: Test expects old version after production upgrade
+EXPECTED_VERSION = "20.20"  # But production returns "20.24"
+
+# ✅ CORRECT: Test version matches production
+EXPECTED_VERSION = "20.24"  # Updated in same commit as production
+```
+
+---

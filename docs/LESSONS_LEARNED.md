@@ -3793,3 +3793,77 @@ python -m pytest tests/test_esoteric_truthfulness.py::TestBreakdownSignalCount -
 **Added in:** v20.22 (Feb 14, 2026)
 
 ---
+
+### Lesson 103: Telemetry Fields Must Use Canonical Sources (v20.24)
+
+**Problem:** `/live/debug/integration-rollup` showed `used_integrations: ["odds_api"]` even though Playbook API was successfully called and returned data. The learning loop and monitoring dashboards missed Playbook usage, making it appear broken.
+
+**Root Cause:** Two separate tracking mechanisms existed:
+1. `_record_integration_call(name, ...)` — called by Playbook, records to `integration_calls` dict
+2. `_mark_integration_used(name)` — called by OddsAPI, adds to `used_integrations` set
+
+Playbook called `_record_integration_call()` but NOT `_mark_integration_used()`. The rollup endpoint read from `used_integrations`, so Playbook was invisible.
+
+**The Fix:**
+```python
+# At the end of request processing, DERIVE used_integrations from integration_calls
+used_integrations = {name for name, meta in integration_calls.items() if meta.get("called", 0) > 0}
+```
+
+**Prevention Pattern:**
+1. NEVER maintain two tracking systems for the same concept
+2. If you must have multiple entry points, DERIVE aggregates from canonical source
+3. The canonical source for integration calls is `integration_calls` dict (has timestamps, call counts, metadata)
+4. Derived fields should be computed at read time, not written by each caller
+
+**Verification:**
+```bash
+# After any integration call, verify used_integrations matches integration_calls
+curl -s "$BASE/live/best-bets/NBA?debug=1" -H "X-API-Key: KEY" | \
+  jq '{used: .debug.used_integrations, calls: [.debug.integration_calls | keys[]]}'
+# Both arrays should match
+```
+
+**Added in:** v20.24 (Feb 14, 2026)
+
+---
+
+### Lesson 104: Version Strings Must Update Together (v20.24)
+
+**Problem:** After updating `CONTRACT_VERSION = "20.24"` in scoring_contract.py, the `/health` endpoint still returned `"version": "20.20"`. Golden run tests failed with "Version mismatch - expected: 20.20, actual: 20.24".
+
+**Root Cause:** Version strings were hardcoded in 5+ places with no synchronization:
+- `core/scoring_contract.py:CONTRACT_VERSION` (canonical)
+- `main.py:280` (health endpoint response)
+- `scripts/golden_run.py:48` (validation script)
+- `scripts/golden_snapshot.py:214` (snapshot metadata)
+- `tests/test_golden_run.py:28` (EXPECTED_VERSION)
+- `tests/fixtures/golden_baseline_v20.21.json:8` (baseline contract)
+
+**The Fix:** Updated all 5 locations to "20.24" in a single coordinated commit.
+
+**Prevention Pattern:**
+1. When bumping version, grep for ALL occurrences: `grep -rn "20\\.2[0-9]" --include="*.py" --include="*.json" --include="*.sh"`
+2. Create a version bump checklist:
+   ```
+   □ core/scoring_contract.py (CONTRACT_VERSION)
+   □ main.py (/health response)
+   □ scripts/golden_run.py
+   □ scripts/golden_snapshot.py
+   □ tests/test_golden_run.py (EXPECTED_VERSION)
+   □ tests/fixtures/golden_baseline_*.json
+   ```
+3. ALWAYS run `./scripts/ci_golden_gate.sh` locally before pushing version changes
+4. Consider: Single source of truth with imports (but some files can't import Python)
+
+**Verification:**
+```bash
+# All version strings should match
+grep -rn '"20\.' --include="*.py" --include="*.json" | grep -E "(version|VERSION)" | head -20
+# Run golden gate to verify
+./scripts/ci_golden_gate.sh
+```
+
+**Added in:** v20.24 (Feb 14, 2026)
+
+---
