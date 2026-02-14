@@ -3653,28 +3653,27 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             model_preds = raw_inputs.get("model_preds", {})
 
             # Detect degenerate conditions:
-            # 1. Very low model std (< 0.3) indicates models agreeing due to similar inputs
-            # 2. Score in suspicious constant range (7.5-8.0 where NCAAB was stuck)
-            # 3. Context data appears defaulted (def_rank=15, pace close to 68 or 100)
+            # PRIMARY CHECK: If context inputs are defaulted, MPS will produce
+            # similar outputs for all games - use heuristic instead for variance
             is_degenerate = False
             degenerate_reason = None
 
-            if model_std < 0.3 and 7.0 <= ai_score <= 8.5:
-                # Check if inputs appear defaulted
-                input_def_rank = game_data.get("def_rank", 15)
-                input_pace = game_data.get("pace", 100)
-                input_vacuum = game_data.get("vacuum", 0)
+            # Check if inputs appear defaulted (this is the root cause)
+            input_def_rank = game_data.get("def_rank", 15)
+            input_pace = game_data.get("pace", 100)
+            input_vacuum = game_data.get("vacuum", 0)
 
-                # If using default values, MPS is getting identical inputs
-                defaults_used = (
-                    input_def_rank == 15 and
-                    (input_pace == 100 or input_pace == 68.0) and
-                    input_vacuum == 0
-                )
+            # If using default values, MPS is getting identical inputs across games
+            # This causes constant AI scores (the NCAAB 7.8 bug)
+            defaults_used = (
+                input_def_rank == 15 and
+                (input_pace == 100 or abs(input_pace - 68.0) < 1.0) and
+                input_vacuum == 0
+            )
 
-                if defaults_used:
-                    is_degenerate = True
-                    degenerate_reason = f"DEFAULTED_INPUTS (def_rank={input_def_rank}, pace={input_pace}, vacuum={input_vacuum})"
+            if defaults_used:
+                is_degenerate = True
+                degenerate_reason = f"DEFAULTED_INPUTS (def_rank={input_def_rank}, pace={input_pace}, vacuum={input_vacuum})"
 
             if is_degenerate:
                 # Fall back to deterministic heuristic which has proper variance
@@ -3711,19 +3710,23 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 reasons.append(f"Edge: {factors.get('edge', 0):.1f}%")
 
             # v20.27: Build comprehensive ai_audit for debug transparency
+            # Keep flat structure for backwards compatibility with ai_breakdown
             ai_audit = {
+                # MPS fields (backwards compatible with existing ai_breakdown)
+                "deviation_score": mps_ai_audit.get("deviation_score"),
+                "agreement_score": mps_ai_audit.get("agreement_score"),
+                "edge_score": mps_ai_audit.get("edge_score"),
+                "factor_score": mps_ai_audit.get("factor_score"),
+                "alternative_base": mps_ai_audit.get("alternative_base"),
+                "base_score_used": mps_ai_audit.get("base_score_used", "UNKNOWN"),
+                "pillar_boost": mps_ai_audit.get("pillar_boost"),
+                "model_std": mps_ai_audit.get("model_std"),
+                "raw_inputs": mps_ai_audit.get("raw_inputs", {}),
+                "model_status": mps_ai_audit.get("model_status", {}),
+                # v20.27 additions
                 "ai_status": "ML_PRIMARY",
                 "ai_weight_applied": 1.0,
-                "ai_raw_components": {
-                    "deviation_score": mps_ai_audit.get("deviation_score", 0),
-                    "agreement_score": mps_ai_audit.get("agreement_score", 0),
-                    "edge_score": mps_ai_audit.get("edge_score", 0),
-                    "factor_score": mps_ai_audit.get("factor_score", 0),
-                    "pillar_boost": mps_ai_audit.get("pillar_boost", 0),
-                },
                 "ai_post_clamp": round(ai_score, 3),
-                "model_std": round(model_std, 3),
-                "base_score_used": mps_ai_audit.get("base_score_used", "UNKNOWN"),
                 "fallback_reason": None,  # Not a fallback
             }
 
