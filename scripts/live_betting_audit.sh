@@ -121,11 +121,13 @@ ET_DAY=$(echo "$RESPONSE" | jq -r '.meta.et_day // empty')
 DATE_ET=$(echo "$RESPONSE" | jq -r '.date_et // empty')
 
 if [[ -n "$ET_DAY" ]] && [[ -n "$DATE_ET" ]]; then
-    if [[ "$ET_DAY" == "$DATE_ET" ]]; then
+    # Convert human-readable date "February 14, 2026" to YYYY-MM-DD for comparison
+    DATE_ET_NORMALIZED=$(date -j -f "%B %d, %Y" "$DATE_ET" "+%Y-%m-%d" 2>/dev/null || echo "$DATE_ET")
+    if [[ "$ET_DAY" == "$DATE_ET_NORMALIZED" ]]; then
         echo "  PASS: meta.et_day ($ET_DAY) matches date_et ($DATE_ET)"
         PASSED=$((PASSED + 1))
     else
-        echo "  FAIL: meta.et_day ($ET_DAY) does not match date_et ($DATE_ET)"
+        echo "  FAIL: meta.et_day ($ET_DAY) does not match date_et ($DATE_ET -> $DATE_ET_NORMALIZED)"
         FAILED=$((FAILED + 1))
     fi
 else
