@@ -1363,3 +1363,96 @@ echo "$ACTUAL" | grep -qE 'YOUR_REGEX' && echo PASS || echo FAIL
 ```
 
 ---
+
+## 🚫 NEVER DO THESE (v20.26 Live Audit & Determinism)
+
+**Rule 305: inputs_hash Must Be Deterministic**
+```python
+# ❌ WRONG: Include time-varying or non-rounded values
+_inputs_hash_data = {
+    "ai": ai_score,           # Floating point precision issues
+    "timestamp": now_et(),    # Changes every call!
+    "random": random.random() # Non-deterministic
+}
+
+# ✅ CORRECT: Round floats, exclude time-varying values
+_inputs_hash_data = {
+    "ai": round(ai_scaled, 2),
+    "research": round(research_score, 2),
+    # ... deterministic inputs only
+}
+_inputs_hash = hashlib.sha256(json.dumps(_inputs_hash_data, sort_keys=True).encode()).hexdigest()[:16]
+```
+
+**Rule 306: JSON Serialization Requires sort_keys=True**
+```python
+# ❌ WRONG: Dict ordering is non-deterministic in Python < 3.7
+json.dumps(data)  # Order may vary between calls
+
+# ✅ CORRECT: Force deterministic ordering
+json.dumps(data, sort_keys=True)
+```
+
+**Rule 307: market_phase Must Be Present on Every Pick**
+```python
+# ❌ WRONG: Missing market_phase field
+{
+    "game_status": "IN_PROGRESS",  # API-specific, inconsistent
+    # market_phase missing!
+}
+
+# ✅ CORRECT: Include canonical market_phase
+{
+    "game_status": "IN_PROGRESS",
+    "market_phase": "IN_PLAY",  # One of: PRE_GAME, IN_PLAY, HALFTIME, FINAL
+}
+```
+
+**Rule 308: market_phase Must Be Canonical Value**
+```python
+# ❌ WRONG: Using API-specific status values
+market_phase = game_status  # Could be "INPROGRESS", "live", "1H", etc.
+
+# ✅ CORRECT: Normalize to canonical values
+VALID_PHASES = {"PRE_GAME", "IN_PLAY", "HALFTIME", "FINAL"}
+# Always map to one of these, default to PRE_GAME if unknown
+```
+
+**Rule 309: Integration Timestamps Must Use now_et() Not now**
+```python
+# ❌ WRONG: Variable 'now' undefined
+timestamp = now.isoformat()  # NameError: name 'now' is not defined
+
+# ✅ CORRECT: Use imported now_et() function
+from core.time_et import now_et
+timestamp = now_et().isoformat()
+```
+
+**Rule 310: Integration Health Tracking Must Use ISO Strings**
+```python
+# ❌ WRONG: Mixing datetime objects and strings in comparisons
+cutoff = now_et()
+if timestamp >= cutoff:  # TypeError: can't compare str to datetime
+
+# ✅ CORRECT: Convert both to ISO strings for comparison
+cutoff_iso = now_et().isoformat()
+if timestamp_iso >= cutoff_iso:  # String comparison works
+```
+
+**Live Audit Verification Commands (v20.26):**
+```bash
+# 1. Check inputs_hash determinism (same game, same hash)
+curl -s "$URL/live/best-bets/NBA" | jq '.game_picks.picks[0] | {inputs_hash, final_score}'
+sleep 3
+curl -s "$URL/live/best-bets/NBA" | jq '.game_picks.picks[0] | {inputs_hash, final_score}'
+# Hashes should match if final_score unchanged
+
+# 2. Check market_phase present and valid
+curl -s "$URL/live/best-bets/NBA" | jq '.game_picks.picks[] | .market_phase' | sort | uniq
+# Should only show: "PRE_GAME", "IN_PLAY", "HALFTIME", or "FINAL"
+
+# 3. Check integration call tracking
+curl -s "$URL/live/debug/integrations" | jq '.integrations[] | {name, calls_last_15m}'
+```
+
+---

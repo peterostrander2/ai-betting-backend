@@ -97,7 +97,7 @@
 | 29 | Integration State Machine | Integrations track `calls_last_15m()` for health (v20.21) |
 | 30 | CI Golden Gate | All deploys must pass `ci_golden_gate.sh` (v20.21) |
 
-### Lessons Learned (106 Total) - Key Categories
+### Lessons Learned (109 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -163,8 +163,11 @@
 | 104 | **v20.24 Version Strings Must Update Together** | Version hardcoded in 5+ places; when bumping, grep ALL occurrences and update in single commit; run golden gate before push |
 | 105 | **v20.25 New Exports Require Import Updates** | Added functions to `__all__` but forgot import sites; grep all `from module import` statements before pushing |
 | 106 | **v20.25 ISO 8601 Regex Must Handle Fractional Seconds** | Python's isoformat() includes microseconds; regex needs `(\.[0-9]+)?` for optional fractional seconds |
+| 107 | **v20.26 Deterministic inputs_hash** | Round floats to fixed precision, use sort_keys=True, exclude time-varying values; hash changes IFF inputs change |
+| 108 | **v20.26 market_phase Canonical Values** | Normalize game_status to PRE_GAME, IN_PLAY, HALFTIME, FINAL using substring matching; default to PRE_GAME |
+| 109 | **v20.26 Integration calls_last_60s** | 60-second rolling window for burst detection; cache_hit tracking infrastructure added |
 
-### NEVER DO Sections (41 Categories)
+### NEVER DO Sections (42 Categories)
 - ML & GLITCH (rules 1-10)
 - MSRF (rules 11-14)
 - Security (rules 15-19)
@@ -212,6 +215,7 @@
 - v20.21 Structured Logging & Request Correlation (rules 283-288)
 - v20.24 Telemetry & Version Management (rules 289-298)
 - v20.25 ET Canonical Clock (rules 299-304)
+- v20.26 Live Audit & Determinism (rules 305-310)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -377,7 +381,42 @@ API_KEY=your_key ./scripts/full_system_audit.sh
 | `.github/workflows/golden-gate.yml` | GitHub Actions CI: golden-gate, contract-tests, freeze-verify jobs — v20.21 |
 | `scripts/full_system_audit.sh` | Full backend audit for frontend readiness (11 hard gates) — v20.21 |
 
-### Current Version: v20.25 (Feb 14, 2026)
+### Current Version: v20.26 (Feb 14, 2026)
+
+**v20.26 (Feb 14, 2026) — Live Audit Hardening + Determinism Verification:**
+
+**New Pick Fields:**
+- `inputs_hash` — 16-char SHA256 hash of scoring inputs for determinism verification
+- `market_phase` — Canonical game phase: `PRE_GAME`, `IN_PLAY`, `HALFTIME`, `FINAL`
+
+**New integration_registry.py Functions:**
+- `calls_last_60s(integration_name)` — 60-second rolling window for burst detection
+- `record_cache_hit(integration_name)` — Increment cache hit counter
+- `get_cache_hit_rate(integration_name)` — Return cache effectiveness ratio (0.0-1.0)
+
+**Integration Health Updates:**
+- Added `cache_hits`/`cache_misses` fields to `IntegrationHealth` dataclass
+- Fixed `now` undefined bug at line 145 (was referencing undefined variable)
+- Added `as_of_et` and `et_day` to `get_all_integrations_status()` response
+
+**Health Endpoint:**
+- Added `now_et` field to `/health` response
+
+**Key Lessons:**
+- Lesson 107: inputs_hash must be deterministic (round floats, sort_keys=True, no time-varying values)
+- Lesson 108: market_phase normalizes various API status strings to canonical values
+- Lesson 109: Integration health tracking with 60s windows for burst detection
+
+**Key Rules (305-310):**
+- inputs_hash must be deterministic
+- JSON serialization requires sort_keys=True
+- market_phase must be present and canonical
+- Integration timestamps must use now_et() not undefined `now`
+
+**Files Modified:** `live_data_router.py`, `integration_registry.py`, `main.py`
+**Build:** `f265b119`
+
+---
 
 **v20.25 (Feb 14, 2026) — ET Canonical Clock Standardization:**
 

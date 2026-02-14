@@ -3953,3 +3953,142 @@ Python's `datetime.isoformat()` includes microseconds by default, so any regex v
 **Added in:** v20.25 (Feb 14, 2026)
 
 ---
+
+### Lesson 107: Deterministic inputs_hash for Drift Detection (v20.26)
+
+**Problem:** Live audit check #4 ("No flip without change") showed that `inputs_hash` changed between two identical API calls even though `final_score` stayed the same. This made it impossible to verify determinism.
+
+**Root Cause:** The `inputs_hash` was computed from floating-point scores that might have minor rounding differences between calls, or from values that changed with time (like timestamps or random components).
+
+**The Fix:**
+```python
+# Calculate inputs_hash from deterministic scoring inputs
+_inputs_hash_data = {
+    "ai": round(ai_scaled, 2),
+    "research": round(research_score, 2),
+    "esoteric": round(esoteric_score, 2),
+    "jarvis": round(jarvis_rs, 2) if jarvis_rs else 0,
+    "context_mod": round(context_modifier, 3),
+    "confluence": confluence_boost,
+    "msrf": msrf_boost,
+    "jason_sim": jason_sim_boost,
+    "serp": serp_boost_total,
+    "sharp_strength": sharp_strength,
+    "lv": round(line_variance, 2),
+    "public_pct": public_pct_val,
+    "book_count": book_count,
+}
+_inputs_hash = hashlib.sha256(
+    json.dumps(_inputs_hash_data, sort_keys=True).encode()
+).hexdigest()[:16]
+```
+
+**Key Design Decisions:**
+- Round floats to fixed precision (2-3 decimal places)
+- Use `sort_keys=True` for deterministic JSON serialization
+- 16-char hash prefix is sufficient for collision avoidance
+- Exclude time-varying values (timestamps, cache state)
+
+**Prevention:**
+1. **inputs_hash must change IFF inputs change** — verify with diff test
+2. **Round all floats consistently** — avoids floating point comparison issues
+3. **sort_keys=True is mandatory** — dict ordering is non-deterministic otherwise
+4. **Test with consecutive calls** — same game, same inputs → same hash
+
+**Verification:**
+```bash
+# Two calls should have same inputs_hash if no market data changed
+curl -s "$URL/live/best-bets/NBA" -H "X-API-Key: KEY" | jq '.game_picks.picks[0] | {inputs_hash, final_score}'
+# Wait 3 seconds
+curl -s "$URL/live/best-bets/NBA" -H "X-API-Key: KEY" | jq '.game_picks.picks[0] | {inputs_hash, final_score}'
+# inputs_hash should match if final_score matches
+```
+
+**Added in:** v20.26 (Feb 14, 2026)
+
+---
+
+### Lesson 108: market_phase for Explicit In-Play Labeling (v20.26)
+
+**Problem:** Live audit check #6 ("In-play markets explicit labeling") required that every pick clearly indicates whether the game is pre-game, live, halftime, or final. The existing `game_status` field had inconsistent values across data sources.
+
+**Root Cause:** Different APIs return different status strings ("LIVE", "IN_PROGRESS", "INPROGRESS", "HALFTIME", "FINAL", "COMPLETED", etc.). No canonical mapping existed.
+
+**The Fix:**
+```python
+# Normalize game_status to canonical market_phase
+_game_status_upper = (game_status or "").upper()
+if "HALFTIME" in _game_status_upper:
+    _market_phase = "HALFTIME"
+elif "LIVE" in _game_status_upper or "IN_PROGRESS" in _game_status_upper or "MISSED_START" in _game_status_upper:
+    _market_phase = "IN_PLAY"
+elif "FINAL" in _game_status_upper or "COMPLETED" in _game_status_upper or "ENDED" in _game_status_upper:
+    _market_phase = "FINAL"
+else:
+    _market_phase = "PRE_GAME"
+```
+
+**Canonical market_phase Values:**
+| Value | Meaning | Use Case |
+|-------|---------|----------|
+| `PRE_GAME` | Game hasn't started | Normal betting |
+| `IN_PLAY` | Game is live | Live betting enabled |
+| `HALFTIME` | Halftime break | Special halftime lines |
+| `FINAL` | Game completed | Grading ready |
+
+**Prevention:**
+1. **Use substring matching** — "IN_PROGRESS" matches both ESPN and Odds API formats
+2. **Default to PRE_GAME** — safest assumption for unknown status
+3. **Check for HALFTIME first** — some APIs include "LIVE" in halftime status
+4. **market_phase is contract field** — must be present on every pick
+
+**Verification:**
+```bash
+# All picks should have market_phase
+curl -s "$URL/live/best-bets/NBA" -H "X-API-Key: KEY" | jq '.game_picks.picks[] | {market_phase, game_status}'
+# market_phase should be one of: PRE_GAME, IN_PLAY, HALFTIME, FINAL
+```
+
+**Added in:** v20.26 (Feb 14, 2026)
+
+---
+
+### Lesson 109: Integration Health Tracking with calls_last_60s (v20.26)
+
+**Problem:** Live audit check #5 ("Paid API safety under polling") required verifying that paid APIs aren't being over-polled. The existing `calls_last_15m` was too coarse-grained to detect burst behavior.
+
+**Root Cause:** No 60-second rolling window existed. Integration health only tracked 15-minute windows, which could mask short burst polling that exhausts API quotas.
+
+**The Fix:**
+```python
+def calls_last_60s(integration_name: str) -> int:
+    """Return count of calls in the last 60 seconds for an integration."""
+    health = _health_tracker.get(integration_name)
+    if not health or not health.call_timestamps:
+        return 0
+    cutoff = now_et() - timedelta(seconds=60)
+    cutoff_iso = cutoff.isoformat()
+    return sum(1 for ts in health.call_timestamps if ts >= cutoff_iso)
+```
+
+**Also Added:**
+- `record_cache_hit(integration_name)` — increment cache hit counter
+- `get_cache_hit_rate(integration_name)` — return cache effectiveness ratio
+- `cache_hits`/`cache_misses` fields on `IntegrationHealth` dataclass
+
+**Prevention:**
+1. **Track both 15m and 60s windows** — coarse for health, fine for burst detection
+2. **ISO string comparison works** — timestamps sort correctly as strings
+3. **Infrastructure first** — add tracking counters before wiring to actual calls
+4. **cache_hit_rate needs wiring** — counters exist but need actual cache ops to call them
+
+**Verification:**
+```bash
+# Check integration call rates
+curl -s "$URL/live/debug/integrations" -H "X-API-Key: KEY" | jq '.integrations[] | {name, calls_last_15m}'
+# calls_last_15m should be reasonable (< 100 for non-burst normal usage)
+```
+
+**Added in:** v20.26 (Feb 14, 2026)
+
+---
