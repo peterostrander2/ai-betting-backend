@@ -67,12 +67,12 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 TRAINING_STATUS=$(curl -s "${BASE_URL}/live/debug/training-status" \
     -H "X-API-Key: ${API_KEY}" 2>/dev/null || echo '{"error": "fetch_failed"}')
 
-# Extract sklearn status
-SKLEARN_MODE=$(echo "$TRAINING_STATUS" | jq -r '.sklearn_status.sklearn_mode // "UNKNOWN"')
-SKLEARN_TRAINED=$(echo "$TRAINING_STATUS" | jq -r '.sklearn_status.sklearn_trained // false')
-MODELS_EXIST=$(echo "$TRAINING_STATUS" | jq -r '.sklearn_status.models_exist // false')
-LAST_TRAIN_TIME=$(echo "$TRAINING_STATUS" | jq -r '.sklearn_status.last_train_time // "never"')
-TRAINING_SAMPLES=$(echo "$TRAINING_STATUS" | jq -r '.sklearn_status.training_samples // 0')
+# Extract sklearn status (nested under model_status.sklearn_status)
+SKLEARN_MODE=$(echo "$TRAINING_STATUS" | jq -r '.model_status.sklearn_status.sklearn_mode // "UNKNOWN"')
+SKLEARN_TRAINED=$(echo "$TRAINING_STATUS" | jq -r '.model_status.sklearn_status.sklearn_trained // false')
+MODELS_EXIST=$(echo "$TRAINING_STATUS" | jq -r '.model_status.sklearn_status.models_exist // false')
+LAST_TRAIN_TIME=$(echo "$TRAINING_STATUS" | jq -r '.model_status.sklearn_status.last_train_time // "never"')
+TRAINING_SAMPLES=$(echo "$TRAINING_STATUS" | jq -r '.model_status.sklearn_status.training_samples // 0')
 
 echo "  Sklearn Mode:      $SKLEARN_MODE"
 echo "  Sklearn Trained:   $SKLEARN_TRAINED"
@@ -109,10 +109,11 @@ echo -e "${BLUE}[2/5] Checking Score Capture (Matchup Model Data)...${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 GRADED_PICKS=$(curl -s "${BASE_URL}/live/picks/graded?limit=100" \
-    -H "X-API-Key: ${API_KEY}" 2>/dev/null || echo '[]')
+    -H "X-API-Key: ${API_KEY}" 2>/dev/null || echo '{"picks":[]}')
 
-TOTAL_GRADED=$(echo "$GRADED_PICKS" | jq 'length')
-WITH_SCORES=$(echo "$GRADED_PICKS" | jq '[.[] | select(.actual_home_score != null)] | length')
+# Handle both array response and object with picks array
+TOTAL_GRADED=$(echo "$GRADED_PICKS" | jq 'if type == "array" then length else (.picks // []) | length end')
+WITH_SCORES=$(echo "$GRADED_PICKS" | jq 'if type == "array" then [.[] | select(.actual_home_score != null)] | length else [(.picks // [])[] | select(.actual_home_score != null)] | length end')
 
 echo "  Total Graded Picks:     $TOTAL_GRADED"
 echo "  Picks with Scores:      $WITH_SCORES"
@@ -125,8 +126,9 @@ if [[ "$WITH_SCORES" -gt 0 ]]; then
     echo ""
     echo "  Sample pick with scores:"
     echo "$GRADED_PICKS" | jq -r '
-        [.[] | select(.actual_home_score != null)][0] |
-        "    Pick: \(.matchup // "N/A")\n    Result: \(.result // "N/A")\n    Home Score: \(.actual_home_score)\n    Away Score: \(.actual_away_score)"
+        (if type == "array" then . else (.picks // []) end) |
+        [.[] | select(.actual_home_score != null)][0] // null |
+        if . then "    Pick: \(.matchup // "N/A")\n    Result: \(.result // "N/A")\n    Home Score: \(.actual_home_score)\n    Away Score: \(.actual_away_score)" else "    (no sample available)" end
     ' 2>/dev/null || echo "    (no sample available)"
 else
     check_warn "No picks with actual scores yet - need more graded games"
