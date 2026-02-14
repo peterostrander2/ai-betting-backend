@@ -1,5 +1,19 @@
 # CLAUDE CODE SESSION BEHAVIOR
 
+---
+## 🔔 PENDING ACTION: Sklearn Activation (Check on Feb 21, 2026+)
+
+**If today is February 21, 2026 or later, remind the user:**
+
+> "The sklearn ensemble models have been training in shadow mode for 7+ days.
+> Ready to verify and potentially enable for live predictions.
+> Run: `API_KEY=your_key ./scripts/verify_sklearn_shadow.sh`
+> See: `docs/SKLEARN_ACTIVATION_REMINDER.md`"
+
+**Delete this section once sklearn is enabled (ENSEMBLE_SKLEARN_ENABLED=true).**
+
+---
+
 **Context Management (READ FIRST):**
 - Do NOT auto-summarize or compact conversation history unless explicitly requested
 - Prefer retaining full context over aggressive summarization
