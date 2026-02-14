@@ -117,6 +117,7 @@
 | 120 | **v20.28 Cross-Sport Testing** | Fixture-based CI, sport-parametric tests, NO_SLATE handling |
 | 121 | **v20.28.1 CI Hardening** | Tests in repo ≠ tests in CI, wire them to GitHub Actions, hard gate classes |
 | 122 | **v20.28.2 Paid APIs First** | Use Odds API for live scores (paid), ESPN as fallback (free). Always prioritize paid API features |
+| 123-126 | **v20.28.4 Portable Test Suite** | No /data required, conftest.py fixtures, lazy init, optional dep skips, verify actual return values |
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
@@ -227,9 +228,13 @@
 - v20.26 Live Betting Correctness (rules 311-318)
 - v20.27 AI Score Variance & Heuristic Fallback (rules 319-325)
 - v20.28.1 CI Hardening (rules 326-330)
+- v20.28.4 Portable Test Suite (rules 331-338)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
+# 0. CI Gate (v20.28.4) - REQUIRED: Runs full test suite locally (no /data needed)
+./scripts/ci_gate.sh
+
 # 1. CI Golden Gate (v20.21) - REQUIRED: Runs all contract tests
 ./scripts/ci_golden_gate.sh
 
@@ -328,6 +333,13 @@ API_KEY=your_key SPORT=NCAAB ./scripts/live_betting_audit.sh
 - [ ] **Update tests with schema changes** — When output dict changes, update test assertions IMMEDIATELY
 - [ ] **Internal vars ≠ output fields** — Local variables like `jarvis_boost` are NOT in output dict
 
+#### Portable Test Suite (v20.28.4)
+- [ ] **No import-time side effects** — Never call mkdir/file ops at module import; use lazy init
+- [ ] **Use conftest.py fixtures** — Set RAILWAY_VOLUME_MOUNT_PATH in conftest, not individual tests
+- [ ] **Skip optional dependencies** — Use `pytest.importorskip()` or `@pytest.mark.skipif` for sklearn/sqlalchemy/pytz
+- [ ] **Verify actual return values** — Read implementation before asserting expected values
+- [ ] **Run ci_gate.sh locally** — Always run `./scripts/ci_gate.sh` before pushing
+
 #### Regression Gates (v20.20)
 - [ ] **Never loosen gate to match bug** — Gate fails → fix production, don't add failing value to valid set
 - [ ] **HIDDEN_TIERS filter at output** — MONITOR/PASS are internal, never returned to API
@@ -399,9 +411,50 @@ API_KEY=your_key SPORT=NCAAB ./scripts/live_betting_audit.sh
 | `tests/test_cross_sport_4engine.py` | Cross-sport 4-engine tests (85 tests): sport-parametric, AI variance gates, market coverage, hard gate classes — v20.28.1 |
 | `scripts/live_betting_audit.sh` | Live betting correctness audit: meta.as_of_et, data_age_ms, game_status, ET consistency — v20.26 |
 | `scripts/live_betting_audit_all_sports.sh` | Cross-sport audit for NBA/NCAAB/NFL/MLB/NHL with NO_SLATE handling — v20.28 |
+| `tests/conftest.py` | Pytest fixtures: auto-sets RAILWAY_VOLUME_MOUNT_PATH to temp dir for portable tests — v20.28.4 |
+| `core/volume_path.py` | Centralized volume path management with safe fallbacks (env var → local_data → temp) — v20.28.4 |
+| `scripts/ci_gate.sh` | Environment-agnostic CI test runner (no /data required) — v20.28.4 |
+| `tests/test_live_scores_fallback.py` | BallDontLie fallback regression tests (7 tests): hierarchy, NBA-only gate, telemetry — v20.28.4 |
 | `time_filters.py` | Game status derivation: `get_game_status(commence_time, completed)` returns PRE_GAME/IN_PROGRESS/FINAL/NOT_TODAY — v20.26 |
 
-### Current Version: v20.28.2 (Feb 14, 2026)
+### Current Version: v20.28.4 (Feb 14, 2026)
+
+**v20.28.4 (Feb 14, 2026) — Portable Test Suite + BallDontLie Fallback:**
+
+**Problem:** Test suite required `/data` mount (Railway volume) to pass locally. Tests failed with `OSError: Read-only file system: '/data'` because:
+1. `team_ml_models.py` called `Path(MODELS_DIR).mkdir()` at import time
+2. Tests expected mountpoint checks to pass on local temp directories
+3. Optional dependencies (sklearn, sqlalchemy, pytz) caused import failures
+
+**Solution:** Make test suite environment-agnostic with automatic temp directory fixture.
+
+**Changes:**
+- `tests/conftest.py` — Session-scoped fixture auto-sets `RAILWAY_VOLUME_MOUNT_PATH` to temp dir
+- `core/volume_path.py` — Centralized volume path management with safe fallbacks
+- `team_ml_models.py` — Lazy initialization via `_resolve_models_dir()` function
+- `scripts/ci_gate.sh` — Environment-agnostic CI test runner
+- `tests/test_live_scores_fallback.py` — BallDontLie fallback regression tests (7 tests)
+- Skip conditions added for optional dependencies (sklearn, sqlalchemy, pytz)
+
+**Test Results:** 1133 passed, 48 skipped, 0 failures locally without /data mount
+
+**Key Lessons (123-126):**
+- **Lesson 123:** Tests MUST NOT require /data mount; use conftest.py fixture to set RAILWAY_VOLUME_MOUNT_PATH to temp dir
+- **Lesson 124:** Modules MUST NOT call mkdir/file operations at import time; use lazy initialization functions
+- **Lesson 125:** Tests using optional deps (sklearn, sqlalchemy, pytz) MUST use pytest.importorskip or skipif
+- **Lesson 126:** Before asserting expected values, verify what the function ACTUALLY returns (e.g., auto_grader error ≠ predicted - actual)
+
+**NEVER DO (v20.28.4 Portable Tests - rules 331-338):**
+- Rule 331: Never call `Path.mkdir()` at module import time — use lazy init functions
+- Rule 332: Never hardcode `/data` in tests — use `RAILWAY_VOLUME_MOUNT_PATH` env var
+- Rule 333: Never assume mountpoint checks pass in CI — skip for temp directories
+- Rule 334: Never import optional ML deps without try/except — use pytest.importorskip
+- Rule 335: Never assume test values without reading implementation — verify actual return values
+- Rule 336: Always use conftest.py for test environment setup — don't set env vars in individual tests
+- Rule 337: Always add `@pytest.mark.skipif` for tests requiring optional dependencies
+- Rule 338: Always run `./scripts/ci_gate.sh` before pushing to verify local tests pass
+
+---
 
 **v20.28.2 (Feb 14, 2026) — Paid APIs First: Odds API Live Scores:**
 
