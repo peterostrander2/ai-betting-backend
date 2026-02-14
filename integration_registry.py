@@ -81,6 +81,9 @@ class IntegrationHealth:
     consecutive_failures: int = 0
     # v20.21: Rolling window of call timestamps for calls_last_15m metric
     call_timestamps: List[str] = field(default_factory=list)
+    # v20.26: Cache hit/miss tracking for cache_hit_rate metric
+    cache_hits: int = 0
+    cache_misses: int = 0
 
 
 # Global health tracking (in-memory)
@@ -109,6 +112,43 @@ def calls_last_15m(integration_name: str) -> int:
     cutoff_iso = cutoff.isoformat()
 
     return sum(1 for ts in health.call_timestamps if ts >= cutoff_iso)
+
+
+def calls_last_60s(integration_name: str) -> int:
+    """Return count of calls in the last 60 seconds for an integration."""
+    health = _health_tracker.get(integration_name)
+    if not health or not health.call_timestamps:
+        return 0
+
+    cutoff = now_et() - timedelta(seconds=60)
+    cutoff_iso = cutoff.isoformat()
+
+    return sum(1 for ts in health.call_timestamps if ts >= cutoff_iso)
+
+
+def record_cache_hit(integration_name: str):
+    """Record a cache hit for an integration."""
+    if integration_name not in _health_tracker:
+        _health_tracker[integration_name] = IntegrationHealth()
+    _health_tracker[integration_name].cache_hits += 1
+
+
+def record_cache_miss(integration_name: str):
+    """Record a cache miss (fresh API call) for an integration."""
+    if integration_name not in _health_tracker:
+        _health_tracker[integration_name] = IntegrationHealth()
+    _health_tracker[integration_name].cache_misses += 1
+
+
+def get_cache_hit_rate(integration_name: str) -> Optional[float]:
+    """Return cache hit rate (0.0-1.0) for an integration, or None if no data."""
+    health = _health_tracker.get(integration_name)
+    if not health:
+        return None
+    total = health.cache_hits + health.cache_misses
+    if total == 0:
+        return None
+    return round(health.cache_hits / total, 3)
 
 
 def get_service_uptime_minutes() -> float:
@@ -799,6 +839,9 @@ async def check_integration_health(name: str) -> Dict[str, Any]:
     result["consecutive_failures"] = health.consecutive_failures
     # v20.21: Rolling window call count for deterministic "0 calls" warnings
     result["calls_last_15m"] = calls_last_15m(name)
+    # v20.26: Live audit metrics
+    result["calls_last_60s"] = calls_last_60s(name)
+    result["cache_hit_rate"] = get_cache_hit_rate(name)
 
     # Run validation if available
     if integration.validate_fn and integration.validate_fn in VALIDATORS:

@@ -5843,9 +5843,49 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             }
         }
 
+        # =================================================================
+        # v20.26: inputs_hash for determinism verification
+        # Hash of all scoring inputs to detect if score changed without input change
+        # =================================================================
+        import hashlib as _hashlib
+        _inputs_hash_data = {
+            "ai": round(ai_scaled, 2),
+            "research": round(research_score, 2),
+            "esoteric": round(esoteric_score, 2),
+            "jarvis": round(jarvis_rs, 2) if jarvis_rs else 0,
+            "context_mod": round(context_modifier, 3),
+            "confluence": confluence_boost,
+            "msrf": msrf_boost,
+            "jason_sim": jason_sim_boost,
+            "serp": serp_boost_total,
+            "sharp_strength": sharp_strength,
+            "lv": round(line_variance, 2),
+            "public_pct": public_pct_val,
+            "book_count": book_count,
+        }
+        _inputs_hash = _hashlib.sha256(
+            json.dumps(_inputs_hash_data, sort_keys=True).encode()
+        ).hexdigest()[:16]
+
+        # =================================================================
+        # v20.26: market_phase for in-play labeling
+        # PRE_GAME | IN_PLAY | HALFTIME | FINAL
+        # =================================================================
+        _game_status_upper = (game_status or "").upper()
+        if "HALFTIME" in _game_status_upper:
+            _market_phase = "HALFTIME"
+        elif "LIVE" in _game_status_upper or "IN_PROGRESS" in _game_status_upper or "MISSED_START" in _game_status_upper:
+            _market_phase = "IN_PLAY"
+        elif "FINAL" in _game_status_upper or "COMPLETED" in _game_status_upper or "ENDED" in _game_status_upper:
+            _market_phase = "FINAL"
+        else:
+            _market_phase = "PRE_GAME"
+
         return {
             "total_score": round(final_score, 2),
             "final_score": round(final_score, 2),  # Alias for frontend
+            "inputs_hash": _inputs_hash,  # v20.26: Determinism verification
+            "market_phase": _market_phase,  # v20.26: PRE_GAME|IN_PLAY|HALFTIME|FINAL
             "confidence": confidence,
             "confidence_score": confidence_score,
             "confluence_level": confluence_level,
