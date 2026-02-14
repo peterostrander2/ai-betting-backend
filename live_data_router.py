@@ -8400,6 +8400,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "after": {k: v.get("used_count", 0) for k, v in usage_snapshot_after.items()},
             "delta": usage_deltas,
         }
+        # v20.24: Derive used_integrations from integration_calls (canonical source)
+        # Fixes bug where manually-tracked set missed some integrations (e.g., Playbook)
+        used_integrations = {name for name, meta in integration_calls.items() if meta.get("called", 0) > 0}
         apply_used_integrations_debug(result, used_integrations, debug_mode)
         attach_integration_telemetry_debug(result, integration_calls, integration_impact, debug_mode)
         record_daily_integration_rollup(date_et, integration_calls, integration_impact)
