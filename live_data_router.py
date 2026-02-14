@@ -2951,11 +2951,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "cache_hit": None,
                 "cache_hits": 0,
                 "cache_samples": 0,
+                "fetched_at_et": None,  # v20.26: Track when data was fetched
+                "criticality": None,  # v20.26: CRITICAL/DEGRADED_OK/OPTIONAL/RELEVANCE_GATED
             }
             integration_calls[name] = entry
         return entry
 
-    def _record_integration_call(name: str, status: str | None = None, latency_ms: float | None = None, cache_hit: bool | None = None) -> None:
+    def _record_integration_call(name: str, status: str | None = None, latency_ms: float | None = None, cache_hit: bool | None = None, fetched_at_et: str | None = None) -> None:
         entry = _ensure_integration_entry(name)
         entry["called"] += 1
         if status is not None:
@@ -2968,6 +2970,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             entry["cache_samples"] += 1
             if cache_hit:
                 entry["cache_hits"] += 1
+        # v20.26: Record fetched_at_et for staleness calculation
+        if fetched_at_et is not None:
+            entry["fetched_at_et"] = fetched_at_et
+        elif entry["fetched_at_et"] is None:
+            # Set default to now if not provided
+            entry["fetched_at_et"] = format_as_of_et() if TIME_ET_AVAILABLE else None
+        # v20.26: Look up criticality from contract
+        if entry["criticality"] is None:
+            try:
+                from core.integration_contract import INTEGRATIONS as CONTRACT_INTEGRATIONS
+                contract = CONTRACT_INTEGRATIONS.get(name, {})
+                entry["criticality"] = contract.get("criticality", "OPTIONAL")
+            except Exception:
+                entry["criticality"] = "OPTIONAL"
 
     def _record_integration_impact(name: str, nonzero_boost: bool = False, reasons_count: int = 0, affected_ranking: bool | None = None) -> None:
         entry = integration_impact.get(name)
@@ -2985,16 +3001,53 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         _ensure_integration_entry(_name)
         integration_impact.setdefault(_name, {"nonzero_boost": 0, "reasons_count": 0, "affected_ranking": 0})
 
-    def _mark_integration_used(name: str) -> None:
+    def _mark_integration_used(name: str, fetched_at_et: str | None = None) -> None:
         """Track integration usage for this run + update last_used_at."""
         used_integrations.add(name)
-        _record_integration_call(name, status="OK")
+        _record_integration_call(name, status="OK", fetched_at_et=fetched_at_et)
         try:
             from integration_registry import mark_integration_used
             mark_integration_used(name)
         except Exception:
             # Usage telemetry is best-effort only
             pass
+
+    def _compute_conservative_data_age() -> tuple[int | None, dict[str, int | None]]:
+        """
+        Compute conservative data_age_ms across all CRITICAL integrations.
+
+        Returns:
+            Tuple of (max_age_ms, integrations_age_dict)
+            - max_age_ms: The oldest age among CRITICAL integrations (conservative)
+            - integrations_age_dict: Per-integration age in ms for debug visibility
+
+        Rules:
+        - data_age_ms = max(age_ms of each CRITICAL integration that was called)
+        - If picks > 0 and no CRITICAL integrations called, returns None (error state)
+        - Each integration's age is computed from its fetched_at_et
+        """
+        integrations_age: dict[str, int | None] = {}
+        max_age_ms: int | None = None
+
+        for name, entry in integration_calls.items():
+            if entry.get("called", 0) == 0:
+                continue  # Only consider integrations that were actually called
+
+            fetched_at = entry.get("fetched_at_et")
+            if fetched_at and TIME_ET_AVAILABLE:
+                age_ms = data_age_ms(fetched_at)
+                if age_ms >= 0:  # Valid age
+                    integrations_age[name] = age_ms
+                    # Only use CRITICAL integrations for max calculation
+                    if entry.get("criticality") == "CRITICAL":
+                        if max_age_ms is None or age_ms > max_age_ms:
+                            max_age_ms = age_ms
+                else:
+                    integrations_age[name] = None  # Parse error
+            else:
+                integrations_age[name] = None
+
+        return max_age_ms, integrations_age
 
     # --- v16.0 PERFORMANCE: Time budget + per-stage timings ---
     TIME_BUDGET_S = float(os.getenv("BEST_BETS_TIME_BUDGET_S", "55"))  # Configurable; increased default to allow both games AND props scoring to complete
@@ -3024,11 +3077,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _sharp_start = time.time()
     sharp_data = await get_sharp_money(sport)
     _sharp_latency_ms = (time.time() - _sharp_start) * 1000.0
+    _sharp_fetched_at = format_as_of_et() if TIME_ET_AVAILABLE else None
     _sharp_source = (sharp_data.get("source") or "").lower() if isinstance(sharp_data, dict) else ""
+    # v20.26: Track fetched_at_et for conservative staleness
     if "playbook" in _sharp_source:
-        _record_integration_call("playbook_api", status="OK", latency_ms=_sharp_latency_ms)
+        _record_integration_call("playbook_api", status="OK", latency_ms=_sharp_latency_ms, fetched_at_et=_sharp_fetched_at)
     if "odds_api" in _sharp_source:
-        _record_integration_call("odds_api", status="OK", latency_ms=_sharp_latency_ms)
+        _record_integration_call("odds_api", status="OK", latency_ms=_sharp_latency_ms, fetched_at_et=_sharp_fetched_at)
     sharp_lookup = {}
     for signal in sharp_data.get("data", []):
         game_key = f"{signal.get('away_team')}@{signal.get('home_team')}"
@@ -4799,7 +4854,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         live_boost = 0.0
         live_reasons = []
         # game_status is now passed as parameter (v20.0)
-        if game_status in ("LIVE", "MISSED_START") and _is_game_pick:
+        if game_status in ("LIVE", "IN_PROGRESS") and _is_game_pick:
             try:
                 from alt_data_sources.live_signals import (
                     get_combined_live_signals, is_live_signals_enabled
@@ -5875,7 +5930,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         _game_status_upper = (game_status or "").upper()
         if "HALFTIME" in _game_status_upper:
             _market_phase = "HALFTIME"
-        elif "LIVE" in _game_status_upper or "IN_PROGRESS" in _game_status_upper or "MISSED_START" in _game_status_upper:
+        elif "LIVE" in _game_status_upper or "IN_PROGRESS" in _game_status_upper:
             _market_phase = "IN_PLAY"
         elif "FINAL" in _game_status_upper or "COMPLETED" in _game_status_upper or "ENDED" in _game_status_upper:
             _market_phase = "FINAL"
@@ -6314,17 +6369,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     _odds_fetched_at = now_et().isoformat() if TIME_ET_AVAILABLE else datetime.now().isoformat()
 
     # Integration usage telemetry (best-bets scoring cycle, request-scoped)
+    # v20.26: Pass fetched_at_et for conservative staleness calculation
     if isinstance(props_data, dict):
         src = props_data.get("source", "")
         if src == "odds_api":
-            _mark_integration_used("odds_api")
+            _mark_integration_used("odds_api", fetched_at_et=_odds_fetched_at)
         elif src == "playbook":
-            _mark_integration_used("playbook_api")
+            _mark_integration_used("playbook_api", fetched_at_et=_odds_fetched_at)
     if isinstance(injuries_data, dict):
         if injuries_data.get("source") == "playbook":
-            _mark_integration_used("playbook_api")
+            _mark_integration_used("playbook_api", fetched_at_et=_odds_fetched_at)
     if _odds_used:
-        _mark_integration_used("odds_api")
+        _mark_integration_used("odds_api", fetched_at_et=_odds_fetched_at)
     if isinstance(espn_scoreboard, Exception):
         logger.debug("ESPN scoreboard failed in parallel: %s", espn_scoreboard)
         espn_scoreboard = {"events": []}
@@ -6990,7 +7046,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         start_time_et = ""
 
                 # v20.0: Compute game_status early for live signals
-                _game_status = "UPCOMING"
+                _game_status = "PRE_GAME"
                 if TIME_FILTERS_AVAILABLE and commence_time:
                     _game_status = get_game_status(commence_time)
 
@@ -7167,14 +7223,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             score_data["weather_reasons"] = _weather_reasons
                             score_data["weather_available"] = _weather_available
 
-                            game_status = "UPCOMING"
+                            game_status = "PRE_GAME"
                             if TIME_FILTERS_AVAILABLE and commence_time:
                                 game_status = get_game_status(commence_time)
 
                             signals_fired = score_data.get("pillars_passed", []).copy()
                             if sharp_signal.get("signal_strength") in ["STRONG", "MODERATE"]:
                                 signals_fired.append(f"SHARP_{sharp_signal.get('signal_strength')}")
-                            has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
+                            has_started = game_status in ["IN_PROGRESS", "LIVE", "FINAL"]
 
                             # v16.0: Compute context modifiers for this game pick
                             # v17.2: Pass injuries data for vacuum calculation
@@ -7215,8 +7271,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 "status": game_status.lower() if game_status else "scheduled",
                                 "has_started": has_started,
                                 "is_started_already": has_started,
-                                "is_live": game_status == "MISSED_START",
-                                "is_live_bet_candidate": game_status == "MISSED_START",
+                                "is_live": game_status == "IN_PROGRESS",
+                                "is_live_bet_candidate": game_status == "IN_PROGRESS",
                                 "market": market_key,
                                 "recommendation": display,
                                 "best_book": best_book,
@@ -7280,7 +7336,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     pass
 
             # v20.0: Compute game_status for live signals
-            _sharp_game_status = "UPCOMING"
+            _sharp_game_status = "PRE_GAME"
             if TIME_FILTERS_AVAILABLE and commence_time:
                 _sharp_game_status = get_game_status(commence_time)
 
@@ -7349,8 +7405,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "home_team": home_team,
                 "away_team": away_team,
                 "start_time_et": start_time_et,
-                "game_status": "UPCOMING",
-                "status": "scheduled",
+                "game_status": "PRE_GAME",
+                "status": "pre_game",
                 "has_started": False,
                 "is_started_already": False,
                 "is_live": False,
@@ -7427,7 +7483,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     start_time_et = ""
 
             # v20.0: Compute game_status early for live signals
-            _prop_game_status = "UPCOMING"
+            _prop_game_status = "PRE_GAME"
             if TIME_FILTERS_AVAILABLE and commence_time:
                 _prop_game_status = get_game_status(commence_time)
 
@@ -7558,7 +7614,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             "reason": f"Player is {injury_status}"
                         })
 
-                game_status = "UPCOMING"
+                game_status = "PRE_GAME"
                 if TIME_FILTERS_AVAILABLE and commence_time:
                     game_status = get_game_status(commence_time)
 
@@ -7596,7 +7652,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     signals_fired.append(f"SHARP_{sharp_signal.get('signal_strength')}")
 
                 # v14.9: Determine has_started
-                has_started = game_status in ["MISSED_START", "LIVE", "FINAL"]
+                has_started = game_status in ["IN_PROGRESS", "LIVE", "FINAL"]
 
                 # v16.0: Compute context modifiers for this prop
                 # v17.2: Pass injuries data for vacuum calculation
@@ -7647,8 +7703,8 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "status": game_status.lower() if game_status else "scheduled",  # v14.11: Status field
                     "has_started": has_started,  # v14.9: Boolean for frontend
                     "is_started_already": has_started,  # v14.11: Alias for frontend
-                    "is_live": game_status == "MISSED_START",  # v14.11: Live mode flag
-                    "is_live_bet_candidate": game_status == "MISSED_START",
+                    "is_live": game_status == "IN_PROGRESS",  # v14.11: Live mode flag
+                    "is_live_bet_candidate": game_status == "IN_PROGRESS",
                     "recommendation": f"{side.upper()} {line}",
                     "injury_status": resolved_injury_status,
                     "injury_checked": True,  # v14.9: Injury was checked via identity resolver
@@ -8124,6 +8180,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     if any(s in ["TIMED_OUT", "ERROR"] for s in [props_status, games_status]):
         overall_status = "PARTIAL"
 
+    # v20.26: Compute conservative data_age_ms (max across CRITICAL integrations)
+    _conservative_age_ms, _integrations_age_ms = _compute_conservative_data_age()
+    # Fallback: if no critical integrations tracked, use odds_fetched_at
+    if _conservative_age_ms is None and _odds_fetched_at and TIME_ET_AVAILABLE:
+        _conservative_age_ms = data_age_ms(_odds_fetched_at)
+        if _conservative_age_ms < 0:
+            _conservative_age_ms = None
+
     result = {
         "sport": sport.upper(),
         "mode": "live" if live_mode else "standard",  # v14.11: Indicate which mode
@@ -8157,7 +8221,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             "odds_fetched_at": _odds_fetched_at,
             "as_of_et": format_as_of_et(),
             "et_day": format_et_day(),
-            "data_age_ms": data_age_ms(_odds_fetched_at) if _odds_fetched_at and TIME_ET_AVAILABLE else None,
+            # v20.26: Conservative data_age_ms = max age across CRITICAL integrations
+            "data_age_ms": _conservative_age_ms,
+            "integrations_age_ms": _integrations_age_ms,
         },
         "esoteric": {
             "daily_energy": daily_energy,
@@ -8591,7 +8657,7 @@ async def get_in_game_picks(sport: str):
     """
     v11.15: Live in-game betting picks for games that have already started.
 
-    Returns picks from best-bets that have game_status=MISSED_START,
+    Returns picks from best-bets that have game_status=IN_PROGRESS,
     meaning they are candidates for live/in-game betting.
 
     For NBA, includes BallDontLie live context if configured (BDL_API_KEY).
@@ -8610,7 +8676,7 @@ async def get_in_game_picks(sport: str):
     if sport_lower not in SPORT_MAPPINGS:
         raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
 
-    # Get best-bets and filter to MISSED_START picks
+    # Get best-bets and filter to IN_PROGRESS picks
     best_bets_result = await get_best_bets(sport)
 
     # Odds staleness check
@@ -8630,14 +8696,14 @@ async def get_in_game_picks(sport: str):
     except Exception:
         pass
 
-    # Filter props and game picks to only MISSED_START
+    # Filter props and game picks to only IN_PROGRESS
     live_props = [
         p for p in best_bets_result.get("props", {}).get("picks", [])
-        if p.get("game_status") == "MISSED_START"
+        if p.get("game_status") == "IN_PROGRESS"
     ]
     live_game_picks = [
         p for p in best_bets_result.get("game_picks", {}).get("picks", [])
-        if p.get("game_status") == "MISSED_START"
+        if p.get("game_status") == "IN_PROGRESS"
     ]
 
     # Annotate live picks with staleness and market status info

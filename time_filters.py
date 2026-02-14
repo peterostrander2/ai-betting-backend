@@ -481,23 +481,33 @@ def is_game_started(commence_time: str) -> bool:
     return now_et > game_dt
 
 
-def get_game_status(commence_time: str) -> str:
+def get_game_status(commence_time: str, completed: bool = False) -> str:
     """
-    Get game status based on start time.
+    Get game status based on start time and completion state.
 
     Args:
         commence_time: ISO format datetime string
+        completed: True if game is completed/final (from API data)
 
     Returns:
-        "UPCOMING" | "MISSED_START" | "NOT_TODAY"
+        "PRE_GAME" | "IN_PROGRESS" | "FINAL" | "NOT_TODAY"
+
+    Status definitions:
+        PRE_GAME: Game has not started yet (now_et < start_time_et)
+        IN_PROGRESS: Game has started but not final (now_et >= start_time_et AND not completed)
+        FINAL: Game is completed (completed=True)
+        NOT_TODAY: Game is not scheduled for today's ET slate
     """
     if not is_game_today(commence_time):
         return "NOT_TODAY"
 
-    if is_game_started(commence_time):
-        return "MISSED_START"
+    if completed:
+        return "FINAL"
 
-    return "UPCOMING"
+    if is_game_started(commence_time):
+        return "IN_PROGRESS"
+
+    return "PRE_GAME"
 
 
 # =============================================================================

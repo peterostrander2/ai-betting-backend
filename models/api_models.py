@@ -251,10 +251,13 @@ class AffiliateConfigRequest(BaseModel):
 
 class PickStatus(str, Enum):
     """Pick status enumeration."""
-    UPCOMING = "UPCOMING"
+    PRE_GAME = "PRE_GAME"
+    IN_PROGRESS = "IN_PROGRESS"
     LIVE = "LIVE"
-    STARTED = "STARTED"
     FINAL = "FINAL"
+    # Deprecated aliases for backwards compatibility
+    UPCOMING = "PRE_GAME"
+    STARTED = "IN_PROGRESS"
 
 
 class MarketType(str, Enum):

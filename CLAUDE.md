@@ -383,7 +383,29 @@ API_KEY=your_key ./scripts/full_system_audit.sh
 
 ### Current Version: v20.26 (Feb 14, 2026)
 
-**v20.26 (Feb 14, 2026) — Live Audit Hardening + Determinism Verification:**
+**v20.26 (Feb 14, 2026) — Live Betting Correctness + Audit Hardening:**
+
+**Game Status Correctness (Task B):**
+- `MISSED_START` replaced with `IN_PROGRESS` for games that have started but aren't final
+- Status enum now: `PRE_GAME` | `IN_PROGRESS` | `FINAL` | `NOT_TODAY`
+- `get_game_status()` updated with optional `completed` parameter
+
+**Conservative Staleness (Task A):**
+- `meta.data_age_ms` now computed as MAX age across all CRITICAL integrations
+- Added `meta.integrations_age_ms` for debug visibility (per-integration ages)
+- Integration calls now track `fetched_at_et` for staleness calculation
+- Rule: If `picks_count > 0`, `data_age_ms` must NEVER be null
+
+**Integration Call Tracking:**
+- `_record_integration_call()` now accepts `fetched_at_et` parameter
+- Each integration entry stores `fetched_at_et` and `criticality`
+- `_compute_conservative_data_age()` computes max age across CRITICAL tier
+
+**Status Definitions:**
+- `PRE_GAME`: Game has not started yet (`now_et < start_time_et`)
+- `IN_PROGRESS`: Game has started but not final (`now_et >= start_time_et AND not completed`)
+- `FINAL`: Game is completed (`completed=True`)
+- `NOT_TODAY`: Game not scheduled for today's ET slate
 
 **New Pick Fields:**
 - `inputs_hash` — 16-char SHA256 hash of scoring inputs for determinism verification
@@ -413,8 +435,10 @@ API_KEY=your_key ./scripts/full_system_audit.sh
 - market_phase must be present and canonical
 - Integration timestamps must use now_et() not undefined `now`
 
-**Files Modified:** `live_data_router.py`, `integration_registry.py`, `main.py`
-**Build:** `f265b119`
+**New Tests:** `tests/test_live_betting_correctness.py` (19 tests)
+**New Script:** `scripts/live_betting_audit.sh` — Validates live betting correctness
+
+**Files Modified:** `time_filters.py`, `live_data_router.py`, `models/api_models.py`, `integration_registry.py`, `main.py`
 
 ---
 
