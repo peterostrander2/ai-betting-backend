@@ -11603,6 +11603,8 @@ async def get_training_status():
             "ensemble": status.get("ensemble", {}).get("status", "UNKNOWN"),
             "ensemble_samples_trained": status.get("ensemble", {}).get("samples_trained", 0),
             "ensemble_is_trained": status.get("ensemble", {}).get("is_trained", False),
+            # v20.22: Sklearn regressor status (shadow mode by default)
+            "sklearn_status": status.get("ensemble", {}).get("sklearn_status", {}),
             "lstm": status.get("lstm", {}).get("status", "UNKNOWN"),
             "lstm_teams_cached": status.get("lstm", {}).get("teams_cached", 0),
             "matchup": status.get("matchup", {}).get("status", "UNKNOWN"),
