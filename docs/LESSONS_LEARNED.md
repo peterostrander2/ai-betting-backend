@@ -4608,3 +4608,61 @@ fi
 **Added in:** v20.28 (Feb 14, 2026)
 
 ---
+
+### Lesson 121: Tests in Repo ≠ Tests in CI — Wire Them or They're Useless (v20.28.1)
+
+**Problem:** 67 cross-sport tests were added in v20.28, but they weren't wired into GitHub Actions. The tests existed in the repo but never ran on push/PR. A regression could ship undetected.
+
+**Root Cause:**
+- Tests were added to `tests/test_cross_sport_4engine.py`
+- GitHub Actions workflow (`golden-gate.yml`) wasn't updated to run them
+- The `contract-tests` job only ran 3 test files, not the new ones
+- **Tests sitting in repo unused = false sense of security**
+
+**Solution:**
+1. **Add `cross-sport-4engine` job to GitHub Actions** — Runs 85 tests on EVERY push/PR
+2. **Add `live-api-audit` job** — Runs cross-sport live audit after Railway deploy (main only)
+3. **Hard gate test classes** — Not warnings, HARD FAILURES that block deploy
+
+**Hard Gate Test Classes Added:**
+| Class | Tests | What It Guards |
+|-------|-------|----------------|
+| `TestAIConstantFallbackForbidden` | 6 | Constant AI scores = deployment failure |
+| `TestFourEnginePresenceHardGate` | 4 | All 4 engines must be present with numeric scores |
+| `TestMarketCoverageHardGate` | 3 | `market_counts_by_type` must be complete |
+| `TestDistributionSanityFlags` | 3 | Diagnostic (not blocking) for underdog/favorite heavy |
+
+**Prevention Rules:**
+1. **Every test file must be in a CI job** — If it's not in `golden-gate.yml`, it doesn't exist
+2. **New test suites = update workflow** — Same commit that adds tests must update CI
+3. **Verify CI runs your tests** — Check GitHub Actions output after push
+4. **Hard gates, not warnings** — `assert` not `warn()` for blocking conditions
+
+**CI Pipeline Structure (v20.28.1):**
+```
+Push to main
+    ↓
+[golden-gate]           ← Unit tests + golden run (no API)
+[contract-tests]        ← Golden run, output boundary, integration
+[cross-sport-4engine]   ← 85 tests against fixtures (HARD GATE)
+    ↓ (all pass)
+Wait 3 min for Railway deploy
+    ↓
+[live-api-audit]        ← Cross-sport live audit against prod API
+    ↓
+Deploy verified ✅
+```
+
+**Files Updated:**
+- `.github/workflows/golden-gate.yml` — Added 2 new jobs (cross-sport-4engine, live-api-audit)
+- `tests/test_cross_sport_4engine.py` — Now 85 tests (was 67), added 4 hard gate classes
+
+**Test Count:**
+| Before v20.28.1 | After v20.28.1 |
+|-----------------|----------------|
+| 92 live betting tests | **110 live betting tests** |
+| Tests not in CI | **All tests in CI** |
+
+**Added in:** v20.28.1 (Feb 14, 2026)
+
+---

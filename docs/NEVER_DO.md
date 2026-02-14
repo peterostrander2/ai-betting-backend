@@ -1713,3 +1713,102 @@ API_KEY=your_key SPORT=NCAAB ./scripts/live_betting_audit.sh
 - `scripts/live_betting_audit.sh` — Check #6 AI score variance
 
 ---
+
+## v20.28.1 CI Hardening Rules (Lesson 121)
+
+**The Golden Rule: Tests in repo ≠ tests in CI. Wire them or they're useless.**
+
+**Rule 326: NEVER Add Test Files Without Updating GitHub Actions**
+```yaml
+# ❌ WRONG: Add tests but don't update workflow
+# tests/test_new_feature.py created
+# .github/workflows/golden-gate.yml NOT updated
+# Result: Tests never run, false sense of security
+
+# ✅ CORRECT: Same commit updates both
+# tests/test_new_feature.py created
+# .github/workflows/golden-gate.yml updated:
+- name: New Feature Tests
+  run: python -m pytest tests/test_new_feature.py -v
+```
+
+**Rule 327: NEVER Use Soft Warnings for Blocking Conditions**
+```python
+# ❌ WRONG: Warning that doesn't stop deployment
+def test_ai_variance():
+    if unique_scores < 4:
+        warn(f"Low variance: {unique_scores}")  # Deployment continues!
+
+# ✅ CORRECT: Hard assertion that fails CI
+def test_ai_variance():
+    assert unique_scores >= 4, f"HARD FAIL: {unique_scores} < 4 unique scores"
+```
+
+**Rule 328: NEVER Assume CI Runs Your Tests**
+```bash
+# ❌ WRONG: Push and assume tests run
+git push origin main
+# Hope tests run...
+
+# ✅ CORRECT: Verify in GitHub Actions output
+git push origin main
+# Go to GitHub → Actions → Check job output
+# Verify your test file appears in the logs
+```
+
+**Rule 329: NEVER Add Hard Gates Without CI Integration**
+```python
+# ❌ WRONG: Hard gate in code but not tested
+class TestNewGate:
+    def test_invariant(self):
+        assert condition, "Gate fails"
+# File not in any GitHub Actions job
+
+# ✅ CORRECT: Hard gate + CI job
+# 1. Add test class
+# 2. Update .github/workflows/golden-gate.yml
+# 3. Verify job runs on PR before merging
+```
+
+**Rule 330: NEVER Skip Live Audit After Deploy**
+```bash
+# ❌ WRONG: Unit tests pass, ship it
+pytest tests/ && git push
+
+# ✅ CORRECT: Unit tests + live audit after deploy
+pytest tests/
+git push origin main
+# Wait for Railway deploy (3 min)
+API_KEY=key ./scripts/live_betting_audit_all_sports.sh
+```
+
+**CI Pipeline Checklist (v20.28.1):**
+```
+Before merging any PR:
+[ ] All test files in .github/workflows/golden-gate.yml
+[ ] Hard assertions (assert), not soft warnings (warn)
+[ ] Cross-sport tests run for all 5 sports
+[ ] Live audit runs after Railway deploy on main
+
+After push to main:
+[ ] Check GitHub Actions → all jobs green
+[ ] Check Railway deploy completed
+[ ] Run live audit against production
+```
+
+**GitHub Actions Jobs (v20.28.1):**
+```yaml
+# All 4 jobs must pass for deployment
+golden-gate:           # Unit tests + golden run
+contract-tests:        # Contract validation
+cross-sport-4engine:   # 85 tests (HARD GATE)
+live-api-audit:        # Live audit after deploy
+```
+
+**Key Files (v20.28.1):**
+- `.github/workflows/golden-gate.yml` — CI configuration (4 jobs)
+- `tests/test_cross_sport_4engine.py` — 85 tests with hard gate classes
+- `tests/test_live_betting_correctness.py` — 25 tests
+- `scripts/live_betting_audit_all_sports.sh` — Cross-sport live audit
+
+---
