@@ -97,7 +97,7 @@
 | 29 | Integration State Machine | Integrations track `calls_last_15m()` for health (v20.21) |
 | 30 | CI Golden Gate | All deploys must pass `ci_golden_gate.sh` (v20.21) |
 
-### Lessons Learned (101 Total) - Key Categories
+### Lessons Learned (102 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -158,6 +158,7 @@
 | 99 | **v20.21 CI Golden Gate 3-Gate Structure** | Gate 1: Golden Run unit tests, Gate 2: Output boundary tests, Gate 3: Integration contract tests |
 | 100 | **v20.21 Full System Audit for Frontend Readiness** | 11-gate audit script proves backend ready for frontend integration — `scripts/full_system_audit.sh` |
 | 101 | **v20.22 Scoring Drift vs Contract Stability** | Replacing signals changes internal behavior even if weights match. Two freeze definitions: strict (byte-identical) vs contract (external behavior). Shadow mode for internal changes, golden run to verify. |
+| 102 | **v20.22 Breakdown Builder Must Match Signal Changes** | Signal changes require THREE places: computation function, truth table, AND breakdown builder. Missing breakdown builder caused benford to appear in output despite being removed from GLITCH. |
 
 ### NEVER DO Sections (40 Categories)
 - ML & GLITCH (rules 1-10)

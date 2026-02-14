@@ -3758,3 +3758,38 @@ python -m pytest tests/test_golden_run.py -v
 **Added in:** v20.22 (Feb 14, 2026)
 
 ---
+
+### Lesson 102: Breakdown Builder Must Match Signal Changes (v20.22)
+
+**Problem:** Added 3 math signals to GLITCH protocol and updated the truth table, but the `build_esoteric_breakdown_with_provenance()` function still produced benford output and didn't include the new math signals. Tests failed with "Breakdown signals not in wired_signals: {'benford'}".
+
+**Root Cause:** Signal changes require updates in THREE places:
+1. `get_glitch_aggregate()` — where signals are computed (✅ was updated)
+2. Truth table (`docs/ESOTERIC_TRUTH_TABLE.md`) — signal inventory (✅ was updated)
+3. `build_esoteric_breakdown_with_provenance()` — provenance output builder (❌ was missed)
+
+**The Fix:**
+- Removed benford provenance building (lines 2446-2464)
+- Added golden_ratio, prime_resonance, numerical_symmetry provenance
+- Updated test assertion from 23 to 25 wired signals
+
+**Prevention Pattern:**
+When adding/removing/modifying signals, checklist:
+```
+□ 1. Signal computation function (get_glitch_aggregate, etc.)
+□ 2. Truth table documentation (ESOTERIC_TRUTH_TABLE.md)
+□ 3. Breakdown provenance builder (build_esoteric_breakdown_with_provenance)
+□ 4. Test signal counts (test_esoteric_truthfulness.py, test_engine3_esoteric_guards.py)
+□ 5. Run all esoteric tests: pytest tests/test_esoteric_truthfulness.py tests/test_engine3_esoteric_guards.py -v
+```
+
+**Verification:**
+```bash
+# After any signal change, verify breakdown matches truth table
+python -m pytest tests/test_esoteric_truthfulness.py::TestTruthTableConsistency -v
+python -m pytest tests/test_esoteric_truthfulness.py::TestBreakdownSignalCount -v
+```
+
+**Added in:** v20.22 (Feb 14, 2026)
+
+---
