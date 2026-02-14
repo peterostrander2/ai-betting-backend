@@ -1,0 +1,59 @@
+{
+  "sport": "MLB",
+  "games": [
+    {
+      "event_id": "mlb_fixture_1",
+      "home_team": "Yankees",
+      "away_team": "Red Sox",
+      "spread": -1.5,
+      "total": 8.5,
+      "moneyline_home": -140,
+      "moneyline_away": 120,
+      "commence_time": "2026-02-14T19:10:00-05:00"
+    },
+    {
+      "event_id": "mlb_fixture_2",
+      "home_team": "Dodgers",
+      "away_team": "Giants",
+      "spread": -1.5,
+      "total": 7.0,
+      "moneyline_home": -180,
+      "moneyline_away": 160,
+      "commence_time": "2026-02-14T22:10:00-05:00"
+    },
+    {
+      "event_id": "mlb_fixture_3",
+      "home_team": "Astros",
+      "away_team": "Rangers",
+      "spread": 1.5,
+      "total": 9.0,
+      "moneyline_home": 110,
+      "moneyline_away": -130,
+      "commence_time": "2026-02-14T20:10:00-05:00"
+    },
+    {
+      "event_id": "mlb_fixture_4",
+      "home_team": "Cubs",
+      "away_team": "Cardinals",
+      "spread": -1.5,
+      "total": 8.0,
+      "moneyline_home": -150,
+      "moneyline_away": 130,
+      "commence_time": "2026-02-14T19:40:00-05:00"
+    },
+    {
+      "event_id": "mlb_fixture_5",
+      "home_team": "Mets",
+      "away_team": "Braves",
+      "spread": 1.5,
+      "total": 7.5,
+      "moneyline_home": 125,
+      "moneyline_away": -145,
+      "commence_time": "2026-02-14T19:20:00-05:00"
+    }
+  ],
+  "expected_market_types": ["SPREAD", "MONEYLINE", "TOTAL"],
+  "expected_integrations": ["odds_api", "weather_api"],
+  "has_props": true,
+  "outdoor_sport": true
+}

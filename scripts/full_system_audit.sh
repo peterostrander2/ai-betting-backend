@@ -99,7 +99,7 @@ echo ""
 # ============================================================
 # 1. CI GOLDEN GATE (Local Tests)
 # ============================================================
-print_section "1/11" "CI Golden Gate (Local Tests)"
+print_section "1/13" "CI Golden Gate (Local Tests)"
 
 if ./scripts/ci_golden_gate.sh > /tmp/golden_gate_output.txt 2>&1; then
     pass "CI Golden Gate passed (all contract tests)"
@@ -111,7 +111,7 @@ fi
 # ============================================================
 # 2. HEALTH & BUILD
 # ============================================================
-print_section "2/11" "Health & Build"
+print_section "2/13" "Health & Build"
 
 HEALTH_JSON=$(curl -s "$BASE_URL/health")
 
@@ -137,7 +137,7 @@ fi
 # ============================================================
 # 3. STORAGE / PERSISTENCE
 # ============================================================
-print_section "3/11" "Storage / Persistence"
+print_section "3/13" "Storage / Persistence"
 
 STORAGE_JSON=$(curl -s "$BASE_URL/internal/storage/health")
 
@@ -181,7 +181,7 @@ fi
 # ============================================================
 # 4. INTEGRATIONS
 # ============================================================
-print_section "4/11" "Integrations"
+print_section "4/13" "Integrations"
 
 INTEGRATIONS_JSON=$(secure_curl "$BASE_URL/live/debug/integrations")
 
@@ -219,7 +219,7 @@ fi
 # ============================================================
 # 5. SCHEDULER
 # ============================================================
-print_section "5/11" "Scheduler"
+print_section "5/13" "Scheduler"
 
 SCHEDULER_JSON=$(secure_curl "$BASE_URL/live/scheduler/status")
 
@@ -249,7 +249,7 @@ done
 # ============================================================
 # 6. TRAINING PIPELINE
 # ============================================================
-print_section "6/11" "Training Pipeline"
+print_section "6/13" "Training Pipeline"
 
 TRAINING_JSON=$(secure_curl "$BASE_URL/live/debug/training-status")
 
@@ -298,7 +298,7 @@ fi
 # ============================================================
 # 7. AUTOGRADER / LEARNING LOOP
 # ============================================================
-print_section "7/11" "Autograder / Learning Loop"
+print_section "7/13" "Autograder / Learning Loop"
 
 GRADER_JSON=$(secure_curl "$BASE_URL/live/grader/status")
 
@@ -326,7 +326,7 @@ fi
 # ============================================================
 # 8. 4-ENGINE EXECUTION + BOOSTS
 # ============================================================
-print_section "8/11" "4-Engine Execution + Boosts ($AUDIT_SPORT)"
+print_section "8/13" "4-Engine Execution + Boosts ($AUDIT_SPORT)"
 
 BESTBETS_JSON=$(secure_curl "$BASE_URL/live/best-bets/${AUDIT_SPORT}?debug=1")
 
@@ -389,7 +389,7 @@ fi
 # ============================================================
 # 9. OUTPUT BOUNDARY / CONTRACT
 # ============================================================
-print_section "9/11" "Output Boundary / Contract"
+print_section "9/13" "Output Boundary / Contract"
 
 # Hidden tier filter active
 HIDDEN_FILTERED=$(echo "$BESTBETS_JSON" | jq -r '.debug.hidden_tier_filtered_total // 0')
@@ -447,7 +447,7 @@ fi
 # ============================================================
 # 10. PICK CONTRACT COMPLETENESS
 # ============================================================
-print_section "10/11" "Pick Contract Completeness"
+print_section "10/13" "Pick Contract Completeness"
 
 if [[ "$GAME_COUNT" -gt 0 ]]; then
     SAMPLE_PICK=$(echo "$BESTBETS_JSON" | jq '.game_picks.picks[0]')
@@ -493,7 +493,7 @@ fi
 # ============================================================
 # 11. REQUEST CORRELATION + CACHE HEADERS
 # ============================================================
-print_section "11/11" "Request Correlation + Cache Headers"
+print_section "11/13" "Request Correlation + Cache Headers"
 
 HEADERS=$(secure_curl_head "$BASE_URL/live/best-bets/${AUDIT_SPORT}")
 
@@ -546,6 +546,40 @@ else
 fi
 echo ""
 # Do NOT fail audit - this is informational only
+
+# ============================================================
+# 12. LIVE BETTING CORRECTNESS UNIT TESTS (v20.28)
+# ============================================================
+print_section "12/13" "Live Betting Correctness Tests"
+
+if pytest -q tests/test_live_betting_correctness.py tests/test_cross_sport_4engine.py > /tmp/live_betting_tests.txt 2>&1; then
+    TEST_RESULTS=$(tail -1 /tmp/live_betting_tests.txt)
+    pass "Live betting unit tests passed: $TEST_RESULTS"
+else
+    fail "Live betting unit tests failed"
+    cat /tmp/live_betting_tests.txt | tail -10
+fi
+
+# ============================================================
+# 13. CROSS-SPORT LIVE BETTING AUDIT (API-level, v20.28)
+# ============================================================
+print_section "13/13" "Cross-Sport Live Betting Audit"
+
+# This runs the full audit across all sports via API
+if ./scripts/live_betting_audit_all_sports.sh > /tmp/cross_sport_audit.txt 2>&1; then
+    pass "Cross-sport live betting audit passed"
+    # Show summary
+    grep "RESULT:" /tmp/cross_sport_audit.txt || true
+else
+    # Check if failure is due to no slate (acceptable)
+    if grep -q "NOT_APPLICABLE_NO_SLATE" /tmp/cross_sport_audit.txt && ! grep -q "FAIL:" /tmp/cross_sport_audit.txt; then
+        warn "Some sports have no slate today (acceptable)"
+        pass "Cross-sport audit: No critical failures"
+    else
+        fail "Cross-sport live betting audit failed"
+        grep -E "(FAIL|ERROR):" /tmp/cross_sport_audit.txt | head -10 || true
+    fi
+fi
 
 # ============================================================
 # DIAGNOSTICS

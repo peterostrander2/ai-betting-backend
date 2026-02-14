@@ -1,0 +1,59 @@
+{
+  "sport": "NCAAB",
+  "games": [
+    {
+      "event_id": "ncaab_fixture_1",
+      "home_team": "Duke",
+      "away_team": "UNC",
+      "spread": 3.5,
+      "total": 145,
+      "moneyline_home": -155,
+      "moneyline_away": 135,
+      "commence_time": "2026-02-14T19:00:00-05:00"
+    },
+    {
+      "event_id": "ncaab_fixture_2",
+      "home_team": "Kansas",
+      "away_team": "Kentucky",
+      "spread": -6.5,
+      "total": 152,
+      "moneyline_home": -250,
+      "moneyline_away": 210,
+      "commence_time": "2026-02-14T20:00:00-05:00"
+    },
+    {
+      "event_id": "ncaab_fixture_3",
+      "home_team": "UCLA",
+      "away_team": "Arizona",
+      "spread": 1.5,
+      "total": 148,
+      "moneyline_home": -120,
+      "moneyline_away": 100,
+      "commence_time": "2026-02-14T21:00:00-05:00"
+    },
+    {
+      "event_id": "ncaab_fixture_4",
+      "home_team": "Michigan",
+      "away_team": "Ohio State",
+      "spread": -8.0,
+      "total": 140,
+      "moneyline_home": -350,
+      "moneyline_away": 280,
+      "commence_time": "2026-02-14T18:00:00-05:00"
+    },
+    {
+      "event_id": "ncaab_fixture_5",
+      "home_team": "Texas",
+      "away_team": "Oklahoma",
+      "spread": 12.5,
+      "total": 155,
+      "moneyline_home": -600,
+      "moneyline_away": 450,
+      "commence_time": "2026-02-14T17:00:00-05:00"
+    }
+  ],
+  "expected_market_types": ["SPREAD", "MONEYLINE", "TOTAL"],
+  "expected_integrations": ["odds_api"],
+  "has_props": false,
+  "notes": "NCAAB teams often lack data coverage - expect heuristic fallback"
+}

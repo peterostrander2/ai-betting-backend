@@ -4568,3 +4568,43 @@ fi
 **Added in:** v20.27 (Feb 14, 2026)
 
 ---
+
+### Lesson 120: Cross-Sport Tests Must Not Depend on Live Slates (v20.28)
+
+**Problem:** Initial live betting tests only validated NCAAB after the v20.27 fix. Unit tests passed, but there was no guarantee other sports (NBA, NFL, MLB, NHL) wouldn't regress silently.
+
+**Root Cause:**
+- Tests were written for a specific bug fix, not for cross-sport invariants
+- Live API tests depend on games being scheduled today
+- Off-season or no-slate days would cause false test failures or missed regressions
+
+**Solution:**
+1. **Fixture-based tests** — Create deterministic fixtures for each sport (`tests/fixtures/live_candidates_{sport}.json`)
+2. **Sport-parametric tests** — Use `@pytest.mark.parametrize("sport", ["NBA", "NCAAB", "NFL", "MLB", "NHL"])`
+3. **NO_SLATE handling** — Audit scripts must distinguish "no games today" from "test failure"
+4. **Unit tests for invariants** — Test engine execution, variance gates, market coverage without HTTP
+
+**Key Invariants (Must Hold Across ALL Sports):**
+1. All 4 engines execute with numeric scores
+2. AI variance gates pass when >= 5 candidates (unique >= 4, stddev >= 0.15)
+3. `market_counts_by_type` is present in debug output
+4. Valid game statuses only (no MISSED_START)
+5. `meta.as_of_et` in ISO 8601 with ET offset
+
+**Prevention:**
+1. **Fixture-based CI** — Tests must pass even with 0 live games
+2. **Cross-sport parametrization** — Every invariant test runs for all 5 sports
+3. **Audit scripts handle no-slate** — `NOT_APPLICABLE_NO_SLATE` is not a failure
+4. **Integration tests separate from unit tests** — Unit tests don't need API_KEY
+
+**Files Added:**
+- `tests/test_cross_sport_4engine.py` (67 tests)
+- `tests/fixtures/live_candidates_{NBA,NCAAB,NFL,MLB,NHL}.json`
+- `scripts/live_betting_audit_all_sports.sh`
+
+**Files Updated:**
+- `scripts/full_system_audit.sh` — Now 13 gates (was 11), includes live betting tests
+
+**Added in:** v20.28 (Feb 14, 2026)
+
+---

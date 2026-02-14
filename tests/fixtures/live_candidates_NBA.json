@@ -1,0 +1,58 @@
+{
+  "sport": "NBA",
+  "games": [
+    {
+      "event_id": "nba_fixture_1",
+      "home_team": "Lakers",
+      "away_team": "Celtics",
+      "spread": -3.5,
+      "total": 225,
+      "moneyline_home": -150,
+      "moneyline_away": 130,
+      "commence_time": "2026-02-14T19:30:00-05:00"
+    },
+    {
+      "event_id": "nba_fixture_2",
+      "home_team": "Warriors",
+      "away_team": "Nets",
+      "spread": 7.5,
+      "total": 232,
+      "moneyline_home": -320,
+      "moneyline_away": 260,
+      "commence_time": "2026-02-14T22:00:00-05:00"
+    },
+    {
+      "event_id": "nba_fixture_3",
+      "home_team": "Heat",
+      "away_team": "Bucks",
+      "spread": 2.0,
+      "total": 218,
+      "moneyline_home": -125,
+      "moneyline_away": 105,
+      "commence_time": "2026-02-14T20:00:00-05:00"
+    },
+    {
+      "event_id": "nba_fixture_4",
+      "home_team": "Suns",
+      "away_team": "Nuggets",
+      "spread": -5.0,
+      "total": 230,
+      "moneyline_home": -200,
+      "moneyline_away": 170,
+      "commence_time": "2026-02-14T21:00:00-05:00"
+    },
+    {
+      "event_id": "nba_fixture_5",
+      "home_team": "Knicks",
+      "away_team": "76ers",
+      "spread": 1.5,
+      "total": 210,
+      "moneyline_home": -115,
+      "moneyline_away": -105,
+      "commence_time": "2026-02-14T19:00:00-05:00"
+    }
+  ],
+  "expected_market_types": ["SPREAD", "MONEYLINE", "TOTAL"],
+  "expected_integrations": ["odds_api"],
+  "has_props": true
+}

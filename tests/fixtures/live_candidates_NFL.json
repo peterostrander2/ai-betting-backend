@@ -1,0 +1,59 @@
+{
+  "sport": "NFL",
+  "games": [
+    {
+      "event_id": "nfl_fixture_1",
+      "home_team": "Chiefs",
+      "away_team": "49ers",
+      "spread": -3.0,
+      "total": 52.5,
+      "moneyline_home": -150,
+      "moneyline_away": 130,
+      "commence_time": "2026-02-14T18:30:00-05:00"
+    },
+    {
+      "event_id": "nfl_fixture_2",
+      "home_team": "Cowboys",
+      "away_team": "Eagles",
+      "spread": 2.5,
+      "total": 48.0,
+      "moneyline_home": 115,
+      "moneyline_away": -135,
+      "commence_time": "2026-02-14T16:25:00-05:00"
+    },
+    {
+      "event_id": "nfl_fixture_3",
+      "home_team": "Bills",
+      "away_team": "Ravens",
+      "spread": -1.0,
+      "total": 51.0,
+      "moneyline_home": -115,
+      "moneyline_away": -105,
+      "commence_time": "2026-02-14T13:00:00-05:00"
+    },
+    {
+      "event_id": "nfl_fixture_4",
+      "home_team": "Bengals",
+      "away_team": "Steelers",
+      "spread": -6.5,
+      "total": 45.5,
+      "moneyline_home": -280,
+      "moneyline_away": 230,
+      "commence_time": "2026-02-14T13:00:00-05:00"
+    },
+    {
+      "event_id": "nfl_fixture_5",
+      "home_team": "Jets",
+      "away_team": "Patriots",
+      "spread": 7.0,
+      "total": 40.0,
+      "moneyline_home": -300,
+      "moneyline_away": 250,
+      "commence_time": "2026-02-14T13:00:00-05:00"
+    }
+  ],
+  "expected_market_types": ["SPREAD", "MONEYLINE", "TOTAL"],
+  "expected_integrations": ["odds_api", "weather_api"],
+  "has_props": true,
+  "outdoor_sport": true
+}

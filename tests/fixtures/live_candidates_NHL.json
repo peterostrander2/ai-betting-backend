@@ -1,0 +1,59 @@
+{
+  "sport": "NHL",
+  "games": [
+    {
+      "event_id": "nhl_fixture_1",
+      "home_team": "Rangers",
+      "away_team": "Bruins",
+      "spread": 1.5,
+      "total": 5.5,
+      "moneyline_home": 105,
+      "moneyline_away": -125,
+      "commence_time": "2026-02-14T19:00:00-05:00"
+    },
+    {
+      "event_id": "nhl_fixture_2",
+      "home_team": "Maple Leafs",
+      "away_team": "Canadiens",
+      "spread": -1.5,
+      "total": 6.0,
+      "moneyline_home": -155,
+      "moneyline_away": 135,
+      "commence_time": "2026-02-14T19:30:00-05:00"
+    },
+    {
+      "event_id": "nhl_fixture_3",
+      "home_team": "Oilers",
+      "away_team": "Flames",
+      "spread": -1.5,
+      "total": 6.5,
+      "moneyline_home": -170,
+      "moneyline_away": 150,
+      "commence_time": "2026-02-14T21:00:00-05:00"
+    },
+    {
+      "event_id": "nhl_fixture_4",
+      "home_team": "Lightning",
+      "away_team": "Panthers",
+      "spread": 1.5,
+      "total": 5.5,
+      "moneyline_home": 115,
+      "moneyline_away": -135,
+      "commence_time": "2026-02-14T19:00:00-05:00"
+    },
+    {
+      "event_id": "nhl_fixture_5",
+      "home_team": "Penguins",
+      "away_team": "Capitals",
+      "spread": -1.5,
+      "total": 6.0,
+      "moneyline_home": -140,
+      "moneyline_away": 120,
+      "commence_time": "2026-02-14T19:00:00-05:00"
+    }
+  ],
+  "expected_market_types": ["SPREAD", "MONEYLINE", "TOTAL"],
+  "expected_integrations": ["odds_api"],
+  "has_props": false,
+  "outdoor_sport": false
+}

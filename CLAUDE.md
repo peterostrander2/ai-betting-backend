@@ -97,7 +97,7 @@
 | 29 | Integration State Machine | Integrations track `calls_last_15m()` for health (v20.21) |
 | 30 | CI Golden Gate | All deploys must pass `ci_golden_gate.sh` (v20.21) |
 
-### Lessons Learned (119 Total) - Key Categories
+### Lessons Learned (120 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -114,6 +114,7 @@
 | 46-48 | **v20.5 Scoring/Scripts** | Unsurfaced adjustments, env var registry, heredoc __file__ |
 | 49-52 | **v20.6 Production Fixes** | Props timeout, empty descriptions, score inflation (total boost cap), Jarvis baseline |
 | 114-119 | **v20.27 AI Score Variance** | MPS model_std units, NCAAB defaults, heuristic fallback, moneyline odds-implied, variance gates |
+| 120 | **v20.28 Cross-Sport Testing** | Fixture-based CI, sport-parametric tests, NO_SLATE handling |
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
@@ -390,12 +391,46 @@ API_KEY=your_key SPORT=NCAAB ./scripts/live_betting_audit.sh
 | `tests/test_integration_validation.py` | Integration contract tests (13 tests) — v20.21 |
 | `docs/CONTRACT.md` | Canonical scoring contract reference (frozen values) — v20.21 |
 | `.github/workflows/golden-gate.yml` | GitHub Actions CI: golden-gate, contract-tests, freeze-verify jobs — v20.21 |
-| `scripts/full_system_audit.sh` | Full backend audit for frontend readiness (11 hard gates) — v20.21 |
+| `scripts/full_system_audit.sh` | Full backend audit for frontend readiness (13 hard gates) — v20.28 |
 | `tests/test_live_betting_correctness.py` | Live betting correctness tests (25 tests): game status, data_age_ms, integration tracking, AI score variance — v20.27 |
+| `tests/test_cross_sport_4engine.py` | Cross-sport 4-engine tests (67 tests): sport-parametric, AI variance gates, market coverage, fixture-based CI — v20.28 |
 | `scripts/live_betting_audit.sh` | Live betting correctness audit: meta.as_of_et, data_age_ms, game_status, ET consistency — v20.26 |
+| `scripts/live_betting_audit_all_sports.sh` | Cross-sport audit for NBA/NCAAB/NFL/MLB/NHL with NO_SLATE handling — v20.28 |
 | `time_filters.py` | Game status derivation: `get_game_status(commence_time, completed)` returns PRE_GAME/IN_PROGRESS/FINAL/NOT_TODAY — v20.26 |
 
-### Current Version: v20.27 (Feb 14, 2026)
+### Current Version: v20.28 (Feb 14, 2026)
+
+**v20.28 (Feb 14, 2026) — Cross-Sport 4-Engine Test Suite:**
+
+**New Test Suite:** `tests/test_cross_sport_4engine.py` (67 tests)
+- Sport-parametric tests across NBA, NCAAB, NFL, MLB, NHL
+- Fixture-based deterministic tests for CI (no live slate dependency)
+- 4-engine execution validation (not just output boundary checks)
+- AI non-degeneracy gates (unique >= 4, stddev >= 0.15 for >= 5 candidates)
+- Market coverage observability (market_counts_by_type)
+- Integration requirements by sport (outdoor sports may use weather_api)
+- Output tier contract validation (no MONITOR/PASS in output)
+- Titanium 3-of-4 rule verification
+
+**New Scripts:**
+- `scripts/live_betting_audit_all_sports.sh` — Runs audit across all 5 sports
+- Handles NO_SLATE gracefully (sports without games today)
+- Validates response structure even when no picks
+
+**Updated:**
+- `scripts/full_system_audit.sh` — Now 13 gates (was 11), includes live betting tests
+- Gate 12: Live betting unit tests (pytest)
+- Gate 13: Cross-sport live betting audit (API-level)
+
+**Fixtures:** `tests/fixtures/live_candidates_{sport}.json` for NBA, NCAAB, NFL, MLB, NHL
+
+**Done Bar:**
+1. `pytest -q` passes
+2. `pytest -q tests/test_live_betting_correctness.py tests/test_cross_sport_4engine.py` passes (92 tests)
+3. `scripts/live_betting_audit_all_sports.sh` passes with NO_SLATE handling
+4. CI runs tests on every deploy
+
+---
 
 **v20.27 (Feb 14, 2026) — AI Score Variance Fix + Heuristic Fallback:**
 
