@@ -772,10 +772,15 @@ async def check_integration_health(name: str) -> Dict[str, Any]:
     if not integration:
         return {"error": f"Unknown integration: {name}"}
 
+    # Get criticality from contract (Integration dataclass doesn't have it)
+    contract = CONTRACT_INTEGRATIONS.get(name, {})
+    criticality = contract.get("criticality", "OPTIONAL")
+
     result = {
         "name": name,
         "description": integration.description,
         "required": integration.required,
+        "criticality": criticality,  # CRITICAL, DEGRADED_OK, OPTIONAL, RELEVANCE_GATED
         "is_configured": is_env_set(*integration.env_vars),
         "env_vars": integration.env_vars,
         "modules": integration.modules,
@@ -863,19 +868,29 @@ async def get_all_integrations_status() -> Dict[str, Any]:
             configured.append(name)
             status["status_category"] = "CONFIGURED"
 
-    # Determine overall health
-    required_not_configured = [n for n in not_configured if INTEGRATIONS[n].required]
-    required_unreachable = [n for n in unreachable if INTEGRATIONS[n].required]
+    # Determine overall health using criticality tiers from contract (not just required flag)
+    # CRITICAL tier: affects ok=false
+    # DEGRADED_OK tier: affects status=degraded but ok=true
+    # OPTIONAL/RELEVANCE_GATED: no health impact
+    def _get_criticality(name: str) -> str:
+        """Get criticality from contract, default to OPTIONAL."""
+        contract = CONTRACT_INTEGRATIONS.get(name, {})
+        return contract.get("criticality", "OPTIONAL")
 
-    if required_not_configured or required_unreachable:
+    critical_not_configured = [n for n in not_configured if _get_criticality(n) == "CRITICAL"]
+    critical_unreachable = [n for n in unreachable if _get_criticality(n) == "CRITICAL"]
+    degraded_ok_failing = [n for n in (not_configured + unreachable) if _get_criticality(n) == "DEGRADED_OK"]
+
+    if critical_not_configured or critical_unreachable:
         overall_status = "CRITICAL"
-        overall_message = f"Required integrations failing: {required_not_configured + required_unreachable}"
-    elif unreachable:
+        overall_message = f"CRITICAL integrations failing: {critical_not_configured + critical_unreachable}"
+    elif degraded_ok_failing:
         overall_status = "DEGRADED"
-        overall_message = f"Some integrations unreachable: {unreachable}"
-    elif not_configured:
-        overall_status = "DEGRADED"
-        overall_message = f"Some optional integrations not configured: {not_configured}"
+        overall_message = f"DEGRADED_OK integrations failing: {degraded_ok_failing}"
+    elif unreachable or not_configured:
+        # OPTIONAL/RELEVANCE_GATED failures don't affect status
+        overall_status = "HEALTHY"
+        overall_message = f"All critical integrations operational ({len(unreachable + not_configured)} optional failing)"
     else:
         overall_status = "HEALTHY"
         overall_message = "All integrations operational"
