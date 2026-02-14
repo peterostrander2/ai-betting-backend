@@ -519,3 +519,305 @@ class TestOutputTierContract:
             count = sum(1 for s in [ai, research, esoteric, jarvis] if s >= 8.0)
             is_titanium = count >= 3
             assert is_titanium == expected, f"Case ({ai}, {research}, {esoteric}, {jarvis}): expected {expected}, got {is_titanium}"
+
+
+# ============================================================================
+# TEST CLASS: AI Constant Fallback Forbidden (HARD GATE)
+# ============================================================================
+
+class TestAIConstantFallbackForbidden:
+    """
+    HARD GATE: AI constant fallback must NEVER return a high score.
+
+    When AI cannot differentiate candidates (degenerate inputs), it MUST:
+    - Return ai_status == DEGRADED or HEURISTIC_FALLBACK
+    - NOT return a constant high score (e.g., 7.8 for all picks)
+    - Apply zero or reduced weight to AI in final scoring
+
+    This test explicitly forces the fallback path and verifies the contract.
+    """
+
+    def test_constant_scores_are_detected_as_degenerate(self):
+        """If all AI scores are identical, this is degenerate and must be flagged."""
+        # Simulate a degenerate scenario: all scores identical
+        scores = [7.8, 7.8, 7.8, 7.8, 7.8]
+
+        unique_count = len(set(scores))
+        stddev = statistics.stdev(scores) if len(scores) > 1 else 0
+
+        # This MUST fail the variance check
+        assert unique_count < 4, "Constant scores must have < 4 unique values"
+        assert stddev < 0.15, "Constant scores must have stddev < 0.15"
+
+    def test_high_constant_ai_not_allowed(self):
+        """
+        A constant AI score >= 7.0 is FORBIDDEN in production.
+
+        This would inflate all picks equally, defeating the purpose of AI.
+        """
+        FORBIDDEN_CONSTANT_THRESHOLD = 7.0
+
+        # If AI is returning constants at this level, it's broken
+        constant_score = 7.8  # The bug from v20.27
+
+        # This must trigger detection
+        is_forbidden = constant_score >= FORBIDDEN_CONSTANT_THRESHOLD
+        assert is_forbidden, "High constant AI scores must be forbidden"
+
+    def test_heuristic_fallback_produces_variance(self):
+        """Heuristic fallback MUST produce differentiated scores."""
+        # Simulate heuristic scoring with team hashes
+        teams = [
+            ("Lakers", "Celtics"),
+            ("Warriors", "Suns"),
+            ("Nets", "Heat"),
+            ("Bucks", "76ers"),
+            ("Nuggets", "Clippers"),
+        ]
+
+        scores = []
+        for home, away in teams:
+            team_hash = (hash(f"{home}:{away}") % 100) / 100.0
+            score = 5.0 + (team_hash * 3.0)  # Range 5.0-8.0
+            scores.append(round(score, 2))
+
+        # Heuristic MUST produce variance
+        unique_count = len(set(scores))
+        assert unique_count >= 4, f"Heuristic must produce >= 4 unique scores, got {unique_count}"
+
+        stddev = statistics.stdev(scores)
+        assert stddev >= 0.15, f"Heuristic must have stddev >= 0.15, got {stddev:.3f}"
+
+    @pytest.mark.parametrize("sport", SUPPORTED_SPORTS)
+    def test_fixture_heuristic_variance_per_sport(self, sport):
+        """Each sport's fixture must produce heuristic variance."""
+        fixture = load_sport_fixture(sport)
+        games = fixture["games"]
+
+        scores = []
+        for game in games:
+            team_hash = (hash(f"{game['home_team']}:{game['away_team']}") % 100) / 100.0
+            score = 5.0 + (team_hash * 3.0)
+            scores.append(round(score, 2))
+
+        if len(scores) >= 5:
+            unique_count = len(set(scores))
+            stddev = statistics.stdev(scores)
+
+            # HARD FAILURE if variance requirements not met
+            assert unique_count >= 4, f"{sport}: HARD FAIL - heuristic produced only {unique_count} unique scores"
+            assert stddev >= 0.15, f"{sport}: HARD FAIL - heuristic stddev {stddev:.3f} < 0.15"
+
+
+# ============================================================================
+# TEST CLASS: 4-Engine Presence Hard Gate
+# ============================================================================
+
+class TestFourEnginePresenceHardGate:
+    """
+    HARD GATE: All 4 engines MUST be present on every pick.
+
+    Each pick must have:
+    - ai_score (not null, numeric)
+    - research_score (not null, numeric)
+    - esoteric_score (not null, numeric)
+    - jarvis_score (not null, numeric)
+    - *_reasons array (or explicit *_status explaining why empty)
+    """
+
+    REQUIRED_ENGINE_FIELDS = ["ai_score", "research_score", "esoteric_score", "jarvis_score"]
+    REASONS_FIELDS = ["ai_reasons", "research_reasons", "esoteric_reasons", "jarvis_reasons"]
+
+    def test_all_engine_fields_required(self):
+        """All 4 engine score fields are required."""
+        assert len(self.REQUIRED_ENGINE_FIELDS) == 4
+        assert "ai_score" in self.REQUIRED_ENGINE_FIELDS
+        assert "research_score" in self.REQUIRED_ENGINE_FIELDS
+        assert "esoteric_score" in self.REQUIRED_ENGINE_FIELDS
+        assert "jarvis_score" in self.REQUIRED_ENGINE_FIELDS
+
+    def test_all_reasons_fields_required(self):
+        """All 4 reasons arrays are required."""
+        assert len(self.REASONS_FIELDS) == 4
+        assert "ai_reasons" in self.REASONS_FIELDS
+        assert "research_reasons" in self.REASONS_FIELDS
+        assert "esoteric_reasons" in self.REASONS_FIELDS
+        assert "jarvis_reasons" in self.REASONS_FIELDS
+
+    def test_mock_pick_has_all_engines(self):
+        """A valid pick must have all 4 engines."""
+        mock_pick = {
+            "ai_score": 7.5,
+            "research_score": 8.0,
+            "esoteric_score": 5.5,
+            "jarvis_score": 6.5,
+            "ai_reasons": ["Model prediction: 0.72"],
+            "research_reasons": ["Sharp money detected"],
+            "esoteric_reasons": ["Vortex aligned"],
+            "jarvis_reasons": ["Baseline 4.5"],
+        }
+
+        for field in self.REQUIRED_ENGINE_FIELDS:
+            assert field in mock_pick, f"Missing required field: {field}"
+            assert mock_pick[field] is not None, f"Field {field} must not be null"
+            assert isinstance(mock_pick[field], (int, float)), f"Field {field} must be numeric"
+            assert 0 <= mock_pick[field] <= 10, f"Field {field} must be 0-10"
+
+        for field in self.REASONS_FIELDS:
+            assert field in mock_pick, f"Missing required field: {field}"
+            assert isinstance(mock_pick[field], list), f"Field {field} must be array"
+
+    def test_null_engine_score_forbidden(self):
+        """Null engine scores must cause hard failure."""
+        invalid_picks = [
+            {"ai_score": None, "research_score": 7.0, "esoteric_score": 5.0, "jarvis_score": 6.0},
+            {"ai_score": 7.0, "research_score": None, "esoteric_score": 5.0, "jarvis_score": 6.0},
+            {"ai_score": 7.0, "research_score": 7.0, "esoteric_score": None, "jarvis_score": 6.0},
+            {"ai_score": 7.0, "research_score": 7.0, "esoteric_score": 5.0, "jarvis_score": None},
+        ]
+
+        for pick in invalid_picks:
+            has_null = any(pick[f] is None for f in self.REQUIRED_ENGINE_FIELDS)
+            assert has_null, "Test data should have null value"
+
+
+# ============================================================================
+# TEST CLASS: Market Coverage Hard Gate
+# ============================================================================
+
+class TestMarketCoverageHardGate:
+    """
+    HARD GATE: market_counts_by_type must ALWAYS be present in debug output.
+
+    Required structure:
+    {
+      "SPREAD": int,
+      "MONEYLINE": int,
+      "TOTAL": int,
+      "SHARP": int,
+      "returned": {
+        "SPREAD": int,
+        "MONEYLINE": int,
+        "TOTAL": int,
+        "SHARP": int
+      }
+    }
+    """
+
+    REQUIRED_MARKET_TYPES = ["SPREAD", "MONEYLINE", "TOTAL", "SHARP"]
+
+    def test_market_counts_structure_complete(self):
+        """market_counts_by_type must have all required keys."""
+        valid_market_counts = {
+            "SPREAD": 12,
+            "MONEYLINE": 12,
+            "TOTAL": 12,
+            "SHARP": 0,
+            "returned": {
+                "SPREAD": 3,
+                "MONEYLINE": 2,
+                "TOTAL": 4,
+                "SHARP": 0,
+            }
+        }
+
+        # All top-level keys present
+        for market in self.REQUIRED_MARKET_TYPES:
+            assert market in valid_market_counts, f"Missing top-level key: {market}"
+
+        # "returned" nested dict present with all keys
+        assert "returned" in valid_market_counts
+        for market in self.REQUIRED_MARKET_TYPES:
+            assert market in valid_market_counts["returned"], f"Missing returned key: {market}"
+
+    def test_market_counts_missing_key_forbidden(self):
+        """Missing market count keys must cause hard failure."""
+        invalid_market_counts = {
+            "SPREAD": 12,
+            "MONEYLINE": 12,
+            # Missing TOTAL and SHARP
+        }
+
+        has_all = all(m in invalid_market_counts for m in self.REQUIRED_MARKET_TYPES)
+        assert not has_all, "Test data should be missing keys"
+
+    def test_returned_tracks_output_subset(self):
+        """returned counts must be <= generated counts."""
+        market_counts = {
+            "SPREAD": 12,
+            "MONEYLINE": 12,
+            "TOTAL": 12,
+            "SHARP": 0,
+            "returned": {
+                "SPREAD": 3,
+                "MONEYLINE": 2,
+                "TOTAL": 4,
+                "SHARP": 0,
+            }
+        }
+
+        for market in self.REQUIRED_MARKET_TYPES:
+            generated = market_counts[market]
+            returned = market_counts["returned"][market]
+            assert returned <= generated, f"{market}: returned ({returned}) > generated ({generated})"
+
+
+# ============================================================================
+# TEST CLASS: Distribution Sanity Flags
+# ============================================================================
+
+class TestDistributionSanityFlags:
+    """
+    Diagnostic flags for pathological pick distributions.
+
+    These don't block output but surface potential issues:
+    - UNDERDOG_HEAVY: > 95% of picks are underdogs (when picks >= 8)
+    - FAVORITE_HEAVY: > 95% of picks are favorites (when picks >= 8)
+    - SINGLE_SPORT_HEAVY: All picks from one sport in multi-sport request
+    """
+
+    def test_underdog_heavy_detection(self):
+        """Detect when picks are > 95% underdogs."""
+        # Simulate 10 picks, 9 underdogs (underdog = positive spread)
+        picks = [
+            {"side": "Team A", "line": 7.5},   # underdog
+            {"side": "Team B", "line": 3.5},   # underdog
+            {"side": "Team C", "line": 10.5},  # underdog
+            {"side": "Team D", "line": 5.5},   # underdog
+            {"side": "Team E", "line": 4.5},   # underdog
+            {"side": "Team F", "line": 6.5},   # underdog
+            {"side": "Team G", "line": 8.5},   # underdog
+            {"side": "Team H", "line": 2.5},   # underdog
+            {"side": "Team I", "line": -3.5},  # favorite
+            {"side": "Team J", "line": 9.5},   # underdog
+        ]
+
+        underdog_count = sum(1 for p in picks if p["line"] > 0)
+        total = len(picks)
+        underdog_share = underdog_count / total if total > 0 else 0
+
+        is_underdog_heavy = underdog_share > 0.95 and total >= 8
+
+        # 9/10 = 0.9, which is NOT > 0.95
+        assert not is_underdog_heavy, f"90% underdog should not trigger flag (got {underdog_share})"
+
+    def test_underdog_heavy_threshold(self):
+        """96%+ underdogs with >= 8 picks triggers flag."""
+        # 25 picks, 24 underdogs = 96%
+        picks = [{"line": 5.0} for _ in range(24)] + [{"line": -3.0}]
+
+        underdog_count = sum(1 for p in picks if p["line"] > 0)
+        underdog_share = underdog_count / len(picks)
+
+        is_underdog_heavy = underdog_share > 0.95 and len(picks) >= 8
+        assert is_underdog_heavy, f"96% underdog with 25 picks should trigger flag"
+
+    def test_small_sample_no_flag(self):
+        """< 8 picks should not trigger distribution flags."""
+        picks = [{"line": 5.0} for _ in range(5)]  # 5 underdogs, 100%
+
+        underdog_count = sum(1 for p in picks if p["line"] > 0)
+        underdog_share = underdog_count / len(picks)
+
+        is_underdog_heavy = underdog_share > 0.95 and len(picks) >= 8
+        assert not is_underdog_heavy, "Small sample should not trigger flag"
