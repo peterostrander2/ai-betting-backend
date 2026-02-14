@@ -366,12 +366,15 @@ class TestSuppressedCandidates:
     """Test that suppressed candidates still have full breakdown."""
 
     def test_suppressed_candidates_have_full_breakdown(self, truth_table):
-        """Candidates below 6.5 threshold must still have complete esoteric_breakdown."""
+        """Candidates below 6.5 threshold must still have complete esoteric_breakdown.
+
+        v20.22: 25 wired signals (23 - 1 benford + 3 math signals)
+        """
         wired_count = len(truth_table.get("wired_signals", []))
 
         # This is a structural test - actual runtime test would check API response
-        assert wired_count == 23, \
-            f"Expected 23 wired signals for full breakdown, got {wired_count}"
+        assert wired_count == 25, \
+            f"Expected 25 wired signals for full breakdown (v20.22), got {wired_count}"
 
 
 # =============================================================================

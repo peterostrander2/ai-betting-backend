@@ -2443,27 +2443,62 @@ def build_esoteric_breakdown_with_provenance(
         contribution=kp_data.get("score", 0.5) * 0.25,
     )
 
-    # Benford Anomaly (INTERNAL)
-    benford_data = glitch_breakdown.get("benford", {})
-    benford_has_data = benford_data.get("values_count", 0) >= 10
-    breakdown["benford"] = _build_signal_provenance(
-        signal_name="benford",
-        value=benford_data.get("score", 0.5) if benford_has_data else 0,
-        triggered=benford_data.get("triggered", False),
+    # Golden Ratio (INTERNAL) - v20.22: replaces benford
+    golden_data = glitch_breakdown.get("golden_ratio", {})
+    golden_has_data = golden_data.get("score") is not None
+    breakdown["golden_ratio"] = _build_signal_provenance(
+        signal_name="golden_ratio",
+        value=golden_data.get("score", 0.5) if golden_has_data else 0,
+        triggered=golden_data.get("triggered", False),
         source_type="INTERNAL",
         source_api=None,
-        status="SUCCESS" if benford_has_data else "NO_DATA",
+        status="SUCCESS" if golden_has_data else "NO_DATA",
         raw_inputs_summary={
-            "required_inputs_present": {"value_for_benford": benford_has_data},
-            "chi_squared": benford_data.get("chi_squared"),
-            "deviation": benford_data.get("deviation"),
-            "values_count": benford_data.get("values_count", 0),
+            "required_inputs_present": {"primary_value": golden_has_data},
+            "phi_distance": golden_data.get("phi_distance"),
         },
         call_proof=None,
-        contribution=benford_data.get("score", 0.5) * 0.10 if benford_has_data else 0,
+        contribution=golden_data.get("score", 0.5) * 0.04 if golden_has_data else 0,
     )
 
-    # NOTE: golden_ratio, prime_resonance, phoenix_resonance, planetary_hour exist in codebase
+    # Prime Resonance (INTERNAL) - v20.22
+    prime_data = glitch_breakdown.get("prime_resonance", {})
+    prime_has_data = prime_data.get("score") is not None
+    breakdown["prime_resonance"] = _build_signal_provenance(
+        signal_name="prime_resonance",
+        value=prime_data.get("score", 0.5) if prime_has_data else 0,
+        triggered=prime_data.get("triggered", False),
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if prime_has_data else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {"primary_value": prime_has_data},
+            "is_prime": prime_data.get("is_prime"),
+            "prime_proximity": prime_data.get("prime_proximity"),
+        },
+        call_proof=None,
+        contribution=prime_data.get("score", 0.5) * 0.03 if prime_has_data else 0,
+    )
+
+    # Numerical Symmetry (INTERNAL) - v20.22
+    symmetry_data = glitch_breakdown.get("numerical_symmetry", {})
+    symmetry_has_data = symmetry_data.get("score") is not None
+    breakdown["numerical_symmetry"] = _build_signal_provenance(
+        signal_name="numerical_symmetry",
+        value=symmetry_data.get("score", 0.5) if symmetry_has_data else 0,
+        triggered=symmetry_data.get("triggered", False),
+        source_type="INTERNAL",
+        source_api=None,
+        status="SUCCESS" if symmetry_has_data else "NO_DATA",
+        raw_inputs_summary={
+            "required_inputs_present": {"primary_value": symmetry_has_data},
+            "pattern_type": symmetry_data.get("pattern_type"),
+        },
+        call_proof=None,
+        contribution=symmetry_data.get("score", 0.5) * 0.03 if symmetry_has_data else 0,
+    )
+
+    # NOTE: phoenix_resonance, planetary_hour exist in codebase
     # but are NOT wired into scoring (present but not wired - see ESOTERIC_TRUTH_TABLE.md)
 
     # =================================================================
