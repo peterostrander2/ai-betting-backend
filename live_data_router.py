@@ -6710,11 +6710,14 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
     # Maps (home_team_lower, away_team_lower) -> {home_score, away_score, period, status}
     _live_scores_by_teams = {}
     _live_scores_source = "none"
+    _odds_api_scores_raw_count = 0  # v20.28.3: Telemetry for diagnosing fallback
 
     # PRIMARY: Use Odds API for live scores (paid API - prioritized)
     if ODDS_API_LIVE_SCORES_AVAILABLE:
         try:
             _odds_api_scores = await build_live_scores_lookup(sport)
+            _odds_api_scores_raw_count = len(_odds_api_scores) if _odds_api_scores else 0
+            logger.info("ODDS API SCORES RAW: %d entries returned for %s", _odds_api_scores_raw_count, sport)
             if _odds_api_scores:
                 # Convert Odds API format to expected tuple-keyed format
                 for key_str, game_data in _odds_api_scores.items():
@@ -8707,6 +8710,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             # v20.28.2: Live scores data source (Odds API paid first, ESPN fallback)
             "live_scores_source": _live_scores_source,
             "live_scores_count": len(_live_scores_by_teams),
+            "odds_api_scores_raw_count": _odds_api_scores_raw_count,  # v20.28.3: Diagnostic
             "splits_present_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("research_breakdown", {}).get("sharp_boost", 0) > 0),
             "jarvis_active_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("jarvis_hits_count", 0) > 0),
             "jason_ran_count": sum(1 for p in _all_prop_candidates + _all_game_candidates if p.get("jason_ran", False)),
