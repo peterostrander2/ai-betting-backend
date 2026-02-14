@@ -10,9 +10,12 @@ Comprehensive esoteric signals for sports betting analysis.
 """
 
 import math
+import logging
 from datetime import datetime, date, timedelta
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import random
+
+logger = logging.getLogger("esoteric_engine")
 
 # Import comprehensive player birth data
 from player_birth_data import get_all_players, get_player_data
@@ -23,6 +26,14 @@ from astronomical_api import (
     calculate_void_of_course,
     calculate_moon_phase
 )
+
+# v20.23: Import PlayerDataService for dynamic birth date lookup
+try:
+    from services.player_data_service import PlayerDataService, PlayerContext
+    PLAYER_DATA_SERVICE_AVAILABLE = True
+except ImportError:
+    PLAYER_DATA_SERVICE_AVAILABLE = False
+    logger.debug("PlayerDataService not available - using static data only")
 
 # =============================================================================
 # TEAM FOUNDING YEARS DATABASE
@@ -1071,33 +1082,128 @@ def get_game_esoteric_signals(game_data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def get_player_esoteric_signals(player_name: str) -> Dict[str, Any]:
+def get_birth_date_for_player(player_name: str, sport: str = "NBA") -> Optional[str]:
+    """
+    Get birth date for a player using dynamic BallDontLie lookup with static fallback.
+
+    v20.23: Uses PlayerDataService for dynamic lookup, falls back to static data.
+
+    Args:
+        player_name: Player's full name
+        sport: Sport code (currently only NBA uses dynamic lookup)
+
+    Returns:
+        Birth date string in YYYY-MM-DD format, or None if not found
+    """
+    # Try PlayerDataService first (cached, may have BDL data)
+    if PLAYER_DATA_SERVICE_AVAILABLE and sport.upper() == "NBA":
+        try:
+            ctx = PlayerDataService.get_player_context_sync(player_name, sport)
+            if ctx and ctx.has_birth_date:
+                return ctx.birth_date
+        except Exception as e:
+            logger.debug(f"PlayerDataService lookup failed for {player_name}: {e}")
+
+    # Fallback to static data
+    static_data = get_player_data(player_name)
+    if static_data and static_data.get("birth_date"):
+        return static_data["birth_date"]
+
+    return None
+
+
+async def get_birth_date_for_player_async(player_name: str, sport: str = "NBA") -> Optional[str]:
+    """
+    Get birth date for a player (async version with BallDontLie API).
+
+    v20.23: Async-safe version that can fetch from BallDontLie in FastAPI context.
+
+    Args:
+        player_name: Player's full name
+        sport: Sport code (currently only NBA uses dynamic lookup)
+
+    Returns:
+        Birth date string in YYYY-MM-DD format, or None if not found
+    """
+    if PLAYER_DATA_SERVICE_AVAILABLE and sport.upper() == "NBA":
+        try:
+            ctx = await PlayerDataService.get_player_context(player_name, sport)
+            if ctx and ctx.has_birth_date:
+                return ctx.birth_date
+        except Exception as e:
+            logger.debug(f"PlayerDataService async lookup failed for {player_name}: {e}")
+
+    # Fallback to static data
+    static_data = get_player_data(player_name)
+    if static_data and static_data.get("birth_date"):
+        return static_data["birth_date"]
+
+    return None
+
+
+def get_player_esoteric_signals(player_name: str, sport: str = "NBA") -> Dict[str, Any]:
     """
     Get esoteric signals for a specific player.
-    Uses get_player_data for fuzzy matching (last name, case-insensitive).
+
+    v20.23: Uses dynamic birth date lookup via PlayerDataService.
+    Falls back to static player_birth_data.py if unavailable.
     """
-    player_data = get_player_data(player_name)
-    if not player_data:
+    # Get birth date dynamically
+    birth_date = get_birth_date_for_player(player_name, sport)
+
+    # Get jersey number from static data (BDL doesn't provide this reliably)
+    static_data = get_player_data(player_name)
+    jersey = static_data.get("jersey", 0) if static_data else 0
+
+    if not birth_date:
         # Fallback for unknown players
-        player_data = {
-            "birth_date": "1990-01-01",
-            "jersey": 0,
-            "team": "Unknown"
-        }
+        birth_date = "1990-01-01"
+        logger.debug(f"Using fallback birth date for {player_name}")
 
     return {
-        "biorhythms": calculate_biorhythms(player_data["birth_date"]),
+        "biorhythms": calculate_biorhythms(birth_date),
         "life_path_sync": check_life_path_sync(
             player_name,
-            player_data["birth_date"],
-            player_data["jersey"]
-        )
+            birth_date,
+            jersey
+        ),
+        "birth_date_source": "balldontlie" if PLAYER_DATA_SERVICE_AVAILABLE else "static",
     }
 
 
-def analyze_parlay_correlations(legs: List[Dict[str, Any]]) -> Dict[str, Any]:
+async def get_player_esoteric_signals_async(player_name: str, sport: str = "NBA") -> Dict[str, Any]:
+    """
+    Get esoteric signals for a specific player (async version).
+
+    v20.23: Async-safe version that can fetch from BallDontLie in FastAPI context.
+    """
+    # Get birth date dynamically
+    birth_date = await get_birth_date_for_player_async(player_name, sport)
+
+    # Get jersey number from static data
+    static_data = get_player_data(player_name)
+    jersey = static_data.get("jersey", 0) if static_data else 0
+
+    if not birth_date:
+        birth_date = "1990-01-01"
+        logger.debug(f"Using fallback birth date for {player_name}")
+
+    return {
+        "biorhythms": calculate_biorhythms(birth_date),
+        "life_path_sync": check_life_path_sync(
+            player_name,
+            birth_date,
+            jersey
+        ),
+        "birth_date_source": "balldontlie" if PLAYER_DATA_SERVICE_AVAILABLE else "static",
+    }
+
+
+def analyze_parlay_correlations(legs: List[Dict[str, Any]], sport: str = "NBA") -> Dict[str, Any]:
     """
     Analyze parlay for esoteric correlations and warnings.
+
+    v20.23: Uses dynamic birth date lookup via PlayerDataService.
     """
     teammate_warnings = check_teammate_void(legs)
 
@@ -1105,9 +1211,10 @@ def analyze_parlay_correlations(legs: List[Dict[str, Any]]) -> Dict[str, Any]:
     player_bios = []
     for leg in legs:
         if leg.get("player_name"):
-            player_data = get_player_data(leg["player_name"])
-            if player_data:
-                bio = calculate_biorhythms(player_data["birth_date"])
+            # v20.23: Use dynamic birth date lookup
+            birth_date = get_birth_date_for_player(leg["player_name"], sport)
+            if birth_date:
+                bio = calculate_biorhythms(birth_date)
                 player_bios.append(bio["overall"])
 
     avg_biorhythm = sum(player_bios) / len(player_bios) if player_bios else None

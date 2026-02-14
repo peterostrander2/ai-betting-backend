@@ -693,6 +693,19 @@ class DailyScheduler:
         except Exception as e:
             logger.warning("Failed to schedule training verification: %s", e)
 
+        # v20.23: Player cache warming (6:47 AM ET, before picks generation)
+        # Pre-fetches NBA player data from BallDontLie for expected props
+        try:
+            self.scheduler.add_job(
+                self._run_player_cache_warm,
+                CronTrigger(hour=6, minute=47, timezone="America/New_York"),
+                id="player_cache_warm",
+                name="Player Data Cache Warm"
+            )
+            logger.info("Player cache warming enabled: runs daily at 6:47 AM ET")
+        except Exception as e:
+            logger.warning("Failed to schedule player cache warming: %s", e)
+
         self.scheduler.start()
         logger.info("APScheduler started with daily audit at 6 AM")
 
@@ -927,6 +940,70 @@ class DailyScheduler:
             except Exception as e:
                 logger.error("   Failed to write alert file: %s", e)
     
+    def _run_player_cache_warm(self):
+        """
+        v20.23: Pre-warm NBA player data cache before picks generation.
+
+        Fetches player context (season averages, birth dates) from BallDontLie
+        for likely prop players (starters + top bench) before daily picks run.
+
+        Runs at 6:47 AM ET, before cache warm and picks generation.
+        """
+        from zoneinfo import ZoneInfo
+        ET = ZoneInfo("America/New_York")
+        today_str = datetime.now(ET).strftime("%Y-%m-%d")
+
+        logger.info("🏀 Starting player cache warm for %s...", today_str)
+
+        try:
+            # Try to import PlayerDataService
+            from services.player_data_service import PlayerDataService
+
+            # Get today's NBA games to determine likely players
+            # We'll pre-fetch common NBA prop players
+            players_to_warm = []
+
+            try:
+                # Try to get today's games from odds API
+                from get_props import get_props
+                nba_events = get_props("NBA")
+
+                if nba_events:
+                    # Extract player names from prop markets
+                    for event in nba_events[:10]:  # Limit to first 10 games
+                        for bm in event.get("bookmakers", []):
+                            for mkt in bm.get("markets", []):
+                                for outcome in mkt.get("outcomes", []):
+                                    desc = outcome.get("description", "")
+                                    if desc and len(desc) > 3:
+                                        players_to_warm.append(desc)
+
+                    # Dedupe
+                    players_to_warm = list(dict.fromkeys(players_to_warm))[:50]
+                    logger.info("   Found %d likely NBA players from props", len(players_to_warm))
+
+            except Exception as e:
+                logger.debug("Could not fetch props for player list: %s", e)
+
+            # v20.23: No hardcoded fallback - only warm from actual props
+            # If we couldn't get props, skip warming (don't use stale player list)
+            if len(players_to_warm) < 5:
+                logger.info("   Skipping cache warm: not enough players from props (%d)", len(players_to_warm))
+                return
+
+            # Run async cache warming using asyncio.run() (safer pattern)
+            import asyncio
+            result = asyncio.run(
+                PlayerDataService.warm_cache_for_players(players_to_warm)
+            )
+            logger.info("✅ Player cache warm complete: warmed=%d, errors=%d, cache_size=%d",
+                       result.get("warmed", 0), result.get("errors", 0), result.get("cache_size", 0))
+
+        except ImportError as e:
+            logger.warning("PlayerDataService not available for cache warming: %s", e)
+        except Exception as e:
+            logger.error("Player cache warm failed: %s", e)
+
     def _run_warm_cache(self):
         """Pre-warm best-bets cache in an async context."""
         if not WARM_AVAILABLE:

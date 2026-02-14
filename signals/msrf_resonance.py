@@ -383,13 +383,15 @@ def get_significant_dates_from_predictions(
 # -----------------------
 # DATA SOURCE: BALLDONTLIE (NBA)
 # -----------------------
-def get_significant_dates_from_player_history(
+async def get_significant_dates_from_player_history_async(
     player_name: str,
     sport: str = "NBA",
     threshold_pct: float = 1.5
 ) -> List[date]:
     """
-    Get significant dates from player performance history.
+    Get significant dates from player performance history (async version).
+
+    v20.23: Fixed async context issue - now properly async-compatible.
 
     For NBA, uses BallDontLie to find games where player exceeded
     their average by threshold_pct (default 50% above average).
@@ -406,37 +408,35 @@ def get_significant_dates_from_player_history(
         return []
 
     try:
-        from alt_data_sources.balldontlie import search_player, get_player_game_stats
-        import asyncio
+        from alt_data_sources.balldontlie import (
+            search_player,
+            is_balldontlie_configured,
+            BDL_ENABLED,
+        )
 
-        # Check if we're in an async context - if so, skip (can't call async from sync in async context)
-        try:
-            asyncio.get_running_loop()
-            # We're inside FastAPI async context - can't safely call async functions
-            logger.debug("MSRF: Skipping player history (in async context)")
+        # Check if BDL is configured
+        if not BDL_ENABLED:
+            logger.debug("MSRF: BallDontLie not configured, skipping player history")
             return []
-        except RuntimeError:
-            pass  # No running loop - safe to use asyncio.run()
 
-        # Search for player (async function)
-        try:
-            player = asyncio.run(search_player(player_name))
-        except Exception:
-            return []
+        # Search for player (async - safe to call directly)
+        player = await search_player(player_name)
         if not player or not player.get("id"):
+            logger.debug(f"MSRF: Player not found in BDL: {player_name}")
             return []
 
         player_id = player["id"]
 
-        # Get recent game stats (async function)
-        try:
-            stats = asyncio.run(get_player_game_stats(player_id, last_n_games=20))
-        except Exception:
-            return []
-        if not stats or not stats.get("games"):
+        # Get player's recent game stats using the stats endpoint
+        from alt_data_sources.balldontlie import _fetch_bdl
+
+        # Fetch last 20 games for this player
+        params = {"player_ids[]": player_id, "per_page": 20}
+        data = await _fetch_bdl("/stats", params)
+        if not data:
             return []
 
-        games = stats["games"]
+        games = data.get("data", [])
         if len(games) < 5:
             return []
 
@@ -452,10 +452,114 @@ def get_significant_dates_from_player_history(
         significant = []
         for game in games:
             if game.get("pts", 0) >= threshold:
-                game_date = game.get("game", {}).get("date", "")[:10]
-                if game_date:
+                game_data = game.get("game", {})
+                game_date_str = game_data.get("date", "")[:10]
+                if game_date_str:
                     try:
-                        significant.append(date.fromisoformat(game_date))
+                        significant.append(date.fromisoformat(game_date_str))
+                    except Exception:
+                        continue
+
+        logger.debug(f"MSRF: Found {len(significant)} significant dates for {player_name}")
+        return sorted(significant)
+
+    except Exception as e:
+        logger.warning("MSRF: Failed to get player history: %s", e)
+        return []
+
+
+def get_significant_dates_from_player_history(
+    player_name: str,
+    sport: str = "NBA",
+    threshold_pct: float = 1.5
+) -> List[date]:
+    """
+    Get significant dates from player performance history (sync version).
+
+    v20.23: Now uses cached player data when available.
+    For fresh BDL data, use get_significant_dates_from_player_history_async().
+
+    Args:
+        player_name: Player name
+        sport: Sport (currently only NBA supported)
+        threshold_pct: Multiplier for "significant" (1.5 = 50% above avg)
+
+    Returns:
+        List of dates where player had standout performances
+    """
+    if sport.upper() != "NBA":
+        return []
+
+    # v20.23: Try to use PlayerDataService for cached player context
+    # This allows us to at least verify the player exists
+    try:
+        from services.player_data_service import PlayerDataService
+        ctx = PlayerDataService.get_player_context_sync(player_name, sport)
+        if not ctx or not ctx.player_id:
+            logger.debug(f"MSRF: Player not in cache: {player_name}")
+            # Fall through to legacy behavior
+    except ImportError:
+        pass
+
+    # Legacy sync behavior - check async context
+    try:
+        import asyncio
+
+        try:
+            asyncio.get_running_loop()
+            # We're inside FastAPI async context - can't safely call async functions
+            # v20.23: Log this as a known limitation, suggest using async version
+            logger.debug("MSRF: In async context, use get_significant_dates_async() instead")
+            return []
+        except RuntimeError:
+            pass  # No running loop - safe to use asyncio.run()
+
+        from alt_data_sources.balldontlie import search_player, BDL_ENABLED
+
+        if not BDL_ENABLED:
+            return []
+
+        # Search for player (async function)
+        try:
+            player = asyncio.run(search_player(player_name))
+        except Exception:
+            return []
+        if not player or not player.get("id"):
+            return []
+
+        player_id = player["id"]
+
+        # Get recent game stats
+        from alt_data_sources.balldontlie import _fetch_bdl
+
+        try:
+            data = asyncio.run(_fetch_bdl("/stats", {"player_ids[]": player_id, "per_page": 20}))
+        except Exception:
+            return []
+        if not data:
+            return []
+
+        games = data.get("data", [])
+        if len(games) < 5:
+            return []
+
+        # Calculate average points
+        points_list = [g.get("pts", 0) for g in games if g.get("pts")]
+        if not points_list:
+            return []
+
+        avg_pts = sum(points_list) / len(points_list)
+        threshold = avg_pts * threshold_pct
+
+        # Find standout games
+        significant = []
+        for game in games:
+            if game.get("pts", 0) >= threshold:
+                game_data = game.get("game", {})
+                game_date_str = game_data.get("date", "")[:10]
+                if game_date_str:
+                    try:
+                        significant.append(date.fromisoformat(game_date_str))
                     except Exception:
                         continue
 
@@ -469,6 +573,46 @@ def get_significant_dates_from_player_history(
 # -----------------------
 # COMBINED DATA SOURCE
 # -----------------------
+async def get_significant_dates_async(
+    player_name: str = None,
+    team: str = None,
+    sport: str = "NBA",
+    home_team: str = None,
+    away_team: str = None
+) -> List[date]:
+    """
+    Get significant dates from all available sources (async version).
+
+    v20.23: Async-safe version that properly uses BallDontLie in FastAPI context.
+
+    Combines:
+    1. Our stored predictions (high-confidence hits)
+    2. Player performance history (BallDontLie for NBA)
+
+    Returns at least 3 dates if possible, or empty list.
+    """
+    all_dates = []
+
+    # Source 1: Our predictions (sync call - no async needed)
+    pred_dates = get_significant_dates_from_predictions(
+        player_name=player_name,
+        team=team or home_team or away_team,
+        sport=sport
+    )
+    all_dates.extend(pred_dates)
+
+    # Source 2: Player history (NBA only) - async version
+    if player_name and sport.upper() == "NBA":
+        player_dates = await get_significant_dates_from_player_history_async(player_name, sport)
+        all_dates.extend(player_dates)
+
+    # Dedupe and sort
+    all_dates = sorted(set(all_dates))
+
+    # Return last 5 for more data points
+    return all_dates[-5:] if len(all_dates) >= 3 else []
+
+
 def get_significant_dates(
     player_name: str = None,
     team: str = None,
@@ -477,7 +621,10 @@ def get_significant_dates(
     away_team: str = None
 ) -> List[date]:
     """
-    Get significant dates from all available sources.
+    Get significant dates from all available sources (sync version).
+
+    Note: In async context, use get_significant_dates_async() for full
+    BallDontLie integration. This sync version may skip BDL calls.
 
     Combines:
     1. Our stored predictions (high-confidence hits)
@@ -510,6 +657,64 @@ def get_significant_dates(
 # -----------------------
 # MAIN INTEGRATION FUNCTION
 # -----------------------
+async def get_msrf_confluence_boost_async(
+    game_date: date,
+    player_name: str = None,
+    home_team: str = None,
+    away_team: str = None,
+    sport: str = "NBA"
+) -> Tuple[float, Dict[str, Any]]:
+    """
+    Get MSRF confluence boost for a pick (async version).
+
+    v20.23: Async-safe version that properly uses BallDontLie in FastAPI context.
+    This should be used from async endpoints like /live/best-bets.
+
+    Args:
+        game_date: Date of the game
+        player_name: Player name (for props)
+        home_team: Home team name
+        away_team: Away team name
+        sport: Sport code
+
+    Returns:
+        Tuple of (boost_value, metadata_dict)
+        - boost_value: 0.0, 0.25, 0.5, or 1.0
+        - metadata: Full MSRF result for debugging
+    """
+    if not MSRF_ENABLED:
+        return 0.0, {"source": "disabled", "reason": "MSRF_DISABLED"}
+
+    # Get significant dates using async version
+    sig_dates = await get_significant_dates_async(
+        player_name=player_name,
+        team=home_team or away_team,
+        sport=sport,
+        home_team=home_team,
+        away_team=away_team
+    )
+
+    if len(sig_dates) < 3:
+        return 0.0, {
+            "source": "insufficient_data",
+            "reason": f"Only {len(sig_dates)} significant dates found (need 3+)",
+            "dates_found": [d.isoformat() for d in sig_dates],
+            "async_mode": True,
+        }
+
+    # Calculate resonance
+    result = calculate_msrf_resonance(sig_dates, game_date)
+    result["source"] = "msrf_live"
+    result["async_mode"] = True
+    result["significant_dates_used"] = [d.isoformat() for d in sig_dates]
+
+    logger.info("MSRF[%s vs %s]: %s, boost=%.2f, points=%.1f (async)",
+                home_team or "?", away_team or "?",
+                result["level"], result["boost"], result["points"])
+
+    return result["boost"], result
+
+
 def get_msrf_confluence_boost(
     game_date: date,
     player_name: str = None,
@@ -518,9 +723,10 @@ def get_msrf_confluence_boost(
     sport: str = "NBA"
 ) -> Tuple[float, Dict[str, Any]]:
     """
-    Get MSRF confluence boost for a pick.
+    Get MSRF confluence boost for a pick (sync version).
 
-    This is the main integration point for live_data_router.py.
+    Note: In async context (FastAPI), use get_msrf_confluence_boost_async()
+    for full BallDontLie integration.
 
     Args:
         game_date: Date of the game
@@ -571,9 +777,12 @@ def get_msrf_confluence_boost(
 __all__ = [
     "calculate_msrf_resonance",
     "get_msrf_confluence_boost",
+    "get_msrf_confluence_boost_async",  # v20.23: Async-safe version
     "get_significant_dates",
+    "get_significant_dates_async",  # v20.23: Async-safe version
     "get_significant_dates_from_predictions",
     "get_significant_dates_from_player_history",
+    "get_significant_dates_from_player_history_async",  # v20.23: Async-safe version
     "MSRF_ENABLED",
     "MSRF_NORMAL",
     "MSRF_IMPORTANT",

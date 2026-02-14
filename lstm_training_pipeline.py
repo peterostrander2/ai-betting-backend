@@ -34,6 +34,15 @@ except ImportError:
     LSTM_AVAILABLE = False
     logger.warning("lstm_brain not found - using standalone mode")
 
+# v20.23: Import PlayerDataService for season baseline normalization
+try:
+    from services.player_data_service import PlayerDataService
+    PLAYER_DATA_SERVICE_AVAILABLE = True
+except ImportError:
+    PLAYER_DATA_SERVICE_AVAILABLE = False
+    PlayerDataService = None
+    logger.warning("PlayerDataService not available - using local sequence average for normalization")
+
 
 # ============================================================
 # CONFIGURATION
@@ -381,10 +390,38 @@ class HistoricalDataFetcher:
             if len(game_records) < TrainingConfig.SEQUENCE_LENGTH:
                 continue
 
-            # Calculate player average for normalization
-            player_avg = np.mean([g["stat_value"] for g in game_records])
-            if player_avg <= 0:
-                player_avg = 1.0
+            # v20.23: Calculate player average for normalization
+            # Try to use season average from BallDontLie for proper baseline,
+            # falling back to local sequence average if unavailable
+            player_avg = None
+            avg_source = "local"
+
+            if sport.upper() == "NBA" and PLAYER_DATA_SERVICE_AVAILABLE and PlayerDataService:
+                try:
+                    # Get season average from BallDontLie
+                    player_ctx = PlayerDataService.get_player_context_sync(player_name, "NBA")
+                    if player_ctx and player_ctx.has_season_data:
+                        # Map stat_type to PlayerContext attribute
+                        stat_map = {
+                            "points": player_ctx.season_pts,
+                            "rebounds": player_ctx.season_reb,
+                            "assists": player_ctx.season_ast,
+                            "threes": player_ctx.season_threes,
+                            "steals": player_ctx.season_stl,
+                            "blocks": player_ctx.season_blk,
+                        }
+                        season_avg = stat_map.get(stat_type)
+                        if season_avg and season_avg > 0:
+                            player_avg = season_avg
+                            avg_source = "balldontlie"
+                except Exception as e:
+                    logger.debug(f"BallDontLie lookup failed for {player_name}: {e}")
+
+            # Fallback to local sequence average
+            if player_avg is None:
+                player_avg = np.mean([g["stat_value"] for g in game_records])
+                if player_avg <= 0:
+                    player_avg = 1.0
 
             # Build sequences using rolling window
             for i in range(len(game_records) - TrainingConfig.SEQUENCE_LENGTH):
@@ -423,7 +460,12 @@ class HistoricalDataFetcher:
         # Clip targets to reasonable range
         y = np.clip(y, -2.0, 2.0)
 
-        logger.info(f"Built {len(X)} real training sequences for {sport}/{stat_type} from {players_processed} players")
+        # v20.23: Log normalization source distribution (for telemetry)
+        bdl_count = sum(1 for p in players[:players_processed] if PLAYER_DATA_SERVICE_AVAILABLE)
+        logger.info(
+            f"Built {len(X)} real training sequences for {sport}/{stat_type} from {players_processed} players "
+            f"(normalization: {'BallDontLie when available' if PLAYER_DATA_SERVICE_AVAILABLE else 'local avg only'})"
+        )
 
         return X, y
 

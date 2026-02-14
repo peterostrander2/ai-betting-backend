@@ -797,6 +797,62 @@ class DefensiveRankService:
         
         return cls.RANKINGS[sport].get(pos_key, {})
 
+    # v20.23: Outdoor sports for weather adjustment
+    OUTDOOR_SPORTS = {"NFL", "MLB"}
+
+    @classmethod
+    def get_weather_adjusted_rank(
+        cls,
+        sport: str,
+        position: str,
+        opponent: str,
+        weather_context: Optional[Dict[str, Any]] = None
+    ) -> Tuple[int, float]:
+        """
+        Get defensive rank with weather adjustment for outdoor sports.
+
+        Weather affects defensive performance:
+        - Extreme cold (< 32°F) makes defenses better (harder to throw/catch)
+        - High wind (> 20 mph) helps defense (passing disruption)
+
+        Args:
+            sport: Sport code (NFL, MLB, etc.)
+            position: Player position
+            opponent: Opposing team
+            weather_context: Dict with temp_f, wind_mph, conditions
+
+        Returns:
+            Tuple of (adjusted_rank, weather_adjustment)
+        """
+        base_rank = cls.get_rank(sport, opponent, position)
+
+        # No weather adjustment for indoor sports
+        if sport.upper() not in cls.OUTDOOR_SPORTS or not weather_context:
+            return base_rank, 0.0
+
+        weather_adjustment = 0.0
+
+        # Get weather conditions
+        temp_f = weather_context.get("temp_f", 70)
+        wind_mph = weather_context.get("wind_mph", 0)
+
+        # Extreme cold makes defenses better (lower rank = better defense)
+        if temp_f is not None and temp_f < 32:
+            weather_adjustment -= 2  # Defense plays better in cold
+        elif temp_f is not None and temp_f < 45:
+            weather_adjustment -= 1  # Slight defensive advantage
+
+        # High wind helps defense (disrupts passing)
+        if wind_mph is not None and wind_mph > 20:
+            weather_adjustment -= 1  # Defense gets boost
+        elif wind_mph is not None and wind_mph > 15:
+            weather_adjustment -= 0.5
+
+        # Apply adjustment (ensure rank stays in valid range)
+        adjusted_rank = max(1, base_rank + weather_adjustment)
+
+        return int(adjusted_rank), weather_adjustment
+
 
 # ============================================================
 # MULTI-SPORT PACE SERVICE

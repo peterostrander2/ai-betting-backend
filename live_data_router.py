@@ -480,6 +480,21 @@ except ImportError:
     CONTEXT_LAYER_AVAILABLE = False
     logger.warning("context_layer module not available - using default context values")
 
+# v20.23: Import PlayerDataService for unified NBA player context
+try:
+    from services.player_data_service import (
+        PlayerDataService,
+        PlayerContext,
+        calculate_line_difficulty,
+    )
+    PLAYER_DATA_SERVICE_AVAILABLE = True
+except ImportError:
+    PLAYER_DATA_SERVICE_AVAILABLE = False
+    PlayerDataService = None
+    PlayerContext = None
+    calculate_line_difficulty = None
+    logger.warning("PlayerDataService not available - line difficulty disabled")
+
 # Import Ensemble Model for Game Picks (v17.0)
 try:
     from ml_integration import get_ensemble_ai_score
@@ -3786,6 +3801,43 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 # Heuristic already returns 0-8
                 ai_score = ai_score_raw
 
+        # ===== v20.23: LINEUP CONFIDENCE MULTIPLIER =====
+        # Reduce AI confidence when key players (starters) are OUT
+        # SHADOW MODE: Compute but do NOT apply to scoring (telemetry only)
+        lineup_confidence_multiplier = 1.0
+        _lineup_shadow_mode = True  # v20.23: Shadow until validated
+        _key_player_out = False
+        _key_player_out_names = []
+        _lineup_would_apply = 0.0
+
+        if _injuries_by_team:
+            # Check both teams for key player injuries
+            for team in [home_team, away_team]:
+                team_injuries = _injuries_by_team.get(team, [])
+                for inj in team_injuries:
+                    status = inj.get("status", "").upper()
+                    is_starter = inj.get("is_starter", False)
+                    # Impact > 0.10 means player contributes >10% of team production
+                    impact = inj.get("impact", 0.0)
+
+                    # Key player = starter OR high impact player who is OUT
+                    if status == "OUT" and (is_starter or impact > 0.10):
+                        _key_player_out = True
+                        _key_player_out_names.append(inj.get("player_name", inj.get("name", "Unknown")))
+
+            if _key_player_out:
+                lineup_confidence_multiplier = 0.90  # Would reduce confidence by 10%
+                _lineup_would_apply = ai_score * (1 - lineup_confidence_multiplier)
+
+                if _lineup_shadow_mode:
+                    # SHADOW: Log what would happen but do NOT apply
+                    logger.debug("LINEUP_CONFIDENCE[SHADOW]: would_multiply=%.2f, would_reduce=%.2f, key_outs=%s",
+                                 lineup_confidence_multiplier, _lineup_would_apply, _key_player_out_names[:3])
+                else:
+                    # ACTIVE MODE (future): Apply multiplier
+                    ai_score = ai_score * lineup_confidence_multiplier
+                    ai_reasons.append(f"Lineup adj: key player(s) OUT ({', '.join(_key_player_out_names[:3])})")
+
         # Scale AI to 0-10 for use in base_score formula
         ai_scaled = scale_ai_score_to_10(ai_score, max_ai=8.0) if TIERING_AVAILABLE else ai_score * 1.25
 
@@ -3936,6 +3988,75 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 nonzero_boost=True,
                 reasons_count=1,
             )
+
+        # ===== v20.23: LINE DIFFICULTY ASSESSMENT (NBA PROPS ONLY) =====
+        # Compare prop line to player's season average to assess soft/hard lines
+        # SHADOW MODE: Compute but do NOT apply to scoring (telemetry only)
+        line_difficulty_data = None
+        line_difficulty_adj = 0.0
+        _line_difficulty_shadow_mode = True  # v20.23: Shadow until validated
+        if (
+            pick_type == "PROP"
+            and sport_upper == "NBA"
+            and player_name
+            and prop_line > 0
+            and PLAYER_DATA_SERVICE_AVAILABLE
+        ):
+            try:
+                # Get player context synchronously (we're in a sync context here)
+                _player_ctx = PlayerDataService.get_player_context_sync(player_name, "NBA")
+
+                if _player_ctx and _player_ctx.has_season_data:
+                    # Map market to stat type for lookup
+                    _market_to_stat = {
+                        "player_points": "points",
+                        "player_rebounds": "rebounds",
+                        "player_assists": "assists",
+                        "player_threes": "threes",
+                        "player_steals": "steals",
+                        "player_blocks": "blocks",
+                        "player_pts_rebs_asts": "pra",
+                        "player_pts_rebs": "pr",
+                        "player_pts_asts": "pa",
+                    }
+                    _stat_type = _market_to_stat.get(market, "points")
+                    _season_avg = _player_ctx.get_stat_average(_stat_type)
+
+                    if _season_avg and _season_avg > 0:
+                        # Calculate line difficulty
+                        line_difficulty_data = calculate_line_difficulty(
+                            prop_line=prop_line,
+                            season_average=_season_avg,
+                            stat_type=_stat_type,
+                        )
+
+                        line_difficulty_adj = line_difficulty_data.get("adjustment", 0.0)
+                        _assessment = line_difficulty_data.get("assessment", "FAIR")
+                        _diff_pct = line_difficulty_data.get("difficulty_pct", 0.0)
+
+                        # SHADOW MODE: Log what would happen but do NOT apply
+                        if _line_difficulty_shadow_mode:
+                            # Telemetry only - no scoring change
+                            line_difficulty_data["shadow_mode"] = True
+                            line_difficulty_data["would_apply"] = line_difficulty_adj
+                            logger.debug(
+                                "LINE_DIFFICULTY[SHADOW]: %s line=%.1f avg=%.1f would_adj=%.2f",
+                                player_name[:20], prop_line, _season_avg, line_difficulty_adj
+                            )
+                        else:
+                            # ACTIVE MODE (future): Apply adjustment
+                            if line_difficulty_adj != 0:
+                                research_score = max(0.0, min(10.0, research_score + line_difficulty_adj))
+                                research_reasons.append(
+                                    f"Line Difficulty: {_assessment} ({_diff_pct:+.0f}% vs avg {_season_avg:.1f})"
+                                )
+
+                        logger.debug(
+                            "LINE_DIFFICULTY[%s]: line=%.1f, avg=%.1f, assessment=%s, adj=%.2f",
+                            player_name[:20], prop_line, _season_avg, _assessment, line_difficulty_adj
+                        )
+            except Exception as e:
+                logger.debug("Line difficulty assessment failed: %s", e)
 
         # ===== WEATHER IMPACT ON RESEARCH (v17.9) =====
         weather_adj = 0.0
@@ -4323,33 +4444,44 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # 3. Founder's Echo - for games (team gematria resonance)
 
         # --- 1. BIORHYTHMS (Props Only) ---
+        # v20.23: Uses dynamic birth date lookup via PlayerDataService + BallDontLie
         # Player birth date cycles: physical (23 days), emotional (28 days), intellectual (33 days)
         biorhythm_boost = 0.0
+        _biorhythm_source = "none"
         if pick_type == "PROP" and player_name:
             try:
-                from esoteric_engine import calculate_biorhythms
-                from player_birth_data import get_player_data as _get_player_bio
-                _bio_player = _get_player_bio(player_name)
-                if _bio_player and _bio_player.get("birth_date"):
+                from esoteric_engine import calculate_biorhythms, get_birth_date_for_player
+
+                # v20.23: Use dynamic birth date lookup (BallDontLie → static fallback)
+                _birth_date = get_birth_date_for_player(player_name, sport_upper)
+
+                if _birth_date and _birth_date != "1990-01-01":
                     _bio_target_date = _game_date_obj if _game_date_obj else None
-                    _bio_result = calculate_biorhythms(_bio_player["birth_date"], _bio_target_date)
+                    _bio_result = calculate_biorhythms(_birth_date, _bio_target_date)
                     _bio_status = _bio_result.get("status", "")
                     _bio_overall = _bio_result.get("overall", 0)
+
+                    # Track data source for telemetry
+                    if PLAYER_DATA_SERVICE_AVAILABLE:
+                        _ctx = PlayerDataService.get_player_context_sync(player_name, sport_upper)
+                        _biorhythm_source = _ctx.data_source if _ctx else "static"
+                    else:
+                        _biorhythm_source = "static"
 
                     # Boost based on biorhythm status
                     if _bio_status == "PEAK":
                         biorhythm_boost = 0.3
-                        esoteric_reasons.append(f"Biorhythm: PEAK ({_bio_overall:.0f})")
+                        esoteric_reasons.append(f"Biorhythm: PEAK ({_bio_overall:.0f}) [{_biorhythm_source}]")
                     elif _bio_status == "RISING":
                         biorhythm_boost = 0.15
-                        esoteric_reasons.append(f"Biorhythm: RISING ({_bio_overall:.0f})")
+                        esoteric_reasons.append(f"Biorhythm: RISING ({_bio_overall:.0f}) [{_biorhythm_source}]")
                     elif _bio_status == "LOW":
                         biorhythm_boost = -0.2  # Negative for low periods
-                        esoteric_reasons.append(f"Biorhythm: LOW ({_bio_overall:.0f})")
+                        esoteric_reasons.append(f"Biorhythm: LOW ({_bio_overall:.0f}) [{_biorhythm_source}]")
 
                     if biorhythm_boost != 0:
-                        logger.debug("BIORHYTHM[%s]: status=%s, overall=%.1f, boost=%.2f",
-                                     player_name[:20], _bio_status, _bio_overall, biorhythm_boost)
+                        logger.debug("BIORHYTHM[%s]: status=%s, overall=%.1f, boost=%.2f, source=%s",
+                                     player_name[:20], _bio_status, _bio_overall, biorhythm_boost, _biorhythm_source)
             except ImportError:
                 logger.debug("Biorhythms module not available")
             except Exception as e:
@@ -5431,6 +5563,44 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             prop_correlation_adjustment=combined_prop_correlation,
         )
 
+        # ===== v20.23 KP-INDEX CONFIDENCE MULTIPLIER =====
+        # SHADOW MODE: Compute but do NOT apply to scoring (telemetry only)
+        # High geomagnetic activity correlates with erratic betting behavior
+        kp_confidence_multiplier = 1.0
+        kp_adjustment_data = None
+        _kp_shadow_mode = True  # v20.23: Shadow until validated (7 days)
+
+        try:
+            from alt_data_sources.noaa import get_kp_betting_signal
+            kp_data = get_kp_betting_signal()
+            kp_value = kp_data.get("kp_value", 0)
+            storm_level = kp_data.get("storm_level", "QUIET")
+
+            # High Kp (≥5) = geomagnetic storm = more emotional betting = reduce confidence
+            if kp_value >= 7:
+                kp_confidence_multiplier = 0.90  # Severe storm: 10% reduction
+            elif kp_value >= 5:
+                kp_confidence_multiplier = 0.95  # Moderate storm: 5% reduction
+
+            if kp_confidence_multiplier < 1.0:
+                # SHADOW MODE: Compute what WOULD happen but do NOT apply
+                _would_apply = final_score * (1 - kp_confidence_multiplier)
+                kp_adjustment_data = {
+                    "kp_value": kp_value,
+                    "storm_level": storm_level,
+                    "confidence_multiplier": kp_confidence_multiplier,
+                    "shadow_mode": True,
+                    "would_apply": round(_would_apply, 3),
+                    "reason": f"Kp-Index: {storm_level} ({kp_value})",
+                }
+                logger.debug("KP_CONFIDENCE[SHADOW]: kp=%.1f, multiplier=%.2f, would_apply=%.3f (NOT applied)",
+                             kp_value, kp_confidence_multiplier, _would_apply)
+                # NOTE: final_score is NOT modified - shadow telemetry only
+        except ImportError:
+            logger.debug("NOAA module not available for Kp-Index confidence")
+        except Exception as e:
+            logger.debug("Kp-Index confidence adjustment failed: %s", e)
+
         # --- v15.0: jarvis_rs already calculated by standalone function above ---
         # jarvis_rs, jarvis_active, jarvis_hits_count, jarvis_triggers_hit, jarvis_reasons
         # are all set from calculate_jarvis_engine_score() call
@@ -5721,7 +5891,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "vacuum": _vacuum,
                 "vacuum_component": round(vacuum_component, 2),
                 "score": round(context_score, 2),
-                "modifier": round(context_modifier, 3)
+                "modifier": round(context_modifier, 3),
+                # v20.23: Kp-Index confidence adjustment
+                "kp_adjustment": kp_adjustment_data,
+                "kp_confidence_multiplier": kp_confidence_multiplier,
             },
             # v14.9 Research breakdown (clean engine separation)
             # v20.16: Added sharp_strength/lv_strength separation (sharp_boost from Playbook only)
@@ -5752,6 +5925,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "market_book_count": int(market_book_count or 0),
                 "base_research": round(base_research, 2),
                 "signal_strength": sharp_strength,        # v20.16: Now equals sharp_strength (legacy compat)
+                # v20.23: Line difficulty assessment (NBA props only)
+                "line_difficulty": line_difficulty_data if line_difficulty_data else None,
+                "line_difficulty_adj": round(line_difficulty_adj, 2) if line_difficulty_adj else 0.0,
                 "total": round(research_score, 2)
             },
             # v20.18 Esoteric breakdown with per-signal provenance (Engine 3 semantic audit)
@@ -5774,6 +5950,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "raw_inputs": _ai_telemetry.get("ai_audit", {}).get("raw_inputs", {}),
                 # v20.16: Model status (WORKS/STUB/FALLBACK/TRAINED)
                 "model_status": _ai_telemetry.get("ai_audit", {}).get("model_status", {}),
+                # v20.23: Lineup confidence multiplier
+                "lineup_confidence_multiplier": lineup_confidence_multiplier,
+                "key_player_out": _key_player_out,
+                "key_player_out_names": _key_player_out_names[:5] if _key_player_out_names else [],
             },
             # v16.0 Jarvis audit fields (ADDITIVE trigger scoring for GOLD_STAR eligibility)
             "jarvis_baseline": jarvis_data.get("jarvis_baseline", 4.5),
