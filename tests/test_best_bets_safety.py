@@ -8,7 +8,21 @@ from unittest.mock import patch, MagicMock, AsyncMock
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
+# Check if optional dependencies are available
+try:
+    import sqlalchemy
+    SQLALCHEMY_AVAILABLE = True
+except ImportError:
+    SQLALCHEMY_AVAILABLE = False
 
+try:
+    import pytz
+    PYTZ_AVAILABLE = True
+except ImportError:
+    PYTZ_AVAILABLE = False
+
+
+@pytest.mark.skipif(not SQLALCHEMY_AVAILABLE, reason="sqlalchemy not installed")
 def test_error_returns_500_without_request_id():
     """best-bets crash returns HTTP 500 without request_id in non-debug."""
     # Patch _best_bets_inner to raise before importing app
@@ -34,6 +48,7 @@ def test_error_returns_500_without_request_id():
         assert "scoring engine exploded" not in str(detail)
 
 
+@pytest.mark.skipif(not SQLALCHEMY_AVAILABLE, reason="sqlalchemy not installed")
 def test_error_returns_structured_code_in_debug():
     """best-bets crash returns detail.code with request_id in debug mode."""
     with patch("live_data_router._best_bets_inner", new_callable=AsyncMock) as mock_inner:
@@ -54,6 +69,7 @@ def test_error_returns_structured_code_in_debug():
         assert "request_id" in detail
 
 
+@pytest.mark.skipif(not PYTZ_AVAILABLE, reason="pytz not installed")
 def test_warm_skips_cache_hot():
     """warm_best_bets_cache skips sports with warm cache."""
     import asyncio

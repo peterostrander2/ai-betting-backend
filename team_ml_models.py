@@ -24,9 +24,34 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
-# Storage path
-MODELS_DIR = os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data"), "models")
-Path(MODELS_DIR).mkdir(parents=True, exist_ok=True)
+# Storage path - resolved at import but with safe fallback
+def _resolve_models_dir() -> str:
+    """Resolve models directory with safe fallbacks for local development."""
+    base = os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    if base:
+        models_dir = os.path.join(base, "models")
+        try:
+            Path(models_dir).mkdir(parents=True, exist_ok=True)
+            return models_dir
+        except OSError:
+            pass  # Fall through to local fallback
+
+    # Fallback: local directory for development/testing
+    local_dir = os.path.join(os.getcwd(), "local_data", "models")
+    try:
+        Path(local_dir).mkdir(parents=True, exist_ok=True)
+        return local_dir
+    except OSError:
+        pass
+
+    # Last resort: temp directory
+    import tempfile
+    temp_dir = os.path.join(tempfile.gettempdir(), "bookie_models")
+    Path(temp_dir).mkdir(parents=True, exist_ok=True)
+    return temp_dir
+
+
+MODELS_DIR = _resolve_models_dir()
 
 
 class TeamDataCache:

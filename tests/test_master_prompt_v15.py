@@ -224,7 +224,9 @@ class TestContradictionGate:
         assert "NBA" in key
         assert "2026-01-28" in key
         assert "TOTAL" in key
-        assert "235.5" in key
+        # Note: TOTAL markets use "ANY" as line_str to group all totals together
+        # for contradiction detection (Over/Under on same game)
+        assert "ANY" in key
 
     def test_make_unique_key_for_prop(self):
         """Unique key should include player name for props"""

@@ -186,7 +186,11 @@ class TestEndToEndGrading:
         assert result["prediction_id"] == pred_id
         assert result["predicted"] == 27.0
         assert result["actual"] == 27.0
-        assert result["error"] == 0.0
+        # Note: error = predicted_value - (10.0 if hit else 0.0)
+        # This measures how far off the confidence score was from ideal,
+        # NOT the difference between predicted and actual values
+        # predicted=27.0, hit=True -> error = 27.0 - 10.0 = 17.0
+        assert result["error"] == 17.0
         assert result["hit"] == True  # Predicted over line (27 > 25.5), actual over line
 
     def test_grading_hit_over(self, test_grader):

@@ -245,8 +245,24 @@ try:
 except ImportError:
     NUMPY_AVAILABLE = False
 
+# Check if sklearn and other ML dependencies are available
+try:
+    import sklearn
+    from sklearn.ensemble import RandomForestRegressor
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+
+# Check if advanced_ml_backend can be imported (needs sklearn, xgboost, lightgbm, etc.)
+try:
+    from advanced_ml_backend import EnsembleStackingModel
+    ML_BACKEND_AVAILABLE = True
+except ImportError:
+    ML_BACKEND_AVAILABLE = False
+
 
 @pytest.mark.skipif(not NUMPY_AVAILABLE, reason="numpy not available")
+@pytest.mark.skipif(not ML_BACKEND_AVAILABLE, reason="advanced_ml_backend not available (missing sklearn/xgboost/lightgbm)")
 class TestEnsembleStackingModelSafety:
     """Regression tests for EnsembleStackingModel hard safety rules.
 
@@ -338,6 +354,7 @@ class TestEnsembleStackingModelSafety:
 
 
 @pytest.mark.skipif(not NUMPY_AVAILABLE, reason="numpy not available")
+@pytest.mark.skipif(not ML_BACKEND_AVAILABLE, reason="advanced_ml_backend not available (missing sklearn/xgboost/lightgbm)")
 class TestEnsembleSklearnPersistence:
     """v20.22: Tests for sklearn model persistence (save/load).
 
