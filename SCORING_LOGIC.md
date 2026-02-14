@@ -2,6 +2,7 @@
 
 <!-- SCORING_CONTRACT_JSON
 {
+  "version": "v20.24",
   "base_score_gates": {
     "edge_lean_min": 6.0,
     "gold_star_min": 6.8
@@ -67,6 +68,31 @@
     "output_fields": ["hook_penalty", "hook_flagged", "hook_reasons"],
     "penalty_cap": 0.25,
     "sports": ["NFL"]
+  },
+  "kp_index": {
+    "applies_to": "final_score",
+    "enabled": true,
+    "moderate_multiplier": 0.95,
+    "moderate_threshold": 5,
+    "severe_multiplier": 0.9,
+    "severe_threshold": 7,
+    "shadow_mode": false
+  },
+  "line_difficulty": {
+    "applies_to": "research_score",
+    "enabled": true,
+    "hard_threshold": 0.15,
+    "max_adjustment": 0.5,
+    "shadow_mode": false,
+    "soft_threshold": -0.15,
+    "sports": ["NBA"]
+  },
+  "lineup_confidence": {
+    "applies_to": "ai_score",
+    "enabled": true,
+    "impact_threshold": 0.1,
+    "multiplier_when_key_out": 0.9,
+    "shadow_mode": false
   },
   "min_final_score": 7.0,
   "min_props_score": 6.5,

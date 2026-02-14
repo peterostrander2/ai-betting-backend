@@ -1,8 +1,8 @@
 # Scoring Contract - Canonical Reference
 
-**Version:** v20.21
-**Status:** FROZEN (No scoring semantics changes allowed)
-**Last Updated:** 2026-02-13
+**Version:** v20.24
+**Status:** ACTIVE (Scoring semantics updated with ContextBundle)
+**Last Updated:** 2026-02-14
 **Source of Truth:** `core/scoring_contract.py`
 
 ---
@@ -264,10 +264,56 @@ API_KEY=xxx ./scripts/ci_golden_gate.sh
 
 ---
 
+## v20.24: Context-Based Multipliers (LIVE)
+
+These multipliers are computed from external API data and apply bounded adjustments.
+All are now LIVE (no longer shadow mode).
+
+### Lineup Confidence Multiplier
+
+```python
+LINEUP_CONFIDENCE_MULTIPLIER = {
+    "enabled": True,
+    "shadow_mode": False,  # v20.24: Now LIVE
+    "multiplier_when_key_out": 0.90,  # 10% reduction
+    "applies_to": "ai_score",
+    "impact_threshold": 0.10,
+}
+```
+
+### Line Difficulty Adjustment (NBA Props)
+
+```python
+LINE_DIFFICULTY_ADJUSTMENT = {
+    "enabled": True,
+    "shadow_mode": False,  # v20.24: Now LIVE
+    "soft_threshold": -0.15,  # 15% below avg = SOFT
+    "hard_threshold": 0.15,   # 15% above avg = HARD
+    "max_adjustment": 0.5,
+    "applies_to": "research_score",
+    "sports": ["NBA"],
+}
+```
+
+### Kp-Index Multiplier
+
+```python
+KP_INDEX_MULTIPLIER = {
+    "enabled": True,
+    "shadow_mode": False,  # v20.24: Now LIVE
+    "severe_multiplier": 0.90,  # Kp >= 7
+    "moderate_multiplier": 0.95,  # Kp 5-6
+    "applies_to": "final_score",
+}
+```
+
+---
+
 ## Change Log
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v20.24 | 2026-02-14 | ContextBundle choke point, LIVE multipliers (lineup, line_difficulty, kp_index) |
 | v20.21 | 2026-02-13 | Added structured logging, integration state machine |
 | v20.20 | 2026-02-13 | Golden run gate, hidden tier filter, freeze baseline |
 | v20.19 | 2026-02-12 | Engine weight rebalancing (Esoteric 20%→15%, Jarvis 20%→25%) |

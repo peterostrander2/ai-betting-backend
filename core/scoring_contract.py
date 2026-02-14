@@ -3,6 +3,9 @@ Scoring Contract - Single Source of Truth
 All scoring logic MUST reference these constants (no duplicated literals).
 """
 
+# Contract Version (v20.24: ContextBundle choke point + live multipliers)
+CONTRACT_VERSION = "v20.24"
+
 # Engine Weights (sum = 1.00; post-base modifiers remain additive
 # such as confluence + Jason Sim + bounded context modifiers, as implemented).
 # v18.0: Option A — 4-engine base weights. Context is a bounded modifier layer.
@@ -104,6 +107,36 @@ TOTAL_BOOST_CAP = 1.5
 # Ensemble adjustment step (post-base)
 ENSEMBLE_ADJUSTMENT_STEP = 0.5
 
+# v20.24: Context-based multipliers (LIVE, not shadow)
+# These multipliers apply bounded adjustments based on external API data
+LINEUP_CONFIDENCE_MULTIPLIER = {
+    "enabled": True,
+    "shadow_mode": False,  # v20.24: Now LIVE
+    "multiplier_when_key_out": 0.90,  # 10% reduction when key player OUT
+    "applies_to": "ai_score",  # Applied to AI engine score
+    "impact_threshold": 0.10,  # Player must contribute >10% of team production
+}
+
+LINE_DIFFICULTY_ADJUSTMENT = {
+    "enabled": True,
+    "shadow_mode": False,  # v20.24: Now LIVE
+    "soft_threshold": -0.15,  # Line 15%+ below average = SOFT
+    "hard_threshold": 0.15,   # Line 15%+ above average = HARD
+    "max_adjustment": 0.5,    # Max +/- adjustment to research score
+    "applies_to": "research_score",  # Applied to Research engine score
+    "sports": ["NBA"],  # Only NBA props have BDL data
+}
+
+KP_INDEX_MULTIPLIER = {
+    "enabled": True,
+    "shadow_mode": False,  # v20.24: Now LIVE
+    "severe_multiplier": 0.90,  # Kp >= 7: 10% reduction
+    "moderate_multiplier": 0.95,  # Kp 5-6: 5% reduction
+    "severe_threshold": 7,  # Kp-Index for severe storm
+    "moderate_threshold": 5,  # Kp-Index for moderate storm
+    "applies_to": "final_score",  # Applied to final score
+}
+
 # v20.4: Totals Side Calibration (OVER/UNDER bias correction)
 # Based on learning loop data: OVER 19.1% vs UNDER 81.6% hit rate
 # Applies score adjustment to correct observed bias toward OVER picks
@@ -204,6 +237,7 @@ WEATHER_STATUS = ["APPLIED", "NOT_RELEVANT", "UNAVAILABLE", "ERROR"]
 
 # Canonical contract object for validation
 SCORING_CONTRACT = {
+    "version": CONTRACT_VERSION,  # v20.24
     "engine_weights": ENGINE_WEIGHTS,
     "min_final_score": MIN_FINAL_SCORE,
     "min_props_score": MIN_PROPS_SCORE,  # v20.13: Lower threshold for props (no SERP)
@@ -236,4 +270,8 @@ SCORING_CONTRACT = {
     "hook_discipline": HOOK_DISCIPLINE,  # v20.3: Key number management
     "expert_consensus": EXPERT_CONSENSUS,  # v20.3: Expert agreement boost
     "prop_correlation": PROP_CORRELATION,  # v20.3: Player prop correlations
+    # v20.24: Context-based multipliers (LIVE)
+    "lineup_confidence": LINEUP_CONFIDENCE_MULTIPLIER,
+    "line_difficulty": LINE_DIFFICULTY_ADJUSTMENT,
+    "kp_index": KP_INDEX_MULTIPLIER,
 }

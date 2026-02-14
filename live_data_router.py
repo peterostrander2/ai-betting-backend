@@ -3801,11 +3801,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 # Heuristic already returns 0-8
                 ai_score = ai_score_raw
 
-        # ===== v20.23: LINEUP CONFIDENCE MULTIPLIER =====
+        # ===== v20.24: LINEUP CONFIDENCE MULTIPLIER (LIVE) =====
         # Reduce AI confidence when key players (starters) are OUT
-        # SHADOW MODE: Compute but do NOT apply to scoring (telemetry only)
+        # ACTIVE MODE: Apply multiplier to AI score (no longer shadow)
         lineup_confidence_multiplier = 1.0
-        _lineup_shadow_mode = True  # v20.23: Shadow until validated
+        _lineup_shadow_mode = False  # v20.24: Now LIVE (was shadow in v20.23)
         _key_player_out = False
         _key_player_out_names = []
         _lineup_would_apply = 0.0
@@ -3989,12 +3989,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 reasons_count=1,
             )
 
-        # ===== v20.23: LINE DIFFICULTY ASSESSMENT (NBA PROPS ONLY) =====
+        # ===== v20.24: LINE DIFFICULTY ASSESSMENT (NBA PROPS ONLY) =====
         # Compare prop line to player's season average to assess soft/hard lines
-        # SHADOW MODE: Compute but do NOT apply to scoring (telemetry only)
+        # ACTIVE MODE: Apply adjustment to research score (no longer shadow)
         line_difficulty_data = None
         line_difficulty_adj = 0.0
-        _line_difficulty_shadow_mode = True  # v20.23: Shadow until validated
+        _line_difficulty_shadow_mode = False  # v20.24: Now LIVE (was shadow in v20.23)
         if (
             pick_type == "PROP"
             and sport_upper == "NBA"
@@ -4034,9 +4034,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                         _assessment = line_difficulty_data.get("assessment", "FAIR")
                         _diff_pct = line_difficulty_data.get("difficulty_pct", 0.0)
 
-                        # SHADOW MODE: Log what would happen but do NOT apply
+                        # v20.24: ACTIVE MODE - Apply adjustment to research score
                         if _line_difficulty_shadow_mode:
-                            # Telemetry only - no scoring change
+                            # Shadow mode (disabled in v20.24)
                             line_difficulty_data["shadow_mode"] = True
                             line_difficulty_data["would_apply"] = line_difficulty_adj
                             logger.debug(
@@ -4044,12 +4044,18 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 player_name[:20], prop_line, _season_avg, line_difficulty_adj
                             )
                         else:
-                            # ACTIVE MODE (future): Apply adjustment
+                            # ACTIVE MODE (v20.24): Apply adjustment to research score
+                            line_difficulty_data["shadow_mode"] = False
+                            line_difficulty_data["adjustment_applied"] = line_difficulty_adj
                             if line_difficulty_adj != 0:
                                 research_score = max(0.0, min(10.0, research_score + line_difficulty_adj))
                                 research_reasons.append(
                                     f"Line Difficulty: {_assessment} ({_diff_pct:+.0f}% vs avg {_season_avg:.1f})"
                                 )
+                            logger.debug(
+                                "LINE_DIFFICULTY[LIVE]: %s line=%.1f avg=%.1f adj=%.2f",
+                                player_name[:20], prop_line, _season_avg, line_difficulty_adj
+                            )
 
                         logger.debug(
                             "LINE_DIFFICULTY[%s]: line=%.1f, avg=%.1f, assessment=%s, adj=%.2f",
@@ -5563,12 +5569,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             prop_correlation_adjustment=combined_prop_correlation,
         )
 
-        # ===== v20.23 KP-INDEX CONFIDENCE MULTIPLIER =====
-        # SHADOW MODE: Compute but do NOT apply to scoring (telemetry only)
+        # ===== v20.24 KP-INDEX CONFIDENCE MULTIPLIER (LIVE) =====
+        # ACTIVE MODE: Apply multiplier to final score during geomagnetic storms
         # High geomagnetic activity correlates with erratic betting behavior
         kp_confidence_multiplier = 1.0
         kp_adjustment_data = None
-        _kp_shadow_mode = True  # v20.23: Shadow until validated (7 days)
+        _kp_shadow_mode = False  # v20.24: Now LIVE (was shadow in v20.23)
 
         try:
             from alt_data_sources.noaa import get_kp_betting_signal
@@ -5583,19 +5589,21 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 kp_confidence_multiplier = 0.95  # Moderate storm: 5% reduction
 
             if kp_confidence_multiplier < 1.0:
-                # SHADOW MODE: Compute what WOULD happen but do NOT apply
-                _would_apply = final_score * (1 - kp_confidence_multiplier)
+                # ACTIVE MODE: Apply multiplier to final score
+                _old_final = final_score
+                final_score = final_score * kp_confidence_multiplier
+                _applied = _old_final - final_score
                 kp_adjustment_data = {
                     "kp_value": kp_value,
                     "storm_level": storm_level,
                     "confidence_multiplier": kp_confidence_multiplier,
-                    "shadow_mode": True,
-                    "would_apply": round(_would_apply, 3),
+                    "shadow_mode": False,
+                    "adjustment_applied": round(_applied, 3),
                     "reason": f"Kp-Index: {storm_level} ({kp_value})",
                 }
-                logger.debug("KP_CONFIDENCE[SHADOW]: kp=%.1f, multiplier=%.2f, would_apply=%.3f (NOT applied)",
-                             kp_value, kp_confidence_multiplier, _would_apply)
-                # NOTE: final_score is NOT modified - shadow telemetry only
+                context_reasons.append(f"Kp-Index: {storm_level} ({kp_value}) - reduced confidence")
+                logger.debug("KP_CONFIDENCE[LIVE]: kp=%.1f, multiplier=%.2f, applied=%.3f",
+                             kp_value, kp_confidence_multiplier, _applied)
         except ImportError:
             logger.debug("NOAA module not available for Kp-Index confidence")
         except Exception as e:

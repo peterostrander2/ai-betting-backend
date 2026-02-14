@@ -2682,6 +2682,567 @@ class PlayerMatchupService:
 
 
 # ============================================================
+# v20.24: CONTEXT BUNDLE - SINGLE CHOKE POINT FOR ALL EXTERNAL APIS
+# ============================================================
+
+@dataclass
+class IntegrationTelemetry:
+    """Telemetry for a single integration call."""
+    name: str
+    expected: bool  # Was this integration expected for this sport/context?
+    called: bool  # Was it actually called?
+    status: str  # APPLIED, UNAVAILABLE, ERROR, NOT_RELEVANT, SKIPPED
+    reason: Optional[str] = None
+    last_success_ts: Optional[str] = None
+    calls_count: int = 0
+    error_message: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "expected": self.expected,
+            "called": self.called,
+            "status": self.status,
+            "reason": self.reason,
+            "last_success_ts": self.last_success_ts,
+            "calls_count": self.calls_count,
+            "error_message": self.error_message,
+        }
+
+
+@dataclass
+class ContextBundle:
+    """
+    v20.24: Unified context bundle for all engines.
+
+    This is the SINGLE CHOKE POINT for all external API data.
+    Engines MUST NOT call external APIs directly - they consume this bundle.
+
+    All fields are optional with sensible defaults so engines can
+    gracefully degrade when data is unavailable.
+    """
+    # Event identification
+    sport: str
+    event_id: Optional[str] = None
+    home_team: Optional[str] = None
+    away_team: Optional[str] = None
+    game_date: Optional[str] = None
+
+    # Odds API context (ALWAYS expected for all sports)
+    odds_ctx: Optional[Dict[str, Any]] = None
+
+    # Playbook API context (ALWAYS expected for all sports)
+    playbook_ctx: Optional[Dict[str, Any]] = None
+
+    # BallDontLie context (ONLY for NBA)
+    bdl_ctx: Optional[Dict[str, Any]] = None
+    bdl_player_contexts: Optional[Dict[str, Any]] = None  # player_name -> PlayerContext
+
+    # Weather context (ONLY for outdoor sports: NFL, MLB)
+    weather_ctx: Optional[Dict[str, Any]] = None
+
+    # NOAA Space Weather context (Kp-Index for Esoteric)
+    noaa_ctx: Optional[Dict[str, Any]] = None
+
+    # Astronomical context (Moon phases for Esoteric)
+    astro_ctx: Optional[Dict[str, Any]] = None
+
+    # Context layer services (static data lookups)
+    defensive_rank: Optional[int] = None
+    pace_value: Optional[float] = None
+    vacuum_value: Optional[float] = None
+    park_factor: Optional[float] = None
+    officials_data: Optional[Dict[str, Any]] = None
+
+    # Lineup/injury context
+    lineup_data: Optional[Dict[str, Any]] = None
+    key_player_out: bool = False
+    injury_impact: float = 0.0
+
+    # Computed features for engines
+    line_difficulty: Optional[Dict[str, Any]] = None
+    lineup_confidence_multiplier: float = 1.0
+    kp_confidence_multiplier: float = 1.0
+
+    # Integration telemetry (for audit/debug)
+    integration_telemetry: Optional[Dict[str, IntegrationTelemetry]] = None
+
+    def is_outdoor_sport(self) -> bool:
+        """Check if this sport plays outdoors (weather relevant)."""
+        return self.sport.upper() in OUTDOOR_SPORTS
+
+    def is_nba(self) -> bool:
+        """Check if this is NBA (BallDontLie relevant)."""
+        return self.sport.upper() == "NBA"
+
+    def get_telemetry_dict(self) -> Dict[str, Any]:
+        """Get integration telemetry as dict for debug output."""
+        if not self.integration_telemetry:
+            return {}
+        return {k: v.to_dict() for k, v in self.integration_telemetry.items()}
+
+    def to_engine_inputs(self) -> Dict[str, Any]:
+        """Convert bundle to engine input dict for debug output."""
+        return {
+            "sport": self.sport,
+            "event_id": self.event_id,
+            "has_odds_ctx": self.odds_ctx is not None,
+            "has_playbook_ctx": self.playbook_ctx is not None,
+            "has_bdl_ctx": self.bdl_ctx is not None and self.is_nba(),
+            "has_weather_ctx": self.weather_ctx is not None and self.is_outdoor_sport(),
+            "has_noaa_ctx": self.noaa_ctx is not None,
+            "has_astro_ctx": self.astro_ctx is not None,
+            "defensive_rank": self.defensive_rank,
+            "pace_value": self.pace_value,
+            "vacuum_value": self.vacuum_value,
+            "key_player_out": self.key_player_out,
+            "injury_impact": self.injury_impact,
+            "line_difficulty": self.line_difficulty,
+            "lineup_confidence_multiplier": self.lineup_confidence_multiplier,
+            "kp_confidence_multiplier": self.kp_confidence_multiplier,
+        }
+
+
+# Relevance matrix for integrations by sport
+INTEGRATION_RELEVANCE = {
+    "odds_api": {"NBA": True, "NCAAB": True, "NFL": True, "MLB": True, "NHL": True},
+    "playbook_api": {"NBA": True, "NCAAB": True, "NFL": True, "MLB": True, "NHL": True},
+    "balldontlie": {"NBA": True, "NCAAB": False, "NFL": False, "MLB": False, "NHL": False},
+    "weather_api": {"NBA": False, "NCAAB": False, "NFL": True, "MLB": True, "NHL": False},
+    "noaa_space_weather": {"NBA": True, "NCAAB": True, "NFL": True, "MLB": True, "NHL": True},
+    "astronomy_api": {"NBA": True, "NCAAB": True, "NFL": True, "MLB": True, "NHL": True},
+    "espn": {"NBA": True, "NCAAB": True, "NFL": True, "MLB": True, "NHL": True},
+}
+
+
+async def build_context(
+    event: Dict[str, Any],
+    market: str,
+    sport: str,
+    players: Optional[List[str]] = None,
+) -> ContextBundle:
+    """
+    v20.24: Build unified context bundle for all engines.
+
+    THIS IS THE SINGLE CHOKE POINT FOR ALL EXTERNAL API CALLS.
+
+    All external APIs are called here ONCE per event, and the resulting
+    ContextBundle is passed to all engines. Engines MUST NOT call external
+    APIs directly.
+
+    Args:
+        event: Event data from Odds API
+        market: Market type (SPREAD, TOTAL, MONEYLINE, PROP)
+        sport: Sport code (NBA, NFL, MLB, NHL, NCAAB)
+        players: Optional list of player names (for props)
+
+    Returns:
+        ContextBundle with all context data and integration telemetry
+    """
+    from datetime import datetime
+
+    sport_upper = sport.upper()
+    telemetry: Dict[str, IntegrationTelemetry] = {}
+
+    # Initialize bundle
+    bundle = ContextBundle(
+        sport=sport_upper,
+        event_id=event.get("id"),
+        home_team=event.get("home_team"),
+        away_team=event.get("away_team"),
+        game_date=event.get("commence_time", "")[:10] if event.get("commence_time") else None,
+    )
+
+    # === 1. ODDS API (ALWAYS expected) ===
+    telemetry["odds_api"] = IntegrationTelemetry(
+        name="odds_api",
+        expected=True,
+        called=True,  # Event data comes from Odds API
+        status="APPLIED",
+        reason="Event data sourced from Odds API",
+    )
+    bundle.odds_ctx = {
+        "event_id": event.get("id"),
+        "home_team": event.get("home_team"),
+        "away_team": event.get("away_team"),
+        "commence_time": event.get("commence_time"),
+        "bookmakers": event.get("bookmakers", []),
+    }
+
+    # === 2. PLAYBOOK API (ALWAYS expected) ===
+    playbook_expected = INTEGRATION_RELEVANCE["playbook_api"].get(sport_upper, True)
+    try:
+        from alt_data_sources.playbook import get_splits_for_event
+        playbook_data = await get_splits_for_event(sport_upper, event.get("id"))
+        if playbook_data:
+            bundle.playbook_ctx = playbook_data
+            telemetry["playbook_api"] = IntegrationTelemetry(
+                name="playbook_api",
+                expected=playbook_expected,
+                called=True,
+                status="APPLIED",
+                reason="Sharp money and splits data retrieved",
+            )
+        else:
+            telemetry["playbook_api"] = IntegrationTelemetry(
+                name="playbook_api",
+                expected=playbook_expected,
+                called=True,
+                status="UNAVAILABLE",
+                reason="No data returned for event",
+            )
+    except ImportError:
+        telemetry["playbook_api"] = IntegrationTelemetry(
+            name="playbook_api",
+            expected=playbook_expected,
+            called=False,
+            status="ERROR",
+            reason="Playbook module not available",
+        )
+    except Exception as e:
+        telemetry["playbook_api"] = IntegrationTelemetry(
+            name="playbook_api",
+            expected=playbook_expected,
+            called=True,
+            status="ERROR",
+            reason=str(e)[:100],
+            error_message=str(e),
+        )
+
+    # === 3. BALLDONTLIE (NBA ONLY) ===
+    bdl_expected = INTEGRATION_RELEVANCE["balldontlie"].get(sport_upper, False)
+    if bdl_expected:
+        try:
+            from services.player_data_service import PlayerDataService
+
+            # Get team/game context
+            bundle.bdl_ctx = {
+                "sport": sport_upper,
+                "home_team": bundle.home_team,
+                "away_team": bundle.away_team,
+            }
+
+            # Get player contexts if players specified
+            if players:
+                player_contexts = {}
+                for player_name in players[:20]:  # Limit to 20 players
+                    try:
+                        ctx = await PlayerDataService.get_player_context(player_name, sport_upper)
+                        if ctx and ctx.has_season_data:
+                            player_contexts[player_name] = ctx.to_dict()
+                    except Exception as pe:
+                        logger.debug(f"BDL player lookup failed for {player_name}: {pe}")
+
+                bundle.bdl_player_contexts = player_contexts
+                bundle.bdl_ctx["players_loaded"] = len(player_contexts)
+
+            telemetry["balldontlie"] = IntegrationTelemetry(
+                name="balldontlie",
+                expected=True,
+                called=True,
+                status="APPLIED",
+                reason=f"NBA context loaded, {len(bundle.bdl_player_contexts or {})} players",
+            )
+        except ImportError:
+            telemetry["balldontlie"] = IntegrationTelemetry(
+                name="balldontlie",
+                expected=True,
+                called=False,
+                status="ERROR",
+                reason="PlayerDataService not available",
+            )
+        except Exception as e:
+            telemetry["balldontlie"] = IntegrationTelemetry(
+                name="balldontlie",
+                expected=True,
+                called=True,
+                status="ERROR",
+                error_message=str(e),
+            )
+    else:
+        telemetry["balldontlie"] = IntegrationTelemetry(
+            name="balldontlie",
+            expected=False,
+            called=False,
+            status="NOT_RELEVANT",
+            reason=f"BallDontLie only relevant for NBA, not {sport_upper}",
+        )
+
+    # === 4. WEATHER API (OUTDOOR SPORTS ONLY) ===
+    weather_expected = INTEGRATION_RELEVANCE["weather_api"].get(sport_upper, False)
+    if weather_expected:
+        try:
+            from alt_data_sources.weather import get_weather_for_venue
+            venue = event.get("venue") or bundle.home_team
+            weather_data = await get_weather_for_venue(venue)
+            if weather_data:
+                bundle.weather_ctx = weather_data
+                telemetry["weather_api"] = IntegrationTelemetry(
+                    name="weather_api",
+                    expected=True,
+                    called=True,
+                    status="APPLIED",
+                    reason=f"Weather data: {weather_data.get('temp_f', 'N/A')}°F",
+                )
+            else:
+                telemetry["weather_api"] = IntegrationTelemetry(
+                    name="weather_api",
+                    expected=True,
+                    called=True,
+                    status="UNAVAILABLE",
+                    reason="No weather data returned",
+                )
+        except ImportError:
+            telemetry["weather_api"] = IntegrationTelemetry(
+                name="weather_api",
+                expected=True,
+                called=False,
+                status="ERROR",
+                reason="Weather module not available",
+            )
+        except Exception as e:
+            telemetry["weather_api"] = IntegrationTelemetry(
+                name="weather_api",
+                expected=True,
+                called=True,
+                status="ERROR",
+                error_message=str(e),
+            )
+    else:
+        telemetry["weather_api"] = IntegrationTelemetry(
+            name="weather_api",
+            expected=False,
+            called=False,
+            status="NOT_RELEVANT",
+            reason=f"Weather only relevant for outdoor sports (NFL/MLB), not {sport_upper}",
+        )
+
+    # === 5. NOAA SPACE WEATHER (Kp-Index for Esoteric) ===
+    try:
+        from alt_data_sources.noaa import get_kp_betting_signal
+        kp_data = get_kp_betting_signal()
+        if kp_data:
+            bundle.noaa_ctx = kp_data
+            kp_value = kp_data.get("kp_value", 0)
+
+            # Compute Kp confidence multiplier (LIVE, not shadow)
+            if kp_value >= 7:
+                bundle.kp_confidence_multiplier = 0.90  # Severe storm
+            elif kp_value >= 5:
+                bundle.kp_confidence_multiplier = 0.95  # Moderate storm
+
+            telemetry["noaa_space_weather"] = IntegrationTelemetry(
+                name="noaa_space_weather",
+                expected=True,
+                called=True,
+                status="APPLIED",
+                reason=f"Kp-Index: {kp_value}, multiplier: {bundle.kp_confidence_multiplier}",
+            )
+        else:
+            telemetry["noaa_space_weather"] = IntegrationTelemetry(
+                name="noaa_space_weather",
+                expected=True,
+                called=True,
+                status="UNAVAILABLE",
+                reason="No Kp data returned",
+            )
+    except ImportError:
+        telemetry["noaa_space_weather"] = IntegrationTelemetry(
+            name="noaa_space_weather",
+            expected=True,
+            called=False,
+            status="ERROR",
+            reason="NOAA module not available",
+        )
+    except Exception as e:
+        telemetry["noaa_space_weather"] = IntegrationTelemetry(
+            name="noaa_space_weather",
+            expected=True,
+            called=True,
+            status="ERROR",
+            error_message=str(e),
+        )
+
+    # === 6. ASTRONOMICAL API (Moon phases for Esoteric) ===
+    try:
+        from alt_data_sources.astronomy import get_moon_phase
+        astro_data = get_moon_phase()
+        if astro_data:
+            bundle.astro_ctx = astro_data
+            telemetry["astronomy_api"] = IntegrationTelemetry(
+                name="astronomy_api",
+                expected=True,
+                called=True,
+                status="APPLIED",
+                reason=f"Moon phase: {astro_data.get('phase', 'unknown')}",
+            )
+        else:
+            telemetry["astronomy_api"] = IntegrationTelemetry(
+                name="astronomy_api",
+                expected=True,
+                called=True,
+                status="UNAVAILABLE",
+                reason="No astronomical data returned",
+            )
+    except ImportError:
+        telemetry["astronomy_api"] = IntegrationTelemetry(
+            name="astronomy_api",
+            expected=True,
+            called=False,
+            status="ERROR",
+            reason="Astronomy module not available",
+        )
+    except Exception as e:
+        telemetry["astronomy_api"] = IntegrationTelemetry(
+            name="astronomy_api",
+            expected=True,
+            called=True,
+            status="ERROR",
+            error_message=str(e),
+        )
+
+    # === 7. CONTEXT LAYER SERVICES (static data) ===
+    opponent = bundle.away_team  # For home team props, opponent is away
+    if opponent:
+        bundle.defensive_rank = DefensiveRankService.get_rank(sport_upper, opponent, "Guard")
+        bundle.pace_value = PaceVectorService.get_pace(sport_upper, opponent)
+
+    # === 8. LINEUP/INJURY CONTEXT (from Playbook or ESPN) ===
+    if bundle.playbook_ctx:
+        injuries = bundle.playbook_ctx.get("injuries", [])
+        key_out = any(inj.get("impact", 0) > 0.15 for inj in injuries)
+        bundle.key_player_out = key_out
+        if key_out:
+            bundle.lineup_confidence_multiplier = 0.85  # LIVE application
+            bundle.injury_impact = sum(inj.get("impact", 0) for inj in injuries)
+
+    bundle.integration_telemetry = telemetry
+    return bundle
+
+
+def build_context_sync(
+    event: Dict[str, Any],
+    market: str,
+    sport: str,
+    players: Optional[List[str]] = None,
+) -> ContextBundle:
+    """
+    Synchronous version of build_context for non-async contexts.
+
+    Uses PlayerDataService.get_player_context_sync and sync API calls.
+    """
+    import asyncio
+
+    # Try to use existing event loop, fall back to asyncio.run
+    try:
+        loop = asyncio.get_running_loop()
+        # If we're in an async context, we can't use asyncio.run
+        # Fall back to sync implementations
+        return _build_context_sync_impl(event, market, sport, players)
+    except RuntimeError:
+        # No running loop - safe to use asyncio.run
+        return asyncio.run(build_context(event, market, sport, players))
+
+
+def _build_context_sync_impl(
+    event: Dict[str, Any],
+    market: str,
+    sport: str,
+    players: Optional[List[str]] = None,
+) -> ContextBundle:
+    """Pure synchronous implementation of build_context."""
+    sport_upper = sport.upper()
+    telemetry: Dict[str, IntegrationTelemetry] = {}
+
+    bundle = ContextBundle(
+        sport=sport_upper,
+        event_id=event.get("id"),
+        home_team=event.get("home_team"),
+        away_team=event.get("away_team"),
+        game_date=event.get("commence_time", "")[:10] if event.get("commence_time") else None,
+    )
+
+    # Odds API (event data already present)
+    telemetry["odds_api"] = IntegrationTelemetry(
+        name="odds_api", expected=True, called=True, status="APPLIED",
+        reason="Event data from Odds API",
+    )
+    bundle.odds_ctx = {
+        "event_id": event.get("id"),
+        "home_team": event.get("home_team"),
+        "away_team": event.get("away_team"),
+    }
+
+    # BallDontLie (NBA only, sync)
+    bdl_expected = INTEGRATION_RELEVANCE["balldontlie"].get(sport_upper, False)
+    if bdl_expected and players:
+        try:
+            from services.player_data_service import PlayerDataService
+            player_contexts = {}
+            for player_name in players[:20]:
+                try:
+                    ctx = PlayerDataService.get_player_context_sync(player_name, sport_upper)
+                    if ctx and ctx.has_season_data:
+                        player_contexts[player_name] = ctx.to_dict()
+                except Exception:
+                    pass
+            bundle.bdl_player_contexts = player_contexts
+            bundle.bdl_ctx = {"players_loaded": len(player_contexts)}
+            telemetry["balldontlie"] = IntegrationTelemetry(
+                name="balldontlie", expected=True, called=True, status="APPLIED",
+                reason=f"Loaded {len(player_contexts)} players",
+            )
+        except ImportError:
+            telemetry["balldontlie"] = IntegrationTelemetry(
+                name="balldontlie", expected=True, called=False, status="ERROR",
+                reason="PlayerDataService not available",
+            )
+    elif not bdl_expected:
+        telemetry["balldontlie"] = IntegrationTelemetry(
+            name="balldontlie", expected=False, called=False, status="NOT_RELEVANT",
+            reason=f"Not NBA sport: {sport_upper}",
+        )
+
+    # NOAA (sync call)
+    try:
+        from alt_data_sources.noaa import get_kp_betting_signal
+        kp_data = get_kp_betting_signal()
+        if kp_data:
+            bundle.noaa_ctx = kp_data
+            kp_value = kp_data.get("kp_value", 0)
+            if kp_value >= 7:
+                bundle.kp_confidence_multiplier = 0.90
+            elif kp_value >= 5:
+                bundle.kp_confidence_multiplier = 0.95
+            telemetry["noaa_space_weather"] = IntegrationTelemetry(
+                name="noaa_space_weather", expected=True, called=True, status="APPLIED",
+                reason=f"Kp={kp_value}",
+            )
+    except Exception as e:
+        telemetry["noaa_space_weather"] = IntegrationTelemetry(
+            name="noaa_space_weather", expected=True, called=True, status="ERROR",
+            error_message=str(e),
+        )
+
+    # Weather (outdoor only)
+    weather_expected = INTEGRATION_RELEVANCE["weather_api"].get(sport_upper, False)
+    if not weather_expected:
+        telemetry["weather_api"] = IntegrationTelemetry(
+            name="weather_api", expected=False, called=False, status="NOT_RELEVANT",
+            reason=f"Indoor sport: {sport_upper}",
+        )
+
+    # Context layer services
+    opponent = bundle.away_team
+    if opponent:
+        bundle.defensive_rank = DefensiveRankService.get_rank(sport_upper, opponent, "Guard")
+        bundle.pace_value = PaceVectorService.get_pace(sport_upper, opponent)
+
+    bundle.integration_telemetry = telemetry
+    return bundle
+
+
+# ============================================================
 # QUICK TEST
 # ============================================================
 
