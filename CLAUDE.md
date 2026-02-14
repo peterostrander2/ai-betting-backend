@@ -80,7 +80,7 @@
 | 12 | Logging Visibility | Keep INFO telemetry for debugging |
 | 13 | PickContract v1 | Frontend-proof picks with all required fields |
 | 14 | ML Model Activation | LSTM + Ensemble models active |
-| 15 | GLITCH Protocol | 6 signals: chrome_resonance, void_moon, noosphere, hurst, kp_index, benford |
+| 15 | GLITCH Protocol | 8 signals (v20.22): chrome_resonance, void_moon, noosphere, hurst, kp_index, golden_ratio, prime_resonance, numerical_symmetry |
 | 16 | 18-Pillar Scoring | All 18 pillars active (see detailed list) |
 | 17 | Harmonic Convergence | +1.5 boost when Research AND Esoteric ≥7.5 |
 | 18 | Secret Redaction | API keys never in logs |
@@ -97,7 +97,7 @@
 | 29 | Integration State Machine | Integrations track `calls_last_15m()` for health (v20.21) |
 | 30 | CI Golden Gate | All deploys must pass `ci_golden_gate.sh` (v20.21) |
 
-### Lessons Learned (100 Total) - Key Categories
+### Lessons Learned (101 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -157,6 +157,7 @@
 | 98 | **v20.21 Integration calls_last_15m() Rolling Window** | Use `time.time()` timestamps + deque for O(1) call tracking; prune old entries on access |
 | 99 | **v20.21 CI Golden Gate 3-Gate Structure** | Gate 1: Golden Run unit tests, Gate 2: Output boundary tests, Gate 3: Integration contract tests |
 | 100 | **v20.21 Full System Audit for Frontend Readiness** | 11-gate audit script proves backend ready for frontend integration — `scripts/full_system_audit.sh` |
+| 101 | **v20.22 Scoring Drift vs Contract Stability** | Replacing signals changes internal behavior even if weights match. Two freeze definitions: strict (byte-identical) vs contract (external behavior). Shadow mode for internal changes, golden run to verify. |
 
 ### NEVER DO Sections (40 Categories)
 - ML & GLITCH (rules 1-10)
@@ -369,9 +370,29 @@ API_KEY=your_key ./scripts/full_system_audit.sh
 | `.github/workflows/golden-gate.yml` | GitHub Actions CI: golden-gate, contract-tests, freeze-verify jobs — v20.21 |
 | `scripts/full_system_audit.sh` | Full backend audit for frontend readiness (11 hard gates) — v20.21 |
 
-### Current Version: v20.21 (Feb 13, 2026) + v20.22 Shadow Scaffolding
+### Current Version: v20.22 (Feb 14, 2026)
 
-**v20.22 Shadow Scaffolding (Feb 14, 2026):**
+**v20.22 (Feb 14, 2026) — Math Signal Activation + Shadow Confluence:**
+
+**GLITCH Protocol Rebalancing:**
+- **REMOVED:** `benford_anomaly` (0.10 weight) — triggered <2% of picks
+- **ADDED:** 3 math signals: `golden_ratio` (0.04), `prime_resonance` (0.03), `numerical_symmetry` (0.03)
+- **MODIFIED:** `chrome_resonance` weight reduced from 0.25 to 0.20
+- Active GLITCH signals: 7 (noosphere remains disabled — SERP cancelled)
+
+**Shadow Confluence (Monitoring Only):**
+- `shadow_confluence.math_glitch_confluence` computed but **NOT applied to scoring**
+- Tracks when ≥2 math signals fire simultaneously
+- JSONL telemetry at `/data/shadow/math_glitch_confluence.jsonl`
+- Will be promoted to scoring in v21+ after 7-day evaluation (Feb 21)
+- Verification script: `./scripts/verify_math_glitch_shadow.sh`
+
+**Scoring Drift Acknowledgment (Lesson 101):**
+- Math signals replace benford — different trigger rates cause scoring drift
+- Contract remains stable: engine weights, tier thresholds unchanged
+- Golden run validation confirms external API contract preserved
+
+**Sklearn Shadow Mode (Engine 1):**
 - Added sklearn ensemble regressor training pipeline (`scripts/train_ensemble_regressors.py`)
 - Training runs at 7:15 AM ET but models are **SHADOW MODE by default**
 - No scoring behavior change unless `ENSEMBLE_SKLEARN_ENABLED=true` explicitly set
@@ -2631,9 +2652,9 @@ All engines score 0-10. Min output threshold: **6.5** (picks below this are filt
 - Officials adjustment (Pillar 16): OfficialsAnalyzer adjusts based on referee tendencies
 
 ### Engine 3: Esoteric Score (15%)
-- 29 signals across GLITCH Protocol, Phase 8, Physics, Math Glitch, Phase 1, and Context
-- **Active signals: 23** | Dormant: 4 | Disabled: 1 (noosphere - SERP cancelled)
-- **GLITCH Protocol (5 active)**: chrome_resonance, void_moon, hurst, kp_index, benford
+- 27 signals across GLITCH Protocol, Phase 8, Physics, Math Glitch, Phase 1, and Context
+- **Active signals: 25** | Dormant: 2 | Disabled: 1 (noosphere - SERP cancelled)
+- **GLITCH Protocol (7 active, v20.22)**: chrome_resonance, void_moon, hurst, kp_index, golden_ratio, prime_resonance, numerical_symmetry
 - **Phase 8 (5 active)**: lunar_phase, mercury_retrograde, rivalry_intensity, streak_momentum, solar_flare
 - External dependency: NOAA Space Weather API (3-hour cache, fail-soft)
 - Output: `esoteric_score` [0.0-10.0], `esoteric_reasons[]`, `esoteric_contributions{}`

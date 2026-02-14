@@ -3720,3 +3720,41 @@ API_KEY=your_key ./scripts/full_system_audit.sh
 **Added in:** v20.21 (Feb 13, 2026)
 
 ---
+
+### Lesson 101: Scoring Drift vs Contract Stability (v20.22)
+
+**Problem:** Changed GLITCH protocol signals (replaced benford with 3 math signals) and assumed "no scoring change" because total weight remained the same. However, different signals trigger at different rates with different scores, causing `esoteric_score` drift which affects alignment and `final_score`.
+
+**The Insight:** There are two definitions of "freeze":
+1. **Strict freeze (scoring unchanged):** No change to computed scores
+2. **Contract freeze (outputs unchanged):** Tiers, thresholds, gates unchanged
+
+Replacing signals with different trigger rates is NOT a strict freeze, even if weights match.
+
+**The Solution:** Classify changes explicitly:
+- **"Scoring drift allowed, contract stable"** — internal engine changes that don't affect output contracts
+- Always run golden run validation after internal scoring changes
+- Shadow mode for new signals before production scoring impact
+
+**Verification Pattern:**
+```bash
+# After any internal scoring change, verify contract stability
+python -m pytest tests/test_golden_run.py -v
+./scripts/ci_golden_gate.sh
+```
+
+**Prevention:**
+1. When modifying signal weights or adding/removing signals, explicitly state: "scoring drift expected, contract unchanged" or "no scoring drift"
+2. ALWAYS run golden run validation after internal engine changes
+3. Use shadow mode (compute but don't apply) for new scoring components until validated
+4. Shadow logging + 7-day evaluation before promoting to live scoring
+
+**Example v20.22:**
+- Replaced benford (0.10 weight, <2% trigger rate) with math signals (0.10 weight, ~5-15% trigger rate)
+- Math signals in GLITCH protocol: scoring drift expected
+- MATH_GLITCH_CONFLUENCE: shadow mode (no scoring impact until v21)
+- Contract stable: golden run passes, output tiers/thresholds unchanged
+
+**Added in:** v20.22 (Feb 14, 2026)
+
+---
