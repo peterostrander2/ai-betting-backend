@@ -277,7 +277,7 @@ async def health():
     return {
         "status": status,
         "ok": overall_ok,
-        "version": "20.20",
+        "version": "20.24",
         "build_sha": build_sha,
         "deploy_version": deploy_version,
         "database": database.DB_ENABLED,
