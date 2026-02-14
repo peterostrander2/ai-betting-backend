@@ -44,8 +44,8 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 
-# v20.12: ET canonical clock helpers - single source of truth
-from core.time_et import format_as_of_et, data_age_ms, now_et
+# v20.12: ET canonical clock helpers
+from core.time_et import format_as_of_et, format_et_day, data_age_ms, now_et
 
 # Import from canonical contract - ensures registry stays in sync
 from core.integration_contract import (
@@ -882,6 +882,8 @@ async def get_all_integrations_status() -> Dict[str, Any]:
 
     return {
         "timestamp": now_et().isoformat(),
+        "as_of_et": format_as_of_et(),
+        "et_day": format_et_day(),
         "overall_status": overall_status,
         "overall_message": overall_message,
         "total_integrations": len(INTEGRATIONS),

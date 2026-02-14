@@ -50,6 +50,7 @@ from core.structured_logging import (
     RequestCorrelationMiddleware,
     get_request_id,
 )
+from core.time_et import format_as_of_et
 
 # v20.21: Configure structured JSON logging with request correlation
 # Must be done before any logging occurs
@@ -277,9 +278,10 @@ async def health():
     return {
         "status": status,
         "ok": overall_ok,
-        "version": "20.24",
+        "version": "20.25",
         "build_sha": build_sha,
         "deploy_version": deploy_version,
+        "now_et": format_as_of_et(),
         "database": database.DB_ENABLED,
         "database_status": db_status,
         "storage": storage_health,
