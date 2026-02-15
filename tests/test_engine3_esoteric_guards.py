@@ -175,20 +175,21 @@ class TestGlitchWeights:
     """Verify GLITCH protocol weights and normalization behavior."""
 
     def test_active_glitch_weights_sum_to_100(self):
-        """Active GLITCH signal weights (excluding disabled noosphere) sum to 1.00 after v20.22.
+        """Active GLITCH signal weights (excluding disabled noosphere) sum to 1.00.
 
-        v20.22: Rebalanced weights - chrome reduced from 0.25 to 0.20 to accommodate
-        3 math signals (golden_ratio 0.04, prime_resonance 0.03, numerical_symmetry 0.03).
+        v20.28.6: Learning Loop Tuned based on Feb 14 grading (1,998 samples):
+        - void_moon reduced 0.20→0.12 (negative -0.07 correlation)
+        - kp_index increased 0.25→0.33 (positive +0.065 correlation, best performer)
         """
         # Raw weights as defined in get_glitch_aggregate()
         active_weights = {
-            "chrome_resonance": 0.20,   # v20.22: reduced from 0.25
-            "void_moon": 0.20,
+            "chrome_resonance": 0.20,
+            "void_moon": 0.12,          # v20.28.6: reduced (negative correlation)
             "hurst": 0.25,
-            "kp_index": 0.25,
-            "golden_ratio": 0.04,       # v20.22: NEW (replaces benford)
-            "prime_resonance": 0.03,    # v20.22: NEW
-            "numerical_symmetry": 0.03, # v20.22: NEW
+            "kp_index": 0.33,           # v20.28.6: increased (positive correlation)
+            "golden_ratio": 0.04,
+            "prime_resonance": 0.03,
+            "numerical_symmetry": 0.03,
         }
         # noosphere is disabled (SERPAPI_KEY absent), so not included in active
         total = sum(active_weights.values())
@@ -222,10 +223,10 @@ class TestGlitchWeights:
         assert 0 <= result.get("glitch_score", 0) <= 1.0, \
             f"Normalized glitch_score should be [0,1], got {result.get('glitch_score')}"
 
-    def test_kp_index_weight_is_025(self):
-        """Kp-Index signal has weight 0.25."""
-        kp_weight = 0.25
-        assert kp_weight == 0.25
+    def test_kp_index_weight_is_033(self):
+        """Kp-Index signal has weight 0.33 (v20.28.6: increased due to positive correlation)."""
+        kp_weight = 0.33
+        assert kp_weight == 0.33
 
 
 # =============================================================================

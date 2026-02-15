@@ -11,12 +11,16 @@ import pytest
 # stay self-contained (no need to import the full router).
 # ---------------------------------------------------------------------------
 
+# v20.28.6: Learning Loop Tuned weights based on Feb 14 grading
+# vortex reduced 0.15→0.08 (negative -0.125 correlation, worst performer)
+# fib reduced 0.15→0.10 (negative -0.06 correlation)
+# Redistributed to numerology and daily_edge (stable performers)
 ESOTERIC_WEIGHTS = {
-    "numerology": 0.35,
-    "astro": 0.25,
-    "fib": 0.15,
-    "vortex": 0.15,
-    "daily_edge": 0.10,
+    "numerology": 0.40,
+    "astro": 0.27,
+    "fib": 0.10,
+    "vortex": 0.08,
+    "daily_edge": 0.15,
 }
 
 # Fibonacci sequence used by Jarvis

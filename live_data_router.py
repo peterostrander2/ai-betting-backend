@@ -3873,13 +3873,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # BASE_4 = (ai × 0.25) + (research × 0.35) + (esoteric × 0.20) + (jarvis × 0.20)
         # =====================================================================
 
-        # --- ESOTERIC WEIGHTS (v15.0 - Clean Separation, NO Jarvis/Gematria) ---
+        # --- ESOTERIC WEIGHTS (v20.28.6 - Learning Loop Tuned) ---
+        # Adjusted based on Feb 14 grading: vortex -0.125, fib -0.06 correlation (hurting)
+        # Redistributed weight to numerology/daily_edge (stable performers)
         ESOTERIC_WEIGHTS = {
-            "numerology": 0.35,   # 35% - Generic numerology (MANDATORY)
-            "astro": 0.25,        # 25% - Vedic astrology
-            "fib": 0.15,          # 15% - Fibonacci alignment
-            "vortex": 0.15,       # 15% - Tesla 3-6-9 patterns
-            "daily_edge": 0.10    # 10% - Daily energy
+            "numerology": 0.40,   # 40% - Generic numerology (stable, increased)
+            "astro": 0.27,        # 27% - Vedic astrology (slight increase)
+            "fib": 0.10,          # 10% - Fibonacci alignment (reduced: -0.06 corr)
+            "vortex": 0.08,       # 8% - Tesla 3-6-9 (reduced: -0.125 corr, worst)
+            "daily_edge": 0.15    # 15% - Daily energy (increased: stable performer)
         }
 
         # --- ENGINE SEPARATION (v15.0 Clean Architecture) ---

@@ -1349,17 +1349,19 @@ def get_glitch_aggregate(
     """
     Calculate aggregate GLITCH Protocol score from all orphaned signals.
 
-    Combines (v20.22 weights - normalized by total_weight):
+    Combines (v20.28.6 weights - Learning Loop Tuned):
     - Chrome Resonance (if birth_date provided) - weight 0.20
-    - Void Moon (always) - weight 0.20
+    - Void Moon (always) - weight 0.12 (reduced: -0.07 correlation in grading)
     - Noosphere Velocity (if SerpAPI enabled) - weight 0.15 (DISABLED by default)
     - Hurst Exponent (if line_history provided) - weight 0.25
-    - Kp-Index / Schumann (always) - weight 0.25
+    - Kp-Index / Schumann (always) - weight 0.33 (increased: +0.065 correlation, best GLITCH performer)
     - Golden Ratio (if primary_value provided) - weight 0.04
     - Prime Resonance (if primary_value provided) - weight 0.03
     - Numerical Symmetry (if primary_value provided) - weight 0.03
 
-    v20.22: Replaced benford_anomaly (0.10) with 3 math signals (0.04 + 0.03 + 0.03).
+    v20.28.6: Tuned based on Feb 14 grading bias analysis (1,998 samples):
+    - void_moon reduced 0.20→0.12 (negative correlation: predictions worse when active)
+    - kp_index increased 0.25→0.33 (positive correlation: geomagnetic = winning signal)
     Total weights sum to ~1.00 and are normalized by dividing by total_weight.
 
     Returns aggregated score and breakdown for esoteric engine integration.
@@ -1381,10 +1383,10 @@ def get_glitch_aggregate(
             triggered_signals.append("chrome_resonance")
         reasons.append(f"CHROME: {chrome['reason']}")
 
-    # 2. Void Moon (weight: 0.20)
+    # 2. Void Moon (weight: 0.12) - v20.28.6: reduced from 0.20 (negative -0.07 correlation)
     void_moon = calculate_void_moon(game_date)
     results["void_moon"] = void_moon
-    weight = 0.20
+    weight = 0.12
     # Void moon: is_void = bad (lower score)
     void_score = 0.3 if void_moon["is_void"] else 0.7
     weighted_score += void_score * weight
@@ -1430,7 +1432,7 @@ def get_glitch_aggregate(
             triggered_signals.append(f"hurst_{hurst['regime'].lower()}")
         reasons.append(f"HURST: {hurst['regime']} (H={hurst['h_value']:.2f})")
 
-    # 4. Kp-Index from NOAA (weight: 0.25) - Falls back to Schumann if unavailable
+    # 4. Kp-Index from NOAA (weight: 0.33) - v20.28.6: increased from 0.25 (positive +0.065 correlation)
     kp_data = None
     try:
         from alt_data_sources.noaa import get_kp_betting_signal, NOAA_ENABLED
@@ -1442,7 +1444,7 @@ def get_glitch_aggregate(
     if kp_data and kp_data.get("source") != "fallback":
         # Use real NOAA Kp-Index data
         results["kp_index"] = kp_data
-        weight = 0.25
+        weight = 0.33
         kp_score = kp_data["score"]
         weighted_score += kp_score * weight
         total_weight += weight
@@ -1450,10 +1452,10 @@ def get_glitch_aggregate(
             triggered_signals.append(f"kp_{kp_data['storm_level'].lower()}")
         reasons.append(f"KP: {kp_data['storm_level']} (Kp={kp_data['kp_value']})")
     else:
-        # Fallback to Schumann simulation
+        # Fallback to Schumann simulation (same weight as kp_index)
         schumann = get_schumann_frequency(game_date)
         results["schumann"] = schumann
-        weight = 0.25
+        weight = 0.33  # v20.28.6: increased from 0.25 (matches kp_index)
         # Normal conditions = good, elevated = potentially volatile
         if schumann["status"] == "NORMAL":
             schumann_score = 0.7
