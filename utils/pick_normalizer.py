@@ -475,6 +475,22 @@ def normalize_pick(pick: dict) -> dict:
         "jarvis": pick.get("jarvis_score") or pick.get("jarvis_rs", 0)
     }
 
+    # === v20.28.9: ENGINE DIVERGENCE WARNINGS ===
+    # Flag when any core engine is weak (<5.5) but pick still outputs
+    ENGINE_WEAK_THRESHOLD = 5.5
+    warnings = pick.get("warnings") or []
+    engine_breakdown = pick["engine_breakdown"]
+    weak_engines = []
+
+    for engine_name, score in engine_breakdown.items():
+        if isinstance(score, (int, float)) and score < ENGINE_WEAK_THRESHOLD:
+            weak_engines.append(f"{engine_name}={score:.1f}")
+
+    if weak_engines:
+        warnings.append(f"ENGINE_DIVERGENCE: {', '.join(weak_engines)} below {ENGINE_WEAK_THRESHOLD}")
+
+    pick["warnings"] = warnings
+
     # === DESCRIPTION (human-readable pick summary) ===
     if not pick.get("description"):
         player_name = pick.get("player_name") or pick.get("player")
