@@ -869,7 +869,136 @@ class AutoGrader:
             "mean_when_under": round(mean_neg, 3),
             "suggested_adjustment": round(-correlation * 0.1, 4) if not np.isnan(correlation) else 0  # Damped correction
         }
-    
+
+    # ============================================
+    # v20.28.6: TOTALS CALIBRATION (OVER-bias correction)
+    # ============================================
+
+    def calculate_totals_calibration(
+        self,
+        sport: str,
+        days_back: int = 7,
+        K: float = 10.0,
+        MAX_ADJ: float = 3.0
+    ) -> Dict:
+        """
+        Calculate recommended totals calibration based on recent mean error.
+
+        v20.28.6: Dynamic calibration formula:
+            total_adjust_points = -clamp(recent_mean_error / K, 0, MAX_ADJ)
+
+        If mean_error > 0 (OVER picks overpredicting), apply negative adjustment.
+        If mean_error < 0 (UNDER picks overpredicting), no adjustment (clamped to 0).
+
+        Args:
+            sport: Sport to analyze (NBA, NFL, etc.)
+            days_back: Days of data to analyze (default 7)
+            K: Divisor for scaling mean error (default 10.0)
+            MAX_ADJ: Maximum adjustment magnitude (default 3.0)
+
+        Returns:
+            {
+                "sport": "NBA",
+                "sample_size": 45,
+                "mean_error": 2.3,
+                "over_count": 30,
+                "under_count": 15,
+                "over_hit_rate": 0.35,
+                "under_hit_rate": 0.65,
+                "recommended_over_penalty": -0.23,
+                "formula": "total_adjust = -clamp(mean_error / K, 0, MAX_ADJ)"
+            }
+        """
+        sport = sport.upper()
+
+        # Use ET timezone
+        if TIME_ET_AVAILABLE:
+            now = now_et()
+        else:
+            now = datetime.now(timezone.utc).astimezone(ET)
+        cutoff = now - timedelta(days=days_back)
+
+        # Filter to TOTAL picks only
+        over_picks = []
+        under_picks = []
+
+        for record in self.predictions.get(sport, []):
+            if record.actual_value is None:
+                continue
+
+            # Must be a TOTAL pick
+            if not record.pick_type or record.pick_type.upper() != "TOTAL":
+                continue
+
+            # Parse timestamp
+            try:
+                record_date = datetime.fromisoformat(record.timestamp)
+                if record_date.tzinfo is None:
+                    record_date = record_date.replace(tzinfo=timezone.utc).astimezone(ET)
+                else:
+                    record_date = record_date.astimezone(ET)
+            except Exception:
+                continue
+
+            if record_date < cutoff:
+                continue
+
+            # Determine if this was an OVER or UNDER pick
+            # Usually stored in pick_side or we infer from predicted > actual
+            pick_side = getattr(record, 'pick_side', None)
+            if pick_side:
+                if pick_side.upper() == "OVER":
+                    over_picks.append(record)
+                elif pick_side.upper() == "UNDER":
+                    under_picks.append(record)
+            else:
+                # Infer from error sign
+                if record.error and record.error > 0:
+                    over_picks.append(record)
+                else:
+                    under_picks.append(record)
+
+        total_picks = over_picks + under_picks
+
+        if len(total_picks) < 10:
+            return {
+                "sport": sport,
+                "sample_size": len(total_picks),
+                "error": "Insufficient TOTAL picks for calibration (need at least 10)",
+                "recommended_over_penalty": 0.0
+            }
+
+        # Calculate metrics
+        over_hit_rate = sum(1 for r in over_picks if r.hit) / len(over_picks) if over_picks else 0
+        under_hit_rate = sum(1 for r in under_picks if r.hit) / len(under_picks) if under_picks else 0
+
+        # Calculate mean error (positive = overpredicting, picks going OVER)
+        errors = [r.error for r in total_picks if r.error is not None]
+        mean_error = np.mean(errors) if errors else 0
+
+        # v20.28.6: Bounded calibration formula
+        # total_adjust = -clamp(mean_error / K, 0, MAX_ADJ)
+        # Only penalize if mean_error > 0 (OVER bias), clamp to [0, MAX_ADJ]
+        raw_adjustment = mean_error / K
+        clamped = np.clip(raw_adjustment, 0, MAX_ADJ)
+        recommended_penalty = -clamped
+
+        return {
+            "sport": sport,
+            "days_back": days_back,
+            "sample_size": len(total_picks),
+            "over_count": len(over_picks),
+            "under_count": len(under_picks),
+            "mean_error": round(mean_error, 3),
+            "over_hit_rate": round(over_hit_rate, 3),
+            "under_hit_rate": round(under_hit_rate, 3),
+            "K": K,
+            "MAX_ADJ": MAX_ADJ,
+            "raw_adjustment": round(raw_adjustment, 3),
+            "recommended_over_penalty": round(recommended_penalty, 3),
+            "formula": "over_penalty = -clamp(mean_error / K, 0, MAX_ADJ)"
+        }
+
     # ============================================
     # WEIGHT ADJUSTMENT
     # ============================================

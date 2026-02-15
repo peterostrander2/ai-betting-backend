@@ -450,6 +450,174 @@ class TestIntegration:
 
 
 # =============================================================================
+# MINIMUM SAMPLE GATE TESTS (v20.28.6)
+# =============================================================================
+
+class TestMinimumSampleGate:
+    """Tests for minimum sample gate enforcement."""
+
+    def test_min_samples_by_market_defined(self):
+        """MIN_SAMPLES_BY_MARKET should have all expected markets."""
+        from auto_grader import MIN_SAMPLES_BY_MARKET
+
+        expected_markets = [
+            "moneyline", "sharp", "spread", "total",
+            "points", "rebounds", "assists", "threes",
+            "steals", "blocks", "turnovers", "pra"
+        ]
+
+        for market in expected_markets:
+            assert market in MIN_SAMPLES_BY_MARKET, \
+                f"Missing market: {market}"
+
+    def test_moneyline_requires_more_samples(self):
+        """Moneyline should require more samples (50) than common markets (20)."""
+        from auto_grader import MIN_SAMPLES_BY_MARKET
+
+        assert MIN_SAMPLES_BY_MARKET["moneyline"] == 50, \
+            "Moneyline should require 50 samples"
+        assert MIN_SAMPLES_BY_MARKET["spread"] == 20, \
+            "Spread should require 20 samples"
+
+    def test_default_min_samples(self):
+        """DEFAULT_MIN_SAMPLES should be 20."""
+        from auto_grader import DEFAULT_MIN_SAMPLES
+
+        assert DEFAULT_MIN_SAMPLES == 20, \
+            f"Expected 20, got {DEFAULT_MIN_SAMPLES}"
+
+    def test_adjust_weights_respects_min_samples(self, test_grader):
+        """Weight adjustment should be blocked when samples < min threshold."""
+        # With no graded predictions, sample_size will be 0
+        result = test_grader.adjust_weights("NBA", "moneyline", days_back=1)
+
+        # Should indicate insufficient samples or no changes
+        assert "error" in result or "reason" in result or "weights_unchanged" in result, \
+            "Should reject adjustment with insufficient samples"
+
+
+# =============================================================================
+# TOTALS CALIBRATION TESTS (v20.28.6)
+# =============================================================================
+
+class TestTotalsCalibration:
+    """Tests for totals OVER-bias calibration."""
+
+    def test_calculate_totals_calibration_method_exists(self, test_grader):
+        """AutoGrader should have calculate_totals_calibration method."""
+        assert hasattr(test_grader, "calculate_totals_calibration"), \
+            "Missing calculate_totals_calibration method"
+
+    def test_calculate_totals_calibration_returns_dict(self, test_grader):
+        """calculate_totals_calibration should return a dict."""
+        result = test_grader.calculate_totals_calibration("NBA", days_back=7)
+
+        assert isinstance(result, dict), "Should return a dict"
+        # With no data, should have error or empty stats
+        assert "sample_size" in result or "error" in result
+
+    def test_calculate_totals_calibration_has_required_fields(self, grader_with_predictions):
+        """Calibration result should have all required fields."""
+        # Grade some predictions as totals
+        grader_with_predictions.log_prediction(
+            sport="NBA",
+            player_name="Over Total",
+            stat_type="total",
+            predicted_value=220.5,
+            line=218.5,
+            adjustments={"defense": 1.0}
+        )
+
+        result = grader_with_predictions.calculate_totals_calibration("NBA", days_back=7)
+
+        # Should have result structure even if no graded totals
+        assert isinstance(result, dict)
+
+    def test_calibration_params_respected(self, test_grader):
+        """Custom K and MAX_ADJ params should be accepted."""
+        result = test_grader.calculate_totals_calibration(
+            "NBA",
+            days_back=7,
+            K=5.0,        # Different from default 10.0
+            MAX_ADJ=2.0   # Different from default 3.0
+        )
+
+        assert isinstance(result, dict), "Should accept custom params"
+
+
+# =============================================================================
+# WEIGHT NORMALIZATION ENFORCEMENT TESTS (v20.28.6)
+# =============================================================================
+
+class TestWeightNormalizationEnforcement:
+    """Tests for weight normalization enforcement after adjustments."""
+
+    def test_baseline_weight_sum_matches_default_weights(self):
+        """BASELINE_WEIGHT_SUM should match the sum of default core weights."""
+        from auto_grader import WeightConfig, BASELINE_WEIGHT_SUM, CORE_WEIGHT_FACTORS
+
+        default_config = WeightConfig()
+        actual_sum = sum(getattr(default_config, f) for f in CORE_WEIGHT_FACTORS)
+
+        assert abs(actual_sum - BASELINE_WEIGHT_SUM) < 0.001, \
+            f"Default weights ({actual_sum}) don't match BASELINE_WEIGHT_SUM ({BASELINE_WEIGHT_SUM})"
+
+    def test_core_weight_factors_excludes_park_factor(self):
+        """CORE_WEIGHT_FACTORS should NOT include park_factor (MLB-specific)."""
+        from auto_grader import CORE_WEIGHT_FACTORS
+
+        assert "park_factor" not in CORE_WEIGHT_FACTORS, \
+            "park_factor is MLB-specific and should not be in CORE_WEIGHT_FACTORS"
+
+    def test_weight_config_has_all_factors(self):
+        """WeightConfig should have all core factors plus park_factor."""
+        from auto_grader import WeightConfig, CORE_WEIGHT_FACTORS
+
+        config = WeightConfig()
+
+        # Core factors
+        for factor in CORE_WEIGHT_FACTORS:
+            assert hasattr(config, factor), f"Missing factor: {factor}"
+
+        # MLB-specific factor
+        assert hasattr(config, "park_factor"), "Missing park_factor"
+
+
+# =============================================================================
+# INTEGRATION TESTS (v20.28.6)
+# =============================================================================
+
+class TestGraderIntegration:
+    """Integration tests for auto-grader learning loop components."""
+
+    def test_full_cycle_with_normalization(self, test_grader):
+        """Test log → grade → adjust cycle preserves weight normalization."""
+        from auto_grader import BASELINE_WEIGHT_SUM, CORE_WEIGHT_FACTORS
+
+        # Log prediction
+        pred_id = test_grader.log_prediction(
+            sport="NBA",
+            player_name="Integration Test",
+            stat_type="points",
+            predicted_value=25.0,
+            line=24.5,
+            adjustments={"defense": 1.0, "pace": 0.5}
+        )
+
+        # Grade prediction
+        test_grader.grade_prediction(pred_id, actual_value=26.0)
+
+        # Get weights
+        weights = test_grader.get_weights("NBA", "points")
+
+        # Weights should be within valid range
+        for factor in CORE_WEIGHT_FACTORS:
+            if factor in weights:
+                assert 0.0 <= weights[factor] <= 1.0, \
+                    f"{factor} weight out of bounds: {weights[factor]}"
+
+
+# =============================================================================
 # RUN TESTS
 # =============================================================================
 

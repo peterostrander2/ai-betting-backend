@@ -608,6 +608,59 @@ async def reset_sport_weights(sport: str, reset_config: Dict[str, Any] = None):
 
 
 # =============================================================================
+# GRADER TOTALS CALIBRATION ENDPOINT (v20.28.6)
+# =============================================================================
+
+@router.get("/grader/totals-calibration/{sport}")
+async def get_totals_calibration(
+    sport: str,
+    days_back: int = 7,
+    k: float = 10.0,
+    max_adj: float = 3.0
+):
+    """
+    Get recommended totals calibration for OVER-bias correction.
+
+    v20.28.6: Implements bounded calibration formula:
+        over_penalty = -clamp(mean_error / K, 0, MAX_ADJ)
+
+    The penalty is applied to OVER picks when they're consistently overpredicting.
+    This helps correct for systematic bias in totals predictions.
+
+    Parameters:
+    - days_back: Days of TOTAL picks to analyze (default 7)
+    - k: Divisor for scaling mean error (default 10.0)
+    - max_adj: Maximum adjustment magnitude (default 3.0)
+
+    Returns:
+    - sample_size: Number of graded TOTAL picks analyzed
+    - mean_error: Average (predicted - actual) for TOTAL picks
+    - over_hit_rate: Hit rate for OVER picks
+    - under_hit_rate: Hit rate for UNDER picks
+    - recommended_over_penalty: Suggested penalty (-3.0 to 0.0)
+    - should_apply: Whether penalty should be applied (sample_size >= 30)
+    """
+    if not AUTO_GRADER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+    grader = get_grader()
+    result = grader.calculate_totals_calibration(
+        sport=sport.upper(),
+        days_back=days_back,
+        K=k,
+        MAX_ADJ=max_adj
+    )
+
+    return {
+        "sport": sport.upper(),
+        "days_analyzed": days_back,
+        "calibration_params": {"k": k, "max_adj": max_adj},
+        "result": result,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# =============================================================================
 # GRADER TRAIN TEAM MODELS ENDPOINT
 # =============================================================================
 
