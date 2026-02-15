@@ -28,7 +28,7 @@ from fastapi.responses import Response, JSONResponse, HTMLResponse
 from fastapi import Request
 from live_data_router import router as live_router, close_shared_client
 from streaming_router import router as streaming_router
-from routers import community_router, esoteric_router, line_shop_router, betting_router, debug_router
+from routers import community_router, esoteric_router, line_shop_router, betting_router, debug_router, grader_router
 from collections import defaultdict
 from datetime import datetime, timezone
 import database
@@ -164,6 +164,7 @@ app.include_router(esoteric_router, prefix="/live")  # Esoteric analysis & debug
 app.include_router(line_shop_router, prefix="/live")  # Line shopping & betslip generation
 app.include_router(betting_router, prefix="/live")  # User betting, tracking, parlays
 app.include_router(debug_router, prefix="/live")  # Debug & diagnostic endpoints
+app.include_router(grader_router, prefix="/live")  # Grader & picks management endpoints
 app.include_router(scheduler_router)
 app.include_router(trap_router)  # v19.0: Trap Learning Loop
 app.include_router(streaming_router)  # v20.0 Phase 9 - Real-time streaming

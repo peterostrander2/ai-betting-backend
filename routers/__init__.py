@@ -18,6 +18,7 @@ from .esoteric import router as esoteric_router
 from .line_shop import router as line_shop_router
 from .betting import router as betting_router
 from .debug import router as debug_router
+from .grader import router as grader_router
 
 __all__ = [
     'community_router',
@@ -25,4 +26,5 @@ __all__ = [
     'line_shop_router',
     'betting_router',
     'debug_router',
+    'grader_router',
 ]
