@@ -5,7 +5,7 @@
   "description": "Deterministic contract baseline - validates schema and invariants, not volatile data",
 
   "contracts": {
-    "version": "20.24",
+    "version": "20.25",
     "engine_weights": {
       "ai": 0.25,
       "research": 0.35,
