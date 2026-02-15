@@ -196,7 +196,7 @@ async def root():
 @app.get("/health")
 async def health():
     build_sha = _os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:8] or "local"
-    deploy_version = "20.9"  # Update with each release
+    deploy_version = "20.25"  # Update with each release
 
     # --- Truthful health probes (no external calls, fail-soft) ---
     errors = []
