@@ -34,9 +34,9 @@
 | File | Contents | When to Load |
 |------|----------|--------------|
 | `docs/ML_REFERENCE.md` | LSTM models, GLITCH protocol, file index | When working on ML/scoring |
-| `docs/LESSONS_LEARNED.md` | 50+ historical bugs & fixes | When debugging a similar issue |
-| `docs/NEVER_DO.md` | 35 consolidated rule sets (v20.24) | Before modifying that subsystem |
-| `docs/CHECKLISTS.md` | 17 verification checklists | Before deploying changes |
+| `docs/LESSONS_LEARNED.md` | 127 historical bugs & fixes | When debugging a similar issue |
+| `docs/NEVER_DO.md` | 342 consolidated rules (v20.28.5) | Before modifying that subsystem |
+| `docs/CHECKLISTS.md` | 18 verification checklists (v20.28.5) | Before deploying changes |
 | `docs/SESSION_NOTES.md` | Codex DNS & troubleshooting | If hitting infra issues |
 | `docs/CONTRACT.md` | Canonical scoring contract reference (v20.21) | When verifying frozen contract values |
 
@@ -96,8 +96,9 @@
 | 28 | Request Correlation | All logs include `request_id` via X-Request-ID header (v20.21) |
 | 29 | Integration State Machine | Integrations track `calls_last_15m()` for health (v20.21) |
 | 30 | CI Golden Gate | All deploys must pass `ci_golden_gate.sh` (v20.21) |
+| 31 | Best Bets Clean Table Format | ALWAYS use space-aligned clean tables with ═══ separators, NEVER markdown pipes (v20.28.5) |
 
-### Lessons Learned (121 Total) - Key Categories
+### Lessons Learned (127 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -118,6 +119,7 @@
 | 121 | **v20.28.1 CI Hardening** | Tests in repo ≠ tests in CI, wire them to GitHub Actions, hard gate classes |
 | 122 | **v20.28.2 Paid APIs First** | Use Odds API for live scores (paid), ESPN as fallback (free). Always prioritize paid API features |
 | 123-126 | **v20.28.4 Portable Test Suite** | No /data required, conftest.py fixtures, lazy init, optional dep skips, verify actual return values |
+| 127 | **v20.28.5 Best Bets Display** | Clean space-aligned tables with ═══ separators, NEVER markdown pipes, start times required |
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
@@ -2029,6 +2031,80 @@ const statusColor = {
 ```
 
 **Yellow is acceptable** for CONFIGURED integrations - it means the key is set but we don't ping on every request (to avoid rate limits on esoteric APIs).
+
+---
+
+### Claude Code Best Bets Display Format (v20.28.5)
+
+**MANDATORY FORMAT - USE BOX-DRAWING TABLES FOR ALL BEST BETS**
+
+Every time you pull best bets for ANY sport (live or regular), use this EXACT format with box-drawing characters.
+
+---
+
+#### BEST BETS TABLE FORMAT
+
+```
+● {SPORT} Best Bets - {Date}
+
+┌────────────┬───────┬─────────────────────────┬───────────────────────┬───────┬───────┬────────────┐
+│    Tier    │ Score │        Matchup          │         Pick          │ Line  │ Odds  │    Book    │
+├────────────┼───────┼─────────────────────────┼───────────────────────┼───────┼───────┼────────────┤
+│ ⭐         │  9.38 │ Northwestern @ Nebraska │ Northwestern +7.5     │  +7.5 │ -106  │ FanDuel    │
+│ GOLD_STAR  │       │                         │                       │       │       │            │
+├────────────┼───────┼─────────────────────────┼───────────────────────┼───────┼───────┼────────────┤
+│ EDGE_LEAN  │  8.52 │ Texas Tech @ Arizona    │ Texas Tech +3.5       │  +3.5 │ -110  │ Caesars    │
+├────────────┼───────┼─────────────────────────┼───────────────────────┼───────┼───────┼────────────┤
+│ EDGE_LEAN  │  8.32 │ McNeese @ East Texas AM │ East Texas AM +35.5   │ +35.5 │ -105  │ DraftKings │
+└────────────┴───────┴─────────────────────────┴───────────────────────┴───────┴───────┴────────────┘
+
+7 picks | 1 GOLD_STAR | 6 EDGE_LEAN | All spreads taking the points
+```
+
+**CRITICAL: Pick column MUST match Matchup team name** - If matchup says "LSU @ Tennessee", pick says "LSU +7.5" NOT "Tigers +7.5"
+
+---
+
+#### ENGINE SCORES TABLE (ALWAYS SHOW AFTER BEST BETS TABLE)
+
+```
+FINAL = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.15) + (Jarvis × 0.25) + Boosts
+
+---
+ENGINE SCORES TABLE
+
+┌───┬─────────────────────┬───────────┬───────────┬───────────┬───────────┬───────┬────────┬───────┐
+│ # │        Pick         │    AI     │ Research  │ Esoteric  │  Jarvis   │ Base  │ Boosts │ Final │
+│   │                     │   (25%)   │   (35%)   │   (15%)   │   (25%)   │       │        │       │
+├───┼─────────────────────┼───────────┼───────────┼───────────┼───────────┼───────┼────────┼───────┤
+│ 1 │ Texas Tech +3.5     │ 7.8 →     │ 7.3 →     │ 5.48 →    │ 6.6 →     │  6.98 │  +1.54 │  8.52 │
+│   │                     │ 1.95      │ 2.56      │ 0.82      │ 1.65      │       │        │       │
+├───┼─────────────────────┼───────────┼───────────┼───────────┼───────────┼───────┼────────┼───────┤
+│ 2 │ East Texas AM +35.5 │ 7.0 →     │ 7.3 →     │ 5.15 →    │ 6.74 →    │  6.76 │  +1.56 │  8.32 │
+│   │                     │ 1.75      │ 2.56      │ 0.77      │ 1.69      │       │        │       │
+├───┼─────────────────────┼───────────┼───────────┼───────────┼───────────┼───────┼────────┼───────┤
+│ 3 │ Brown +1.5          │ 6.5 →     │ 7.3 →     │ 5.77 →    │ 5.75 →    │  6.48 │  +1.56 │  8.04 │
+│   │                     │ 1.63      │ 2.56      │ 0.87      │ 1.44      │       │        │       │
+└───┴─────────────────────┴───────────┴───────────┴───────────┴───────────┴───────┴────────┴───────┘
+```
+
+**Engine columns show:** Raw Score → Weighted Contribution (two rows per pick)
+
+---
+
+#### MANDATORY RULES:
+- ✅ ALWAYS use box-drawing characters (┌ ─ ┬ ┐ │ ├ ┼ ┤ └ ┴ ┘) for tables
+- ✅ ALWAYS show ENGINE SCORES TABLE immediately after Best Bets table
+- ✅ ALWAYS match Pick team name to Matchup (city/school name, NOT mascot)
+- ✅ ALWAYS show formula before Engine Scores: `FINAL = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.15) + (Jarvis × 0.25) + Boosts`
+- ✅ ALWAYS show summary footer with pick counts
+
+#### NEVER DO:
+- ❌ Use markdown pipe tables `| col |`
+- ❌ Use space-aligned tables without box characters
+- ❌ Skip the ENGINE SCORES TABLE
+- ❌ Use mascot names (Tigers, Bears) when Matchup uses city/school names (LSU, Brown)
+- ❌ Omit the formula or engine breakdown
 
 ---
 

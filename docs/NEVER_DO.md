@@ -1822,3 +1822,43 @@ live-api-audit:        # Live audit after deploy
 335. **ALWAYS** document API priority in comments when choosing between paid and free sources
 
 ---
+
+## v20.28.5 Best Bets Display (rules 336-342)
+
+336. **NEVER** use markdown pipe tables `| col | col |` — ugly and hard to read
+337. **NEVER** use space-aligned tables without box-drawing characters
+338. **NEVER** skip the ENGINE SCORES TABLE after Best Bets
+339. **NEVER** use mascot names (Tigers, Bears) when Matchup uses city/school names (LSU, Brown)
+340. **ALWAYS** use box-drawing characters (┌ ─ ┬ ┐ │ ├ ┼ ┤ └ ┴ ┘) for ALL tables
+341. **ALWAYS** show ENGINE SCORES TABLE with formula after Best Bets table
+342. **ALWAYS** match Pick column team name to Matchup column team name
+
+**Display Format Reference:** See CLAUDE.md section "Claude Code Best Bets Display Format (v20.28.5)"
+
+**MANDATORY BEST BETS TABLE:**
+```
+● {SPORT} Best Bets - {Date}
+
+┌────────────┬───────┬─────────────────────────┬───────────────────────┬───────┬───────┬────────────┐
+│    Tier    │ Score │        Matchup          │         Pick          │ Line  │ Odds  │    Book    │
+├────────────┼───────┼─────────────────────────┼───────────────────────┼───────┼───────┼────────────┤
+│ EDGE_LEAN  │  8.52 │ Texas Tech @ Arizona    │ Texas Tech +3.5       │  +3.5 │ -110  │ Caesars    │
+└────────────┴───────┴─────────────────────────┴───────────────────────┴───────┴───────┴────────────┘
+
+7 picks | 0 GOLD_STAR | 7 EDGE_LEAN | All spreads taking the points
+```
+
+**MANDATORY ENGINE SCORES TABLE (ALWAYS SHOW AFTER BEST BETS):**
+```
+FINAL = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.15) + (Jarvis × 0.25) + Boosts
+
+┌───┬─────────────────────┬───────────┬───────────┬───────────┬───────────┬───────┬────────┬───────┐
+│ # │        Pick         │    AI     │ Research  │ Esoteric  │  Jarvis   │ Base  │ Boosts │ Final │
+│   │                     │   (25%)   │   (35%)   │   (15%)   │   (25%)   │       │        │       │
+├───┼─────────────────────┼───────────┼───────────┼───────────┼───────────┼───────┼────────┼───────┤
+│ 1 │ Texas Tech +3.5     │ 7.8 →     │ 7.3 →     │ 5.48 →    │ 6.6 →     │  6.98 │  +1.54 │  8.52 │
+│   │                     │ 1.95      │ 2.56      │ 0.82      │ 1.65      │       │        │       │
+└───┴─────────────────────┴───────────┴───────────┴───────────┴───────────┴───────┴────────┴───────┘
+```
+
+---

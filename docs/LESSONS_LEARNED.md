@@ -4708,3 +4708,61 @@ Deploy verified ✅
 **Added in:** v20.28.2 (Feb 14, 2026)
 
 ---
+
+### Lesson 127: Best Bets Display — Box-Drawing Tables ALWAYS (v20.28.5)
+**Problem:** Best bets displayed in ugly markdown pipe tables or inconsistent formats. User had to repeatedly correct the format.
+
+**Root Cause:** No standardized display format. Kept using markdown `| col |` tables or space-aligned tables instead of clean box-drawing characters.
+
+**Solution: ALWAYS Use Box-Drawing Tables**
+
+**BEST BETS TABLE:**
+```
+● {SPORT} Best Bets - {Date}
+
+┌────────────┬───────┬─────────────────────────┬───────────────────────┬───────┬───────┬────────────┐
+│    Tier    │ Score │        Matchup          │         Pick          │ Line  │ Odds  │    Book    │
+├────────────┼───────┼─────────────────────────┼───────────────────────┼───────┼───────┼────────────┤
+│ ⭐         │  9.38 │ Northwestern @ Nebraska │ Northwestern +7.5     │  +7.5 │ -106  │ FanDuel    │
+│ GOLD_STAR  │       │                         │                       │       │       │            │
+├────────────┼───────┼─────────────────────────┼───────────────────────┼───────┼───────┼────────────┤
+│ EDGE_LEAN  │  8.52 │ Texas Tech @ Arizona    │ Texas Tech +3.5       │  +3.5 │ -110  │ Caesars    │
+└────────────┴───────┴─────────────────────────┴───────────────────────┴───────┴───────┴────────────┘
+
+7 picks | 1 GOLD_STAR | 6 EDGE_LEAN | All spreads taking the points
+```
+
+**ENGINE SCORES TABLE (ALWAYS SHOW AFTER BEST BETS):**
+```
+FINAL = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.15) + (Jarvis × 0.25) + Boosts
+
+---
+ENGINE SCORES TABLE
+
+┌───┬─────────────────────┬───────────┬───────────┬───────────┬───────────┬───────┬────────┬───────┐
+│ # │        Pick         │    AI     │ Research  │ Esoteric  │  Jarvis   │ Base  │ Boosts │ Final │
+│   │                     │   (25%)   │   (35%)   │   (15%)   │   (25%)   │       │        │       │
+├───┼─────────────────────┼───────────┼───────────┼───────────┼───────────┼───────┼────────┼───────┤
+│ 1 │ Texas Tech +3.5     │ 7.8 →     │ 7.3 →     │ 5.48 →    │ 6.6 →     │  6.98 │  +1.54 │  8.52 │
+│   │                     │ 1.95      │ 2.56      │ 0.82      │ 1.65      │       │        │       │
+└───┴─────────────────────┴───────────┴───────────┴───────────┴───────────┴───────┴────────┴───────┘
+```
+
+**CRITICAL RULES:**
+- ✅ ALWAYS use box-drawing characters (┌ ─ ┬ ┐ │ ├ ┼ ┤ └ ┴ ┘) for ALL tables
+- ✅ ALWAYS show ENGINE SCORES TABLE after Best Bets table
+- ✅ ALWAYS match Pick name to Matchup (LSU not Tigers, Brown not Bears)
+- ✅ ALWAYS show formula before engines: `FINAL = (AI × 0.25) + ...`
+- ❌ NEVER use markdown pipe tables `| col |`
+- ❌ NEVER use space-aligned tables without box characters
+- ❌ NEVER skip the ENGINE SCORES TABLE
+- ❌ NEVER use mascot names when Matchup uses city/school names
+
+**Files Modified:**
+- `CLAUDE.md` — "Claude Code Best Bets Display Format (v20.28.5)"
+- `docs/LESSONS_LEARNED.md` — This lesson
+- `docs/NEVER_DO.md` — Rules 336-342
+
+**Added in:** v20.28.5 (Feb 14, 2026)
+
+---

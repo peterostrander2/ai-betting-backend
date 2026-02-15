@@ -1431,10 +1431,55 @@ Inspect 1 prod pick and verify:
 **Shortest path (do first):**
 1) `/live/debug/integrations` all green + timestamps move
 2) best-bets has `_timed_out_components = []` and `stack_complete = true`
-3) manual recompute of one pick’s final_score matches formula
+3) manual recompute of one pick's final_score matches formula
 
 ---
 
+## ✅ BEST BETS DISPLAY CHECKLIST (v20.28.5)
+
+Run this checklist when displaying best bets in Claude Code:
+
+### Table Format Verification:
+1. **Clean readable format (NOT markdown pipes)**
+   - [ ] Uses space-aligned columns with `═══` separators
+   - [ ] NO markdown `| col | col |` pipe tables
+   - [ ] Header: `{SPORT} BEST BETS` + date on right
+
+2. **Required Columns**
+   - [ ] # (row number)
+   - [ ] Start (time in "6:00 PM" format)
+   - [ ] Matchup ("Away @ Home" shortened)
+   - [ ] Pick (⭐ prefix for GOLD_STAR, then "Team +7.5")
+   - [ ] Odds (American format)
+   - [ ] Book (title case)
+   - [ ] Score (2 decimals)
+
+3. **Footer Requirements**
+   - [ ] Summary: `X picks | Y ⭐ GOLD_STAR | Z EDGE_LEAN | bet type summary`
+   - [ ] Live indicator: `🔴 ALL GAMES LIVE - Pulled {time} ET`
+
+4. **Data Mapping**
+   - [ ] Pick: `tier` + `side` + `line`
+   - [ ] Matchup: `matchup` field shortened
+   - [ ] Book: `book` in title case
+   - [ ] Score: `final_score` with 2 decimals
+   - [ ] Start: `start_time_et` without "ET"
+
+### Expected Output Format:
+```
+{SPORT} BEST BETS                                                    {Date}
+═══════════════════════════════════════════════════════════════════════════════
+
+  #   Start        Matchup                      Pick               Odds   Book        Score
+ ─── ─────────── ──────────────────────────── ────────────────── ────── ────────── ───────
+  1   5:41 PM    Miss Valley St @ Alabama AM   ⭐ Devils +7.5     -125   Fanatics    8.66
+  2   6:00 PM    West Virginia @ UCF              Mountaineers +5.5 -112 FanDuel     8.22
+
+═══════════════════════════════════════════════════════════════════════════════
+  6 picks  |  1 ⭐ GOLD_STAR  |  5 EDGE_LEAN  |  All taking the points
+
+  🔴 ALL GAMES LIVE - Pulled 7:25 PM ET
+```
 
 ---
 
