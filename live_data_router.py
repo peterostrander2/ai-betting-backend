@@ -3630,10 +3630,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
             input_vacuum = game_data.get("vacuum", 0)
 
             # If using default values, MPS is getting identical inputs across games
-            # This causes constant AI scores (the NCAAB 7.8 bug)
+            # This causes constant AI scores (the NCAAB 7.8 bug, NHL degeneracy)
+            # v20.28.6: Check ALL sports' league average pace values
+            # League averages: NBA=98.5, NFL=63.5, MLB=4.3, NHL=31.0, NCAAB=68.0
+            LEAGUE_AVG_PACES = [98.5, 100.0, 63.5, 4.3, 31.0, 68.0]
+            pace_is_default = any(abs(input_pace - avg) < 1.5 for avg in LEAGUE_AVG_PACES)
+
             defaults_used = (
                 input_def_rank == 15 and
-                (input_pace == 100 or abs(input_pace - 68.0) < 1.0) and
+                pace_is_default and
                 input_vacuum == 0
             )
 
