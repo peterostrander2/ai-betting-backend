@@ -623,6 +623,9 @@ SPORT_MAPPINGS = {
     "ncaab": {"odds": "basketball_ncaab", "espn": "basketball/mens-college-basketball", "playbook": "NCAAB"},
 }
 
+# Sportsbook configurations - shared module
+from core.sportsbooks import SPORTSBOOK_CONFIGS
+
 # ============================================================================
 # v20.22: SHADOW CONFLUENCE LOGGING
 # ============================================================================
@@ -7522,6 +7525,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             if TIME_FILTERS_AVAILABLE and commence_time:
                                 game_status = get_game_status(commence_time)
 
+                            # v20.28.5: Sync game_status from market_phase (more authoritative from Odds API)
+                            _market_phase = score_data.get("market_phase", "PRE_GAME")
+                            if _market_phase in ("IN_PLAY", "HALFTIME"):
+                                game_status = "IN_PROGRESS"
+                            elif _market_phase == "FINAL":
+                                game_status = "FINAL"
+
                             signals_fired = score_data.get("pillars_passed", []).copy()
                             if sharp_signal.get("signal_strength") in ["STRONG", "MODERATE"]:
                                 signals_fired.append(f"SHARP_{sharp_signal.get('signal_strength')}")
@@ -7653,6 +7663,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 event_id=signal_game_id,
                 game_status=_sharp_game_status  # v20.0: Pass for live signals
             )
+
+            # v20.28.5: Sync game_status from market_phase (more authoritative from Odds API)
+            _market_phase = score_data.get("market_phase", "PRE_GAME")
+            if _market_phase in ("IN_PLAY", "HALFTIME"):
+                _sharp_game_status = "IN_PROGRESS"
+            elif _market_phase == "FINAL":
+                _sharp_game_status = "FINAL"
 
             signals_fired = score_data.get("pillars_passed", []).copy()
             signals_fired.append(f"SHARP_{signal.get('signal_strength', 'MODERATE')}")
@@ -7912,6 +7929,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 game_status = "PRE_GAME"
                 if TIME_FILTERS_AVAILABLE and commence_time:
                     game_status = get_game_status(commence_time)
+
+                # v20.28.5: Sync game_status from market_phase (more authoritative from Odds API)
+                _market_phase = score_data.get("market_phase", "PRE_GAME")
+                if _market_phase in ("IN_PLAY", "HALFTIME"):
+                    game_status = "IN_PROGRESS"
+                elif _market_phase == "FINAL":
+                    game_status = "FINAL"
 
                 # v16.1: Use pre-resolved player cache (instant lookup, no await)
                 canonical_player_id = None
