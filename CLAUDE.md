@@ -119,7 +119,8 @@
 | 121 | **v20.28.1 CI Hardening** | Tests in repo ≠ tests in CI, wire them to GitHub Actions, hard gate classes |
 | 122 | **v20.28.2 Paid APIs First** | Use Odds API for live scores (paid), ESPN as fallback (free). Always prioritize paid API features |
 | 123-126 | **v20.28.4 Portable Test Suite** | No /data required, conftest.py fixtures, lazy init, optional dep skips, verify actual return values |
-| 127 | **v20.28.5 Best Bets Display** | Clean space-aligned tables with ═══ separators, NEVER markdown pipes, start times required |
+| 127 | **v20.28.5 Best Bets Display** | Box-drawing tables, NEVER markdown pipes, start times required |
+| 128 | **v20.28.5 Multiple Code Paths** | game_status hardcoded in sharp fallback — grep ALL pick append locations |
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
@@ -231,6 +232,8 @@
 - v20.27 AI Score Variance & Heuristic Fallback (rules 319-325)
 - v20.28.1 CI Hardening (rules 326-330)
 - v20.28.4 Portable Test Suite (rules 331-338)
+- v20.28.5 Best Bets Display (rules 336-342)
+- v20.28.5 Multiple Code Paths (rules 343-348)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash

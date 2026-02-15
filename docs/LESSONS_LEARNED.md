@@ -4766,3 +4766,52 @@ ENGINE SCORES TABLE
 **Added in:** v20.28.5 (Feb 14, 2026)
 
 ---
+
+### Lesson 128: Multiple Code Paths for Picks — game_status Hardcoded in Fallback (v20.28.5)
+
+**Problem:** Live games showed `game_status: "PRE_GAME"` even though `market_phase: "IN_PLAY"` was correct. The fix for syncing game_status from market_phase only worked for some picks.
+
+**Root Cause:** TWO code paths generate game picks:
+1. **Main game loop** (lines ~7480-7596) - correctly used computed `game_status`
+2. **Sharp fallback path** (lines ~7645-7760) - **hardcoded `game_status: "PRE_GAME"`**
+
+The fix at line ~7528 synced `game_status` from `market_phase`, but the sharp fallback path at line ~7729 still had:
+```python
+"game_status": "PRE_GAME",  # ← HARDCODED, ignored sync
+```
+
+**Why it seemed to work earlier:**
+- Earlier picks came from main loop (correct code)
+- Games hadn't started yet (PRE_GAME was correct)
+- We weren't checking game_status field explicitly
+
+**Solution:**
+1. Fix sharp fallback to use `_sharp_game_status` variable instead of hardcoded "PRE_GAME"
+2. Derive `has_started`, `is_live`, `is_live_bet_candidate` from the variable too
+
+**Before (line 7729):**
+```python
+"game_status": "PRE_GAME",
+"is_live": False,
+```
+
+**After:**
+```python
+"game_status": _sharp_game_status,
+"is_live": _sharp_game_status == "IN_PROGRESS",
+```
+
+**Prevention:**
+- When adding ANY computed field to pick output, grep for ALL places picks are assembled
+- Search: `grep -n "game_picks.append\|props_picks.append" live_data_router.py`
+- Each append location must use the computed variable, not hardcoded values
+- Add debug fields to trace which code path is executing when values seem wrong
+
+**Files Modified:**
+- `live_data_router.py` — Lines ~7729-7734 (sharp fallback pick assembly)
+
+**Commits:** `1310a54`, `0bb1e19`
+
+**Added in:** v20.28.5 (Feb 14, 2026)
+
+---

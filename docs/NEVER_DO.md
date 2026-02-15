@@ -1862,3 +1862,37 @@ FINAL = (AI × 0.25) + (Research × 0.35) + (Esoteric × 0.15) + (Jarvis × 0.25
 ```
 
 ---
+
+## v20.28.5 Multiple Code Paths — game_status Hardcoding (rules 343-348)
+
+343. **NEVER** hardcode `game_status: "PRE_GAME"` in pick assembly — always use computed variable
+344. **NEVER** hardcode `is_live: False` or `has_started: False` — derive from game_status variable
+345. **NEVER** fix a computed field bug without checking ALL code paths that assemble picks
+346. **ALWAYS** grep for all pick append locations: `grep -n "game_picks.append\|props_picks.append" live_data_router.py`
+347. **ALWAYS** use the synced variable in ALL pick assembly locations (main loop + fallback paths)
+348. **ALWAYS** add debug fields when values seem wrong to trace which code path executes
+
+**Code Paths That Assemble Game Picks:**
+```bash
+grep -n "game_picks.append" live_data_router.py
+# Line ~7559: Main game loop (spreads, totals, ML)
+# Line ~7708: Sharp fallback path (when main loop has no picks)
+```
+
+**The Bug (line 7729):**
+```python
+# WRONG — hardcoded, ignores sync
+"game_status": "PRE_GAME",
+"is_live": False,
+
+# CORRECT — uses computed variable
+"game_status": _sharp_game_status,
+"is_live": _sharp_game_status == "IN_PROGRESS",
+```
+
+**When Debugging "Fix Didn't Work":**
+1. Add debug fields to the pick to trace code path
+2. If debug fields are `null`, you're in the WRONG code path
+3. Find ALL locations with `grep` and fix each one
+
+---
