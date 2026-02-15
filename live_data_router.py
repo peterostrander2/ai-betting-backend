@@ -3646,6 +3646,26 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 is_degenerate = True
                 degenerate_reason = f"DEFAULTED_INPUTS (def_rank={input_def_rank}, pace={input_pace}, vacuum={input_vacuum})"
 
+            # v20.28.7: Check for OUTPUT saturation (NHL degeneracy fix)
+            # If MPS returns max score (>=9.9) with low model variance (<0.5),
+            # it's saturating and all games will get identical scores
+            if not is_degenerate and ai_score >= 9.9 and model_std < 0.5:
+                is_degenerate = True
+                degenerate_reason = f"OUTPUT_SATURATION (ai_score={ai_score:.2f}, model_std={model_std:.3f})"
+
+            # v20.28.7: Check for model prediction collapse
+            # If all models predict nearly identical values, MPS is degenerate
+            if not is_degenerate and model_preds:
+                pred_values = [v for v in model_preds.values() if isinstance(v, (int, float))]
+                if len(pred_values) >= 3:
+                    pred_arr = np.array(pred_values)
+                    pred_stddev = float(np.std(pred_arr))
+                    pred_range = float(np.max(pred_arr) - np.min(pred_arr))
+                    # If all model predictions within 0.5 points of each other, that's suspicious
+                    if pred_range < 0.5 and ai_score >= 9.5:
+                        is_degenerate = True
+                        degenerate_reason = f"MODEL_COLLAPSE (pred_range={pred_range:.2f}, pred_stddev={pred_stddev:.3f})"
+
             if is_degenerate:
                 # Fall back to deterministic heuristic which has proper variance
                 logger.warning(f"MPS returned degenerate output (ai={ai_score:.2f}, std={model_std:.3f}), using heuristic: {degenerate_reason}")
