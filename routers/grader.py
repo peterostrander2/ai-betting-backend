@@ -439,6 +439,99 @@ async def adjust_sport_weights(sport: str, adjust_config: Dict[str, Any] = None)
 
 
 # =============================================================================
+# GRADER RESET WEIGHTS ENDPOINT (v20.28.6)
+# =============================================================================
+
+@router.post("/grader/reset-weights/{sport}")
+async def reset_sport_weights(sport: str, reset_config: Dict[str, Any] = None):
+    """
+    Reset weights for a sport/stat_type back to baseline.
+
+    v20.28.6: Use this to undo incorrect weight adjustments from small samples.
+    Example: Moneyline pace was adjusted to 0.21 based on only 6 picks.
+
+    Request body:
+    {
+        "stat_type": "moneyline",   # Which market to reset (required)
+        "factor": "pace",           # Which factor to reset (optional, resets all if omitted)
+        "confirm": true             # Must be true to apply (safety check)
+    }
+
+    Baseline weights:
+    - defense: 0.15
+    - pace: 0.12
+    - vacuum: 0.18
+    - lstm: 0.20
+    - officials: 0.08
+    - park_factor: 0.10
+    """
+    if not AUTO_GRADER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+    config = reset_config or {}
+    stat_type = config.get("stat_type")
+    factor = config.get("factor")  # Optional: reset specific factor only
+    confirm = config.get("confirm", False)
+
+    if not stat_type:
+        raise HTTPException(status_code=400, detail="stat_type is required")
+
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Set confirm=true to apply reset. This is a safety check."
+        )
+
+    grader = get_grader()
+    sport_upper = sport.upper()
+
+    if sport_upper not in grader.weights:
+        raise HTTPException(status_code=400, detail=f"Unsupported sport: {sport}")
+
+    if stat_type not in grader.weights[sport_upper]:
+        raise HTTPException(status_code=400, detail=f"Unknown stat_type: {stat_type}")
+
+    # Baseline weights
+    BASELINE = {
+        "defense": 0.15,
+        "pace": 0.12,
+        "vacuum": 0.18,
+        "lstm": 0.20,
+        "officials": 0.08,
+        "park_factor": 0.10,
+    }
+
+    current = grader.weights[sport_upper][stat_type]
+    changes = {}
+
+    if factor:
+        # Reset single factor
+        if factor not in BASELINE:
+            raise HTTPException(status_code=400, detail=f"Unknown factor: {factor}")
+        old_value = getattr(current, factor)
+        setattr(current, factor, BASELINE[factor])
+        changes[factor] = {"old": old_value, "new": BASELINE[factor]}
+    else:
+        # Reset all factors
+        for f, baseline_val in BASELINE.items():
+            if hasattr(current, f):
+                old_value = getattr(current, f)
+                setattr(current, f, baseline_val)
+                changes[f] = {"old": round(old_value, 4), "new": baseline_val}
+
+    # Save to disk
+    grader._save_state()
+
+    return {
+        "status": "reset_complete",
+        "sport": sport_upper,
+        "stat_type": stat_type,
+        "changes": changes,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+# =============================================================================
 # GRADER TRAIN TEAM MODELS ENDPOINT
 # =============================================================================
 
