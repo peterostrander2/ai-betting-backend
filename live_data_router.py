@@ -3305,7 +3305,7 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         }
 
     # v16.1: Helper function for heuristic AI score calculation (fallback when LSTM unavailable)
-    def _calculate_heuristic_ai_score(base_ai, sharp_signal, spread, player_name, game_data: Optional[Dict] = None):
+    def _calculate_heuristic_ai_score(base_ai, sharp_signal, spread, player_name, game_data: Optional[Dict] = None, coverage_status: str = "OK"):
         """
         Calculate AI score using deterministic heuristic rules.
 
@@ -3315,6 +3315,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         - rest days and injury impact
         - line movement and EV/Kelly signals
         - odds-implied probability for moneylines
+
+        v20.28.10: Coverage penalty when DEFAULTED_INPUTS triggers:
+        - coverage_status="LOW" caps AI to 7.0 max (sparse data penalty)
+        - coverage_status="OK" allows full 0-10 range
 
         Returns: (ai_score, ai_reasons, ai_components)
         """
@@ -3426,8 +3430,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 sharp_component = 1.0
                 ai_reasons.append(f"MODERATE sharp signal (+1.00)")
             elif _ss == "MILD" or lv >= 0.5:
-                sharp_component = 0.5
-                ai_reasons.append(f"MILD sharp signal (+0.50)")
+                # v20.28.10: Reduced from 0.5 to 0.3 - MILD signals indicate weak conviction
+                sharp_component = 0.3
+                ai_reasons.append(f"MILD sharp signal (+0.30)")
             else:
                 sharp_component = 0.2  # Some data present
         ai_components["sharp"] = round(sharp_component, 3)
@@ -3460,8 +3465,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     home_component + player_component)
         ai_score = max(0.0, min(10.0, raw_score))
 
+        # v20.28.10: Coverage penalty - cap AI score when data is sparse
+        # DEFAULTED_INPUTS means MPS received placeholder data, so heuristic
+        # should NOT produce high scores that imply real ML confidence
+        SPARSE_DATA_CAP = 7.0
+        coverage_penalty_applied = False
+        if coverage_status == "LOW" and ai_score > SPARSE_DATA_CAP:
+            ai_reasons.append(f"Coverage penalty: {ai_score:.2f} -> {SPARSE_DATA_CAP:.1f} (sparse data)")
+            ai_score = SPARSE_DATA_CAP
+            coverage_penalty_applied = True
+
         ai_components["raw_total"] = round(raw_score, 3)
         ai_components["clamped"] = round(ai_score, 3)
+        ai_components["coverage_status"] = coverage_status
+        ai_components["coverage_penalty_applied"] = coverage_penalty_applied
         ai_reasons.append(f"Heuristic total: {ai_score:.2f}/10")
 
         return ai_score, ai_reasons, ai_components
@@ -3509,8 +3526,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # ===== GUARD: MPS must be available =====
         if mps is None:
             # Fallback to deterministic heuristic
+            # v20.28.10: coverage_status="OK" since we don't know about inputs (MPS not loaded)
             ai_score, heuristic_reasons, ai_components = _calculate_heuristic_ai_score(
-                fallback_base, sharp_signal, game_data.get("spread", 0), None, game_data
+                fallback_base, sharp_signal, game_data.get("spread", 0), None, game_data, coverage_status="OK"
             )
             reasons.append("ML unavailable: MasterPredictionSystem not loaded")
             reasons.extend(heuristic_reasons)
@@ -3518,7 +3536,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "fallback_reason": "MPS_NOT_LOADED",
                 "ai_components": ai_components,
                 "ai_weight_applied": 1.0,  # Full weight since it's the only source
-                "ai_status": "HEURISTIC_DETERMINISTIC"
+                "ai_status": "HEURISTIC_DETERMINISTIC",
+                "coverage_status": "OK",  # Unknown, so no penalty
+                "defaulted_inputs": False
             }
             return ai_score, reasons, "HEURISTIC_DETERMINISTIC", 0, ai_audit
 
@@ -3681,9 +3701,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
 
             if is_degenerate:
                 # Fall back to deterministic heuristic which has proper variance
+                # v20.28.10: Pass coverage_status="LOW" to cap score when DEFAULTED_INPUTS
+                _coverage_status = "LOW" if "DEFAULTED_INPUTS" in degenerate_reason else "OK"
                 logger.warning(f"MPS returned degenerate output (ai={ai_score:.2f}, std={model_std:.3f}), using heuristic: {degenerate_reason}")
                 ai_score_heuristic, heuristic_reasons, ai_components = _calculate_heuristic_ai_score(
-                    fallback_base, sharp_signal, game_data.get("spread", 0), None, game_data
+                    fallback_base, sharp_signal, game_data.get("spread", 0), None, game_data, coverage_status=_coverage_status
                 )
                 reasons.append(f"MPS degenerate: {degenerate_reason}")
                 reasons.extend(heuristic_reasons)
@@ -3693,7 +3715,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     "mps_model_std": round(model_std, 3),
                     "ai_components": ai_components,
                     "ai_weight_applied": 1.0,
-                    "ai_status": "HEURISTIC_DETERMINISTIC"
+                    "ai_status": "HEURISTIC_DETERMINISTIC",
+                    "coverage_status": _coverage_status,  # v20.28.10 telemetry
+                    "defaulted_inputs": "DEFAULTED_INPUTS" in degenerate_reason
                 }
                 return ai_score_heuristic, reasons, "HEURISTIC_DETERMINISTIC", 0, ai_audit
 
@@ -3732,15 +3756,19 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "ai_weight_applied": 1.0,
                 "ai_post_clamp": round(ai_score, 3),
                 "fallback_reason": None,  # Not a fallback
+                # v20.28.10 telemetry
+                "coverage_status": "OK",  # MPS succeeded = real data
+                "defaulted_inputs": False
             }
 
             return ai_score, reasons, "ML_PRIMARY", models_used, ai_audit
 
         except Exception as e:
             # ===== FALLBACK TO DETERMINISTIC HEURISTIC =====
+            # v20.28.10: Exception fallback - don't know about inputs so coverage_status="OK"
             logger.warning(f"8-model prediction failed, using deterministic heuristic: {e}")
             ai_score, heuristic_reasons, ai_components = _calculate_heuristic_ai_score(
-                fallback_base, sharp_signal, game_data.get("spread", 0), None, game_data
+                fallback_base, sharp_signal, game_data.get("spread", 0), None, game_data, coverage_status="OK"
             )
             reasons.append(f"ML unavailable: {str(e)[:100]}")
             reasons.extend(heuristic_reasons)
@@ -3748,7 +3776,9 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "fallback_reason": f"MPS_EXCEPTION: {str(e)[:80]}",
                 "ai_components": ai_components,
                 "ai_weight_applied": 1.0,
-                "ai_status": "HEURISTIC_DETERMINISTIC"
+                "ai_status": "HEURISTIC_DETERMINISTIC",
+                "coverage_status": "OK",  # Unknown, so no penalty
+                "defaulted_inputs": False
             }
             return ai_score, reasons, "HEURISTIC_DETERMINISTIC", 0, ai_audit
 
@@ -5783,7 +5813,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
         # Game pick types: SPREAD, TOTAL, MONEYLINE, SHARP (not "GAME" - that's the default)
         ensemble_metadata = None
         ensemble_adjustment = 0.0
+        ensemble_used = False  # v20.28.10 telemetry
+        ensemble_skipped_reason = None  # v20.28.10 telemetry
         _GAME_PICK_TYPES = {"SPREAD", "TOTAL", "MONEYLINE", "SHARP", "GAME"}
+
+        # v20.28.10: Get coverage_status from ai_audit - gate ensemble boost by coverage
+        _ai_coverage_status = _ai_telemetry.get("ai_audit", {}).get("coverage_status", "OK")
 
         if pick_type in _GAME_PICK_TYPES and ENSEMBLE_AVAILABLE and ML_INTEGRATION_AVAILABLE:
             try:
@@ -5809,13 +5844,22 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                     ensemble_confidence = ensemble_metadata.get("confidence", 0)
                     ai_reasons.append(f"Ensemble hit prob: {hit_prob:.1%} (conf: {ensemble_confidence:.0f}%)")
 
-                    # Determine ensemble adjustment value (applied INSIDE TOTAL_BOOST_CAP)
-                    if hit_prob > 0.6:
-                        ensemble_adjustment = ENSEMBLE_ADJUSTMENT_STEP
-                        ai_reasons.append(f"Ensemble boost: +{ENSEMBLE_ADJUSTMENT_STEP} (prob > 60%)")
-                    elif hit_prob < 0.4:
-                        ensemble_adjustment = -ENSEMBLE_ADJUSTMENT_STEP
-                        ai_reasons.append(f"Ensemble penalty: -{ENSEMBLE_ADJUSTMENT_STEP} (prob < 40%)")
+                    # v20.28.10: Gate ensemble boost by coverage_status
+                    # When data is sparse (coverage_status="LOW"), ensemble predictions are
+                    # based on defaulted inputs and should NOT boost scores
+                    if _ai_coverage_status == "LOW":
+                        ensemble_skipped_reason = "coverage_status=LOW (sparse data)"
+                        ai_reasons.append(f"Ensemble boost skipped: {ensemble_skipped_reason}")
+                    else:
+                        # Determine ensemble adjustment value (applied INSIDE TOTAL_BOOST_CAP)
+                        if hit_prob > 0.6:
+                            ensemble_adjustment = ENSEMBLE_ADJUSTMENT_STEP
+                            ensemble_used = True
+                            ai_reasons.append(f"Ensemble boost: +{ENSEMBLE_ADJUSTMENT_STEP} (prob > 60%)")
+                        elif hit_prob < 0.4:
+                            ensemble_adjustment = -ENSEMBLE_ADJUSTMENT_STEP
+                            ensemble_used = True
+                            ai_reasons.append(f"Ensemble penalty: -{ENSEMBLE_ADJUSTMENT_STEP} (prob < 40%)")
             except Exception as e:
                 logger.debug(f"Ensemble prediction unavailable: {e}")
 
@@ -6271,6 +6315,11 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "lineup_confidence_multiplier": lineup_confidence_multiplier,
                 "key_player_out": _key_player_out,
                 "key_player_out_names": _key_player_out_names[:5] if _key_player_out_names else [],
+                # v20.28.10: Coverage penalty telemetry
+                "coverage_status": _ai_telemetry.get("ai_audit", {}).get("coverage_status", "OK"),
+                "defaulted_inputs": _ai_telemetry.get("ai_audit", {}).get("defaulted_inputs", False),
+                "ensemble_used": ensemble_used,
+                "ensemble_skipped_reason": ensemble_skipped_reason,
             },
             # v16.0 Jarvis audit fields (ADDITIVE trigger scoring for GOLD_STAR eligibility)
             "jarvis_baseline": jarvis_data.get("jarvis_baseline", 4.5),

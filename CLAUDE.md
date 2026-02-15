@@ -34,8 +34,8 @@
 | File | Contents | When to Load |
 |------|----------|--------------|
 | `docs/ML_REFERENCE.md` | LSTM models, GLITCH protocol, file index | When working on ML/scoring |
-| `docs/LESSONS_LEARNED.md` | 136 historical bugs & fixes | When debugging a similar issue |
-| `docs/NEVER_DO.md` | 371 consolidated rules (v20.28.9) | Before modifying that subsystem |
+| `docs/LESSONS_LEARNED.md` | 139 historical bugs & fixes | When debugging a similar issue |
+| `docs/NEVER_DO.md` | 377 consolidated rules (v20.28.10) | Before modifying that subsystem |
 | `docs/CHECKLISTS.md` | 18 verification checklists (v20.28.5) | Before deploying changes |
 | `docs/SESSION_NOTES.md` | Codex DNS & troubleshooting | If hitting infra issues |
 | `docs/CONTRACT.md` | Canonical scoring contract reference (v20.21) | When verifying frozen contract values |
@@ -123,6 +123,7 @@
 | 128 | **v20.28.5 Multiple Code Paths** | game_status hardcoded in sharp fallback — grep ALL pick append locations |
 | 129-133 | **v20.28.6 Tech Debt Cleanup** | Singleton audit, test assertions, version sync, deletion docs, skip conditions |
 | 134-136 | **v20.28.7-v20.28.9 MPS Degeneracy & Transparency** | NHL AI degeneracy fix, multi-layer detection, ENGINE_DIVERGENCE warnings |
+| 137-139 | **v20.28.10 Coverage Penalty & Ensemble Gating** | Heuristic cap at 7.0 for sparse data, ensemble gating by coverage_status, MILD sharp reduction |
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
@@ -238,6 +239,7 @@
 - v20.28.5 Multiple Code Paths (rules 343-348)
 - v20.28.6 Tech Debt Cleanup (rules 349-363)
 - v20.28.7-v20.28.9 MPS Degeneracy & Transparency (rules 364-371)
+- v20.28.10 Coverage Penalty & Ensemble Gating (rules 372-377)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -426,7 +428,47 @@ API_KEY=your_key SPORT=NCAAB ./scripts/live_betting_audit.sh
 | `tests/test_live_scores_fallback.py` | BallDontLie fallback regression tests (7 tests): hierarchy, NBA-only gate, telemetry — v20.28.4 |
 | `time_filters.py` | Game status derivation: `get_game_status(commence_time, completed)` returns PRE_GAME/IN_PROGRESS/FINAL/NOT_TODAY — v20.26 |
 
-### Current Version: v20.28.9 (Feb 15, 2026)
+### Current Version: v20.28.10 (Feb 15, 2026)
+
+**v20.28.10 (Feb 15, 2026) — Coverage Penalty + Ensemble Gating:**
+
+**Problem:** AI heuristic fallback produces inflated scores (7.0-8.4) under sparse data, and ensemble boost (+0.5) applies even when inputs are defaulted.
+
+**Root Cause:** When MPS detects DEFAULTED_INPUTS and falls back to heuristic:
+1. Heuristic stacks boosts generously (base + Goldilocks + sharp + rest = 7-8+)
+2. Ensemble still adds +0.5 for high hit_prob (overconfident on garbage inputs)
+
+**Solution:** Coverage penalty system + ensemble gating.
+
+**Changes (v20.28.10):**
+- `live_data_router.py` — `_calculate_heuristic_ai_score()`:
+  - Added `coverage_status` parameter ("OK" or "LOW")
+  - When coverage_status="LOW": Cap AI score to 7.0 max
+  - Reduced MILD sharp signal from +0.5 to +0.3
+- `live_data_router.py` — Ensemble boost section:
+  - Gate ensemble_adjustment by coverage_status
+  - Skip boost when coverage_status="LOW" (sparse data)
+- Added telemetry fields: `coverage_status`, `defaulted_inputs`, `ensemble_used`, `ensemble_skipped_reason`
+
+**Result:**
+- Sparse data teams (Fairfield) now capped at 7.0 AI instead of 8.4
+- Ensemble boost (+0.5) no longer applied when inputs are defaulted
+- Full transparency via telemetry fields
+
+**Key Lessons (137-139):**
+- **Lesson 137:** Heuristic fallback must be conservative when data is sparse — cap score to 7.0
+- **Lesson 138:** Ensemble boost requires coverage_status="OK" — garbage in = garbage out
+- **Lesson 139:** MILD sharp signals indicate weak conviction — reduce boost from 0.5 to 0.3
+
+**NEVER DO (v20.28.10 - rules 372-377):**
+- Rule 372: Never allow heuristic fallback to score above 7.0 when DEFAULTED_INPUTS
+- Rule 373: Never apply ensemble boost when coverage_status="LOW"
+- Rule 374: Never treat MILD sharp signals as equivalent to MODERATE
+- Rule 375: Always include coverage_status in ai_audit telemetry
+- Rule 376: Always include ensemble_used and ensemble_skipped_reason in ai_breakdown
+- Rule 377: Gate boosts/adjustments by data quality, not just availability
+
+---
 
 **v20.28.9 (Feb 15, 2026) — MPS Degeneracy Fix + ENGINE_DIVERGENCE Warnings:**
 
