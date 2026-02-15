@@ -756,6 +756,19 @@ async def fetch_with_retries(
                     # Invalid JSON should not mark usage
                     pass
 
+            # v20.28.6: Playbook API usage marking (success + valid JSON only)
+            if resp.status_code == 200 and url.startswith(PLAYBOOK_API_BASE):
+                try:
+                    _ = resp.json()
+                    try:
+                        from integration_registry import mark_integration_used
+                        mark_integration_used("playbook_api")
+                    except Exception as e:
+                        logger.debug("playbook_api mark_integration_used failed: %s", str(e))
+                except Exception:
+                    # Invalid JSON should not mark usage
+                    pass
+
             return resp
 
         except httpx.RequestError as e:
@@ -2038,6 +2051,13 @@ async def get_sharp_money(sport: str):
     cache_key = f"sharp:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
+        # v20.28.6: Track cache hits for usage monitoring
+        try:
+            from integration_registry import record_cache_hit, mark_integration_used
+            record_cache_hit("playbook_api")
+            mark_integration_used("playbook_api")  # Update last_used_at even on cache hits
+        except Exception:
+            pass
         return cached  # Return dict, FastAPI auto-serializes for endpoints
 
     sport_config = SPORT_MAPPINGS[sport_lower]
@@ -2287,6 +2307,13 @@ async def get_splits(sport: str):
     cache_key = f"splits:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
+        # v20.28.6: Track cache hits for usage monitoring
+        try:
+            from integration_registry import record_cache_hit, mark_integration_used
+            record_cache_hit("playbook_api")
+            mark_integration_used("playbook_api")  # Update last_used_at even on cache hits
+        except Exception:
+            pass
         return JSONResponse(_sanitize_public(cached))
 
     sport_config = SPORT_MAPPINGS[sport_lower]
@@ -2401,6 +2428,14 @@ async def get_injuries(sport: str):
     cache_key = f"injuries:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
+        # v20.28.6: Track cache hits for usage monitoring (only if Playbook source)
+        if cached.get("source") == "playbook":
+            try:
+                from integration_registry import record_cache_hit, mark_integration_used
+                record_cache_hit("playbook_api")
+                mark_integration_used("playbook_api")  # Update last_used_at even on cache hits
+            except Exception:
+                pass
         return cached  # Return dict for dual-use compatibility
 
     sport_config = SPORT_MAPPINGS[sport_lower]
@@ -2488,6 +2523,22 @@ async def get_lines(sport: str):
     cache_key = f"lines:{sport_lower}"
     cached = api_cache.get(cache_key)
     if cached:
+        # v20.28.6: Track cache hits for usage monitoring (based on source)
+        source = cached.get("source")
+        if source == "playbook":
+            try:
+                from integration_registry import record_cache_hit, mark_integration_used
+                record_cache_hit("playbook_api")
+                mark_integration_used("playbook_api")
+            except Exception:
+                pass
+        elif source == "odds_api":
+            try:
+                from integration_registry import record_cache_hit, mark_integration_used
+                record_cache_hit("odds_api")
+                mark_integration_used("odds_api")
+            except Exception:
+                pass
         return cached  # Return dict for internal callers, FastAPI auto-serializes for endpoints
 
     sport_config = SPORT_MAPPINGS[sport_lower]

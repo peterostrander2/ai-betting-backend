@@ -1896,3 +1896,68 @@ grep -n "game_picks.append" live_data_router.py
 3. Find ALL locations with `grep` and fix each one
 
 ---
+
+## v20.28.6 Technical Debt Cleanup (rules 349-363)
+
+### Singleton Migration Rules (349-352)
+
+349. **NEVER** migrate a "singleton" without verifying it creates a real class instance
+350. **NEVER** assume `_instance = True` is a singleton — it's just a module init marker
+351. **ALWAYS** read the singleton implementation before converting to `@lru_cache(maxsize=1)`
+352. **ALWAYS** verify: "Does `get_X()` return a `ClassName()` instance or just `True/False`?"
+
+**Real Singleton (MIGRATE):**
+```python
+def get_esoteric_grader() -> EsotericGrader:
+    global _instance
+    if _instance is None:
+        _instance = EsotericGrader()  # ← Creates class instance
+    return _instance
+```
+
+**NOT a Singleton (DON'T MIGRATE):**
+```python
+def get_result_fetcher():
+    global _instance
+    if _instance is None:
+        _instance = True  # ← Just a flag!
+    return _instance
+```
+
+### Test Assertion Rules (353-355)
+
+353. **NEVER** write assertions that only check success/error — handle ALL valid response shapes
+354. **ALWAYS** check implementation for all possible return keys before writing assertions
+355. **ALWAYS** use `any(key in result for key in [...])` for multi-key validation
+
+**Wrong:**
+```python
+assert "bias_analysis" in result or "error" in result  # Misses "reason"
+```
+
+**Right:**
+```python
+assert any(k in result for k in ["bias_analysis", "error", "reason"])
+```
+
+### Version Sync Rules (356-358)
+
+356. **NEVER** let `scripts/golden_run.py` EXPECTED version drift from deployed version
+357. **ALWAYS** update expected version after version bumps
+358. **ALWAYS** run `API_KEY=xxx python3 scripts/golden_run.py check` after deploys
+
+### Code Deletion Documentation Rules (359-363)
+
+359. **NEVER** delete files/directories without documenting what was removed
+360. **ALWAYS** update nearest README.md with: what, when, why
+361. **ALWAYS** include deletion details in commit message
+362. **ALWAYS** update tests that referenced deleted code (add skip conditions)
+363. **ALWAYS** verify imports don't break: `python -c "from module import X"`
+
+**README Template for Deletions:**
+```markdown
+## Deleted
+- `services/` - Removed Feb 15, 2026 (obsolete demo data generators, replaced by live APIs)
+```
+
+---

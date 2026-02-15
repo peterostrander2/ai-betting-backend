@@ -4815,3 +4815,206 @@ The fix at line ~7528 synced `game_status` from `market_phase`, but the sharp fa
 **Added in:** v20.28.5 (Feb 14, 2026)
 
 ---
+
+### Lesson 129: Singleton Pattern Audit — Check If It's a Real Singleton (v20.28.6)
+
+**Problem:** Plan called for migrating 5 "singleton" files to `@lru_cache(maxsize=1)`, but `result_fetcher.py` was not a real singleton — it just returned `True` as a module initialization marker.
+
+**Root Cause:** The "singleton" pattern in `result_fetcher.py` was:
+```python
+_result_fetcher_instance = None
+
+def get_result_fetcher():
+    global _result_fetcher_instance
+    if _result_fetcher_instance is None:
+        _result_fetcher_instance = True  # ← Just a marker!
+    return _result_fetcher_instance
+```
+
+This is NOT a singleton — it's a module initialization flag. Converting to `@lru_cache` would be meaningless.
+
+**Solution:**
+- Before migrating singletons, verify the pattern actually creates a class instance
+- `esoteric_grader.py` was a real singleton → migrated to `@lru_cache(maxsize=1)`
+- `result_fetcher.py` was just a marker → left as-is
+
+**Prevention:**
+- Read the singleton implementation before migrating
+- Real singletons create `ClassName()` instances
+- Markers just set flags like `True` or `1`
+- Ask: "Does this function return a useful object, or just a boolean?"
+
+**Files Modified:**
+- `esoteric_grader.py` — Migrated to `@lru_cache(maxsize=1)`
+
+**Commits:** `2ac1819`
+
+**Added in:** v20.28.6 (Feb 15, 2026)
+
+---
+
+### Lesson 130: Test Assertions Should Handle All Valid Response Keys (v20.28.6)
+
+**Problem:** `test_adjust_weights_with_data` failed because it expected `bias_analysis` or `error` in the result, but the API returned `reason` for insufficient samples.
+
+**Root Cause:** The test was too narrow:
+```python
+# Before - missed valid "reason" key
+assert "bias_analysis" in result or "error" in result
+```
+
+The API legitimately returns different keys based on the scenario:
+- `bias_analysis` — Successful bias calculation
+- `error` — Fatal error
+- `reason` — Insufficient samples (valid, non-error state)
+
+**Solution:**
+```python
+# After - handles all valid response types
+assert "bias_analysis" in result or "error" in result or "reason" in result
+```
+
+**Prevention:**
+- When writing assertions for API responses, list ALL valid response shapes
+- Check the implementation to see what keys it can return
+- Consider: success, error, AND edge cases (insufficient data, rate limits, etc.)
+- Use `any(key in result for key in ["bias_analysis", "error", "reason"])` for clarity
+
+**Files Modified:**
+- `tests/test_autograder.py` — Line 265
+
+**Commits:** `0bbfeb5`
+
+**Added in:** v20.28.6 (Feb 15, 2026)
+
+---
+
+### Lesson 131: Golden Run Version Sync — Keep Expected Version Current (v20.28.6)
+
+**Problem:** Live golden run validation failed with "Version mismatch" because `scripts/golden_run.py` expected version "20.24" but deployed version was "20.25".
+
+**Root Cause:** The `EXPECTED` dict in golden_run.py had a stale version:
+```python
+EXPECTED = {
+    "version": "20.24",  # ← Stale, server is 20.25
+    ...
+}
+```
+
+**Solution:** Update expected version to match deployed:
+```python
+EXPECTED = {
+    "version": "20.25",  # v20.25: ET Canonical Clock Standardization
+    ...
+}
+```
+
+**Prevention:**
+- When deploying version bumps, update `scripts/golden_run.py` EXPECTED version
+- Run `API_KEY=xxx python3 scripts/golden_run.py check` after deploys
+- Version mismatch = warning, not fatal (functionality may still work)
+- Consider: auto-fetch version from `/health` instead of hardcoding
+
+**Files Modified:**
+- `scripts/golden_run.py` — Line 48
+
+**Commits:** `9d32b52`
+
+**Added in:** v20.28.6 (Feb 15, 2026)
+
+---
+
+### Lesson 132: Technical Debt Removal — Document What Was Deleted (v20.28.6)
+
+**Problem:** After deleting `legacy/services/` directory, there was no record of what was removed or why, making it hard to trace if something breaks later.
+
+**Root Cause:** Deleting code without documenting what was removed, when, and why.
+
+**Solution:** Update `legacy/README.md` with deletion records:
+```markdown
+## Deleted
+- `services/` - Removed Feb 15, 2026 (odds_api_service.py, playbook_api_service.py - obsolete demo data generators)
+```
+
+**Prevention:**
+- When deleting files/directories, update the nearest README with:
+  - What was deleted
+  - When (date)
+  - Why (obsolete, moved, replaced by X)
+- For major deletions, add a commit message that explains the removal
+- Keep a "graveyard" section in relevant README files
+- Update tests that referenced deleted code (add skip conditions if needed)
+
+**Deleted in this session:**
+1. `live_data_router.py` — `_DEPRECATED_generate_fallback_line_shop` function (92 LOC)
+2. `legacy/services/odds_api_service.py` — Demo data generator (obsolete)
+3. `legacy/services/playbook_api_service.py` — Demo data generator (obsolete)
+4. `legacy/services/__init__.py` — Package init
+
+**Files Modified:**
+- `legacy/README.md` — Documented deletions
+- `tests/test_no_demo_data.py` — Removed obsolete tests, added skip conditions
+
+**Commits:** `22da214`
+
+**Added in:** v20.28.6 (Feb 15, 2026)
+
+---
+
+### Lesson 133: Test Skip Conditions for Optional Dependencies (v20.28.6)
+
+**Problem:** Tests in `test_no_demo_data.py` failed with `ModuleNotFoundError: No module named 'sqlalchemy'` because they tried to import `main.py` which requires sqlalchemy.
+
+**Root Cause:** Tests were using incorrect skip syntax:
+```python
+# Wrong - importorskip returns module, not boolean
+@pytest.mark.skipif(not pytest.importorskip("sqlalchemy"), ...)
+```
+
+**Solution:** Create explicit check function:
+```python
+def _can_import_main():
+    """Check if main.py can be imported (requires sqlalchemy)."""
+    try:
+        import sqlalchemy
+        return True
+    except ImportError:
+        return False
+
+@pytest.mark.skipif(not _can_import_main(), reason="sqlalchemy required")
+class TestDebugEndpointGating:
+    ...
+```
+
+**Prevention:**
+- `pytest.importorskip()` returns the module or raises Skipped — it's not for `skipif`
+- For `skipif` with imports, use explicit try/except helper functions
+- List all optional dependencies in test docstrings
+- Run `./scripts/ci_gate.sh` locally before pushing to catch import errors
+
+**Common patterns:**
+```python
+# For skipif - use helper function
+def _has_sklearn():
+    try:
+        import sklearn
+        return True
+    except ImportError:
+        return False
+
+@pytest.mark.skipif(not _has_sklearn(), reason="sklearn required")
+
+# For inline skip - use importorskip directly
+def test_something():
+    sklearn = pytest.importorskip("sklearn")
+    # test code using sklearn
+```
+
+**Files Modified:**
+- `tests/test_no_demo_data.py` — Added `_can_import_main()` helper
+
+**Commits:** `22da214`
+
+**Added in:** v20.28.6 (Feb 15, 2026)
+
+---

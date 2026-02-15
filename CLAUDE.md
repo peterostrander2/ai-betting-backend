@@ -35,7 +35,7 @@
 |------|----------|--------------|
 | `docs/ML_REFERENCE.md` | LSTM models, GLITCH protocol, file index | When working on ML/scoring |
 | `docs/LESSONS_LEARNED.md` | 127 historical bugs & fixes | When debugging a similar issue |
-| `docs/NEVER_DO.md` | 342 consolidated rules (v20.28.5) | Before modifying that subsystem |
+| `docs/NEVER_DO.md` | 363 consolidated rules (v20.28.6) | Before modifying that subsystem |
 | `docs/CHECKLISTS.md` | 18 verification checklists (v20.28.5) | Before deploying changes |
 | `docs/SESSION_NOTES.md` | Codex DNS & troubleshooting | If hitting infra issues |
 | `docs/CONTRACT.md` | Canonical scoring contract reference (v20.21) | When verifying frozen contract values |
@@ -121,6 +121,7 @@
 | 123-126 | **v20.28.4 Portable Test Suite** | No /data required, conftest.py fixtures, lazy init, optional dep skips, verify actual return values |
 | 127 | **v20.28.5 Best Bets Display** | Box-drawing tables, NEVER markdown pipes, start times required |
 | 128 | **v20.28.5 Multiple Code Paths** | game_status hardcoded in sharp fallback — grep ALL pick append locations |
+| 129-133 | **v20.28.6 Tech Debt Cleanup** | Singleton audit, test assertions, version sync, deletion docs, skip conditions |
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
@@ -234,6 +235,7 @@
 - v20.28.4 Portable Test Suite (rules 331-338)
 - v20.28.5 Best Bets Display (rules 336-342)
 - v20.28.5 Multiple Code Paths (rules 343-348)
+- v20.28.6 Tech Debt Cleanup (rules 349-363)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
