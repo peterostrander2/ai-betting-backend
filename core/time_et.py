@@ -42,7 +42,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 # America/New_York timezone (single source of truth)
-ET = ZoneInfo("America/New_York")
+ET_TIMEZONE_NAME = "America/New_York"
+ET = ZoneInfo(ET_TIMEZONE_NAME)
 
 # Canonical slate window start time: midnight ET
 ET_SLATE_START_TIME = time(0, 0, 0)
@@ -445,6 +446,7 @@ def get_build_sha() -> str:
 # Export only these functions - no other date helpers allowed
 __all__ = [
     'ET',
+    'ET_TIMEZONE_NAME',
     'ET_SLATE_START_TIME',
     'now_et',
     'et_day_bounds',
