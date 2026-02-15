@@ -45,7 +45,7 @@ API_KEY = os.getenv("API_KEY", "")
 # =============================================================================
 
 EXPECTED = {
-    "version": "20.24",  # v20.24: Context multipliers now LIVE
+    "version": "20.25",  # v20.25: ET Canonical Clock Standardization
     "engine_weights": {
         "ai": 0.25,
         "research": 0.35,
