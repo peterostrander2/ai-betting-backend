@@ -262,7 +262,8 @@ class TestWeightAdjustment:
             "NBA", "points", days_back=1, apply_changes=False
         )
 
-        assert "bias_analysis" in result or "error" in result
+        # Result contains bias_analysis on success, error on failure, or reason for insufficient samples
+        assert "bias_analysis" in result or "error" in result or "reason" in result
 
 
 # =============================================================================
