@@ -319,6 +319,82 @@ async def grader_weights(sport: str):
     }
 
 
+@router.get("/grader/weights-sanity")
+async def grader_weights_sanity():
+    """
+    v20.28.6: Check all sports for weight drift and sample issues.
+
+    Returns:
+        {
+            "all_sports": { "NBA": {...}, "NFL": {...}, ... },
+            "drift_detected": ["NBA/points", ...],
+            "small_sample_sports": ["NHL", ...],
+            "baseline_sum": 0.73,
+            "drift_threshold": 0.05
+        }
+    """
+    if not AUTO_GRADER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Auto-grader module not available")
+
+    from dataclasses import asdict
+    from auto_grader import BASELINE_WEIGHT_SUM, CORE_WEIGHT_FACTORS
+
+    grader = get_grader()
+
+    DRIFT_THRESHOLD = 0.05
+    all_sports = {}
+    drift_detected = []
+    small_sample_sports = []
+
+    for sport in ["NBA", "NFL", "NHL", "MLB", "NCAAB"]:
+        if sport not in grader.weights:
+            continue
+
+        sport_data = {
+            "weights": {},
+            "drift_analysis": {}
+        }
+
+        for stat_type, config in grader.weights[sport].items():
+            config_dict = asdict(config)
+            sport_data["weights"][stat_type] = config_dict
+
+            # Calculate weight sum for core factors
+            core_sum = sum(config_dict.get(f, 0) for f in CORE_WEIGHT_FACTORS)
+            drift = core_sum - BASELINE_WEIGHT_SUM
+
+            sport_data["drift_analysis"][stat_type] = {
+                "core_sum": round(core_sum, 4),
+                "baseline": BASELINE_WEIGHT_SUM,
+                "drift": round(drift, 4),
+                "is_drifted": abs(drift) > DRIFT_THRESHOLD
+            }
+
+            if abs(drift) > DRIFT_THRESHOLD:
+                drift_detected.append(f"{sport}/{stat_type}")
+
+        # Check sample sizes via bias endpoint
+        try:
+            bias = grader.calculate_bias(sport, "points", days_back=7)
+            sample_size = bias.get("sample_size", 0)
+            sport_data["sample_size"] = sample_size
+            if sample_size < 30:
+                small_sample_sports.append(sport)
+        except Exception:
+            sport_data["sample_size"] = None
+
+        all_sports[sport] = sport_data
+
+    return {
+        "all_sports": all_sports,
+        "drift_detected": drift_detected,
+        "small_sample_sports": small_sample_sports,
+        "baseline_sum": BASELINE_WEIGHT_SUM,
+        "drift_threshold": DRIFT_THRESHOLD,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
 # =============================================================================
 # GRADER RUN AUDIT ENDPOINT
 # =============================================================================
