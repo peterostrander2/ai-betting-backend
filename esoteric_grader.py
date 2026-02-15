@@ -22,6 +22,7 @@ import os
 import json
 import logging
 from datetime import datetime, date, timedelta
+from functools import lru_cache
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 from collections import defaultdict
@@ -483,16 +484,11 @@ class EsotericGrader:
         }
 
 
-# Singleton instance
-_esoteric_grader_instance = None
-
-
+# Singleton instance via lru_cache
+@lru_cache(maxsize=1)
 def get_esoteric_grader() -> EsotericGrader:
     """Get singleton esoteric grader instance."""
-    global _esoteric_grader_instance
-    if _esoteric_grader_instance is None:
-        _esoteric_grader_instance = EsotericGrader()
-    return _esoteric_grader_instance
+    return EsotericGrader()
 
 
 # Convenience functions
