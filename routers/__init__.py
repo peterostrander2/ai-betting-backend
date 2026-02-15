@@ -17,10 +17,12 @@ from .community import router as community_router
 from .esoteric import router as esoteric_router
 from .line_shop import router as line_shop_router
 from .betting import router as betting_router
+from .debug import router as debug_router
 
 __all__ = [
     'community_router',
     'esoteric_router',
     'line_shop_router',
     'betting_router',
+    'debug_router',
 ]
