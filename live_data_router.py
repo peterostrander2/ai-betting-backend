@@ -7522,15 +7522,20 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             score_data["weather_available"] = _weather_available
 
                             game_status = "PRE_GAME"
+                            _game_status_before_sync = game_status
                             if TIME_FILTERS_AVAILABLE and commence_time:
                                 game_status = get_game_status(commence_time)
+                            _game_status_after_time = game_status
 
                             # v20.28.5: Sync game_status from market_phase (more authoritative from Odds API)
                             _market_phase = score_data.get("market_phase", "PRE_GAME")
+                            _game_status_synced = False
                             if _market_phase in ("IN_PLAY", "HALFTIME"):
                                 game_status = "IN_PROGRESS"
+                                _game_status_synced = True
                             elif _market_phase == "FINAL":
                                 game_status = "FINAL"
+                                _game_status_synced = True
 
                             signals_fired = score_data.get("pillars_passed", []).copy()
                             if sharp_signal.get("signal_strength") in ["STRONG", "MODERATE"]:
@@ -7573,6 +7578,10 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 "away_team": away_team,
                                 "start_time_et": start_time_et,
                                 "game_status": game_status,
+                                "_debug_status_before_sync": _game_status_before_sync,
+                                "_debug_status_after_time": _game_status_after_time,
+                                "_debug_market_phase": _market_phase,
+                                "_debug_synced": _game_status_synced,
                                 "status": game_status.lower() if game_status else "scheduled",
                                 "has_started": has_started,
                                 "is_started_already": has_started,
@@ -12579,46 +12588,11 @@ async def trigger_ensemble_training(background: bool = False):
 
 
 # ============================================================================
-# LEVEL 17 - PARLAY ARCHITECT CORRELATION ENGINE
-# The Science: Books price parlays as independent. They aren't.
-# Covariance > 0.8 = Mathematical Edge
+# LEVEL 17 - PARLAY ARCHITECT CORRELATION ENGINE - Moved to routers/betting.py
 # ============================================================================
-
-CORRELATION_MATRIX = {
-    # NFL Correlations
-    "QB_WR": {"correlation": 0.88, "name": "BATTERY STACK", "description": "QB throws 300+ yards → WR1 must have yards"},
-    "QB_TE": {"correlation": 0.72, "name": "REDZONE STACK", "description": "QB TDs correlate with TE targets in redzone"},
-    "RB_DST": {"correlation": 0.65, "name": "GRIND STACK", "description": "RB dominance = winning = opponent forced passing = sacks/INTs"},
-    "WR1_WR2": {"correlation": -0.35, "name": "CANNIBALIZE", "description": "Negative correlation - targets split"},
-
-    # NBA Correlations
-    "PG_C": {"correlation": 0.55, "name": "PNR STACK", "description": "Pick and roll - PG assists correlate with C points"},
-    "STAR_OUT_BACKUP": {"correlation": 0.82, "name": "USAGE MONSTER", "description": "Star out = backup usage spike"},
-    "BLOWOUT_BENCH": {"correlation": 0.70, "name": "GARBAGE TIME", "description": "Blowout = bench minutes spike"},
-
-    # MLB Correlations
-    "LEADOFF_RUNS": {"correlation": 0.68, "name": "TABLE SETTER", "description": "Leadoff OBP correlates with team runs"},
-    "ACE_UNDER": {"correlation": 0.75, "name": "ACE EFFECT", "description": "Ace pitching = low scoring game"},
-}
-
-# Usage impact multipliers when star players are OUT
-VOID_IMPACT_MULTIPLIERS = {
-    # NBA - Points boost when star is out
-    "Joel Embiid": {"teammate": "Tyrese Maxey", "pts_boost": 1.28, "usage_boost": 1.35},
-    "LeBron James": {"teammate": "Anthony Davis", "pts_boost": 1.15, "usage_boost": 1.20},
-    "Stephen Curry": {"teammate": "Klay Thompson", "pts_boost": 1.22, "usage_boost": 1.25},
-    "Luka Doncic": {"teammate": "Kyrie Irving", "pts_boost": 1.18, "usage_boost": 1.22},
-    "Giannis Antetokounmpo": {"teammate": "Damian Lillard", "pts_boost": 1.20, "usage_boost": 1.25},
-    "Kevin Durant": {"teammate": "Devin Booker", "pts_boost": 1.12, "usage_boost": 1.18},
-    "Jayson Tatum": {"teammate": "Jaylen Brown", "pts_boost": 1.15, "usage_boost": 1.20},
-    "Nikola Jokic": {"teammate": "Jamal Murray", "pts_boost": 1.25, "usage_boost": 1.30},
-
-    # NFL - Target/usage boost when WR1 is out
-    "Davante Adams": {"teammate": "Jakobi Meyers", "target_boost": 1.35, "usage_boost": 1.40},
-    "Tyreek Hill": {"teammate": "Jaylen Waddle", "target_boost": 1.28, "usage_boost": 1.32},
-    "CeeDee Lamb": {"teammate": "Brandin Cooks", "target_boost": 1.30, "usage_boost": 1.35},
-    "Justin Jefferson": {"teammate": "Jordan Addison", "target_boost": 1.38, "usage_boost": 1.42},
-}
+# CORRELATION_MATRIX and VOID_IMPACT_MULTIPLIERS are now in routers/betting.py
+# Import from there if needed:
+#   from routers.betting import CORRELATION_MATRIX, VOID_IMPACT_MULTIPLIERS
 
 # ============================================================================
 # SPORTSBOOK DEEP LINKS - Moved to routers/line_shop.py
@@ -12632,320 +12606,13 @@ VOID_IMPACT_MULTIPLIERS = {
 
 
 # ============================================================================
-# LEVEL 17 - PARLAY ARCHITECT, VOID CHECK, SMASH CARD
+# LEVEL 17 - PARLAY ARCHITECT, VOID CHECK, SMASH CARD - Moved to routers/betting.py
 # ============================================================================
-
-@router.post("/parlay-architect")
-async def parlay_architect(leg1: Dict[str, Any], leg2: Dict[str, Any]):
-    """
-    Calculates 'Correlation Alpha' for Same Game Parlays (SGP).
-    Finds correlated props that books misprice as independent events.
-
-    Request Body:
-    {
-        "leg1": {"player": "Patrick Mahomes", "position": "QB", "team": "KC", "prop": "passing_yards", "line": 275.5},
-        "leg2": {"player": "Travis Kelce", "position": "TE", "team": "KC", "prop": "receiving_yards", "line": 65.5}
-    }
-
-    Response:
-    {
-        "stack_type": "BATTERY STACK",
-        "correlation": 0.88,
-        "glitch_score": 9.0,
-        "recommendation": "CORRELATION GLITCH - Book Misprice Detected",
-        "edge_explanation": "If Mahomes hits 275+ yards, Kelce MUST have yards. Books price independently."
-    }
-    """
-    pos1 = leg1.get("position", "").upper()
-    pos2 = leg2.get("position", "").upper()
-    team1 = leg1.get("team", "").upper()
-    team2 = leg2.get("team", "").upper()
-
-    correlation = 0.0
-    stack_type = "INDEPENDENT"
-    description = "No significant correlation detected"
-
-    # Same team correlations
-    if team1 == team2:
-        # QB + WR/TE Stack
-        if pos1 == "QB" and pos2 in ["WR", "TE"]:
-            corr_key = f"QB_{pos2}"
-            if corr_key in CORRELATION_MATRIX:
-                data = CORRELATION_MATRIX[corr_key]
-                correlation = data["correlation"]
-                stack_type = data["name"]
-                description = data["description"]
-        elif pos2 == "QB" and pos1 in ["WR", "TE"]:
-            corr_key = f"QB_{pos1}"
-            if corr_key in CORRELATION_MATRIX:
-                data = CORRELATION_MATRIX[corr_key]
-                correlation = data["correlation"]
-                stack_type = data["name"]
-                description = data["description"]
-
-        # RB + DST Stack
-        elif (pos1 == "RB" and pos2 == "DST") or (pos1 == "DST" and pos2 == "RB"):
-            data = CORRELATION_MATRIX["RB_DST"]
-            correlation = data["correlation"]
-            stack_type = data["name"]
-            description = data["description"]
-
-        # WR1 + WR2 (negative correlation)
-        elif pos1 == "WR" and pos2 == "WR":
-            data = CORRELATION_MATRIX["WR1_WR2"]
-            correlation = data["correlation"]
-            stack_type = data["name"]
-            description = data["description"]
-
-        # PG + C (NBA)
-        elif (pos1 == "PG" and pos2 == "C") or (pos1 == "C" and pos2 == "PG"):
-            data = CORRELATION_MATRIX["PG_C"]
-            correlation = data["correlation"]
-            stack_type = data["name"]
-            description = data["description"]
-
-    # Calculate glitch score
-    base_score = 5.0
-    if correlation > 0.80:
-        base_score += 4.0
-        recommendation = "CORRELATION GLITCH - Book Misprice Detected"
-    elif correlation > 0.60:
-        base_score += 2.5
-        recommendation = "MODERATE CORRELATION - Slight Edge"
-    elif correlation > 0.40:
-        base_score += 1.0
-        recommendation = "WEAK CORRELATION - Standard Parlay"
-    elif correlation < 0:
-        base_score -= 2.0
-        recommendation = "NEGATIVE CORRELATION - Avoid This Parlay"
-    else:
-        recommendation = "INDEPENDENT - No Correlation Edge"
-
-    return {
-        "stack_type": stack_type,
-        "correlation": round(correlation, 2),
-        "glitch_score": round(min(10, max(0, base_score)), 1),
-        "recommendation": recommendation,
-        "edge_explanation": description,
-        "leg1": leg1,
-        "leg2": leg2,
-        "timestamp": datetime.now().isoformat()
-    }
-
-
-@router.get("/void-check/{player}")
-async def void_check(player: str, target_player: Optional[str] = None, baseline_avg: Optional[float] = None):
-    """
-    The HOF Feature: Recalculates hit rate when a star player is OUT.
-    Finds the 'Usage Monster' - the teammate who benefits most.
-
-    Example: /live/void-check/Joel%20Embiid
-    Example: /live/void-check/Joel%20Embiid?target_player=Tyrese%20Maxey&baseline_avg=24.0
-
-    Response:
-    {
-        "missing_star": "Joel Embiid",
-        "usage_beneficiary": "Tyrese Maxey",
-        "baseline_avg": 24.0,
-        "void_avg": 30.7,
-        "boost_pct": 28,
-        "hit_rate_with_star": "5/10 (50%)",
-        "hit_rate_without_star": "8/10 (80%)",
-        "signal": "USAGE MONSTER (+6.7 pts without Joel Embiid)",
-        "recommendation": "SMASH THE OVER"
-    }
-    """
-    # Normalize player name
-    player_normalized = player.title()
-
-    # Check if we have data for this player
-    impact_data = VOID_IMPACT_MULTIPLIERS.get(player_normalized)
-
-    if not impact_data:
-        # Generate reasonable fallback based on player name hash
-        rng = deterministic_rng_for_game_id(player_normalized)
-        pts_boost = 1.15 + (rng.random() * 0.20)  # 15-35% boost
-        usage_boost = pts_boost + 0.05
-
-        # Find a generic teammate name
-        teammate = target_player or "Teammate"
-        base_avg = baseline_avg or rng.randint(18, 28)
-    else:
-        teammate = target_player or impact_data["teammate"]
-        pts_boost = impact_data.get("pts_boost", impact_data.get("target_boost", 1.20))
-        usage_boost = impact_data["usage_boost"]
-        base_avg = baseline_avg or 24.0  # Default baseline
-
-    void_avg = base_avg * pts_boost
-    boost_pct = int((pts_boost - 1) * 100)
-
-    # Calculate hit rates (simulated based on boost)
-    base_hit_rate = 50
-    void_hit_rate = min(90, base_hit_rate + (boost_pct * 1.2))
-
-    # Generate signal
-    diff = void_avg - base_avg
-    if diff > 5.0:
-        signal = f"USAGE MONSTER (+{diff:.1f} pts without {player_normalized})"
-        recommendation = "SMASH THE OVER"
-    elif diff > 3.0:
-        signal = f"USAGE SPIKE (+{diff:.1f} pts without {player_normalized})"
-        recommendation = "LEAN OVER"
-    else:
-        signal = f"MINOR BUMP (+{diff:.1f} pts without {player_normalized})"
-        recommendation = "MONITOR"
-
-    return {
-        "missing_star": player_normalized,
-        "usage_beneficiary": teammate,
-        "baseline_avg": round(base_avg, 1),
-        "void_avg": round(void_avg, 1),
-        "boost_pct": boost_pct,
-        "usage_boost_pct": int((usage_boost - 1) * 100),
-        "hit_rate_with_star": f"{base_hit_rate // 10}/10 ({base_hit_rate}%)",
-        "hit_rate_without_star": f"{int(void_hit_rate) // 10}/10 ({int(void_hit_rate)}%)",
-        "signal": signal,
-        "recommendation": recommendation,
-        "timestamp": datetime.now().isoformat()
-    }
-
-
-@router.post("/smash-card")
-async def generate_smash_card(bet_data: Dict[str, Any], book: Optional[str] = "draftkings"):
-    """
-    Generates a 'Smash Card' with deep links for one-tap betting.
-    Bypasses sportsbook lobby and drops user directly into bet slip.
-
-    Request Body:
-    {
-        "bet_data": {
-            "player": "Tyrese Maxey",
-            "prop": "points",
-            "line": 28.5,
-            "pick": "over",
-            "odds": -110,
-            "hit_rate": "8/10",
-            "reasoning": "Embiid OUT - Usage Spike",
-            "event_id": "nba_phi_vs_sac_123",
-            "market_id": "player_points_maxey"
-        },
-        "book": "draftkings"
-    }
-
-    Response:
-    {
-        "smash_card": {
-            "title": "SMASH: Tyrese Maxey OVER 28.5 PTS",
-            "subtitle": "Embiid OUT - Usage Spike",
-            "hit_rate_display": "[████████░░] 80%",
-            "confidence": "HIGH",
-            "button": {
-                "text": "Place on DraftKings",
-                "color": "#53d337",
-                "logo": "..."
-            },
-            "deep_links": {
-                "app": "draftkings://...",
-                "web": "https://...",
-                "universal": "https://..."
-            }
-        }
-    }
-    """
-    book_key = book.lower() if book else "draftkings"
-    book_config = SPORTSBOOK_CONFIGS.get(book_key, SPORTSBOOK_CONFIGS["draftkings"])
-    link_schemes = SMASH_LINK_SCHEMES.get(book_key, SMASH_LINK_SCHEMES["draftkings"])
-
-    player = bet_data.get("player", "Player")
-    prop = bet_data.get("prop", "points")
-    line = bet_data.get("line", 0)
-    pick = bet_data.get("pick", "over").upper()
-    odds = bet_data.get("odds", -110)
-    hit_rate = bet_data.get("hit_rate", "7/10")
-    reasoning = bet_data.get("reasoning", "AI Analysis")
-    event_id = bet_data.get("event_id", "event_123")
-    market_id = bet_data.get("market_id", "market_456")
-
-    # Parse hit rate for visual
-    try:
-        hits, total = hit_rate.split("/")
-        hit_pct = int(int(hits) / int(total) * 100)
-    except Exception:
-        hit_pct = 70
-
-    # Generate hit rate bar
-    filled = hit_pct // 10
-    empty = 10 - filled
-    hit_rate_bar = f"[{'█' * filled}{'░' * empty}] {hit_pct}%"
-
-    # Determine confidence
-    if hit_pct >= 80:
-        confidence = "HIGH"
-    elif hit_pct >= 60:
-        confidence = "MEDIUM"
-    else:
-        confidence = "LOW"
-
-    # Generate deep links
-    sport = bet_data.get("sport", "nba").upper()
-    sport_path = {"NBA": "basketball/nba", "NFL": "football/nfl", "MLB": "baseball/mlb", "NHL": "hockey/nhl"}.get(sport, "basketball/nba")
-
-    deep_links = {
-        "app": link_schemes["app"].format(sport=sport, event_id=event_id, market_id=market_id),
-        "web": link_schemes["web"].format(sport_path=sport_path, event_id=event_id),
-        "universal": link_schemes["universal"].format(sport=sport.lower(), event_id=event_id, market_id=market_id)
-    }
-
-    return {
-        "smash_card": {
-            "title": f"SMASH: {player} {pick} {line} {prop.upper()}",
-            "subtitle": reasoning,
-            "odds_display": f"{'+' if odds > 0 else ''}{odds}",
-            "hit_rate_display": hit_rate_bar,
-            "hit_rate_raw": hit_rate,
-            "confidence": confidence,
-            "button": {
-                "text": f"Place on {book_config['name']}",
-                "color": book_config["color"],
-                "logo": book_config.get("logo", "")
-            },
-            "deep_links": deep_links,
-            "all_books": [
-                {
-                    "key": key,
-                    "name": cfg["name"],
-                    "color": cfg["color"],
-                    "logo": cfg.get("logo", ""),
-                    "deep_link": SMASH_LINK_SCHEMES.get(key, {}).get("universal", "").format(
-                        sport=sport.lower(), event_id=event_id, market_id=market_id
-                    )
-                }
-                for key, cfg in SPORTSBOOK_CONFIGS.items()
-            ]
-        },
-        "bet_data": bet_data,
-        "timestamp": datetime.now().isoformat()
-    }
-
-
-@router.get("/correlations")
-async def list_correlations():
-    """List all known correlation patterns for parlay building."""
-    return {
-        "count": len(CORRELATION_MATRIX),
-        "correlations": [
-            {
-                "key": key,
-                "name": data["name"],
-                "correlation": data["correlation"],
-                "description": data["description"],
-                "edge": "HIGH" if data["correlation"] > 0.75 else "MEDIUM" if data["correlation"] > 0.5 else "LOW"
-            }
-            for key, data in CORRELATION_MATRIX.items()
-        ],
-        "void_players": list(VOID_IMPACT_MULTIPLIERS.keys()),
-        "timestamp": datetime.now().isoformat()
-    }
+# Endpoints moved to routers/betting.py:
+# - POST /parlay-architect (correlation calculation)
+# - GET /void-check/{player} (void player impact)
+# - POST /smash-card (deep link generation)
+# - GET /correlations (list all correlations)
 
 
 # ============================================================================
