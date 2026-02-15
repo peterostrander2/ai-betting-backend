@@ -3647,8 +3647,13 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 degenerate_reason = f"DEFAULTED_INPUTS (def_rank={input_def_rank}, pace={input_pace}, vacuum={input_vacuum})"
 
             # v20.28.7: Check for OUTPUT saturation (NHL degeneracy fix)
-            # If MPS returns max score (>=9.9) with low model variance (<0.5),
-            # it's saturating and all games will get identical scores
+            # If ai_score is EXACTLY 10.0, MPS is hitting max cap which is suspicious
+            # Real differentiated scoring wouldn't produce exact 10.0 for multiple games
+            if not is_degenerate and ai_score >= 10.0:
+                is_degenerate = True
+                degenerate_reason = f"OUTPUT_MAX_CAP (ai_score={ai_score:.2f}, deviation_score={mps_ai_audit.get('deviation_score', 'N/A')})"
+
+            # Also check for high model variance but still hitting max - indicates cap saturation
             if not is_degenerate and ai_score >= 9.9 and model_std < 0.5:
                 is_degenerate = True
                 degenerate_reason = f"OUTPUT_SATURATION (ai_score={ai_score:.2f}, model_std={model_std:.3f})"
