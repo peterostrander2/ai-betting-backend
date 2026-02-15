@@ -69,6 +69,14 @@ except Exception as e:
     PUBLIC_SANITIZER_AVAILABLE = False
     logger.warning("public_payload_sanitizer not available: %s", e)
 
+# Import AFFILIATE_LINKS from community router (moved in v20.28.6 refactor)
+try:
+    from routers.community import AFFILIATE_LINKS
+except ImportError:
+    # Fallback: empty dict if community router not available
+    AFFILIATE_LINKS = {}
+    logger.debug("AFFILIATE_LINKS not available from routers.community, using empty fallback")
+
 
 def _sanitize_public(payload: dict) -> dict:
     if PUBLIC_SANITIZER_AVAILABLE:
