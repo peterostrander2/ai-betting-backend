@@ -151,13 +151,22 @@ class WeightConfig:
     lstm: float = 0.20
     officials: float = 0.08
     park_factor: float = 0.10  # MLB only
-    
+
     # Learning rate for weight adjustments
     learning_rate: float = 0.05
-    
+
     # Bounds to prevent extreme weights
     min_weight: float = 0.05
     max_weight: float = 0.35
+
+
+# v20.28.6: Baseline weight sum for normalization
+# Sum of core weights (excluding MLB-only park_factor):
+# defense=0.15 + pace=0.12 + vacuum=0.18 + lstm=0.20 + officials=0.08 = 0.73
+BASELINE_WEIGHT_SUM = 0.73
+
+# Core weight factors (excluding park_factor which is MLB-only)
+CORE_WEIGHT_FACTORS = ["defense", "pace", "vacuum", "lstm", "officials"]
 
 
 # ============================================
@@ -939,7 +948,28 @@ class AutoGrader:
                 "new": round(new_weight, 4)
             }
             new_weights[factor] = new_weight
-        
+
+        # v20.28.6: Renormalize weights to baseline sum (0.83) to prevent drift
+        # Only normalize core factors (exclude park_factor which is MLB-only)
+        core_sum = sum(new_weights.get(f, 0) for f in CORE_WEIGHT_FACTORS if f in new_weights)
+        if core_sum > 0 and abs(core_sum - BASELINE_WEIGHT_SUM) > 0.001:
+            scale_factor = BASELINE_WEIGHT_SUM / core_sum
+            logger.info(
+                f"WEIGHT NORMALIZATION: {sport}/{stat_type} sum was {core_sum:.4f}, "
+                f"scaling by {scale_factor:.4f} to reach baseline {BASELINE_WEIGHT_SUM}"
+            )
+            for factor in CORE_WEIGHT_FACTORS:
+                if factor in new_weights:
+                    old_val = new_weights[factor]
+                    new_val = old_val * scale_factor
+                    # Re-clip to bounds after scaling
+                    new_val = np.clip(new_val, current.min_weight, current.max_weight)
+                    new_weights[factor] = new_val
+                    # Update adjustments to reflect normalized values
+                    adjustments[factor]["new"] = round(new_val, 4)
+                    adjustments[factor]["normalized"] = True
+                    adjustments[factor]["scale_factor"] = round(scale_factor, 4)
+
         # Apply changes if requested
         if apply_changes:
             for factor, value in new_weights.items():
