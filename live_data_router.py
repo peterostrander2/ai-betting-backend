@@ -7522,20 +7522,15 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                             score_data["weather_available"] = _weather_available
 
                             game_status = "PRE_GAME"
-                            _game_status_before_sync = game_status
                             if TIME_FILTERS_AVAILABLE and commence_time:
                                 game_status = get_game_status(commence_time)
-                            _game_status_after_time = game_status
 
                             # v20.28.5: Sync game_status from market_phase (more authoritative from Odds API)
                             _market_phase = score_data.get("market_phase", "PRE_GAME")
-                            _game_status_synced = False
                             if _market_phase in ("IN_PLAY", "HALFTIME"):
                                 game_status = "IN_PROGRESS"
-                                _game_status_synced = True
                             elif _market_phase == "FINAL":
                                 game_status = "FINAL"
-                                _game_status_synced = True
 
                             signals_fired = score_data.get("pillars_passed", []).copy()
                             if sharp_signal.get("signal_strength") in ["STRONG", "MODERATE"]:
@@ -7578,10 +7573,6 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                                 "away_team": away_team,
                                 "start_time_et": start_time_et,
                                 "game_status": game_status,
-                                "_debug_status_before_sync": _game_status_before_sync,
-                                "_debug_status_after_time": _game_status_after_time,
-                                "_debug_market_phase": _market_phase,
-                                "_debug_synced": _game_status_synced,
                                 "status": game_status.lower() if game_status else "scheduled",
                                 "has_started": has_started,
                                 "is_started_already": has_started,
@@ -7726,12 +7717,12 @@ async def _best_bets_inner(sport, sport_lower, live_mode, cache_key,
                 "home_team": home_team,
                 "away_team": away_team,
                 "start_time_et": start_time_et,
-                "game_status": "PRE_GAME",
-                "status": "pre_game",
-                "has_started": False,
-                "is_started_already": False,
-                "is_live": False,
-                "is_live_bet_candidate": False,
+                "game_status": _sharp_game_status,
+                "status": _sharp_game_status.lower() if _sharp_game_status else "pre_game",
+                "has_started": _sharp_game_status in ["IN_PROGRESS", "LIVE", "FINAL"],
+                "is_started_already": _sharp_game_status in ["IN_PROGRESS", "LIVE", "FINAL"],
+                "is_live": _sharp_game_status == "IN_PROGRESS",
+                "is_live_bet_candidate": _sharp_game_status == "IN_PROGRESS",
                 "market": "sharp_money",
                 "recommendation": f"SHARP ON {signal.get('sharp_side', 'home').upper()}",
                 "best_book": "",
@@ -12953,254 +12944,14 @@ async def get_retrograde_status():
 
 
 # ============================================================================
-# CLICK-TO-BET ENHANCEMENTS v2.0
+# CLICK-TO-BET ENHANCEMENTS v2.0 - Moved to routers/betting.py
 # ============================================================================
-
-# In-memory storage for user preferences and bet tracking
-# In production, this should use Redis or a database
-_user_preferences: Dict[str, Dict[str, Any]] = {}
-_tracked_bets: List[Dict[str, Any]] = []
-_parlay_slips: Dict[str, List[Dict[str, Any]]] = {}  # user_id -> list of parlay legs
-_placed_parlays: List[Dict[str, Any]] = []  # Tracked parlays
-
-
-@router.get("/user/preferences/{user_id}")
-async def get_user_preferences(user_id: str):
-    """
-    Get user's sportsbook preferences.
-
-    Returns:
-    - favorite_books: List of preferred sportsbooks (in order)
-    - default_bet_amount: Default stake amount
-    - notifications: Notification preferences
-    """
-    prefs = _user_preferences.get(user_id, {
-        "user_id": user_id,
-        "favorite_books": ["draftkings", "fanduel", "betmgm"],
-        "default_bet_amount": 25,
-        "auto_best_odds": True,
-        "notifications": {
-            "smash_alerts": True,
-            "odds_movement": True,
-            "bet_results": True
-        },
-        "created_at": datetime.now().isoformat()
-    })
-
-    return prefs
-
-
-@router.post("/user/preferences/{user_id}")
-async def save_user_preferences(user_id: str, prefs: UserPreferencesRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any]):
-    """
-    Save user's sportsbook preferences.
-
-    Request Body (validated with Pydantic):
-    - favorite_books: array of strings (validated against supported books)
-    - default_bet_amount: float (default: 25, must be >= 0)
-    - auto_best_odds: bool (default: true)
-    - notifications: object with smash_alerts, odds_movement, bet_results booleans
-    """
-    # Handle both Pydantic model and dict input
-    if PYDANTIC_MODELS_AVAILABLE and hasattr(prefs, 'dict'):
-        data = prefs.dict()
-    else:
-        data = prefs if isinstance(prefs, dict) else dict(prefs)
-
-    # Validate favorite_books
-    valid_books = list(SPORTSBOOK_CONFIGS.keys())
-    favorite_books = data.get("favorite_books", [])
-    validated_books = [b for b in favorite_books if b in valid_books]
-
-    # Get notifications, handling nested object
-    notifications_data = data.get("notifications", {})
-    if hasattr(notifications_data, 'dict'):
-        notifications_data = notifications_data.dict()
-
-    _user_preferences[user_id] = {
-        "user_id": user_id,
-        "favorite_books": validated_books if validated_books else ["draftkings", "fanduel", "betmgm"],
-        "default_bet_amount": data.get("default_bet_amount", 25),
-        "auto_best_odds": data.get("auto_best_odds", True),
-        "notifications": notifications_data if notifications_data else {
-            "smash_alerts": True,
-            "odds_movement": True,
-            "bet_results": True
-        },
-        "updated_at": datetime.now().isoformat()
-    }
-
-    return {"status": "saved", "preferences": _user_preferences[user_id]}
-
-
-@router.post("/bets/track")
-async def track_bet(
-    bet_data: TrackBetRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any],
-    auth: bool = Depends(verify_api_key)
-):
-    """
-    Track a bet that was placed through the click-to-bet flow.
-
-    Request Body (validated with Pydantic):
-    - user_id: str (default: "anonymous")
-    - sport: str (required, validated: NBA/NFL/MLB/NHL)
-    - game_id: str (required)
-    - game: str (default: "Unknown Game")
-    - bet_type: str (required)
-    - selection: str (required)
-    - line: float (optional)
-    - odds: int (required, validated: American odds format)
-    - sportsbook: str (required)
-    - stake: float (default: 0, must be >= 0)
-    - ai_score: float (optional, 0-20)
-    - confluence_level: str (optional)
-
-    Returns bet_id for later grading.
-    """
-    # Handle both Pydantic model and dict input for backwards compatibility
-    if PYDANTIC_MODELS_AVAILABLE and hasattr(bet_data, 'dict'):
-        data = bet_data.dict()
-    else:
-        # Fallback validation for dict input
-        data = bet_data if isinstance(bet_data, dict) else dict(bet_data)
-        required_fields = ["sport", "game_id", "bet_type", "selection", "odds", "sportsbook"]
-        for field in required_fields:
-            if field not in data:
-                raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
-        # Validate odds format
-        if data.get("odds") and (data["odds"] == 0 or (-100 < data["odds"] < 100)):
-            raise HTTPException(status_code=400, detail="Invalid odds. American odds must be <= -100 or >= 100")
-        data["sport"] = data.get("sport", "").upper()
-
-    bet_id = f"BET_{data['sport']}_{data['game_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-
-    tracked_bet = {
-        "bet_id": bet_id,
-        "user_id": data.get("user_id", "anonymous"),
-        "sport": data["sport"],
-        "game_id": data["game_id"],
-        "game": data.get("game", "Unknown Game"),
-        "bet_type": data["bet_type"],
-        "selection": data["selection"],
-        "line": data.get("line"),
-        "odds": data["odds"],
-        "sportsbook": data["sportsbook"],
-        "stake": data.get("stake", 0),
-        "potential_payout": calculate_payout(data.get("stake", 0), data["odds"]),
-        "ai_score": data.get("ai_score"),
-        "confluence_level": data.get("confluence_level"),
-        "status": "PENDING",
-        "result": None,
-        "placed_at": datetime.now().isoformat()
-    }
-
-    _tracked_bets.append(tracked_bet)
-
-    return {
-        "status": "tracked",
-        "bet_id": bet_id,
-        "bet": tracked_bet,
-        "timestamp": datetime.now().isoformat()
-    }
-
-
-@router.post("/bets/grade/{bet_id}")
-async def grade_bet(
-    bet_id: str,
-    result_data: GradeBetRequest if PYDANTIC_MODELS_AVAILABLE else Dict[str, Any],
-    auth: bool = Depends(verify_api_key)
-):
-    """
-    Grade a tracked bet with actual result.
-
-    Request Body (validated with Pydantic):
-    - result: str (required, must be WIN, LOSS, or PUSH)
-    - actual_score: str (optional)
-    """
-    # Handle both Pydantic model and dict input
-    if PYDANTIC_MODELS_AVAILABLE and hasattr(result_data, 'result'):
-        result = result_data.result.value if hasattr(result_data.result, 'value') else str(result_data.result)
-        actual_score = result_data.actual_score
-    else:
-        result = result_data.get("result", "").upper()
-        actual_score = result_data.get("actual_score")
-        if result not in ["WIN", "LOSS", "PUSH"]:
-            raise HTTPException(status_code=400, detail="Result must be WIN, LOSS, or PUSH")
-
-    for bet in _tracked_bets:
-        if bet["bet_id"] == bet_id:
-            bet["status"] = "GRADED"
-            bet["result"] = result
-            bet["actual_score"] = actual_score
-            bet["graded_at"] = datetime.now().isoformat()
-
-            # Calculate actual profit/loss
-            if result == "WIN":
-                bet["profit"] = bet["potential_payout"] - bet["stake"]
-            elif result == "LOSS":
-                bet["profit"] = -bet["stake"]
-            else:  # PUSH
-                bet["profit"] = 0
-
-            return {"status": "graded", "bet": bet}
-
-    raise HTTPException(status_code=404, detail=f"Bet not found: {bet_id}")
-
-
-@router.get("/bets/history")
-async def get_bet_history(
-    user_id: Optional[str] = None,
-    sport: Optional[str] = None,
-    status: Optional[str] = None,
-    limit: int = 50,
-    auth: bool = Depends(verify_api_key)
-):
-    """
-    Get bet history with optional filters.
-
-    Supports filtering by:
-    - user_id: Filter by user
-    - sport: Filter by sport (NBA, NFL, etc.)
-    - status: Filter by status (PENDING, GRADED)
-    - limit: Max 500 results (default 50)
-    """
-    # Validate and cap limit to prevent DoS
-    limit = min(max(1, limit), 500)
-    filtered_bets = _tracked_bets.copy()
-
-    if user_id:
-        filtered_bets = [b for b in filtered_bets if b.get("user_id") == user_id]
-    if sport:
-        filtered_bets = [b for b in filtered_bets if b.get("sport") == sport.upper()]
-    if status:
-        filtered_bets = [b for b in filtered_bets if b.get("status") == status.upper()]
-
-    # Sort by placed_at descending
-    filtered_bets.sort(key=lambda x: x.get("placed_at", ""), reverse=True)
-
-    # Calculate stats
-    graded_bets = [b for b in filtered_bets if b.get("status") == "GRADED"]
-    wins = len([b for b in graded_bets if b.get("result") == "WIN"])
-    losses = len([b for b in graded_bets if b.get("result") == "LOSS"])
-    pushes = len([b for b in graded_bets if b.get("result") == "PUSH"])
-    total_profit = sum(b.get("profit", 0) for b in graded_bets)
-
-    return {
-        "bets": filtered_bets[:limit],
-        "count": len(filtered_bets[:limit]),
-        "total_tracked": len(filtered_bets),
-        "stats": {
-            "graded": len(graded_bets),
-            "pending": len(filtered_bets) - len(graded_bets),
-            "wins": wins,
-            "losses": losses,
-            "pushes": pushes,
-            "win_rate": round(wins / len(graded_bets) * 100, 1) if graded_bets else 0,
-            "total_profit": round(total_profit, 2),
-            "roi": round(total_profit / sum(b.get("stake", 1) for b in graded_bets) * 100, 1) if graded_bets else 0
-        },
-        "timestamp": datetime.now().isoformat()
-    }
+# Endpoints moved to routers/betting.py:
+# - GET /user/preferences/{user_id} (user sportsbook preferences)
+# - POST /user/preferences/{user_id} (save preferences)
+# - POST /bets/track (track a placed bet)
+# - POST /bets/grade/{bet_id} (grade a bet)
+# - GET /bets/history (bet history with filters)
 
 
 @router.get("/quick-betslip/{sport}/{game_id}")
@@ -13285,57 +13036,17 @@ async def quick_betslip(
 
 
 # ============================================================================
-# PARLAY BUILDER
+# PARLAY BUILDER - Moved to routers/betting.py
 # ============================================================================
-
-def american_to_decimal(american_odds: int) -> float:
-    """Convert American odds to decimal odds."""
-    if american_odds > 0:
-        return 1 + (american_odds / 100)
-    else:
-        return 1 + (100 / abs(american_odds))
-
-
-def decimal_to_american(decimal_odds: float) -> int:
-    """Convert decimal odds to American odds."""
-    if decimal_odds >= 2.0:
-        return int(round((decimal_odds - 1) * 100))
-    else:
-        return int(round(-100 / (decimal_odds - 1)))
-
-
-def calculate_parlay_odds(legs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Calculate combined parlay odds from individual legs.
-    Returns decimal odds, American odds, and implied probability.
-    """
-    if not legs:
-        return {"decimal": 1.0, "american": -10000, "implied_probability": 100.0}
-
-    combined_decimal = 1.0
-    for leg in legs:
-        leg_odds = leg.get("odds", -110)
-        combined_decimal *= american_to_decimal(leg_odds)
-
-    combined_american = decimal_to_american(combined_decimal)
-    implied_prob = (1 / combined_decimal) * 100
-
-    return {
-        "decimal": round(combined_decimal, 3),
-        "american": combined_american,
-        "implied_probability": round(implied_prob, 2)
-    }
-
-
-@router.get("/parlay/{user_id}")
-async def get_parlay_slip(user_id: str):
-    """
-    Get current parlay slip for a user.
-
-    Returns all legs in the parlay with calculated combined odds.
-    """
-    legs = _parlay_slips.get(user_id, [])
-    combined = calculate_parlay_odds(legs)
+# Endpoints moved to routers/betting.py:
+# - GET /parlay/{user_id} (get parlay slip)
+# - POST /parlay/add (add leg to parlay)
+# - DELETE /parlay/remove/{user_id}/{leg_id} (remove leg)
+# - DELETE /parlay/clear/{user_id} (clear slip)
+# - POST /parlay/place (place parlay bet)
+# - POST /parlay/grade/{parlay_id} (grade parlay)
+# - GET /parlay/history (parlay history)
+# - POST /parlay/calculate (preview calculation)
 
     return {
         "user_id": user_id,
