@@ -5018,3 +5018,141 @@ def test_something():
 **Added in:** v20.28.6 (Feb 15, 2026)
 
 ---
+
+### Lesson 134: NHL AI Degeneracy — MPS Output Saturation Detection (v20.28.7)
+
+**Problem:** All 8 NHL games returned identical AI scores (10.0). MPS was producing degenerate output, but existing detection only checked for low model_std (variance).
+
+**Root Cause:** The 8-model MPS had high internal variance (model_std=42.7) but the final `deviation_score` saturated at exactly 10.0 for all games. Checking only `model_std < 0.5` missed this case because model variance was HIGH but output was CLAMPED.
+
+**Initial Fix Attempt (v20.28.7):** Added check for model prediction collapse (range < 0.5). Didn't work because model predictions had high variance.
+
+**Correct Fix (v20.28.8):** Added check for exact max score saturation:
+```python
+if not is_degenerate and ai_score >= 10.0:
+    is_degenerate = True
+    degenerate_reason = "OUTPUT_MAX_CAP"
+```
+
+**Key Insight:** When MPS output = 10.0 (exact max), it's ALWAYS suspicious. Real differentiated scoring would never produce exact 10.0 for multiple games. Trigger heuristic fallback.
+
+**Prevention:**
+- Check for output saturation (exact max/min scores), not just input variance
+- `model_std` is INTERNAL variance; final output can still be clamped
+- Any ai_score ≥ 10.0 should trigger heuristic fallback
+- Verify degeneracy fix with: unique scores > 1, stddev > 0.5
+
+**Verification Command:**
+```bash
+curl -s "API_BASE/live/best-bets/nhl" | jq '[.game_picks.candidates[].ai_score] | unique | length'
+# Should return >1
+```
+
+**Result After Fix:**
+- BEFORE: unique=1, stddev=0.0, range=10.0-10.0
+- AFTER: unique=8, stddev=0.913, range=4.3-7.0
+
+**Files Modified:**
+- `live_data_router.py` — Added OUTPUT_MAX_CAP and OUTPUT_SATURATION checks
+
+**Commits:** `dba30c01`
+
+**Added in:** v20.28.8 (Feb 15, 2026)
+
+---
+
+### Lesson 135: Multiple Degeneracy Detection Layers (v20.28.8)
+
+**Problem:** Single degeneracy check (model_std < threshold) failed to catch all MPS failure modes.
+
+**Root Cause:** MPS can fail in multiple ways:
+1. DEFAULTED_INPUTS — Missing team stats → default values used
+2. MODEL_COLLAPSE — All models predict same value
+3. OUTPUT_MAX_CAP — Final score hits exact maximum (10.0)
+4. OUTPUT_SATURATION — Score near max with low variance
+
+**Solution:** Layered detection with multiple fallback checks:
+```python
+# Layer 1: Check for defaulted inputs
+if defaults_used:
+    is_degenerate = True
+    degenerate_reason = "DEFAULTED_INPUTS"
+
+# Layer 2: Check for output max cap (exact 10.0)
+elif ai_score >= 10.0:
+    is_degenerate = True
+    degenerate_reason = "OUTPUT_MAX_CAP"
+
+# Layer 3: Check for output saturation (near max + low variance)
+elif ai_score >= 9.9 and model_std < 0.5:
+    is_degenerate = True
+    degenerate_reason = "OUTPUT_SATURATION"
+
+# Layer 4: Check for model collapse (all predictions similar)
+elif model_preds and len(pred_values) >= 3:
+    if pred_range < 0.5 and ai_score >= 9.5:
+        is_degenerate = True
+        degenerate_reason = "MODEL_COLLAPSE"
+```
+
+**Prevention:**
+- Degeneracy detection must be multi-layered
+- Test each layer independently with unit tests
+- Log `degenerate_reason` for debugging
+- Every degenerate pick should have `heuristic_fallback_count > 0`
+
+**Files Modified:**
+- `live_data_router.py` — Added 4-layer degeneracy detection
+
+**Commits:** `dba30c01`
+
+**Added in:** v20.28.8 (Feb 15, 2026)
+
+---
+
+### Lesson 136: ENGINE_DIVERGENCE Warnings for Transparency (v20.28.9)
+
+**Problem:** Top-tier picks (TITANIUM_SMASH) sometimes had weak individual engines (e.g., Jarvis=4.78) being overridden by strong ensemble. No visibility into this divergence.
+
+**Root Cause:** The 4-engine weighted average can mask individual engine weakness. A pick with scores [8.5, 8.2, 7.9, 4.8] can still output as GOLD_STAR tier, but Jarvis is clearly not confident.
+
+**Solution:** Add ENGINE_DIVERGENCE warning when any core engine < 5.5:
+```python
+# In pick_normalizer.py
+ENGINE_WEAK_THRESHOLD = 5.5
+weak_engines = []
+
+for engine_name, score in engine_breakdown.items():
+    if score < ENGINE_WEAK_THRESHOLD:
+        weak_engines.append(f"{engine_name}={score:.1f}")
+
+if weak_engines:
+    warnings.append(f"ENGINE_DIVERGENCE: {', '.join(weak_engines)} below {ENGINE_WEAK_THRESHOLD}")
+```
+
+**Key Insight:** This is a transparency feature, not a filtering feature. The pick still outputs, but users see the warning and can make informed decisions.
+
+**Prevention:**
+- Always include `warnings` field in pick output
+- Log engine divergence for post-analysis
+- Consider ENGINE_DIVERGENCE in learning loop feedback
+- Don't suppress weak engines — expose them
+
+**Example Output:**
+```json
+{
+  "pick_id": "NHL_SPREAD_Rangers_2026-02-15",
+  "final_score": 7.89,
+  "tier": "GOLD_STAR",
+  "warnings": ["ENGINE_DIVERGENCE: jarvis=4.8 below 5.5"]
+}
+```
+
+**Files Modified:**
+- `utils/pick_normalizer.py` — Added ENGINE_DIVERGENCE warning logic
+
+**Commits:** `a3fd3b3`
+
+**Added in:** v20.28.9 (Feb 15, 2026)
+
+---

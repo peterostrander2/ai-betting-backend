@@ -34,8 +34,8 @@
 | File | Contents | When to Load |
 |------|----------|--------------|
 | `docs/ML_REFERENCE.md` | LSTM models, GLITCH protocol, file index | When working on ML/scoring |
-| `docs/LESSONS_LEARNED.md` | 127 historical bugs & fixes | When debugging a similar issue |
-| `docs/NEVER_DO.md` | 363 consolidated rules (v20.28.6) | Before modifying that subsystem |
+| `docs/LESSONS_LEARNED.md` | 136 historical bugs & fixes | When debugging a similar issue |
+| `docs/NEVER_DO.md` | 371 consolidated rules (v20.28.9) | Before modifying that subsystem |
 | `docs/CHECKLISTS.md` | 18 verification checklists (v20.28.5) | Before deploying changes |
 | `docs/SESSION_NOTES.md` | Codex DNS & troubleshooting | If hitting infra issues |
 | `docs/CONTRACT.md` | Canonical scoring contract reference (v20.21) | When verifying frozen contract values |
@@ -98,7 +98,7 @@
 | 30 | CI Golden Gate | All deploys must pass `ci_golden_gate.sh` (v20.21) |
 | 31 | Best Bets Clean Table Format | ALWAYS use space-aligned clean tables with ═══ separators, NEVER markdown pipes (v20.28.5) |
 
-### Lessons Learned (127 Total) - Key Categories
+### Lessons Learned (136 Total) - Key Categories
 | Range | Category | Examples |
 |-------|----------|----------|
 | 1-5 | Code Quality | Dormant code, orphaned signals, weight normalization |
@@ -122,6 +122,7 @@
 | 127 | **v20.28.5 Best Bets Display** | Box-drawing tables, NEVER markdown pipes, start times required |
 | 128 | **v20.28.5 Multiple Code Paths** | game_status hardcoded in sharp fallback — grep ALL pick append locations |
 | 129-133 | **v20.28.6 Tech Debt Cleanup** | Singleton audit, test assertions, version sync, deletion docs, skip conditions |
+| 134-136 | **v20.28.7-v20.28.9 MPS Degeneracy & Transparency** | NHL AI degeneracy fix, multi-layer detection, ENGINE_DIVERGENCE warnings |
 | 53 | **v20.7 Performance** | SERP sequential bottleneck: parallel pre-fetch pattern for external API calls |
 | 54 | **v20.8 Props Dead Code** | Indentation bug made props_picks.append() unreachable — ALL sports returned 0 props |
 | 55 | **v20.9 Missing Endpoint** | Frontend called GET /picks/graded but endpoint didn't exist; MOCK_PICKS masked the 404 |
@@ -236,6 +237,7 @@
 - v20.28.5 Best Bets Display (rules 336-342)
 - v20.28.5 Multiple Code Paths (rules 343-348)
 - v20.28.6 Tech Debt Cleanup (rules 349-363)
+- v20.28.7-v20.28.9 MPS Degeneracy & Transparency (rules 364-371)
 
 ### Deployment Gates (REQUIRED BEFORE DEPLOY)
 ```bash
@@ -424,7 +426,41 @@ API_KEY=your_key SPORT=NCAAB ./scripts/live_betting_audit.sh
 | `tests/test_live_scores_fallback.py` | BallDontLie fallback regression tests (7 tests): hierarchy, NBA-only gate, telemetry — v20.28.4 |
 | `time_filters.py` | Game status derivation: `get_game_status(commence_time, completed)` returns PRE_GAME/IN_PROGRESS/FINAL/NOT_TODAY — v20.26 |
 
-### Current Version: v20.28.4 (Feb 14, 2026)
+### Current Version: v20.28.9 (Feb 15, 2026)
+
+**v20.28.9 (Feb 15, 2026) — MPS Degeneracy Fix + ENGINE_DIVERGENCE Warnings:**
+
+**Problem:** All 8 NHL games returned identical AI scores (10.0). MPS was producing degenerate output but existing detection only checked for low model_std.
+
+**Root Cause:** MPS had high internal variance (model_std=42.7) but the final `deviation_score` saturated at exactly 10.0 for all games.
+
+**Solution:** Multi-layer degeneracy detection + transparency warnings.
+
+**Changes (v20.28.7-v20.28.9):**
+- `live_data_router.py` — Added 4-layer degeneracy detection:
+  - DEFAULTED_INPUTS: Missing team stats
+  - OUTPUT_MAX_CAP: ai_score >= 10.0 (always suspicious)
+  - OUTPUT_SATURATION: ai_score >= 9.9 and model_std < 0.5
+  - MODEL_COLLAPSE: pred_range < 0.5 and ai_score >= 9.5
+- `utils/pick_normalizer.py` — Added ENGINE_DIVERGENCE warnings when any core engine < 5.5
+
+**Result:**
+- BEFORE: unique=1, stddev=0.0, range=10.0-10.0 (DEGENERATE)
+- AFTER: unique=8, stddev=0.913, range=4.3-7.0 (HEALTHY)
+
+**Key Lessons (134-136):**
+- **Lesson 134:** MPS model_std can be high while output saturates at max — check output, not just variance
+- **Lesson 135:** Any ai_score >= 10.0 (exact max) is ALWAYS suspicious — trigger heuristic fallback
+- **Lesson 136:** ENGINE_DIVERGENCE warnings provide transparency when weak engines are overridden
+
+**NEVER DO (v20.28.7-v20.28.9 - rules 364-371):**
+- Rule 364: Never assume model_std < threshold catches all degeneracy — check output saturation
+- Rule 365: Never ignore exact max score (10.0) — always suspicious
+- Rule 366: Always trigger heuristic fallback when ai_score >= 10.0
+- Rule 367: Always use multi-layer degeneracy detection
+- Rule 368-371: Always add ENGINE_DIVERGENCE warnings for engine transparency
+
+---
 
 **v20.28.4 (Feb 14, 2026) — Portable Test Suite + BallDontLie Fallback:**
 

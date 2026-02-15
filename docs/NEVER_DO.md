@@ -1961,3 +1961,64 @@ assert any(k in result for k in ["bias_analysis", "error", "reason"])
 ```
 
 ---
+
+## v20.28.7-v20.28.9 MPS Degeneracy & Transparency (rules 364-371)
+
+### MPS Degeneracy Detection Rules (364-367)
+
+364. **NEVER** assume `model_std < threshold` catches all MPS degeneracy — models can have high variance but saturated output
+365. **NEVER** ignore exact max score (10.0) — real scoring never produces exact 10.0 for multiple games
+366. **ALWAYS** trigger heuristic fallback when `ai_score >= 10.0` (OUTPUT_MAX_CAP detection)
+367. **ALWAYS** use multi-layer degeneracy detection: DEFAULTED_INPUTS → OUTPUT_MAX_CAP → OUTPUT_SATURATION → MODEL_COLLAPSE
+
+**MPS Degeneracy Detection Order:**
+```python
+# Layer 1: DEFAULTED_INPUTS
+if defaults_used:
+    trigger_fallback("DEFAULTED_INPUTS")
+
+# Layer 2: OUTPUT_MAX_CAP (exact 10.0 = always suspicious)
+elif ai_score >= 10.0:
+    trigger_fallback("OUTPUT_MAX_CAP")
+
+# Layer 3: OUTPUT_SATURATION (near max + low variance)
+elif ai_score >= 9.9 and model_std < 0.5:
+    trigger_fallback("OUTPUT_SATURATION")
+
+# Layer 4: MODEL_COLLAPSE (all predictions similar at high score)
+elif pred_range < 0.5 and ai_score >= 9.5:
+    trigger_fallback("MODEL_COLLAPSE")
+```
+
+**Verification Command:**
+```bash
+# Check for degeneracy: unique AI scores must be > 1
+curl -s "API_BASE/live/best-bets/nhl" | jq '[.game_picks.candidates[].ai_score] | unique | length'
+```
+
+### ENGINE_DIVERGENCE Transparency Rules (368-371)
+
+368. **ALWAYS** add ENGINE_DIVERGENCE warning when any core engine score < 5.5
+369. **ALWAYS** include `warnings` field in pick output (even if empty list)
+370. **NEVER** suppress weak engine scores — expose them with warnings for transparency
+371. **ALWAYS** include `engine_breakdown` dict in every pick (ai, research, esoteric, jarvis)
+
+**ENGINE_DIVERGENCE Implementation:**
+```python
+ENGINE_WEAK_THRESHOLD = 5.5
+weak_engines = [f"{eng}={score:.1f}" for eng, score in engine_breakdown.items() if score < ENGINE_WEAK_THRESHOLD]
+if weak_engines:
+    warnings.append(f"ENGINE_DIVERGENCE: {', '.join(weak_engines)} below {ENGINE_WEAK_THRESHOLD}")
+```
+
+**Example Warning Output:**
+```json
+{
+  "pick_id": "NHL_SPREAD_Rangers",
+  "tier": "GOLD_STAR",
+  "warnings": ["ENGINE_DIVERGENCE: jarvis=4.8 below 5.5"],
+  "engine_breakdown": {"ai": 7.2, "research": 8.1, "esoteric": 6.9, "jarvis": 4.8}
+}
+```
+
+---
