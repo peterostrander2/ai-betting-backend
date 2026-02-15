@@ -66,6 +66,29 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # ============================================
+# MINIMUM SAMPLE SIZE FOR WEIGHT ADJUSTMENTS (v20.28.6)
+# ============================================
+# Prevents over-amplification from small samples.
+# Markets with fewer than MIN_SAMPLES won't have weights adjusted.
+# This protects against situations like 6 moneyline picks at 0% skewing weights.
+
+MIN_SAMPLES_BY_MARKET = {
+    "moneyline": 50,   # Rarer market, needs more samples
+    "sharp": 30,       # Sharp signals are valuable, moderate threshold
+    "spread": 20,      # Most common market
+    "total": 20,       # Common market
+    "points": 20,      # Props
+    "rebounds": 20,
+    "assists": 20,
+    "threes": 20,
+    "steals": 30,      # Rarer prop
+    "blocks": 30,      # Rarer prop
+    "turnovers": 30,   # Rarer prop
+    "pra": 20,         # Points+Rebounds+Assists combo
+}
+DEFAULT_MIN_SAMPLES = 20  # Fallback for unknown markets
+
+# ============================================
 # DATA STRUCTURES
 # ============================================
 
@@ -868,10 +891,28 @@ class AutoGrader:
         
         # Calculate bias
         bias = self.calculate_bias(sport, stat_type, days_back)
-        
+
         if "error" in bias:
             return {"error": bias["error"], "weights_unchanged": True}
-        
+
+        # v20.28.6: Minimum sample size gate to prevent small-sample over-amplification
+        # Example: 6 moneyline picks at 0% hit rate shouldn't skew weights
+        min_samples = MIN_SAMPLES_BY_MARKET.get(stat_type.lower(), DEFAULT_MIN_SAMPLES)
+        sample_size = bias.get("sample_size", 0)
+        if sample_size < min_samples:
+            logger.info(
+                f"LEARNING GATE: {sport}/{stat_type} has {sample_size} samples, "
+                f"need {min_samples} minimum. Skipping weight adjustment."
+            )
+            return {
+                "sport": sport,
+                "stat_type": stat_type,
+                "sample_size": sample_size,
+                "min_samples_required": min_samples,
+                "weights_unchanged": True,
+                "reason": f"Insufficient samples ({sample_size} < {min_samples}). No weight adjustment applied."
+            }
+
         # Calculate new weights
         adjustments = {}
         new_weights = {}
@@ -1020,6 +1061,23 @@ class AutoGrader:
 
         if "error" in bias:
             return {"error": bias["error"], "weights_unchanged": True}
+
+        # v20.28.6: Minimum sample size gate to prevent small-sample over-amplification
+        min_samples = MIN_SAMPLES_BY_MARKET.get(stat_type.lower(), DEFAULT_MIN_SAMPLES)
+        sample_size = bias.get("sample_size", 0)
+        if sample_size < min_samples:
+            logger.info(
+                f"LEARNING GATE: {sport}/{stat_type} has {sample_size} samples, "
+                f"need {min_samples} minimum. Skipping weight adjustment."
+            )
+            return {
+                "sport": sport,
+                "stat_type": stat_type,
+                "sample_size": sample_size,
+                "min_samples_required": min_samples,
+                "weights_unchanged": True,
+                "reason": f"Insufficient samples ({sample_size} < {min_samples}). No weight adjustment applied."
+            }
 
         # Calculate new weights with reconciliation
         adjustments = {}
